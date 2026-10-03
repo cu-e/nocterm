@@ -7,6 +7,24 @@ use gpui_kit::{
 use nocterm_session::{RemoteFs, Target};
 use nocterm_ui::IconName;
 
+/// Feature commands shared by menus, shortcuts and future command palettes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemCommand {
+    Copy,
+    Paste,
+    SelectAll,
+    ClearSelection,
+    Find,
+    FindNext,
+    FindPrevious,
+    FindNextSelection,
+    Disconnect,
+    Reconnect,
+    StartRecording,
+    StopRecording,
+    SessionSettings,
+}
+
 /// The content of a tab.
 pub trait Item: Render + Focusable + EventEmitter<ItemEvent> {
     /// The tab's label.
@@ -27,6 +45,12 @@ pub trait Item: Render + Focusable + EventEmitter<ItemEvent> {
     fn session(&self, _cx: &App) -> Option<SessionContext> {
         None
     }
+
+    fn command_enabled(&self, _command: ItemCommand, _cx: &App) -> bool {
+        false
+    }
+
+    fn execute(&mut self, _command: ItemCommand, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// The tab is closing: release whatever it holds.
     fn on_close(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -90,6 +114,8 @@ pub trait ItemHandle: 'static {
     fn session(&self, cx: &App) -> Option<SessionContext>;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn close(&self, window: &mut Window, cx: &mut App);
+    fn command_enabled(&self, command: ItemCommand, cx: &App) -> bool;
+    fn execute(&self, command: ItemCommand, window: &mut Window, cx: &mut App);
 }
 
 impl<T: Item> ItemHandle for Entity<T> {
@@ -123,5 +149,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn close(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |item, cx| item.on_close(window, cx));
+    }
+
+    fn command_enabled(&self, command: ItemCommand, cx: &App) -> bool {
+        self.read(cx).command_enabled(command, cx)
+    }
+
+    fn execute(&self, command: ItemCommand, window: &mut Window, cx: &mut App) {
+        self.update(cx, |item, cx| item.execute(command, window, cx));
     }
 }

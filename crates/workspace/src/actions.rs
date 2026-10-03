@@ -47,6 +47,48 @@ gpui_kit::actions!(
         CloseLocalTerminal,
         /// Open the encrypted credential vault.
         OpenVault,
+        /// Copy the current terminal selection.
+        EditCopy,
+        /// Paste the clipboard into the focused terminal.
+        EditPaste,
+        /// Select all terminal content.
+        SelectAll,
+        /// Clear the terminal selection.
+        ClearSelection,
+        /// Open terminal search.
+        Find,
+        /// Select the next search match.
+        FindNext,
+        /// Select the previous search match.
+        FindPrevious,
+        /// Search for the current terminal selection.
+        FindNextSelection,
+        /// Disconnect the focused session.
+        DisconnectSession,
+        /// Reconnect the focused session.
+        ReconnectSession,
+        /// Edit options of the focused session.
+        SessionSettings,
+        /// Start recording terminal output.
+        StartRecording,
+        /// Stop recording terminal output.
+        StopRecording,
+        /// Copy the displayed connection name or alias.
+        CopyConnectionName,
+        /// Open another application window.
+        NewWindow,
+        /// Close this window.
+        CloseWindow,
+        /// Show application information.
+        About,
+        /// Open the directory containing connection profiles.
+        ProfilesDirectory,
+        /// Open the terminal recordings directory.
+        LogsDirectory,
+        /// Edit default session options.
+        DefaultSessionSettings,
+        /// Open SSH settings.
+        OpenSSHSettings,
         /// Quit the application.
         Quit,
     ]

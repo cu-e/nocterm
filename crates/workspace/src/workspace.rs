@@ -1,8 +1,9 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui_kit::{
-    Action, Anchor, AnyView, App, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Window,
+    Action, Anchor, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Menu, MouseButton, SharedString, Subscription, Window,
+    base::GlobalState,
     component::{
         ActiveTheme as _, Icon, ResizableState, Selectable as _, Sizable as _, StyledExt as _,
         TitleBar,
@@ -12,6 +13,7 @@ use gpui_kit::{
             PanelStyle, panel_handle,
         },
         h_flex, h_resizable,
+        menu::AppMenuBar,
         popover::Popover,
         resizable_panel, v_flex,
     },
@@ -23,8 +25,8 @@ use nocterm_session::{Auth, Target};
 use nocterm_ui::{ActiveDesign as _, IconName};
 
 use crate::{
-    CloseTab, Item, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab, OpenSettings,
-    Panel, PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
+    CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
+    OpenSettings, Panel, PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -69,6 +71,7 @@ pub enum TabCloseScope {
 
 type SessionOpener = Rc<dyn Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>)>;
 type ActionRegistration = Box<dyn Fn(Div, &mut Context<Workspace>) -> Div>;
+type MenuBuilder = Rc<dyn Fn(&Workspace, &Window, &App) -> Vec<Menu>>;
 
 struct NewTabMenu {
     view: AnyView,
@@ -92,6 +95,7 @@ struct BottomTerminal {
     handle: Rc<dyn ItemHandle>,
     local: Box<dyn crate::local_terminal::LocalTerminalHandle>,
     _subscription: Subscription,
+    _focus_subscription: Subscription,
 }
 
 pub struct Workspace {
@@ -113,6 +117,11 @@ pub struct Workspace {
     status_views: Vec<AnyView>,
     /// The active session as last announced, to announce only changes.
     announced_session: Option<SessionContext>,
+    menu_builder: Option<MenuBuilder>,
+    app_menu_bar: Option<Entity<AppMenuBar>>,
+    menu_focus: FocusHandle,
+    menu_item: Option<EntityId>,
+    last_command_item: Option<EntityId>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -129,14 +138,14 @@ impl Workspace {
             let focused = this
                 .items
                 .iter()
-                .find(|open| open.handle.focus_handle(cx).contains_focused(window, cx))
+                .find(|open| open.dock_item.read(cx).contains_focus(window, cx))
                 .map(|open| open.handle.item_id());
             if let Some(id) = focused {
                 this.mark_active(id, cx);
             }
             cx.notify();
         });
-        Self {
+        let mut this = Self {
             dock,
             _dock_subscription: subscription,
             local_terminal: None,
@@ -154,7 +163,47 @@ impl Workspace {
             actions: Vec::new(),
             status_views: Vec::new(),
             announced_session: None,
+            menu_builder: None,
+            app_menu_bar: None,
+            menu_focus: cx.focus_handle(),
+            menu_item: None,
+            last_command_item: None,
+        };
+        macro_rules! item_action {
+            ($action:ty, $command:ident) => {
+                this.register_action::<$action>(|this, _, window, cx| {
+                    this.dispatch_item_command(ItemCommand::$command, window, cx);
+                });
+            };
         }
+        this.register_action::<crate::EditCopy>(|_, _, window, cx| {
+            window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
+        });
+        this.register_action::<crate::EditPaste>(|_, _, window, cx| {
+            window.dispatch_action(Box::new(gpui_kit::component::input::Paste), cx)
+        });
+        this.register_action::<crate::SelectAll>(|_, _, window, cx| {
+            window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx)
+        });
+        item_action!(crate::ClearSelection, ClearSelection);
+        item_action!(crate::Find, Find);
+        item_action!(crate::FindNext, FindNext);
+        item_action!(crate::FindPrevious, FindPrevious);
+        item_action!(crate::FindNextSelection, FindNextSelection);
+        item_action!(crate::DisconnectSession, Disconnect);
+        item_action!(crate::ReconnectSession, Reconnect);
+        item_action!(crate::StartRecording, StartRecording);
+        item_action!(crate::StopRecording, StopRecording);
+        item_action!(crate::SessionSettings, SessionSettings);
+        item_action!(gpui_kit::component::input::Copy, Copy);
+        item_action!(gpui_kit::component::input::Paste, Paste);
+        item_action!(gpui_kit::component::input::SelectAll, SelectAll);
+        this.register_action::<crate::CopyConnectionName>(|this, _, window, cx| {
+            if let Some(title) = this.command_title(window, cx) {
+                cx.write_to_clipboard(ClipboardItem::new_string(title.to_string()));
+            }
+        });
+        this
     }
 
     // ── Items ────────────────────────────────────────────────────────────────
@@ -196,9 +245,6 @@ impl Workspace {
                 },
             );
 
-        let focus = item.read(cx).focus_handle(cx);
-        let focus_subscription =
-            cx.on_focus_in(&focus, window, move |this, _, cx| this.mark_active(id, cx));
         let destination = self
             .active_item
             .and_then(|ix| self.items.get(ix))
@@ -213,6 +259,11 @@ impl Workspace {
         let workspace = cx.weak_entity();
         let dock_item = cx.new(|item_cx| {
             crate::dock_item::DockItem::new(handle.clone(), workspace, false, window, item_cx)
+        });
+        let focus = dock_item.read(cx).container_focus_handle();
+        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
+            this.last_command_item = Some(id);
+            this.mark_active(id, cx);
         });
         self.dock.update(cx, |dock, cx| {
             dock.add_panel_view(
@@ -544,9 +595,14 @@ impl Workspace {
                 ItemEvent::CloseRequested => this.close_local_terminal(window, cx),
             });
         let handle: Rc<dyn ItemHandle> = Rc::new(item.clone());
+        let id = item.entity_id();
         let workspace = cx.weak_entity();
         let dock_item = cx.new(|item_cx| {
             crate::dock_item::DockItem::new(handle.clone(), workspace, true, window, item_cx)
+        });
+        let focus = dock_item.read(cx).container_focus_handle();
+        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, _| {
+            this.last_command_item = Some(id);
         });
         let height = rems(cx.design().layout.local_terminal_height).to_pixels(window.rem_size());
         self.dock.update(cx, |dock, cx| {
@@ -564,6 +620,7 @@ impl Workspace {
             handle,
             local: Box::new(item),
             _subscription: subscription,
+            _focus_subscription: focus_subscription,
         });
         cx.notify();
     }
@@ -643,6 +700,24 @@ impl Workspace {
             return;
         };
         self.split_item(id, placement, window, cx);
+    }
+
+    /// Splitting moves a tab out of a pane which retains another tab.
+    pub fn can_split_active(&self, cx: &App) -> bool {
+        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
+            return false;
+        };
+        let panel = PanelId::from(open.dock_item.entity_id());
+        self.dock
+            .read(cx)
+            .layout(DockPlacement::Center)
+            .and_then(|tree| {
+                tree.find_panel_node(panel)
+                    .and_then(|node| tree.find_node(node))
+            })
+            .is_some_and(
+                |node| matches!(node.kind(), PaneRef::Tabs { panels, .. } if panels.len() > 1),
+            )
     }
 
     pub fn split_item(
@@ -864,6 +939,164 @@ impl Workspace {
 
     // ── Actions ──────────────────────────────────────────────────────────────
 
+    /// Focused bottom terminal, focused central item, then the active central tab.
+    /// An open menu retains its opening context while native popup focus moves.
+    pub fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
+        if let Some(local) = &self.local_terminal
+            && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+            && local.item.read(cx).contains_focus(window, cx)
+        {
+            return Some(local.handle.clone());
+        }
+        if let Some(item) = self
+            .items
+            .iter()
+            .find(|item| item.dock_item.read(cx).contains_focus(window, cx))
+        {
+            return Some(item.handle.clone());
+        }
+        if self.menu_focus.contains_focused(window, cx)
+            && let Some(id) = self.menu_item.or(self.last_command_item)
+        {
+            if let Some(local) = &self.local_terminal
+                && local.handle.item_id() == id
+                && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+            {
+                return Some(local.handle.clone());
+            }
+            if let Some(item) = self.items.iter().find(|item| item.handle.item_id() == id) {
+                return Some(item.handle.clone());
+            }
+            return None;
+        }
+        self.active_item
+            .and_then(|ix| self.items.get(ix))
+            .map(|item| item.handle.clone())
+    }
+
+    pub fn item_command_enabled(&self, command: ItemCommand, window: &Window, cx: &App) -> bool {
+        self.command_item(window, cx)
+            .is_some_and(|item| item.command_enabled(command, cx))
+    }
+
+    pub fn execute_item_command(
+        &mut self,
+        command: ItemCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(item) = self.command_item(window, cx)
+            && item.command_enabled(command, cx)
+        {
+            item.execute(command, window, cx);
+        }
+    }
+
+    fn dispatch_item_command(
+        &mut self,
+        command: ItemCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(item) = self.command_item(window, cx)
+            && item.command_enabled(command, cx)
+        {
+            if matches!(
+                command,
+                ItemCommand::Find | ItemCommand::FindNextSelection | ItemCommand::SessionSettings
+            ) {
+                let workspace = cx.weak_entity();
+                window.defer(cx, move |window, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        let still_open = this
+                            .items
+                            .iter()
+                            .any(|open| open.handle.item_id() == item.item_id())
+                            || this
+                                .local_terminal
+                                .as_ref()
+                                .is_some_and(|local| local.handle.item_id() == item.item_id());
+                        if still_open && item.command_enabled(command, cx) {
+                            item.execute(command, window, cx);
+                        }
+                    });
+                });
+            } else {
+                item.execute(command, window, cx);
+            }
+        }
+    }
+
+    /// The displayed tab label, including its user-defined alias.
+    pub fn command_title(&self, window: &Window, cx: &App) -> Option<SharedString> {
+        let item = self.command_item(window, cx)?;
+        let dock = self
+            .items
+            .iter()
+            .find(|open| open.handle.item_id() == item.item_id())
+            .map(|open| &open.dock_item)
+            .or_else(|| {
+                self.local_terminal
+                    .as_ref()
+                    .filter(|local| local.handle.item_id() == item.item_id())
+                    .map(|local| &local.item)
+            });
+        Some(
+            dock.and_then(|dock| dock.read(cx).alias.clone())
+                .unwrap_or_else(|| item.tab_title(cx)),
+        )
+    }
+
+    pub fn sidebar_is_open(&self) -> bool {
+        self.sidebar_open
+    }
+    pub fn local_terminal_is_visible(&self, cx: &App) -> bool {
+        self.local_terminal.is_some() && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+    }
+
+    /// Supplies window-specific menus to the toolkit's standard menu bar.
+    pub fn set_menu_builder(
+        &mut self,
+        builder: impl Fn(&Workspace, &Window, &App) -> Vec<Menu> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu_builder = Some(Rc::new(builder));
+        self.reload_menu_bar(window, cx);
+    }
+
+    fn reload_menu_bar(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(builder) = self.menu_builder.clone() else {
+            return;
+        };
+        self.menu_item = self.command_item(window, cx).map(|item| item.item_id());
+        let menus = builder(self, window, cx)
+            .into_iter()
+            .map(Menu::owned)
+            .collect();
+        if let Some(bar) = &self.app_menu_bar {
+            bar.update(cx, |bar, cx| bar.set_menus(menus, cx));
+        } else {
+            // Construction reads GlobalState once; restore it immediately so
+            // other windows and OS menus never inherit this snapshot.
+            let previous = GlobalState::global(cx).app_menus().to_vec();
+            GlobalState::global_mut(cx).set_app_menus(menus);
+            self.app_menu_bar = Some(AppMenuBar::new(cx));
+            GlobalState::global_mut(cx).set_app_menus(previous);
+        }
+    }
+
+    fn prepare_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if !self
+            .app_menu_bar
+            .as_ref()
+            .is_some_and(|bar| bar.read(cx).is_open())
+        {
+            self.menu_item = None;
+            self.reload_menu_bar(window, cx);
+        }
+    }
+
     /// Handles action `A` whenever focus is inside the workspace.
     ///
     /// This is how a feature adds a command without the workspace knowing
@@ -881,9 +1114,13 @@ impl Workspace {
         }));
     }
 
-    fn on_new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
-        let open = !self.new_tab_menu_open;
-        self.show_new_tab_menu(open, cx);
+    fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = cx.weak_entity();
+        window.defer(cx, move |_, cx| {
+            let _ = workspace.update(cx, |this, cx| {
+                this.show_new_tab_menu(!this.new_tab_menu_open, cx);
+            });
+        });
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -939,6 +1176,31 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)),
                         ),
                 )
+                .when_some(self.app_menu_bar.as_ref(), |bar, menu| {
+                    bar.child(
+                        div()
+                            .id("workspace-app-menu")
+                            .track_focus(&self.menu_focus)
+                            .h_full()
+                            .min_w_0()
+                            .capture_any_mouse_down(cx.listener(
+                                |this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                    if event.button == MouseButton::Left {
+                                        this.prepare_menu(window, cx);
+                                    }
+                                },
+                            ))
+                            .capture_key_down(cx.listener(
+                                |this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                                    match event.keystroke.key.as_str() {
+                                        "enter" | "space" => this.prepare_menu(window, cx),
+                                        _ => {}
+                                    }
+                                },
+                            ))
+                            .child(menu.clone()),
+                    )
+                })
                 .child(div().flex_1())
                 .child(self.render_new_tab_button(cx)),
         )
@@ -1137,8 +1399,11 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &crate::PreviousPane, window, cx| {
                 this.focus_pane(-1, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &crate::RenameTab, window, cx| {
-                this.rename_active_tab(window, cx)
+            .on_action(cx.listener(|_, _: &crate::RenameTab, window, cx| {
+                let workspace = cx.weak_entity();
+                window.defer(cx, move |window, cx| {
+                    let _ = workspace.update(cx, |this, cx| this.rename_active_tab(window, cx));
+                });
             }))
             .on_action(
                 cx.listener(|this, _: &crate::ToggleLocalTerminal, window, cx| {

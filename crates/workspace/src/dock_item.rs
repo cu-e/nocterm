@@ -32,6 +32,14 @@ pub(crate) struct DockItem {
 }
 impl EventEmitter<PanelEvent> for DockItem {}
 impl DockItem {
+    /// Focus membership belongs to the whole view, while `Focusable` chooses
+    /// the feature's preferred control when activating it.
+    pub(crate) fn container_focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+    pub(crate) fn contains_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
     pub(crate) fn new(
         item: Rc<dyn ItemHandle>,
         workspace: WeakEntity<Workspace>,
@@ -131,7 +139,7 @@ impl BasePanel for DockItem {
         });
     }
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active && !self.bottom && self.item.focus_handle(cx).contains_focused(window, cx) {
+        if active && !self.bottom && self.contains_focus(window, cx) {
             self.announce(window, cx);
         }
     }

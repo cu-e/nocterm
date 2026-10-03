@@ -28,7 +28,7 @@ mod settings_page;
 mod workspace;
 
 pub use actions::*;
-pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
+pub use item::{Item, ItemCommand, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::LocalTerminal;
 pub use panel::{Panel, PanelHandle};
 pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
