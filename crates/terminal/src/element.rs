@@ -14,8 +14,8 @@ use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, ElementInputHandler, Entity, FocusHandle, Font,
     FontStyle, FontWeight, Hitbox, HitboxBehavior, Hsla, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, StrikethroughStyle,
-    TextAlign, TextRun, UnderlineStyle, Window, canvas, fill, font, outline, point, prelude::*, px,
-    size,
+    TextAlign, TextRun, UnderlineStyle, Window, canvas, component::ActiveTheme as _, fill, font,
+    outline, point, prelude::*, px, size,
 };
 use nocterm_ui::{TerminalStyle, hsla};
 use nocterm_vt::{
@@ -153,7 +153,7 @@ impl TerminalElement {
         );
 
         self.terminal
-            .update(cx, |terminal, _| terminal.resize(size));
+            .update(cx, |terminal, cx| terminal.resize(size, cx));
         self.terminal
             .read(cx)
             .emulator()
@@ -191,6 +191,9 @@ impl TerminalElement {
                 paint_runs(window, &layout.geometry, row, cells, |cell| {
                     let (_, background) = colors.cell(cell);
                     (background != colors.background).then_some(background)
+                });
+                paint_runs(window, &layout.geometry, row, cells, |cell| {
+                    cell.search_hit.then_some(cx.theme().warning.opacity(0.35))
                 });
                 paint_runs(window, &layout.geometry, row, cells, |cell| {
                     cell.selected.then_some(colors.selection)

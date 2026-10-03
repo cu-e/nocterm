@@ -50,6 +50,7 @@ pub fn init_recording(directory: std::path::PathBuf, cx: &mut gpui_kit::App) {
 mod element;
 pub use credentials::init_credentials;
 mod integration;
+mod session_settings;
 mod terminal;
 mod view;
 
@@ -59,7 +60,7 @@ use gpui_kit::{App, Context, Global, KeyBinding, NoAction, Window, prelude::*};
 use nocterm_session::{ShellLaunch, Transport};
 use nocterm_workspace::{SessionSpec, Workspace};
 
-pub use terminal::{Status, Terminal, TerminalEvent};
+pub use terminal::{FindState, Status, Terminal, TerminalEvent};
 pub use view::TerminalView;
 
 gpui_kit::actions!(
@@ -77,7 +78,7 @@ gpui_kit::actions!(
         ScrollToTop,
         /// Scroll back to the live screen.
         ScrollToBottom,
-        /// Connect again after the session ended.
+        /// Reconnect this tab using its next-launch options.
         Reconnect,
         /// Start or stop output-only session recording.
         ToggleRecording,

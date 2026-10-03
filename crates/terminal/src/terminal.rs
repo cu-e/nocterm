@@ -12,7 +12,10 @@ use nocterm_session::{
 };
 use nocterm_settings::{CursorShape, TerminalSettings};
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
-use nocterm_vt::{Effect, Emulator, EmulatorOptions, Palette, Scroll, TermSize};
+use nocterm_vt::{
+    Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchPoint,
+    SearchProgress, SearchResult, TermSize,
+};
 use nocterm_workspace::{SessionContext, SessionSpec};
 
 use crate::{ActiveTransport, LocalTransportFactory, integration::ShellIntegration};
@@ -36,6 +39,15 @@ pub enum TerminalEvent {
     Bell,
 }
 
+#[derive(Default)]
+pub struct FindState {
+    pub query: String,
+    pub searching: bool,
+    /// Counts are final when `searching` is false; active may be an early preview.
+    pub result: SearchResult,
+    pub error: Option<String>,
+}
+
 /// A session and the screen it draws on.
 pub struct Terminal {
     codec: crate::codec::TextCodec,
@@ -54,7 +66,10 @@ pub struct Terminal {
     status: Status,
     prompt: Option<Prompt>,
     prompt_epoch: u64,
+    connection_epoch: u64,
     emulator: Emulator,
+    find: FindState,
+    find_task: Option<Task<()>>,
     /// What the running program called its window.
     program_title: Option<String>,
     _pump: Option<Task<()>>,
@@ -104,13 +119,17 @@ impl Terminal {
             status: Status::Connecting(ConnectStage::Connecting),
             prompt: None,
             prompt_epoch: 0,
+            connection_epoch: 0,
             emulator: Emulator::new(TermSize::default(), options),
+            find: FindState::default(),
+            find_task: None,
             program_title: None,
             _pump: None,
             sync_timer: None,
             _settings: cx.observe_global::<SettingsStore>(|this, cx| {
                 let options = emulator_options(&cx.settings().terminal);
                 this.emulator.set_options(options);
+                this.refresh_find(cx);
                 cx.emit(TerminalEvent::Output);
             }),
         };
@@ -124,6 +143,18 @@ impl Terminal {
 
     pub fn spec(&self) -> &SessionSpec {
         &self.spec
+    }
+
+    /// Changes this tab's next-launch options without changing a saved profile.
+    pub fn set_session_options(
+        &mut self,
+        options: nocterm_session::SessionOptions,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        options.validate()?;
+        self.spec.options = options;
+        cx.emit(TerminalEvent::Changed);
+        Ok(())
     }
 
     pub fn status(&self) -> &Status {
@@ -164,8 +195,7 @@ impl Terminal {
 
     /// Opens a new session, replacing the current one.
     fn connect(&mut self, cx: &mut Context<Self>) {
-        self.clear_credentials();
-        self.stop_recording();
+        self.close();
         if let Err(error) = self.spec.options.validate() {
             self.set_status(
                 Status::Closed(CloseReason::Failed(SessionError::Other(error))),
@@ -246,19 +276,26 @@ impl Terminal {
         self.session = Some(session.clone());
         self.prompt = None;
         self.set_status(Status::Connecting(ConnectStage::Connecting), cx);
+        cx.emit(TerminalEvent::Changed);
+
+        let epoch = self.connection_epoch;
 
         self._pump = Some(cx.spawn(async move |this, cx| {
             while let Some(event) = session.next_event().await {
-                if this
-                    .update(cx, |this, cx| this.handle_event(event, cx))
-                    .is_err()
-                {
+                let alive = this.update(cx, |this, cx| {
+                    if this.connection_epoch != epoch {
+                        return false;
+                    }
+                    this.handle_event(event, cx);
+                    true
+                });
+                if !matches!(alive, Ok(true)) {
                     return;
                 }
             }
             // The transport went away without saying why.
             let _ = this.update(cx, |this, cx| {
-                if !matches!(this.status, Status::Closed(_)) {
+                if this.connection_epoch == epoch && !matches!(this.status, Status::Closed(_)) {
                     let lost = SessionError::ConnectionLost("the transport stopped".into());
                     this.handle_event(Event::Closed(CloseReason::Failed(lost)), cx);
                 }
@@ -266,20 +303,33 @@ impl Terminal {
         }));
     }
 
-    /// Connects again after the session ended. Does nothing while it is up.
+    /// Replaces a live connection as well as reconnecting a closed one.
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.status, Status::Closed(_)) {
-            // Start the new session on a fresh line below the old output.
-            self.emulator.advance(b"\r\n");
-            self.connect(cx);
-        }
+        self.emulator.advance(b"\r\n");
+        self.connect(cx);
+        self.refresh_find(cx);
     }
 
     /// Ends the session.
     pub fn close(&mut self) {
-        if let Some(session) = &self.session {
+        self.connection_epoch = self.connection_epoch.wrapping_add(1);
+        self._pump = None;
+        self.sync_timer = None;
+        if let Some(session) = self.session.take() {
             session.close();
         }
+        self.fs = None;
+        self.prompt = None;
+        self.prompt_epoch = self.prompt_epoch.wrapping_add(1);
+        self.clear_credentials();
+        self.stop_recording();
+    }
+
+    /// Immediately publishes disconnection, including a cancelled handshake.
+    pub fn disconnect(&mut self, cx: &mut Context<Self>) {
+        self.close();
+        self.set_status(Status::Closed(CloseReason::ClosedByUser), cx);
+        cx.emit(TerminalEvent::Changed);
     }
 
     fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
@@ -303,6 +353,7 @@ impl Terminal {
                 let effects = self.emulator.advance(&bytes);
                 self.apply(effects, cx);
                 self.schedule_sync(cx);
+                self.refresh_find(cx);
                 cx.emit(TerminalEvent::Output);
             }
             Event::Prompt(prompt) => {
@@ -325,6 +376,8 @@ impl Terminal {
                 }
                 self.clear_credentials();
                 self.prompt = None;
+                self.fs = None;
+                self.refresh_find(cx);
                 self.set_status(Status::Closed(reason), cx);
             }
         }
@@ -373,6 +426,7 @@ impl Terminal {
                     Some(deadline) if deadline <= Instant::now() => {
                         let effects = this.emulator.finish_sync();
                         this.apply(effects, cx);
+                        this.refresh_find(cx);
                         cx.emit(TerminalEvent::Output);
                     }
                     // The program ended it, or began another one since.
@@ -473,7 +527,10 @@ impl Terminal {
             self.start_recording(cx);
         }
     }
-    fn start_recording(&mut self, cx: &mut Context<Self>) {
+    pub fn start_recording(&mut self, cx: &mut Context<Self>) {
+        if self.is_recording() {
+            return;
+        }
         if !self.is_connected() {
             return;
         }
@@ -552,11 +609,12 @@ impl Terminal {
     }
 
     /// Lays the grid out anew, and tells the remote program.
-    pub fn resize(&mut self, size: TermSize) {
+    pub fn resize(&mut self, size: TermSize, cx: &mut Context<Self>) {
         if size == self.emulator.size() {
             return;
         }
         self.emulator.resize(size);
+        self.refresh_find(cx);
         if let Some(session) = &self.session {
             session.resize(pty_size(size));
         }
@@ -564,6 +622,151 @@ impl Terminal {
 
     pub fn set_palette(&mut self, palette: Palette) {
         self.emulator.set_palette(palette);
+    }
+
+    pub fn find(&self) -> &FindState {
+        &self.find
+    }
+
+    pub fn begin_find(
+        &mut self,
+        query: String,
+        direction: SearchDirection,
+        anchor: Option<SearchPoint>,
+        cx: &mut Context<Self>,
+    ) {
+        self.find_task = None;
+        self.emulator.clear_search();
+        self.find = FindState {
+            query: query
+                .chars()
+                .take(nocterm_vt::MAX_SEARCH_QUERY + 1)
+                .collect(),
+            ..Default::default()
+        };
+        self.scan_find(direction, anchor, Duration::ZERO, cx);
+    }
+
+    pub fn find_next(&mut self, previous: bool, cx: &mut Context<Self>) {
+        let anchor = self.find.result.active.map(|m| m.start);
+        self.scan_find(
+            if previous {
+                SearchDirection::Previous
+            } else {
+                SearchDirection::Next
+            },
+            anchor,
+            Duration::ZERO,
+            cx,
+        );
+    }
+
+    pub fn clear_find(&mut self, cx: &mut Context<Self>) {
+        self.find_task = None;
+        self.find = FindState::default();
+        self.emulator.clear_search();
+        cx.emit(TerminalEvent::Output);
+    }
+
+    fn refresh_find(&mut self, cx: &mut Context<Self>) {
+        if self.find.query.is_empty() {
+            return;
+        }
+        // A running task owns its restart throttle. Continuous output must not
+        // keep postponing the start of every attempt indefinitely.
+        if self.find.searching {
+            return;
+        }
+        let anchor = self.find.result.active.map(|m| m.start);
+        self.scan_find(
+            SearchDirection::Stay,
+            anchor,
+            Duration::from_millis(100),
+            cx,
+        );
+    }
+
+    fn scan_find(
+        &mut self,
+        direction: SearchDirection,
+        anchor: Option<SearchPoint>,
+        delay: Duration,
+        cx: &mut Context<Self>,
+    ) {
+        self.find_task = None;
+        self.find.error = None;
+        self.emulator.clear_search();
+        if self.find.query.is_empty() {
+            self.find.searching = false;
+            self.find.result = SearchResult::default();
+            cx.emit(TerminalEvent::Output);
+            return;
+        }
+        let mut scan = match self.emulator.search(&self.find.query, direction, anchor) {
+            Ok(scan) => scan,
+            Err(error) => {
+                self.find.error = Some(error);
+                self.find.searching = false;
+                cx.emit(TerminalEvent::Output);
+                return;
+            }
+        };
+        self.find.searching = true;
+        cx.emit(TerminalEvent::Output);
+        self.find_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let mut restart = delay != Duration::ZERO;
+            let mut previewed = None;
+            loop {
+                let progress = this.update(cx, |this, cx| {
+                    if restart {
+                        let Ok(fresh) = this.emulator.search(&this.find.query, direction, anchor)
+                        else {
+                            return SearchProgress::Invalidated;
+                        };
+                        scan = fresh;
+                        restart = false;
+                        previewed = None;
+                    }
+                    let progress = scan.step(&this.emulator, 4_096);
+                    if matches!(progress, SearchProgress::Searching)
+                        && let Some(found) = scan.provisional()
+                        && previewed != Some(found)
+                    {
+                        previewed = Some(found);
+                        this.find.result.active = Some(found);
+                        this.emulator.show_search_match(found);
+                        cx.emit(TerminalEvent::Output);
+                    }
+                    if let SearchProgress::Complete(result) = progress {
+                        this.find.result = result;
+                        this.find.searching = false;
+                        this.find_task = None;
+                        if let Some(active) = result.active
+                            && previewed != Some(active)
+                        {
+                            this.emulator.show_search_match(active);
+                        }
+                        cx.emit(TerminalEvent::Output);
+                    }
+                    progress
+                });
+                match progress {
+                    Ok(SearchProgress::Searching) => {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1))
+                            .await
+                    }
+                    Ok(SearchProgress::Invalidated) => {
+                        restart = true;
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                    }
+                    _ => break,
+                }
+            }
+        }));
     }
 
     /// Gives the emulator to `edit`, for selection and scrolling, and redraws.
