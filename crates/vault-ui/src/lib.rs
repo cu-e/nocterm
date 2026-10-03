@@ -15,7 +15,10 @@ use gpui_kit::{
 };
 use nocterm_session::Secret;
 use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, SettingsStore};
-use nocterm_vault::{CredentialInfo, VaultFuture, VaultService};
+use nocterm_vault::{
+    CredentialInfo, DeviceAvailability, DeviceCapability, DeviceUnlockProvider, VaultFuture,
+    VaultService,
+};
 use nocterm_workspace::{SettingsPage, SettingsPageSpec};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -24,9 +27,19 @@ impl Global for Service {}
 
 /// Installs the shared service and returns it for authentication integration.
 pub fn init(path: PathBuf, cx: &mut App) -> Result<Arc<VaultService>, nocterm_vault::VaultError> {
-    let service = Arc::new(VaultService::new(
+    init_with_device_unlock(path, None, cx)
+}
+
+/// The composition root injects the native adapter; this feature remains platform independent.
+pub fn init_with_device_unlock(
+    path: PathBuf,
+    device: Option<Arc<dyn DeviceUnlockProvider>>,
+    cx: &mut App,
+) -> Result<Arc<VaultService>, nocterm_vault::VaultError> {
+    let service = Arc::new(VaultService::new_with_device_unlock(
         path,
         Duration::from_secs(u64::from(cx.settings().vault.auto_lock_minutes) * 60),
+        device,
     )?);
     cx.set_global(Service(service.clone()));
     cx.observe_global::<SettingsStore>(|cx| {
@@ -51,6 +64,8 @@ pub struct VaultView {
     confirm: Entity<InputState>,
     focus: FocusHandle,
     busy: bool,
+    device: Option<DeviceCapability>,
+    device_busy: bool,
     message: Option<(SharedString, bool)>,
     records: Vec<CredentialInfo>,
     unlocked: bool,
@@ -88,6 +103,8 @@ impl VaultView {
             password,
             confirm,
             busy: false,
+            device: None,
+            device_busy: false,
             message: None,
             records: Vec::new(),
             unlocked: false,
@@ -107,6 +124,7 @@ impl VaultView {
                                     this.records.clear();
                                     this.generation = this.generation.wrapping_add(1);
                                     this.busy = false;
+                                    this.device_busy = false;
                                     this.password
                                         .update(cx, |input, cx| input.set_value("", window, cx));
                                     this.confirm
@@ -124,11 +142,28 @@ impl VaultView {
                 }
             }),
         };
+        this.refresh_device(cx);
         if this.service.is_unlocked() {
             this.unlocked = true;
             this.refresh(cx);
         }
         this
+    }
+    fn refresh_device(&mut self, cx: &mut Context<Self>) {
+        let future = self.service.probe_device_unlock();
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let result = future.await;
+            let _ = this.update(cx, |this, cx| {
+                if generation == this.generation {
+                    if let Ok(capability) = result {
+                        this.device = Some(capability);
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
@@ -173,6 +208,13 @@ impl VaultView {
         };
         self.operation(future, cx);
     }
+    fn device_operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.device_busy = true;
+        self.operation(future, cx);
+    }
     fn operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
         self.busy = true;
         self.message = None;
@@ -184,6 +226,8 @@ impl VaultView {
                     return;
                 }
                 this.busy = false;
+                this.device_busy = false;
+                this.refresh_device(cx);
                 match result {
                     Ok(()) => {
                         this.unlocked = this.service.is_unlocked();
@@ -202,6 +246,7 @@ impl VaultView {
     }
     fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.service.lock();
+        self.device_busy = false;
         self.unlocked = false;
         self.records.clear();
         self.generation = self.generation.wrapping_add(1);
@@ -225,6 +270,9 @@ impl Focusable for VaultView {
 }
 impl SettingsPage for VaultView {
     fn on_deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.device_busy {
+            self.lock(window, cx);
+        }
         self.password
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.confirm
@@ -259,6 +307,83 @@ impl Render for VaultView {
                     }))
                     .child(div().pt_4().font_semibold().child("Change master password"))
                     .child(Input::new(&self.password)).child(Input::new(&self.confirm)));
+        let form = form.child(
+            v_flex()
+                .pt_4()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(div().font_semibold().child("Device unlock"))
+                        .child(
+                            Button::new("vault-device-refresh")
+                                .ghost()
+                                .label("Check availability")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_device(cx))),
+                        ),
+                )
+                .when_some(self.device.clone(), |section, device| {
+                    section
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(device.detail.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .child(
+                                    Button::new("vault-device-enable")
+                                        .label(format!("Enable {}", device.label))
+                                        .disabled(
+                                            self.busy
+                                                || !unlocked
+                                                || device.enabled
+                                                || device.availability
+                                                    != DeviceAvailability::Available,
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.device_operation(
+                                                this.service.enable_device_unlock(),
+                                                cx,
+                                            )
+                                        })),
+                                )
+                                .child(
+                                    Button::new("vault-device-unlock")
+                                        .label(format!("Unlock with {}", device.label))
+                                        .disabled(
+                                            self.busy
+                                                || unlocked
+                                                || !device.enabled
+                                                || device.availability
+                                                    != DeviceAvailability::Available,
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.device_operation(
+                                                this.service.unlock_with_device(),
+                                                cx,
+                                            )
+                                        })),
+                                )
+                                .child(
+                                    Button::new("vault-device-disable")
+                                        .ghost()
+                                        .label("Disable")
+                                        .disabled(self.busy || !device.enabled)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.device_operation(
+                                                this.service.disable_device_unlock(),
+                                                cx,
+                                            )
+                                        })),
+                                ),
+                        )
+                }),
+        );
         let footer = v_flex()
             .flex_shrink_0()
             .px_6()
@@ -277,7 +402,16 @@ impl Render for VaultView {
                         .child(message),
                 )
             })
-            .when(self.busy, |footer| footer.child("Working…"))
+            .when(self.busy, |footer| {
+                footer.child(
+                    h_flex().gap_2().child("Working…").child(
+                        Button::new("vault-cancel-operation")
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, window, cx| this.lock(window, cx))),
+                    ),
+                )
+            })
             .child(
                 h_flex()
                     .gap_2()

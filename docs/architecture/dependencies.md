@@ -6,10 +6,11 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-files`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
+| `nocterm-device-unlock` | adapter | `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
 | `nocterm-files` | feature | `nocterm-session`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session adapter. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
@@ -20,6 +21,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
 | `nocterm-ui` | ui | `nocterm-design`, `nocterm-settings` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential vault and bounded worker service. |
+| `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
 | `nocterm-workspace` | ui | `nocterm-session`, `nocterm-settings`, `nocterm-ui` | Window shell: tab strip, sidebar and the registries features plug into. |
@@ -30,6 +32,7 @@ graph TD
     nocterm --> nocterm_connections
     nocterm --> nocterm_core
     nocterm --> nocterm_design
+    nocterm --> nocterm_device_unlock
     nocterm --> nocterm_files
     nocterm --> nocterm_local
     nocterm --> nocterm_session
@@ -44,6 +47,7 @@ graph TD
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_ui
     nocterm_connections --> nocterm_workspace
+    nocterm_device_unlock --> nocterm_vault
     nocterm_files --> nocterm_session
     nocterm_files --> nocterm_transfers
     nocterm_files --> nocterm_ui

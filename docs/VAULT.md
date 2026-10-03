@@ -7,6 +7,10 @@ account system or plaintext export is implemented. A future storage provider mus
 handle authenticated ciphertext and preserve conflict detection, without receiving
 secrets or decrypted metadata.
 
+Optional [device unlock](DEVICE_UNLOCK.md) adds authenticated native key release
+without changing this portable format. Platform capabilities and requirements are
+shown in Settings → Vault; password fallback is always retained.
+
 Open Settings → Vault, or Credential Vault in the `+` menu (which selects the same
 Settings page). Create requires confirmation; unlock,
 explicit lock, automatic lock, credential deletion and changing the master password

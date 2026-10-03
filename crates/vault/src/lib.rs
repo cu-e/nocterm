@@ -4,7 +4,12 @@
 //! random data key, and XChaCha20-Poly1305. Neither metadata nor secrets leave
 //! the encrypted payload. This format needs independent security review.
 
+mod device_unlock;
 mod service;
+pub use device_unlock::{
+    DeviceAvailability, DeviceCancellation, DeviceCapability, DeviceUnlockError,
+    DeviceUnlockProvider, VaultBinding, VaultKey,
+};
 pub use service::{VaultFuture, VaultService};
 
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -61,6 +66,8 @@ pub enum VaultError {
     Cancelled,
     #[error("Vault file operation failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Device(#[from] DeviceUnlockError),
 }
 
 /// The specific request a stored secret may answer. Interactive/MFA answers
@@ -97,7 +104,7 @@ impl Drop for Record {
 }
 
 struct Unlocked {
-    kek: Zeroizing<[u8; 32]>,
+    kek: VaultKey,
     dek: Zeroizing<[u8; 32]>,
     salt: [u8; 16],
     vault_id: [u8; 16],
@@ -110,6 +117,7 @@ pub struct Vault {
     path: PathBuf,
     revision: Option<Vec<u8>>,
     unlocked: Option<Unlocked>,
+    device: Option<std::sync::Arc<dyn DeviceUnlockProvider>>,
     guard: Option<(std::sync::Arc<std::sync::atomic::AtomicU64>, u64)>,
 }
 impl fmt::Debug for Vault {
@@ -126,6 +134,7 @@ impl Vault {
             path: path.into(),
             revision: None,
             unlocked: None,
+            device: None,
             guard: None,
         }
     }
@@ -166,6 +175,15 @@ impl Vault {
         let encrypted = read_file(&self.path)?;
         let header = Header::parse(&encrypted)?;
         let kek = derive(&password, &header.salt)?;
+        self.unlock_encrypted(encrypted, header, kek)
+    }
+
+    fn unlock_encrypted(
+        &mut self,
+        encrypted: Vec<u8>,
+        header: Header,
+        kek: VaultKey,
+    ) -> Result<(), VaultError> {
         let wrapped = &encrypted[HEADER_SIZE..HEADER_SIZE + WRAPPED_SIZE];
         let key = Zeroizing::new(
             cipher(&kek)?
@@ -285,6 +303,7 @@ impl Vault {
         self.persist(&encrypted, self.revision.as_deref())?;
         self.revision = Some(encrypted);
         self.unlocked = Some(replacement);
+        self.revoke_device_after_rotation();
         Ok(())
     }
     fn state(&self) -> Result<&Unlocked, VaultError> {
@@ -393,13 +412,13 @@ fn random<const N: usize>() -> Result<[u8; N], VaultError> {
     getrandom::fill(&mut bytes).map_err(|_| VaultError::Randomness)?;
     Ok(bytes)
 }
-fn derive(password: &Secret, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+fn derive(password: &Secret, salt: &[u8; 16]) -> Result<VaultKey, VaultError> {
     if password.expose().len() > 4096 {
         return Err(VaultError::Password);
     }
     let params =
         Params::new(MEMORY_KIB, ITERATIONS, LANES, Some(32)).map_err(|_| VaultError::Format)?;
-    let mut key = Zeroizing::new([0; 32]);
+    let mut key = VaultKey::new([0; 32]);
     let mut memory = Zeroizing::new(vec![argon2::Block::default(); MEMORY_KIB as usize]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into_with_memory(

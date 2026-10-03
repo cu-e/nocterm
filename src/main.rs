@@ -55,8 +55,11 @@ fn main() -> anyhow::Result<()> {
                 cx,
             );
             nocterm_connections::init(Some(&paths), cx);
-            let vault_ready = match nocterm_vault_ui::init(paths.config_dir().join("vault.bin"), cx)
-            {
+            let vault_ready = match nocterm_vault_ui::init_with_device_unlock(
+                paths.config_dir().join("vault.bin"),
+                Some(nocterm_device_unlock::provider()),
+                cx,
+            ) {
                 Ok(vault) => {
                     nocterm_terminal::init_credentials(
                         vault,

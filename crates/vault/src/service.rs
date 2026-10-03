@@ -1,5 +1,7 @@
 //! A bounded worker keeps expensive KDF and atomic file writes off UI threads.
-use crate::{CredentialBinding, CredentialInfo, Vault, VaultError};
+use crate::{
+    CredentialBinding, CredentialInfo, DeviceCapability, DeviceUnlockProvider, Vault, VaultError,
+};
 use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
 use nocterm_session::{CredentialId, Secret};
 use std::{
@@ -37,6 +39,13 @@ pub struct VaultService {
 }
 impl VaultService {
     pub fn new(path: impl Into<PathBuf>, auto_lock: Duration) -> Result<Self, VaultError> {
+        Self::new_with_device_unlock(path, auto_lock, None)
+    }
+    pub fn new_with_device_unlock(
+        path: impl Into<PathBuf>,
+        auto_lock: Duration,
+        device: Option<Arc<dyn DeviceUnlockProvider>>,
+    ) -> Result<Self, VaultError> {
         let path = path.into();
         let state = Arc::new(State {
             epoch: Arc::new(AtomicU64::new(0)),
@@ -51,6 +60,7 @@ impl VaultService {
             .name("nocterm-vault".into())
             .spawn(move || {
                 let mut vault = Vault::new(path);
+                vault.device = device;
                 let mut epoch = 0;
                 let mut touched = Instant::now();
                 loop {
@@ -157,6 +167,18 @@ impl VaultService {
     }
     pub fn unlock(&self, password: Secret) -> VaultFuture<()> {
         self.request(move |vault| vault.unlock(password))
+    }
+    pub fn probe_device_unlock(&self) -> VaultFuture<DeviceCapability> {
+        self.request(|vault| vault.probe_device_unlock())
+    }
+    pub fn enable_device_unlock(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.enable_device_unlock())
+    }
+    pub fn unlock_with_device(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.unlock_with_device())
+    }
+    pub fn disable_device_unlock(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.disable_device_unlock())
     }
     pub fn change_password(&self, password: Secret) -> VaultFuture<()> {
         self.request(move |vault| vault.change_password(password))

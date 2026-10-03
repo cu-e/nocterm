@@ -52,6 +52,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `transfers` | bounded upload/download service |
 | `vault` | encrypted credential storage |
 | `vault-ui` | vault settings and authentication bridge |
+| `device-unlock` | native authenticated vault key release |
+| `vault-broker` | optional privileged Linux fingerprint broker |
 | `app` | application composition and keymap |
 | `xtask` | generation and architecture checks |
 

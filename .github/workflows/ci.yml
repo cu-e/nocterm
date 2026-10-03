@@ -58,7 +58,7 @@ jobs:
           sudo apt-get install -y build-essential pkg-config clang cmake libssl-dev \
             libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libvulkan-dev mesa-vulkan-drivers openssh-server openssh-client
+            libvulkan-dev mesa-vulkan-drivers openssh-server openssh-client dbus
           sudo mkdir -p /run/sshd
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,3 +75,24 @@ jobs:
       - run: cargo xtask docs --check
       - run: cargo xtask architecture
       - run: cargo doc --locked --workspace --no-deps
+
+  device-unlock-native:
+    name: Device unlock on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile and link native adapters
+        run: cargo build --locked -p nocterm-device-unlock --all-targets
+      - name: Lint native adapters
+        run: cargo clippy --locked -p nocterm-vault -p nocterm-device-unlock --all-targets -- -D warnings
+      - name: Test portable envelope and native metadata without authentication prompts
+        run: cargo test --locked -p nocterm-vault -p nocterm-device-unlock

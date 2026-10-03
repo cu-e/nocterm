@@ -8,6 +8,13 @@ rejects runtime GUI dependencies below the UI layer. The
 [architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
 regression evidence and residual constraints.
 
+`nocterm-vault` declares the device-unlock provider contract and owns envelope,
+binding and cancellation rules. The composition root injects
+`nocterm-device-unlock`; native adapters remain outside the vault and its UI.
+An optional `nocterm-vault-broker` Linux system service enforces fingerprint
+verification for connection-bound memory-only keys. See [device unlock](DEVICE_UNLOCK.md)
+for the platform boundaries and explicit installation.
+
 `nocterm-core` provides paths and atomic, comment-preserving TOML persistence.
 `nocterm-settings` owns the configuration schema, defaults, ranges and storage.
 `nocterm-design` owns typed visual tokens and theme overrides. These foundation

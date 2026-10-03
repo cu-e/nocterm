@@ -10,6 +10,7 @@ publish = false
 layer = "app"
 
 [dependencies]
+nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
 nocterm-core.workspace = true
 nocterm-design.workspace = true
@@ -41,12 +42,13 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["vendor/alacritty_terminal", "vendor/gpui-component"]
+exclude = ["vendor/alacritty_terminal", "vendor/gpui-component", "vendor/tid-rs"]
 resolver = "3"
 
 [patch.crates-io]
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
 gpui-component = { path = "vendor/gpui-component" }
+tid-rs = { path = "vendor/tid-rs" }
 
 [workspace.package]
 edition = "2024"
@@ -54,6 +56,7 @@ license-file = "LICENSE"
 
 [workspace.dependencies]
 # Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
+nocterm-device-unlock = { path = "crates/device-unlock" }
 nocterm-connections = { path = "crates/connections" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }

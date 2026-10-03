@@ -43,7 +43,8 @@ cargo run
 
 A running X11 or Wayland desktop and a Vulkan-capable driver are needed to open
 the application. On macOS, install Xcode command line tools. Windows requires
-the MSVC toolchain and its C++ build tools. CI currently verifies Linux.
+the MSVC toolchain and its C++ build tools. CI verifies the workspace on Linux and
+compiles/links vault device adapters on macOS and Windows.
 
 Open a connection from the `+` menu. Save a profile with New Connection, or enter
 `user@host[:port]` in Quick Connect. First connections ask you to verify the host
@@ -52,6 +53,10 @@ key. Passwords and key passphrases are requested when needed. Open Settings → 
 then explicitly choose Remember in
 the authentication prompt; only successful authentication saves a credential.
 Interactive/MFA answers are never saved. See [vault security](docs/VAULT.md).
+
+Settings → Vault also detects optional fingerprint/Touch ID/Windows Hello unlock.
+Linux requires the separately installed root-owned broker; detection and password
+fallback work without it. See [device unlock setup](docs/DEVICE_UNLOCK.md).
 
 Drag a tab to reorder it or onto a pane edge to split horizontally/vertically;
 the dock previews the destination. Double-click its title to set an alias. Enter
