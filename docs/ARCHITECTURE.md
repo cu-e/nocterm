@@ -3,7 +3,10 @@
 The application is the composition root. `src/main.rs` loads paths, settings and
 design tokens, installs SSH/local transports and the vault service, and registers independent workspace
 features. The [dependency map](architecture/dependencies.md) is generated from
-Cargo metadata; `cargo xtask architecture` enforces its declared layers.
+Cargo metadata; `cargo xtask architecture` enforces its declared layers and
+rejects runtime GUI dependencies below the UI layer. The
+[architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
+regression evidence and residual constraints.
 
 `nocterm-core` provides paths and atomic, comment-preserving TOML persistence.
 `nocterm-settings` owns the configuration schema, defaults, ranges and storage.
@@ -54,7 +57,11 @@ changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. `nocterm-settings-ui`
 contributes a single settings Item with native page tabs; it validates a draft,
 saves it, and publishes changes through SettingsStore only after a successful
-write. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition
+write. Persistent writes run through bounded ordered background queues;
+settings drafts carry a revision and profile drafts carry the original snapshot,
+so another window cannot silently lose its saved changes. Recent snapshots
+coalesce separately from connection opening. Native quit draining is bounded
+best effort within GPUI's shutdown deadline. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition
 root inject the lazy Vault page without feature-to-feature dependencies. Page
 deactivation/closure clears transient secrets. `nocterm-files`
 contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
@@ -80,7 +87,10 @@ protocol limitation. Removing a normal symbolic link never traverses its target.
 Typed session options inherit global TERM, charset, proxy and output-recording
 defaults, with explicit profile/quick-connect overrides. A shared options form in
 `nocterm-ui` keeps settings and connection features independent. Terminal owns
-incremental decoding/encoding at the text boundary; terminal replies and mouse
+incremental decoding/encoding at the text boundary. Combining marks retain the
+base cell style. OSC 52 clipboard writes are denied by default; opt-in requires
+the actual screen to have focus in the active window. Clipboard reads remain
+denied. Terminal replies and mouse
 protocol bytes bypass conversion. Its output recorder uses a bounded worker,
 private capped files, visible failures and an application-quit drain. Neither
 authentication answers nor the input stream enter the recorder.

@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use gpui_kit::{
     App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, WeakEntity, Window,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
+        WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
@@ -186,13 +187,16 @@ pub fn open_editor(
     };
     let width = rems(cx.design().layout.dialog_width).to_pixels(window.rem_size());
     let editor = cx.new(|cx| ConnectionEditor::new(profile, workspace, window, cx));
+    let dismissed = editor.read(cx).dismissed.clone();
     let focus = editor.read(cx).focus_handle(cx);
     window.open_dialog(cx, move |dialog, _, _| {
         let editor = editor.clone();
+        let dismissed = dismissed.clone();
         dialog
             .title(title)
             .w(width)
             .child(editor.clone())
+            .on_close(move |_, _, _| dismissed.store(true, std::sync::atomic::Ordering::Release))
             .on_ok(move |_, window, cx| {
                 editor.update(cx, |editor, cx| editor.save(true, window, cx));
                 // Saving closes the dialog only after validation succeeds.
@@ -206,6 +210,9 @@ pub fn open_editor(
 pub struct ConnectionEditor {
     id: ProfileId,
     editing: bool,
+    original: Option<Profile>,
+    pending: bool,
+    dismissed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     workspace: WeakEntity<Workspace>,
     name: Entity<InputState>,
     description: Entity<TextareaState>,
@@ -348,6 +355,9 @@ impl ConnectionEditor {
         Self {
             id: existing.map_or_else(ProfileId::generate, |profile| profile.id),
             editing: existing.is_some(),
+            original: profile.clone(),
+            pending: false,
+            dismissed: Default::default(),
             workspace,
             name,
             description,
@@ -390,6 +400,9 @@ impl ConnectionEditor {
 
     /// Saves the connection, and opens it when `and_connect` is set.
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending || self.dismissed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         let mut fields = self.fields(cx);
         fields.options = match self.options.read(cx).options(cx) {
             Ok(options) => options,
@@ -415,24 +428,42 @@ impl ConnectionEditor {
         };
 
         let saved = Connections::global(cx).update(cx, |connections, cx| {
-            connections.save_profile(profile.clone(), cx)
+            connections.save_profile_checked(profile.clone(), self.original.clone(), cx)
         });
-        if let Err(error) = saved {
-            self.error = Some(error.into());
-            cx.notify();
-            return;
-        }
-
-        window.close_dialog(cx);
-        if and_connect {
-            connect(
-                &self.workspace,
-                spec_for_profile(&profile),
-                Some(profile.id),
-                window,
-                cx,
-            );
-        }
+        self.pending = true;
+        self.error = None;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = saved.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.pending = false;
+                if this.dismissed.load(std::sync::atomic::Ordering::Acquire) {
+                    return;
+                }
+                match result {
+                    Err(error) => {
+                        this.error = Some(error.into());
+                        cx.notify();
+                    }
+                    Ok(()) => {
+                        this.original = Some(profile.clone());
+                        this.dismissed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        window.close_dialog(cx);
+                        if and_connect {
+                            connect(
+                                &this.workspace,
+                                spec_for_profile(&profile),
+                                Some(profile.id),
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     fn set_auth(&mut self, auth: AuthKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -542,6 +573,15 @@ impl Render for ConnectionEditor {
                 .child(div().text_xs().text_color(muted).child("These options apply on the next start or reconnect. Keep secrets in the vault.")))
             .when_some(self.error.clone(), |form, error| {
                 form.child(div().text_sm().text_color(danger).child(error))
+                    .when(self.original.is_some(), |form| form.child(
+                        Button::new("editor-reload-current").small().ghost().label("Reload connection").disabled(self.pending)
+                            .tooltip("Discard this draft and load the current saved connection")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let latest = Connections::global(cx).read(cx).profiles().get(this.id).cloned();
+                                if let Some(profile) = latest { open_editor(Some(profile), this.workspace.clone(), window, cx); }
+                                else { this.error = Some("This connection was deleted. Close the editor to create a new connection.".into()); cx.notify(); }
+                            }))
+                    ))
             })
             .child(
                 h_flex()
@@ -555,12 +595,13 @@ impl Render for ConnectionEditor {
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
-                        Button::new("editor-save").label("Save").on_click(
+                        Button::new("editor-save").label(if self.pending { "Saving…" } else { "Save" }).disabled(self.pending).on_click(
                             cx.listener(|this, _, window, cx| this.save(false, window, cx)),
                         ),
                     )
                     .child(
                         Button::new("editor-save-connect")
+                            .disabled(self.pending)
                             .primary()
                             .label(if self.editing {
                                 "Save and Connect"

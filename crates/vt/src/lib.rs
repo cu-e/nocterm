@@ -13,6 +13,7 @@
 mod emulator;
 mod keys;
 mod mouse;
+mod osc_guard;
 mod paste;
 mod search;
 

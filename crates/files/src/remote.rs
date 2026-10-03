@@ -35,14 +35,7 @@ impl Browser {
         }
         self.loading = false;
         match result {
-            Ok((path, mut entries)) => {
-                entries.retain(|entry| entry.name != "." && entry.name != "..");
-                entries.sort_by(|left, right| {
-                    (left.kind != EntryKind::Directory)
-                        .cmp(&(right.kind != EntryKind::Directory))
-                        .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-                        .then_with(|| left.name.cmp(&right.name))
-                });
+            Ok((path, entries)) => {
                 self.path = Some(path);
                 self.entries = entries;
                 self.error = None;
@@ -61,6 +54,23 @@ pub(crate) async fn listing(
         Some(directory) => directory,
         None => fs.home().await?,
     };
-    let entries = fs.read_dir(&directory).await?;
+    let mut entries = fs.read_dir(&directory).await?;
+    if entries.len() > super::local::MAX_DIRECTORY_ENTRIES
+        || entries.iter().map(|entry| entry.name.len()).sum::<usize>()
+            > super::local::MAX_DIRECTORY_NAME_BYTES
+    {
+        return Err(FsError::Other(
+            "Directory exceeds the Explorer listing limit; narrow the directory and refresh."
+                .into(),
+        ));
+    }
+    entries.retain(|entry| entry.name != "." && entry.name != "..");
+    entries.sort_by_cached_key(|entry| {
+        (
+            entry.kind != EntryKind::Directory,
+            entry.name.to_lowercase(),
+            entry.name.clone(),
+        )
+    });
     Ok((directory, entries))
 }

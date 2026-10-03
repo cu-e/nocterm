@@ -9,7 +9,13 @@ use nocterm_session::{DirEntry, EntryKind, FsError, fs::path};
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-const MAX_DEPTH: usize = 256;
+const MAX_DEPTH: usize = super::MAX_DISCOVERY_DEPTH;
+const MAX_PENDING_NAME_BYTES: usize = 8 * 1024 * 1024;
+struct DirectoryEntries {
+    remote: String,
+    directory: LocalDirectory,
+    entries: std::vec::IntoIter<DirEntry>,
+}
 
 pub(super) struct FileJob {
     remote: String,
@@ -27,6 +33,7 @@ pub(super) fn valid_source(source: &str) -> bool {
 fn valid_name(name: &str) -> bool {
     // Reject Windows prefixes/separators as well, even when running on Unix.
     !name.is_empty()
+        && name.len() <= 1024
         && name != "."
         && name != ".."
         && !name.contains(['/', '\\', '\0', ':'])
@@ -124,12 +131,15 @@ async fn discover_one(
     directory: LocalDirectory,
 ) -> Result<(), FsError> {
     let mut current = Some((remote, name, entry, directory));
-    let mut stack: Vec<(String, LocalDirectory, std::vec::IntoIter<DirEntry>)> = Vec::new();
+    let mut stack: Vec<DirectoryEntries> = Vec::new();
+    let mut pending_entries = 0usize;
+    let mut pending_name_bytes = 0usize;
     loop {
         if batch.cancelled() {
             return Ok(());
         }
         if let Some((remote, name, entry, directory)) = current.take() {
+            batch.visit()?;
             if !valid_name(&name) {
                 batch.error(format!("{remote}: unsafe remote filename"));
             } else if entry.is_symlink || entry.kind == EntryKind::Other {
@@ -153,7 +163,26 @@ async fn discover_one(
             } else {
                 match directory.child(&name) {
                     Ok(child) => match batch.request.fs().read_dir(&remote).await {
-                        Ok(entries) => stack.push((remote, child, entries.into_iter())),
+                        Ok(entries) => {
+                            let bytes = entries.iter().fold(0usize, |total, entry| {
+                                total.saturating_add(entry.name.len())
+                            });
+                            if pending_entries.saturating_add(entries.len())
+                                > super::MAX_LISTING_ENTRIES
+                                || pending_name_bytes.saturating_add(bytes) > MAX_PENDING_NAME_BYTES
+                            {
+                                return Err(FsError::Other(format!(
+                                    "{remote}: pending directory listings exceed the discovery budget (100,000 entries / 8 MiB names); select a smaller subtree"
+                                )));
+                            }
+                            pending_entries += entries.len();
+                            pending_name_bytes += bytes;
+                            stack.push(DirectoryEntries {
+                                remote,
+                                directory: child,
+                                entries: entries.into_iter(),
+                            });
+                        }
                         Err(e) => batch.error(e),
                     },
                     Err(e) => batch.error(e),
@@ -161,10 +190,17 @@ async fn discover_one(
             }
         }
         loop {
-            let Some((parent, directory, entries)) = stack.last_mut() else {
+            let Some(DirectoryEntries {
+                remote: parent,
+                directory,
+                entries,
+            }) = stack.last_mut()
+            else {
                 return Ok(());
             };
             if let Some(entry) = entries.next() {
+                pending_entries -= 1;
+                pending_name_bytes -= entry.name.len();
                 if !valid_name(&entry.name) {
                     batch.error(format!("{parent}: unsafe remote filename {:?}", entry.name));
                     continue;
@@ -343,4 +379,94 @@ pub(super) fn open_local_source(path: &std::path::Path) -> Result<std::fs::File,
     LocalDirectory::open(parent)?
         .read_file(name)
         .map_err(|e| local_error(path, e))
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::{CollisionPolicy, DownloadRequest};
+    use nocterm_session::{FsFuture, RemoteFs, Target};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct WideTree {
+        calls: Arc<AtomicUsize>,
+        oversized_names: bool,
+    }
+    impl RemoteFs for WideTree {
+        fn home(&self) -> FsFuture<String> {
+            Box::pin(async { Ok("/root".into()) })
+        }
+        fn stat(&self, _: &str) -> FsFuture<Option<DirEntry>> {
+            Box::pin(async {
+                Ok(Some(DirEntry {
+                    name: "root".into(),
+                    kind: EntryKind::Directory,
+                    is_symlink: false,
+                    size: None,
+                }))
+            })
+        }
+        fn read_dir(&self, _: &str) -> FsFuture<Vec<DirEntry>> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call >= 3 {
+                return Box::pin(futures::future::pending());
+            }
+            let name = if self.oversized_names {
+                "d".repeat(900)
+            } else {
+                "d".into()
+            };
+            let count = if self.oversized_names { 10_000 } else { 50_000 };
+            Box::pin(async move {
+                Ok(vec![
+                    DirEntry {
+                        name,
+                        kind: EntryKind::Directory,
+                        is_symlink: false,
+                        size: None
+                    };
+                    count
+                ])
+            })
+        }
+    }
+    #[test]
+    fn aggregate_pending_listings_are_bounded_across_depth() {
+        for oversized_names in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let batch = Arc::new(Batch::new(Request::Download(DownloadRequest {
+                sources: vec!["/root".into()],
+                target: Target::new("u", "h", 22),
+                local_destination: root.path().into(),
+                fs: Arc::new(WideTree {
+                    calls: calls.clone(),
+                    oversized_names,
+                }),
+                collisions: CollisionPolicy::Skip,
+            })));
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let (send, _) = mpsc::channel(1);
+            runtime.block_on(async {
+                tokio::time::timeout(Duration::from_secs(2), discover(batch.clone(), send))
+                    .await
+                    .unwrap();
+            });
+            let progress = batch.progress.lock();
+            assert!(progress.discovery_complete);
+            assert!(
+                progress
+                    .errors
+                    .iter()
+                    .any(|error| error.contains("pending directory listings exceed"))
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                if oversized_names { 1 } else { 3 }
+            );
+        }
+    }
 }

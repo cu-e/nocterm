@@ -1083,3 +1083,35 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
 
 #[path = "operations_ui_tests.rs"]
 mod operations_ui;
+
+#[test]
+fn custom_remote_adapter_cannot_deliver_an_unbounded_explorer_listing() {
+    struct OversizedFs {
+        names: bool,
+    }
+    impl RemoteFs for OversizedFs {
+        fn home(&self) -> FsFuture<String> {
+            async { Ok("/home/test".into()) }.boxed()
+        }
+        fn read_dir(&self, _: &str) -> FsFuture<Vec<DirEntry>> {
+            let entries = if self.names {
+                vec![entry(
+                    &"x".repeat(local::MAX_DIRECTORY_NAME_BYTES + 1),
+                    EntryKind::File,
+                )]
+            } else {
+                vec![entry("file", EntryKind::File); local::MAX_DIRECTORY_ENTRIES + 1]
+            };
+            async { Ok(entries) }.boxed()
+        }
+    }
+    for names in [false, true] {
+        let result = block_on(listing(Arc::new(OversizedFs { names }), None));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Explorer listing limit")
+        );
+    }
+}

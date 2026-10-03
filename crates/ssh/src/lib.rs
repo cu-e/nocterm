@@ -9,6 +9,7 @@
 
 mod auth;
 mod connection;
+mod file;
 mod host_keys;
 mod proxy;
 mod sftp;

@@ -376,6 +376,7 @@ impl EventListener for Listener {
 pub struct Emulator {
     term: Term<Listener>,
     parser: Processor,
+    osc_guard: crate::osc_guard::OscGuard,
     events: Arc<Mutex<Vec<Event>>>,
     size: TermSize,
     palette: Palette,
@@ -389,6 +390,7 @@ impl Emulator {
         Self {
             term: Term::new(options.to_config(), &size, Listener(events.clone())),
             parser: Processor::new(),
+            osc_guard: crate::osc_guard::OscGuard::default(),
             events,
             size,
             palette: Palette::default(),
@@ -413,7 +415,8 @@ impl Emulator {
             self.generation = self.generation.wrapping_add(1);
         }
         self.term.set_output_timestamp_ms(timestamp_ms);
-        self.parser.advance(&mut self.term, bytes);
+        self.osc_guard
+            .advance(bytes, |bytes| self.parser.advance(&mut self.term, bytes));
         self.take_effects()
     }
 
@@ -1202,5 +1205,95 @@ mod lineage_storage_tests {
         cell.set_hyperlink(None);
         assert_eq!(cell.logical_line(), lineage);
         assert!(std::mem::size_of::<alacritty_terminal::term::cell::Cell>() <= 24);
+    }
+}
+
+#[cfg(test)]
+mod osc_limit_tests {
+    use super::*;
+    fn emulator() -> Emulator {
+        Emulator::new(TermSize::new(80, 3, 0, 0), EmulatorOptions::default())
+    }
+    #[test]
+    fn oversize_title_and_clipboard_never_dispatch_and_each_terminator_recovers() {
+        for prefix in [b"\x1b]0;".as_slice(), b"\x1b]52;c;".as_slice()] {
+            for terminator in [0x07, 0x18, 0x1a, 0x1b] {
+                let mut terminal = emulator();
+                assert!(terminal.advance(prefix).is_empty());
+                for _ in 0..256 {
+                    assert!(terminal.advance(&[b'A'; 8192]).is_empty());
+                }
+                let mut recovery = vec![terminator];
+                if terminator == 0x1b {
+                    recovery.push(b'\\');
+                }
+                recovery.extend(b"restored\x1b]0;new title\x07");
+                let effects = terminal.advance(&recovery);
+                assert!(
+                    matches!(effects.as_slice(), [Effect::Title(title)] if title.as_deref() == Some("new title"))
+                );
+                let mut frame = Frame::default();
+                terminal.snapshot(&mut frame);
+                assert_eq!(frame.row_text(0), "restored");
+            }
+        }
+    }
+    #[test]
+    fn valid_osc_at_the_byte_limit_is_not_truncated() {
+        let mut terminal = emulator();
+        terminal.advance(b"\x1b]0;");
+        let title = vec![b'x'; 1024 * 1024 - 3];
+        assert!(terminal.advance(&title).is_empty());
+        let effects = terminal.advance(b"\x07");
+        assert!(
+            matches!(effects.as_slice(), [Effect::Title(Some(value))] if value.len() == title.len())
+        );
+    }
+    #[test]
+    fn each_escape_follower_preserves_upstream_semantics_below_the_limit() {
+        for byte in 0..=255 {
+            let mut guarded = emulator();
+            let mut native = emulator();
+            let bytes = [
+                b"before\x1b".as_slice(),
+                &[byte],
+                b"]0;x\x07after\x1b]52;c;b2s=\x1b\\",
+            ]
+            .concat();
+            let mut guarded_effects = Vec::new();
+            let mut native_effects = Vec::new();
+            for byte in bytes {
+                guarded_effects.extend(guarded.advance_at(&[byte], 0));
+                native.term.set_output_timestamp_ms(0);
+                native.parser.advance(&mut native.term, &[byte]);
+                native_effects.extend(native.take_effects());
+            }
+            assert_eq!(guarded_effects, native_effects, "escape follower {byte:#x}");
+            let (mut left, mut right) = (Frame::default(), Frame::default());
+            guarded.snapshot(&mut left);
+            native.snapshot(&mut right);
+            assert_eq!(left, right, "escape follower {byte:#x}");
+        }
+    }
+    #[test]
+    fn ordinary_fragmented_osc_and_utf8_preserve_native_effects_and_synchronized_output() {
+        let bytes = "\x1b[?2026hλ\x1b]0;title λ\x1b\\\x1b]52;c;b2s=\x07\x1b[?2026l".as_bytes();
+        let mut terminal = emulator();
+        let effects: Vec<_> = bytes
+            .iter()
+            .flat_map(|byte| terminal.advance(&[*byte]))
+            .collect();
+        assert!(effects.iter().any(
+            |effect| matches!(effect, Effect::Title(title) if title.as_deref() == Some("title λ"))
+        ));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CopyToClipboard(text) if text == "ok"))
+        );
+        let mut frame = Frame::default();
+        terminal.snapshot(&mut frame);
+        assert_eq!(frame.row_text(0), "λ");
+        assert!(terminal.sync_deadline().is_none());
     }
 }

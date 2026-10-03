@@ -1,6 +1,6 @@
 //! Bounded, session-owned SFTP requests and streaming transfers.
 use crate::connection::Client;
-use futures::{FutureExt, channel::oneshot};
+use futures::{FutureExt, StreamExt as _, channel::oneshot};
 use nocterm_session::{
     DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs,
     fs::{RemoteDownload, RemoteUpload, UploadMode, path},
@@ -22,6 +22,10 @@ const CONCURRENT_REQUESTS: usize = 16;
 const MAX_CHUNK: usize = 32 * 1024;
 const MAX_WRITE_BATCH: usize = 8;
 const MAX_OPEN_DOWNLOADS: usize = 128;
+const MAX_OPEN_UPLOADS: usize = 128;
+const MAX_DIRECTORY_ENTRIES: usize = 100_000;
+const MAX_DIRECTORY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ENTRY_NAME: usize = 4096;
 
 pub(crate) enum FsRequest {
     Home(Answer<String>),
@@ -547,6 +551,55 @@ async fn set_permissions(sftp: &Sftp, path: &str, permissions: u32) -> Result<()
         .map_err(|e| fs_error(e, path))
 }
 
+#[derive(Default)]
+struct ListingBudget {
+    entries: usize,
+    bytes: usize,
+    pages: usize,
+}
+impl ListingBudget {
+    fn page(&mut self) -> Result<(), FsError> {
+        self.pages += 1;
+        if self.pages > MAX_DIRECTORY_ENTRIES {
+            return Err(FsError::Other(
+                "remote directory listing exceeds the supported page limit".into(),
+            ));
+        }
+        Ok(())
+    }
+    fn entry(&mut self, name: &str) -> Result<(), FsError> {
+        if name.is_empty() || name.contains(['/', '\0']) {
+            return Err(FsError::Other(
+                "remote directory contains an invalid entry name".into(),
+            ));
+        }
+        self.entries += 1;
+        self.bytes = self.bytes.saturating_add(name.len());
+        if name.len() > MAX_ENTRY_NAME
+            || self.entries > MAX_DIRECTORY_ENTRIES
+            || self.bytes > MAX_DIRECTORY_BYTES
+        {
+            return Err(FsError::Other(
+                "remote directory listing exceeds the supported size limit".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+fn admit_upload(
+    registry: &mut HashMap<Uuid, Arc<Mutex<Upload>>>,
+    id: Uuid,
+    upload: Arc<Mutex<Upload>>,
+) -> Result<(), FsError> {
+    if registry.len() >= MAX_OPEN_UPLOADS {
+        return Err(FsError::Other(
+            "too many open uploads; close an existing writer".into(),
+        ));
+    }
+    registry.insert(id, upload);
+    Ok(())
+}
+
 async fn read_dir(sftp: &Sftp, dir: &str) -> Result<Vec<DirEntry>, FsError> {
     let handle = sftp
         .raw
@@ -556,20 +609,33 @@ async fn read_dir(sftp: &Sftp, dir: &str) -> Result<Vec<DirEntry>, FsError> {
         .handle;
     let result = async {
         let mut entries = Vec::new();
+        let mut budget = ListingBudget::default();
         loop {
             match sftp.raw.readdir(&handle).await {
                 Ok(names) => {
-                    for name in names.files {
-                        if name.filename == "." || name.filename == ".." {
-                            continue;
-                        }
-                        let mut item = entry(name.filename, &name.attrs);
-                        if item.is_symlink
-                            && let Ok(target) = sftp.raw.stat(path::join(dir, &item.name)).await
-                        {
-                            item.kind = entry_kind(target.attrs.file_type());
-                            item.size = target.attrs.size;
-                        }
+                    budget.page()?;
+                    for name in &names.files {
+                        budget.entry(&name.filename)?;
+                    }
+                    // Following a listing link is optional metadata enrichment.
+                    // Pipeline a small window rather than one network roundtrip
+                    // per link; buffered retains the server's listing order.
+                    let enriched = names
+                        .files
+                        .into_iter()
+                        .filter(|name| name.filename != "." && name.filename != "..")
+                        .map(|name| async move {
+                            let mut item = entry(name.filename, &name.attrs);
+                            if item.is_symlink
+                                && let Ok(target) = sftp.raw.stat(path::join(dir, &item.name)).await
+                            {
+                                item.kind = entry_kind(target.attrs.file_type());
+                                item.size = target.attrs.size;
+                            }
+                            item
+                        });
+                    let mut enriched = futures::stream::iter(enriched).buffered(8);
+                    while let Some(item) = enriched.next().await {
                         entries.push(item);
                     }
                 }
@@ -628,7 +694,10 @@ async fn start_upload(
         mode,
         failed: false,
     }));
-    uploads.lock().await.insert(id, upload.clone());
+    {
+        let mut registry = uploads.lock().await;
+        admit_upload(&mut registry, id, upload.clone())?;
+    }
     let mut attrs = FileAttributes::empty();
     attrs.permissions = Some(0o600);
     let opened = sftp
@@ -929,6 +998,180 @@ mod tests {
     }
     fn request_id(packet: &[u8]) -> u32 {
         u32::from_be_bytes(packet[1..5].try_into().unwrap())
+    }
+
+    #[test]
+    fn hostile_directory_listing_is_bounded_and_names_cannot_escape_parent() {
+        let mut budget = ListingBudget::default();
+        assert!(budget.entry("ordinary:file\\name").is_ok());
+        for name in ["", "../outside", "/outside", "a\0b"] {
+            assert!(ListingBudget::default().entry(name).is_err());
+        }
+        assert!(
+            ListingBudget::default()
+                .entry(&"a".repeat(MAX_ENTRY_NAME + 1))
+                .is_err()
+        );
+        let mut count = ListingBudget {
+            entries: MAX_DIRECTORY_ENTRIES,
+            ..Default::default()
+        };
+        assert!(count.entry("next").is_err());
+        let mut bytes = ListingBudget {
+            bytes: MAX_DIRECTORY_BYTES,
+            ..Default::default()
+        };
+        assert!(bytes.entry("next").is_err());
+        let mut pages = ListingBudget {
+            pages: MAX_DIRECTORY_ENTRIES,
+            ..Default::default()
+        };
+        assert!(pages.page().is_err());
+    }
+    #[tokio::test]
+    async fn upload_admission_never_opens_beyond_the_handle_limit() {
+        let mut registry = HashMap::new();
+        let upload = Arc::new(Mutex::new(Upload {
+            temporary: "/tmp/staged".into(),
+            destination: "/tmp/target".into(),
+            handle: None,
+            offset: 0,
+            mode: UploadMode::Create,
+            failed: false,
+        }));
+        for _ in 0..MAX_OPEN_UPLOADS {
+            admit_upload(&mut registry, Uuid::new_v4(), upload.clone()).unwrap();
+        }
+        let excess = Uuid::new_v4();
+        assert!(admit_upload(&mut registry, excess, upload.clone()).is_err());
+        assert!(!registry.contains_key(&excess));
+        let first = *registry.keys().next().unwrap();
+        registry.remove(&first);
+        admit_upload(&mut registry, excess, upload).unwrap();
+        assert_eq!(registry.len(), MAX_OPEN_UPLOADS);
+    }
+
+    async fn directory_open(peer: &mut DuplexStream) {
+        assert_eq!(packet(peer).await[0], 1);
+        send(peer, &[2, 0, 0, 0, 3]).await;
+        let open = packet(peer).await;
+        assert_eq!(open[0], 11);
+        let mut handle = vec![102];
+        handle.extend(request_id(&open).to_be_bytes());
+        handle.extend(4u32.to_be_bytes());
+        handle.extend(b"list");
+        send(peer, &handle).await;
+    }
+    async fn directory_names(peer: &mut DuplexStream, id: u32, names: &[String], mode: u32) {
+        let mut bytes = vec![104];
+        bytes.extend(id.to_be_bytes());
+        bytes.extend((names.len() as u32).to_be_bytes());
+        for name in names {
+            bytes.extend((name.len() as u32).to_be_bytes());
+            bytes.extend(name.as_bytes());
+            bytes.extend(0u32.to_be_bytes());
+            bytes.extend(4u32.to_be_bytes());
+            bytes.extend(mode.to_be_bytes());
+        }
+        send(peer, &bytes).await;
+    }
+    #[tokio::test]
+    async fn rejected_directory_page_closes_its_remote_handle() {
+        for name in ["../outside".into(), "x".repeat(MAX_ENTRY_NAME + 1)] {
+            let (client, mut peer) = tokio::io::duplex(8192);
+            let raw = RawSftpSession::new(client);
+            let fake = tokio::spawn(async move {
+                directory_open(&mut peer).await;
+                let read = packet(&mut peer).await;
+                assert_eq!(read[0], 12);
+                directory_names(&mut peer, request_id(&read), &[name], 0o100600).await;
+                let close = packet(&mut peer).await;
+                assert_eq!(close[0], 4);
+                status(&mut peer, request_id(&close), StatusCode::Ok).await;
+            });
+            timeout(Duration::from_secs(3), raw.init())
+                .await
+                .unwrap()
+                .unwrap();
+            let sftp = Sftp {
+                raw,
+                atomic_replace: false,
+            };
+            assert!(
+                timeout(Duration::from_secs(3), read_dir(&sftp, "/root"))
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+            timeout(Duration::from_secs(3), fake)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn listing_pipelines_eight_link_stats_and_preserves_server_order() {
+        let (client, mut peer) = tokio::io::duplex(8192);
+        let raw = RawSftpSession::new(client);
+        let names: Vec<_> = (0..16).map(|n| format!("link-{n}")).collect();
+        let expected = names.clone();
+        let fake = tokio::spawn(async move {
+            directory_open(&mut peer).await;
+            let read = packet(&mut peer).await;
+            assert_eq!(read[0], 12);
+            directory_names(&mut peer, request_id(&read), &names, 0o120777).await;
+            for _ in 0..2 {
+                let mut ids = Vec::new();
+                // No response until the complete window arrives: sequential
+                // enrichment would deadlock here and fail the timeout.
+                for _ in 0..8 {
+                    let stat = packet(&mut peer).await;
+                    assert_eq!(stat[0], 17);
+                    ids.push(request_id(&stat));
+                }
+                for id in ids.into_iter().rev() {
+                    let mut attrs = vec![105];
+                    attrs.extend(id.to_be_bytes());
+                    attrs.extend(4u32.to_be_bytes());
+                    attrs.extend(0o040755u32.to_be_bytes());
+                    send(&mut peer, &attrs).await;
+                }
+            }
+            let read = packet(&mut peer).await;
+            assert_eq!(read[0], 12);
+            status(&mut peer, request_id(&read), StatusCode::Eof).await;
+            let close = packet(&mut peer).await;
+            assert_eq!(close[0], 4);
+            status(&mut peer, request_id(&close), StatusCode::Ok).await;
+        });
+        timeout(Duration::from_secs(3), raw.init())
+            .await
+            .unwrap()
+            .unwrap();
+        let sftp = Sftp {
+            raw,
+            atomic_replace: false,
+        };
+        let entries = timeout(Duration::from_secs(3), read_dir(&sftp, "/root"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.kind == EntryKind::Directory && entry.is_symlink)
+        );
+        timeout(Duration::from_secs(3), fake)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

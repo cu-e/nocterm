@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -30,6 +30,13 @@ const FILE_BACKLOG: usize = 32;
 const PARALLEL_FILES: usize = 4;
 const CHUNK_SIZE: usize = 32 * 1024;
 const MAX_ERROR_DETAILS: usize = 100;
+const MAX_SOURCE_PATHS: usize = 4_096;
+const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+const MAX_SOURCE_PATH_BYTES: usize = 16 * 1024;
+const MAX_DISCOVERY_DEPTH: usize = 256;
+const MAX_DISCOVERY_ENTRIES: usize = 1_000_000;
+const MAX_LISTING_ENTRIES: usize = 100_000;
+const MAX_HISTORY: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CollisionPolicy {
@@ -139,6 +146,7 @@ struct Batch {
     request: Request,
     progress: Mutex<Progress>,
     cancel: AtomicBool,
+    visited: AtomicUsize,
     destinations: Arc<Mutex<HashSet<String>>>,
     local_destinations: Arc<Mutex<HashSet<PathBuf>>>,
 }
@@ -163,6 +171,7 @@ impl Batch {
             }),
             request,
             cancel: AtomicBool::new(false),
+            visited: AtomicUsize::new(0),
             destinations: Arc::default(),
             local_destinations: Arc::default(),
         }
@@ -173,6 +182,15 @@ impl Batch {
         if p.errors.len() < MAX_ERROR_DETAILS {
             p.errors.push(error.to_string());
         }
+    }
+    fn visit(&self) -> Result<(), FsError> {
+        if self.visited.fetch_add(1, Ordering::Relaxed) >= MAX_DISCOVERY_ENTRIES {
+            return Err(FsError::Other(
+                "Transfer discovery exceeds the 1,000,000 entry limit; select a smaller subtree."
+                    .into(),
+            ));
+        }
+        Ok(())
     }
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Acquire)
@@ -189,6 +207,10 @@ pub enum QueueError {
     InvalidDestination,
     #[error("The transfer no longer exists.")]
     Missing,
+    #[error(
+        "Selected paths exceed the transfer request limit (4,096 paths, 1 MiB total, 16 KiB per path). Select fewer files or their containing folder."
+    )]
+    RequestTooLarge,
 }
 
 /// Retained by the application, not a panel. Up to four files stream globally.
@@ -220,8 +242,16 @@ impl Transfers {
         })
     }
     pub fn enqueue(&self, request: UploadRequest) -> Result<Uuid, QueueError> {
-        if request.sources.is_empty() {
-            return Err(QueueError::Empty);
+        validate_sources(
+            request
+                .sources
+                .iter()
+                .map(|path| path.as_os_str().as_encoded_bytes().len()),
+        )?;
+        if request.destination.len() > MAX_SOURCE_PATH_BYTES
+            || request.target.host.len() + request.target.user.len() > MAX_SOURCE_PATH_BYTES
+        {
+            return Err(QueueError::RequestTooLarge);
         }
         if !request.destination.starts_with('/') || request.destination.contains('\0') {
             return Err(QueueError::InvalidDestination);
@@ -229,8 +259,16 @@ impl Transfers {
         self.enqueue_request(Request::Upload(request))
     }
     pub fn enqueue_download(&self, request: DownloadRequest) -> Result<Uuid, QueueError> {
-        if request.sources.is_empty() {
-            return Err(QueueError::Empty);
+        validate_sources(request.sources.iter().map(String::len))?;
+        if request
+            .local_destination
+            .as_os_str()
+            .as_encoded_bytes()
+            .len()
+            > MAX_SOURCE_PATH_BYTES
+            || request.target.host.len() + request.target.user.len() > MAX_SOURCE_PATH_BYTES
+        {
+            return Err(QueueError::RequestTooLarge);
         }
         if !request.local_destination.is_absolute()
             || request.sources.iter().any(|p| !download::valid_source(p))
@@ -247,7 +285,7 @@ impl Transfers {
             .map_err(|_| QueueError::Full)?;
         let mut batches = self.batches.lock();
         // Retain bounded history, without dropping running jobs.
-        if batches.len() >= 64 {
+        if batches.len() >= MAX_HISTORY {
             let old = batches
                 .iter()
                 .filter(|(_, b)| b.progress.lock().state.finished())
@@ -297,6 +335,23 @@ impl Drop for Transfers {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
+    }
+}
+
+fn validate_sources(lengths: impl Iterator<Item = usize>) -> Result<(), QueueError> {
+    let mut count = 0usize;
+    let mut bytes = 0usize;
+    for length in lengths {
+        count += 1;
+        bytes = bytes.saturating_add(length);
+        if count > MAX_SOURCE_PATHS || length > MAX_SOURCE_PATH_BYTES || bytes > MAX_SOURCE_BYTES {
+            return Err(QueueError::RequestTooLarge);
+        }
+    }
+    if count == 0 {
+        Err(QueueError::Empty)
+    } else {
+        Ok(())
     }
 }
 
@@ -423,6 +478,7 @@ async fn discover_one(
             return Ok(());
         }
         if let Some((local, remote)) = current.take() {
+            batch.visit()?;
             let metadata = tokio::fs::symlink_metadata(&local)
                 .await
                 .map_err(|e| local_error(&local, e))?;
@@ -443,6 +499,12 @@ async fn discover_one(
                     .await
                     .map_err(|_| FsError::Other("upload discovery cancelled".into()))?;
             } else {
+                if stack.len() >= MAX_DISCOVERY_DEPTH {
+                    return Err(FsError::Other(format!(
+                        "{}: directory depth exceeds {MAX_DISCOVERY_DEPTH}",
+                        local.display()
+                    )));
+                }
                 batch.request.fs().create_dir(&remote).await?;
                 stack.push((
                     tokio::fs::read_dir(&local)

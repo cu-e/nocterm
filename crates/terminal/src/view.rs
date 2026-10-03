@@ -155,6 +155,15 @@ impl TerminalView {
             TerminalEvent::Output => cx.notify(),
             // A visual or audible bell is a setting still to come.
             TerminalEvent::Bell => {}
+            TerminalEvent::ClipboardWrite(text) => {
+                if self.focus_handle.is_focused(window)
+                    && cx.active_window() == Some(window.window_handle())
+                    && cx.settings().terminal.clipboard_write
+                        == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                }
+            }
         }
     }
 

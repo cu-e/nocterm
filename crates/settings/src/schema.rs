@@ -83,6 +83,9 @@ pub struct TerminalSettings {
     pub scrollback_lines: u32,
     /// Copy text to the clipboard as soon as it is selected.
     pub copy_on_select: bool,
+    /// Allow programs to write the clipboard only while their terminal screen has focus.
+    /// Denied by default; clipboard reads are always denied.
+    pub clipboard_write: ClipboardWritePolicy,
     /// Terminal type announced to the remote host (its `TERM` variable).
     pub term: String,
     /// Show the timestamp of the first output on each logical line.
@@ -103,11 +106,21 @@ impl Default for TerminalSettings {
             cursor_blink: true,
             scrollback_lines: 10_000,
             copy_on_select: false,
+            clipboard_write: ClipboardWritePolicy::default(),
             term: "xterm-256color".to_owned(),
             show_timestamps: false,
             show_line_numbers: false,
         }
     }
+}
+
+/// Permission for terminal output (OSC 52) to change the system clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipboardWritePolicy {
+    #[default]
+    Deny,
+    FocusedTerminal,
 }
 
 /// Shape of the terminal cursor.

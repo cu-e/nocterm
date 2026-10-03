@@ -317,3 +317,83 @@ fn rapid_output_invalidates_highlights_then_search_resumes_and_can_cancel(cx: &m
         assert!(!frame.cells.iter().any(|c| c.search_hit));
     });
 }
+
+#[gpui_kit::test]
+fn osc52_requires_opt_in_and_focus_on_the_actual_terminal_screen(cx: &mut TestAppContext) {
+    let (handle, view, transport) = fixture(cx);
+    let clipboard = |cx: &mut TestAppContext| {
+        cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+    };
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("original".into())));
+    let request = || Event::Output(b"\x1b]52;c;cmVtb3Rl\x07".to_vec());
+    emit(cx, &transport, 0, request());
+    assert_eq!(clipboard(cx).as_deref(), Some("original"));
+    cx.update(|cx| {
+        nocterm_ui::update_settings(cx, |s| {
+            s.terminal.clipboard_write = nocterm_settings::ClipboardWritePolicy::FocusedTerminal;
+        })
+        .now_or_never()
+        .unwrap()
+        .unwrap();
+    });
+    emit(cx, &transport, 0, request());
+    assert_eq!(clipboard(cx).as_deref(), Some("remote"));
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| v.execute(ItemCommand::Find, window, cx));
+        window.render_frame(cx);
+        cx.write_to_clipboard(ClipboardItem::new_string("search".into()));
+    })
+    .unwrap();
+    emit(cx, &transport, 0, request());
+    assert_eq!(clipboard(cx).as_deref(), Some("search"));
+    cx.update_window(handle, |_, window, cx| {
+        window.blur(cx);
+        cx.write_to_clipboard(ClipboardItem::new_string("background".into()));
+    })
+    .unwrap();
+    emit(cx, &transport, 0, request());
+    assert_eq!(clipboard(cx).as_deref(), Some("background"));
+}
+
+#[gpui_kit::test]
+fn osc52_cannot_write_from_a_focused_terminal_in_an_inactive_window(cx: &mut TestAppContext) {
+    struct OtherWindow;
+    impl Render for OtherWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+    let (handle, view, transport) = fixture(cx);
+    cx.update(|cx| {
+        nocterm_ui::update_settings(cx, |settings| {
+            settings.terminal.clipboard_write =
+                nocterm_settings::ClipboardWritePolicy::FocusedTerminal;
+        })
+        .now_or_never()
+        .unwrap()
+        .unwrap();
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            window.activate_window();
+            cx.new(|_| OtherWindow)
+        })
+        .unwrap();
+        cx.write_to_clipboard(ClipboardItem::new_string("other window".into()));
+    });
+    cx.update_window(handle, |_, window, cx| {
+        assert!(view.read(cx).focus_handle.is_focused(window));
+        assert_ne!(cx.active_window(), Some(window.window_handle()));
+    })
+    .unwrap();
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(b"\x1b]52;c;cmVtb3Rl\x07".to_vec()),
+    );
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("other window")
+        );
+    });
+}

@@ -271,7 +271,10 @@ impl FilesPanel {
         self.requested_directory = directory.clone();
         cx.notify();
         self.remote_task = Some(cx.spawn(async move |this, cx| {
-            let result = listing(fs, directory).await;
+            let result = cx
+                .background_executor()
+                .spawn(async move { listing(fs, directory).await })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.browser.finish(generation, result) {
                     cx.notify();
@@ -294,9 +297,10 @@ impl FilesPanel {
         cx.notify();
         self.local_task = Some(cx.spawn(async move |this, cx| {
             let path = directory.clone();
+            let listing_cancel = cancel.clone();
             let result = cx
                 .background_executor()
-                .spawn(async move { local::read_directory(&path) })
+                .spawn(async move { local::read_directory(&path, &listing_cancel) })
                 .await;
             let loaded = this
                 .update(cx, |this, cx| {
@@ -1021,12 +1025,11 @@ impl FilesPanel {
                             .child(information),
                     )
                     .when(s.inaccessible > 0, |p| {
-                        p.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().danger)
-                                .child(format!("{} paths could not be scanned", s.inaccessible)),
-                        )
+                        p.child(div().text_xs().text_color(cx.theme().danger).child(
+                            s.errors.first().cloned().unwrap_or_else(|| {
+                                format!("{} paths could not be scanned", s.inaccessible)
+                            }),
+                        ))
                     })
                     .child(
                         h_flex()

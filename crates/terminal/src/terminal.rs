@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui_kit::{ClipboardItem, Context, EventEmitter, Subscription, Task};
+use gpui_kit::{Context, EventEmitter, Subscription, Task};
 use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize, RemoteFs,
     Secret, Session, SessionError,
@@ -29,7 +29,7 @@ pub enum Status {
 }
 
 /// What a [`Terminal`] tells its observers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalEvent {
     /// The status, the pending prompt or the title changed.
     Changed,
@@ -37,6 +37,8 @@ pub enum TerminalEvent {
     Output,
     /// The program rang the bell.
     Bell,
+    /// A program requested a clipboard write; the view applies permission and focus checks.
+    ClipboardWrite(String),
 }
 
 #[derive(Default)]
@@ -403,7 +405,12 @@ impl Terminal {
                 }
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    if text.len() <= 1024 * 1024
+                        && cx.settings().terminal.clipboard_write
+                            == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                    {
+                        cx.emit(TerminalEvent::ClipboardWrite(text));
+                    }
                 }
             }
         }
@@ -848,6 +855,7 @@ fn shell_launch(settings: &nocterm_settings::ShellSettings) -> nocterm_session::
 #[cfg(test)]
 mod local_tests {
     use super::*;
+    use futures::FutureExt as _;
     use gpui_kit::{AppContext as _, TestAppContext};
     use std::sync::Mutex;
 
@@ -895,7 +903,10 @@ mod local_tests {
                     cx,
                 );
                 assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/egor")));
-                nocterm_ui::update_settings(cx, |s| s.local.program = Some("pwsh".into())).unwrap();
+                nocterm_ui::update_settings(cx, |s| s.local.program = Some("pwsh".into()))
+                    .now_or_never()
+                    .unwrap()
+                    .unwrap();
                 terminal
                     .change_directory(Path::new("/tmp/a' $(id)"), cx)
                     .unwrap();
@@ -966,7 +977,7 @@ mod credential_tests {
                 SettingsStore::in_memory(Default::default()),
                 cx,
             );
-            crate::init_credentials(service.clone(), |_, _, _| Ok(()), cx);
+            crate::init_credentials(service.clone(), |_, _, _| Task::ready(Ok(())), cx);
             cx.new(|cx| {
                 Terminal::new(
                     SessionSpec {
@@ -1092,7 +1103,7 @@ mod credential_tests {
                 service.clone(),
                 move |_, id, _| {
                     sink.borrow_mut().push(id);
-                    Ok(())
+                    Task::ready(Ok(()))
                 },
                 cx,
             );

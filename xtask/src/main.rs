@@ -31,6 +31,7 @@ struct Package {
 #[derive(Deserialize)]
 struct Dependency {
     name: String,
+    kind: Option<String>,
 }
 #[derive(Deserialize)]
 struct Keymap {
@@ -88,6 +89,30 @@ fn allowed(source: &str, destination: &str) -> bool {
     }
 }
 
+fn check_dependency(
+    source: &str,
+    dependency: &Dependency,
+    layers: &BTreeMap<&str, &str>,
+) -> anyhow::Result<()> {
+    let name = dependency.name.as_str();
+    if let Some(destination) = layers.get(name) {
+        if !allowed(source, destination) {
+            bail!("{source} depends on {name} ({destination})");
+        }
+    } else if name.starts_with("nocterm-") {
+        bail!("internal dependency {name} has no declared architecture layer");
+    } else if dependency.kind.as_deref() != Some("dev")
+        && matches!(source, "foundation" | "domain" | "adapter")
+        && matches!(
+            name,
+            "gpui" | "gpui-kit" | "gpui-component" | "gpui-pre" | "gpui-base"
+        )
+    {
+        bail!("{source} runtime depends on GUI library {name}");
+    }
+    Ok(())
+}
+
 fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut metadata = metadata(root)?;
     metadata
@@ -117,6 +142,10 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut edges = String::new();
     for package in &metadata.packages {
         let source = layers[package.name.as_str()];
+        for dependency in &package.dependencies {
+            check_dependency(source, dependency, &layers)
+                .with_context(|| format!("architecture violation in {}", package.name))?;
+        }
         let mut dependencies: Vec<_> = package
             .dependencies
             .iter()
@@ -128,13 +157,7 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
             .collect();
         dependencies.sort_unstable();
         dependencies.dedup();
-        for (name, destination) in &dependencies {
-            if !allowed(source, destination) {
-                bail!(
-                    "architecture violation: {} ({source}) depends on {name} ({destination})",
-                    package.name
-                );
-            }
+        for (name, _) in &dependencies {
             writeln!(
                 edges,
                 "    {} --> {}",
@@ -414,6 +437,34 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_gui_and_undeclared_internal_dependencies_cannot_escape_the_policy() {
+        let layers = BTreeMap::from([("nocterm-core", "foundation")]);
+        for source in ["foundation", "domain", "adapter"] {
+            for kind in [None, Some("build")] {
+                let dependency = Dependency {
+                    name: "gpui-kit".into(),
+                    kind: kind.map(str::to_owned),
+                };
+                assert!(check_dependency(source, &dependency, &layers).is_err());
+            }
+        }
+        let test_support = Dependency {
+            name: "gpui-kit".into(),
+            kind: Some("dev".into()),
+        };
+        assert!(check_dependency("domain", &test_support, &layers).is_ok());
+        let runtime = Dependency {
+            name: "gpui-kit".into(),
+            kind: None,
+        };
+        assert!(check_dependency("ui", &runtime, &layers).is_ok());
+        let missing = Dependency {
+            name: "nocterm-forgotten".into(),
+            kind: None,
+        };
+        assert!(check_dependency("app", &missing, &layers).is_err());
+    }
     #[test]
     fn feature_and_transport_boundaries_are_enforced() {
         assert!(!allowed("feature", "feature"));

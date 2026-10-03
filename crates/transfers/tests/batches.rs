@@ -484,3 +484,52 @@ fn local_size_changes_during_acknowledgement_never_publish_partial_content() {
         assert_eq!(fs.0.cancelled.load(Ordering::SeqCst), 1);
     }
 }
+
+#[test]
+fn oversized_requests_are_rejected_before_admission() {
+    let service = Transfers::new().unwrap();
+    let fs = Fs::default();
+    for sources in [
+        vec![PathBuf::from("/missing"); 4_097],
+        vec![PathBuf::from(format!("/{}", "a".repeat(16 * 1024)))],
+        vec![PathBuf::from(format!("/{}", "a".repeat(1024))); 1_024],
+    ] {
+        assert!(matches!(
+            service.enqueue(request(&fs, sources, CollisionPolicy::Skip)),
+            Err(QueueError::RequestTooLarge)
+        ));
+    }
+    assert!(service.snapshot().is_empty());
+    assert_eq!(fs.0.live.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn deep_upload_discovery_stops_before_exhausting_directory_handles() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut leaf = directory.path().join("root");
+    std::fs::create_dir(&leaf).unwrap();
+    for _ in 0..260 {
+        leaf = leaf.join("d");
+        std::fs::create_dir(&leaf).unwrap();
+    }
+    std::fs::write(leaf.join("never-uploaded"), b"private").unwrap();
+    let fs = Fs::default();
+    let service = Transfers::new().unwrap();
+    let id = service
+        .enqueue(request(
+            &fs,
+            vec![directory.path().join("root")],
+            CollisionPolicy::Skip,
+        ))
+        .unwrap();
+    let result = finished(&service, id);
+    assert_eq!(result.state, TransferState::Failed);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("directory depth exceeds 256"))
+    );
+    assert!(result.discovery_complete);
+    assert!(fs.0.files.lock().unwrap().is_empty());
+}

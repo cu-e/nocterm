@@ -206,7 +206,7 @@ impl TerminalElement {
                 let block_col = block.filter(|at| at.row == row).map(|at| at.col);
                 paint_text(
                     row,
-                    frame.row(row),
+                    &frame,
                     block_col,
                     &layout,
                     self.style.font_size,
@@ -488,7 +488,7 @@ fn paint_runs(
 /// glyph width can only describe single-width cells.
 fn paint_text(
     row: u16,
-    cells: &[GridCell],
+    frame: &Frame,
     block_cursor_col: Option<u16>,
     layout: &Layout,
     font_size: Pixels,
@@ -497,8 +497,13 @@ fn paint_text(
 ) {
     let geometry = &layout.geometry;
     let mut segment = Segment::default();
+    let start = usize::from(row) * usize::from(frame.size.cols);
+    let mut combining = frame.combining
+        [frame.combining.partition_point(|(index, _)| *index < start)..]
+        .iter()
+        .peekable();
 
-    for (col, cell) in (0u16..).zip(cells) {
+    for (col, cell) in (0u16..).zip(frame.row(row)) {
         if cell.spacer {
             continue;
         }
@@ -509,12 +514,13 @@ fn paint_text(
         if block_cursor_col == Some(col) {
             foreground = background;
         }
-        let ch = if cell.style.hidden || cell.ch.is_control() {
-            ' '
-        } else {
-            cell.ch
-        };
-        segment.push(ch, text_run(ch, cell.style, foreground, &layout.font));
+        let marks = combining.next_if(|(index, _)| *index == start + usize::from(col));
+        segment.push_cell(
+            cell,
+            marks.map(|(_, text)| text.as_str()).unwrap_or(""),
+            foreground,
+            &layout.font,
+        );
 
         if cell.wide {
             segment.paint(row, geometry, font_size, window, cx);
@@ -533,6 +539,17 @@ struct Segment {
 }
 
 impl Segment {
+    fn push_cell(&mut self, cell: &GridCell, marks: &str, foreground: Hsla, font: &Font) {
+        let hidden = cell.style.hidden || cell.ch.is_control();
+        let ch = if hidden { ' ' } else { cell.ch };
+        self.push(ch, text_run(ch, cell.style, foreground, font));
+        if !hidden {
+            for mark in marks.chars() {
+                self.push(mark, text_run(mark, cell.style, foreground, font));
+            }
+        }
+    }
+
     fn push(&mut self, ch: char, run: TextRun) {
         self.visible |= ch != ' ' || run.underline.is_some() || run.strikethrough.is_some();
         self.text.push(ch);
@@ -764,5 +781,55 @@ mod gutter_tests {
         };
         assert_eq!(gutter_label(mark, true, true, 3), "01:02:03  42");
         assert_eq!(gutter_label(mark, false, true, 3), " 42");
+    }
+}
+
+#[cfg(test)]
+mod combining_tests {
+    use super::*;
+    #[test]
+    fn combining_marks_keep_the_base_style_and_utf8_run_lengths() {
+        let base = GridCell {
+            ch: 'e',
+            style: Style {
+                bold: true,
+                underline: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut segment = Segment::default();
+        segment.push_cell(
+            &base,
+            "\u{301}\u{323}",
+            gpui_kit::black(),
+            &font("monospace"),
+        );
+        segment.push_cell(
+            &GridCell { ch: 'X', ..base },
+            "",
+            gpui_kit::black(),
+            &font("monospace"),
+        );
+        assert_eq!(segment.text, "e\u{301}\u{323}X");
+        assert_eq!(segment.runs.len(), 1);
+        assert_eq!(segment.runs[0].len, segment.text.len());
+        assert_eq!(segment.runs[0].font.weight, FontWeight::BOLD);
+        assert!(segment.runs[0].underline.is_some());
+    }
+    #[test]
+    fn hidden_cells_do_not_leak_combining_marks() {
+        let mut segment = Segment::default();
+        let hidden = GridCell {
+            ch: 'e',
+            style: Style {
+                hidden: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        segment.push_cell(&hidden, "\u{301}", gpui_kit::black(), &font("monospace"));
+        assert_eq!(segment.text, " ");
+        assert!(!segment.visible);
     }
 }

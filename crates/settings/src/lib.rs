@@ -12,8 +12,8 @@ pub use session_options::{
 mod store;
 
 pub use schema::{
-    Appearance, AppearanceMode, CONNECT_TIMEOUT_RANGE, CursorShape, FONT_SIZE_RANGE,
-    KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, Settings, ShellSettings, SshSettings,
-    TerminalSettings, VaultSettings,
+    Appearance, AppearanceMode, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape,
+    FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, Settings, ShellSettings,
+    SshSettings, TerminalSettings, VaultSettings,
 };
 pub use store::SettingsFile;

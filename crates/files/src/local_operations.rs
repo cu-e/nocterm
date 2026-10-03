@@ -24,7 +24,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), FsError> {
 }
 
 #[cfg(unix)]
-mod unix {
+pub(super) mod unix {
     use super::*;
     use rustix::fs::{self, AtFlags, FileType, Mode, OFlags};
     use std::{
@@ -57,13 +57,27 @@ mod unix {
             .file_name()
             .ok_or_else(|| error(path, "the filesystem root cannot be changed"))?
             .to_owned();
+        let fd = open_directory(normalized.parent().unwrap())?;
+        Ok(Parent { fd, name })
+    }
+    fn open_directory(path: &Path) -> Result<OwnedFd, FsError> {
+        let absolute = std::path::absolute(path).map_err(|e| error(path, e))?;
+        if absolute
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(error(
+                path,
+                "parent components are not accepted; navigate to the directory first",
+            ));
+        }
         let mut fd = fs::open(
             "/",
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
             Mode::empty(),
         )
         .map_err(|e| error(path, e))?;
-        for component in normalized.parent().unwrap().components() {
+        for component in absolute.components() {
             if let Component::Normal(name) = component {
                 fd = fs::openat(
                     &fd,
@@ -74,30 +88,75 @@ mod unix {
                 .map_err(|e| error(path, e))?;
             }
         }
-        Ok(Parent { fd, name })
+        Ok(fd)
+    }
+    pub(crate) struct ScanDirectory {
+        fd: OwnedFd,
+        entries: fs::Dir,
+    }
+    impl ScanDirectory {
+        pub(crate) fn open(path: &Path) -> Result<Self, FsError> {
+            Self::from_fd(open_directory(path)?)
+        }
+        fn from_fd(fd: OwnedFd) -> Result<Self, FsError> {
+            let entries =
+                fs::Dir::read_from(&fd).map_err(|error| FsError::Other(error.to_string()))?;
+            Ok(Self { fd, entries })
+        }
+        pub(crate) fn next(&mut self) -> Option<Result<OsString, FsError>> {
+            loop {
+                let entry = self.entries.next()?;
+                match entry {
+                    Ok(entry) => {
+                        let name = OsStr::from_bytes(entry.file_name().to_bytes());
+                        if name == "." || name == ".." {
+                            continue;
+                        }
+                        return Some(Ok(name.to_owned()));
+                    }
+                    Err(error) => return Some(Err(FsError::Other(error.to_string()))),
+                }
+            }
+        }
+        pub(crate) fn metadata(&self, name: &OsStr) -> Result<FileMetadata, FsError> {
+            fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)
+                .map(metadata_from_stat)
+                .map_err(|error| FsError::Other(error.to_string()))
+        }
+        pub(crate) fn child(&self, name: &OsStr) -> Result<Self, FsError> {
+            let fd = fs::openat(
+                &self.fd,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|error| FsError::Other(error.to_string()))?;
+            Self::from_fd(fd)
+        }
     }
     // libc stat typedef widths differ between Unix platforms.
     #[allow(clippy::unnecessary_cast)]
-    pub(super) fn metadata(path: &Path) -> Result<FileMetadata, FsError> {
-        let p = parent(path)?;
-        let s =
-            fs::statat(&p.fd, &p.name, AtFlags::SYMLINK_NOFOLLOW).map_err(|e| error(path, e))?;
-        let ty = FileType::from_raw_mode(s.st_mode);
-        Ok(FileMetadata {
-            kind: if ty == FileType::Directory {
-                EntryKind::Directory
-            } else if ty == FileType::RegularFile {
-                EntryKind::File
-            } else {
-                EntryKind::Other
+    fn metadata_from_stat(stat: fs::Stat) -> FileMetadata {
+        let ty = FileType::from_raw_mode(stat.st_mode);
+        FileMetadata {
+            kind: match ty {
+                FileType::Directory => EntryKind::Directory,
+                FileType::RegularFile => EntryKind::File,
+                _ => EntryKind::Other,
             },
             is_symlink: ty == FileType::Symlink,
-            size: u64::try_from(s.st_size).ok(),
-            permissions: Some((s.st_mode as u32) & 0o7777),
-            uid: Some(s.st_uid as u32),
-            gid: Some(s.st_gid as u32),
-            modified: u64::try_from(s.st_mtime).ok(),
-        })
+            size: u64::try_from(stat.st_size).ok(),
+            permissions: Some((stat.st_mode as u32) & 0o7777),
+            uid: Some(stat.st_uid as u32),
+            gid: Some(stat.st_gid as u32),
+            modified: u64::try_from(stat.st_mtime).ok(),
+        }
+    }
+    pub(super) fn metadata(path: &Path) -> Result<FileMetadata, FsError> {
+        let p = parent(path)?;
+        fs::statat(&p.fd, &p.name, AtFlags::SYMLINK_NOFOLLOW)
+            .map(metadata_from_stat)
+            .map_err(|e| error(path, e))
     }
     pub(super) fn rename(path: &Path, name: &str) -> Result<(), FsError> {
         let p = parent(path)?;

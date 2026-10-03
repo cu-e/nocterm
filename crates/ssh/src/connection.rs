@@ -63,7 +63,7 @@ impl client::Handler for Client {
         };
 
         let verdict = self.host_keys.check(&self.host, self.port, key);
-        let acceptable = !matches!(verdict, Verdict::Changed { .. });
+        let acceptable = !matches!(verdict, Verdict::Changed { .. } | Verdict::Revoked { .. });
         lock(&self.observed).host_key = Some((key.clone(), verdict));
         Ok(acceptable)
     }
@@ -167,10 +167,12 @@ async fn sign_in(
     observed: &Arc<Mutex<Observed>>,
 ) -> Result<Handle<Client>, SessionError> {
     let target = &request.target;
-    let host_keys = HostKeys::new(
-        config.known_hosts.clone(),
-        config.read_only_known_hosts.clone(),
-    );
+    let writable = config.known_hosts.clone();
+    let read_only = config.read_only_known_hosts.clone();
+    let host_keys = tokio::task::spawn_blocking(move || HostKeys::load(writable, read_only))
+        .await
+        .map_err(|error| SessionError::Other(format!("cannot load host trust records: {error}")))?
+        .map_err(|error| SessionError::Other(error.to_string()))?;
 
     driver
         .emit(Event::Connecting(ConnectStage::Connecting))
@@ -230,6 +232,9 @@ async fn connect(
                     known_hosts,
                     line,
                 },
+                Some((_, Verdict::Revoked { known_hosts, line })) => {
+                    revoked(host, &known_hosts, line)
+                }
                 _ => SessionError::Other(error.to_string()),
             })
     };
@@ -263,6 +268,7 @@ async fn verify_host(
                 line,
             });
         }
+        Verdict::Revoked { known_hosts, line } => return Err(revoked(host, &known_hosts, line)),
         Verdict::Unknown => {}
     }
 
@@ -292,6 +298,13 @@ async fn verify_host(
             Ok(())
         }
     }
+}
+
+fn revoked(host: &str, file: &std::path::Path, line: usize) -> SessionError {
+    SessionError::Other(format!(
+        "the host key of {host} is revoked (line {line} of {}); refusing to connect",
+        file.display()
+    ))
 }
 
 /// The host as known-hosts files spell it.

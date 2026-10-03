@@ -138,9 +138,12 @@ async fn remove_remote(
 ) -> Result<(), FsError> {
     // Post-order traversal holds only directory listings on the current branch.
     // Every node is lstat-ed again; final links are unlinked, never traversed.
+    const MAX_PENDING_PATH_BYTES: usize = 16 * 1024 * 1024;
+    let mut pending_path_bytes = root.len();
     let mut pending = vec![(root, false, 0usize)];
     let mut visited = 0usize;
     while let Some((path, remove_directory, depth)) = pending.pop() {
+        pending_path_bytes -= path.len();
         if cancel.load(Ordering::Acquire) {
             return Err(FsError::Other(
                 "Deletion cancelled; already deleted entries cannot be restored.".into(),
@@ -168,6 +171,10 @@ async fn remove_remote(
                     "Deletion discovery limit reached; refresh to see remaining entries.".into(),
                 ));
             }
+            pending_path_bytes = pending_path_bytes.saturating_add(path.len());
+            if pending_path_bytes > MAX_PENDING_PATH_BYTES {
+                return Err(FsError::Other("Deletion pending paths exceed 16 MiB; select a smaller subtree and refresh to see remaining entries.".into()));
+            }
             pending.push((path.clone(), true, depth));
             for entry in entries.into_iter().rev() {
                 if !local_operations::valid_name(&entry.name) {
@@ -175,7 +182,12 @@ async fn remove_remote(
                         "Server returned an unsafe directory entry; deletion stopped.".into(),
                     ));
                 }
-                pending.push((path::join(&path, &entry.name), false, depth + 1));
+                let child = path::join(&path, &entry.name);
+                pending_path_bytes = pending_path_bytes.saturating_add(child.len());
+                if pending_path_bytes > MAX_PENDING_PATH_BYTES {
+                    return Err(FsError::Other("Deletion pending paths exceed 16 MiB; select a smaller subtree and refresh to see remaining entries.".into()));
+                }
+                pending.push((child, false, depth + 1));
             }
         } else {
             fs.remove_file(&path).await?;
@@ -193,5 +205,63 @@ mod tests {
             assert!(remote_path(p).is_err());
         }
         assert!(remote_path("/home/unicode-目录").is_ok());
+    }
+    #[test]
+    fn deletion_bounds_pending_path_memory_before_mutating_a_wide_directory() {
+        use std::sync::atomic::AtomicUsize;
+        struct WideFs(Arc<AtomicUsize>);
+        impl RemoteFs for WideFs {
+            fn home(&self) -> FsFuture<String> {
+                Box::pin(async { Ok("/root".into()) })
+            }
+            fn metadata(&self, path: &str) -> FsFuture<FileMetadata> {
+                let directory = path == "/root";
+                Box::pin(async move {
+                    Ok(FileMetadata {
+                        kind: if directory {
+                            EntryKind::Directory
+                        } else {
+                            EntryKind::File
+                        },
+                        is_symlink: false,
+                        size: None,
+                        permissions: None,
+                        uid: None,
+                        gid: None,
+                        modified: None,
+                    })
+                })
+            }
+            fn read_dir(&self, _: &str) -> FsFuture<Vec<nocterm_session::DirEntry>> {
+                Box::pin(async {
+                    Ok(vec![
+                        nocterm_session::DirEntry {
+                            name: "a".repeat(900),
+                            kind: EntryKind::File,
+                            is_symlink: false,
+                            size: None
+                        };
+                        20_000
+                    ])
+                })
+            }
+            fn remove_file(&self, _: &str) -> FsFuture<()> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let mutations = Arc::new(AtomicUsize::new(0));
+        let result = futures::executor::block_on(remove_remote(
+            Arc::new(WideFs(mutations.clone())),
+            "/root".into(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("pending paths exceed 16 MiB")
+        );
+        assert_eq!(mutations.load(Ordering::SeqCst), 0);
     }
 }

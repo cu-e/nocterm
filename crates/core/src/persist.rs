@@ -5,10 +5,9 @@
 //! intact.
 
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::{self, Write as _},
     path::{Path, PathBuf},
-    process,
 };
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -79,7 +78,8 @@ pub fn save_preserving<T: Serialize>(path: &Path, value: &T) -> Result<(), Persi
             Ok(document) => document,
             Err(_) => {
                 let backup = backup_path(path);
-                fs::copy(path, &backup).map_err(|source| PersistError::io(&backup, source))?;
+                publish_atomic(&backup, &text)
+                    .map_err(|source| PersistError::io(&backup, source))?;
                 DocumentMut::new()
             }
         },
@@ -153,36 +153,31 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     // Write through a symlink rather than replacing it: configuration is
     // often linked in from a dotfiles repository.
     let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    publish_atomic(&path, contents)
+}
+
+// Backups publish at their exact path: an old .bak symlink must be replaced,
+// never followed into an unrelated file.
+fn publish_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let directory = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(directory)?;
 
-    let mut temporary_name = std::ffi::OsString::from(".");
-    temporary_name.push(path.file_name().unwrap_or_default());
-    temporary_name.push(format!(".{}.tmp", process::id()));
-    let temporary = directory.join(temporary_name);
-
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            // Profiles name hosts and accounts; keep them private to the user.
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(contents.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
+    // Unique, exclusively created temporary files cannot follow an attacker-
+    // supplied name or collide with another writer in the same process.
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    temporary.write_all(contents.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    // Publication has committed. A directory-sync failure must not be reported
+    // as a precommit failure: callers would retain state different from disk.
+    #[cfg(unix)]
+    if let Ok(directory) = fs::File::open(directory) {
+        let _ = directory.sync_all();
     }
-    result
+    Ok(())
 }
 
 #[cfg(test)]
@@ -295,6 +290,76 @@ mod tests {
             "name = = ="
         );
         assert_eq!(load::<Sample>(&path).unwrap(), Some(sample()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_configuration_backup_cannot_follow_an_existing_symlink() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sample.toml");
+        let backup = directory.path().join("sample.toml.bak");
+        let victim = directory.path().join("victim");
+        fs::write(&path, "name = = =").unwrap();
+        fs::write(&victim, "preserve unrelated data").unwrap();
+        std::os::unix::fs::symlink(&victim, &backup).unwrap();
+        save_preserving(&path, &sample()).unwrap();
+        assert_eq!(
+            fs::read_to_string(&victim).unwrap(),
+            "preserve unrelated data"
+        );
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "name = = =");
+        assert!(
+            !fs::symlink_metadata(backup)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn predictable_temporary_symlink_cannot_overwrite_another_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let victim = directory.path().join("victim");
+        fs::write(&victim, b"preserve unrelated data").unwrap();
+        let path = directory.path().join("sample.toml");
+        let old_temporary = directory
+            .path()
+            .join(format!(".sample.toml.{}.tmp", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &old_temporary).unwrap();
+        save(&path, &sample()).unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"preserve unrelated data");
+        assert!(
+            fs::symlink_metadata(old_temporary)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn simultaneous_writers_publish_complete_documents() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sample.toml");
+        std::thread::scope(|scope| {
+            for number in 0..16 {
+                let path = &path;
+                scope.spawn(move || {
+                    for _ in 0..10 {
+                        let mut value = sample();
+                        value.name = format!("writer-{number}");
+                        save(path, &value).unwrap();
+                        assert!(load::<Sample>(path).unwrap().is_some());
+                    }
+                });
+            }
+        });
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[cfg(unix)]

@@ -19,6 +19,10 @@ use russh::{
 };
 
 use crate::{SshConfig, connection::Client};
+use zeroize::Zeroizing;
+
+const MAX_PRIVATE_KEY: usize = 1024 * 1024;
+const MAX_PUBLIC_KEY: usize = 64 * 1024;
 
 /// Private keys tried when the connection names none, most modern first.
 const DEFAULT_IDENTITIES: [&str; 3] = ["id_ed25519", "id_ecdsa", "id_rsa"];
@@ -193,7 +197,7 @@ impl<'a> Authenticator<'a> {
         if !self.may_offer_key() {
             return Ok(false);
         }
-        let text = match tokio::fs::read_to_string(path).await {
+        let text = match read_key(path.to_owned(), MAX_PRIVATE_KEY).await {
             Ok(text) => text,
             Err(error) => {
                 if explicit {
@@ -227,7 +231,7 @@ impl<'a> Authenticator<'a> {
 
     /// Decodes a private key, asking for its passphrase if it has one.
     /// `None` means the key cannot be used.
-    async fn unlock(&self, path: &Path, text: String) -> Option<PrivateKey> {
+    async fn unlock(&self, path: &Path, text: Arc<Zeroizing<Vec<u8>>>) -> Option<PrivateKey> {
         match decode(text.clone(), None).await {
             Ok(key) => return Some(key),
             Err(russh::keys::Error::KeyIsEncrypted) => {}
@@ -342,24 +346,50 @@ impl<'a> Authenticator<'a> {
 /// Decoding runs a deliberately slow key derivation for encrypted keys, so
 /// it stays off the threads that serve the network.
 async fn decode(
-    text: String,
+    text: Arc<Zeroizing<Vec<u8>>>,
     passphrase: Option<Secret>,
 ) -> Result<PrivateKey, russh::keys::Error> {
     tokio::task::spawn_blocking(move || {
-        decode_secret_key(&text, passphrase.as_ref().map(Secret::expose))
+        let text = std::str::from_utf8(&text).map_err(|_| russh::keys::Error::CouldNotReadKey)?;
+        decode_secret_key(text, passphrase.as_ref().map(Secret::expose))
     })
     .await
     .unwrap_or(Err(russh::keys::Error::CouldNotReadKey))
+}
+
+async fn read_key(path: PathBuf, limit: usize) -> std::io::Result<Arc<Zeroizing<Vec<u8>>>> {
+    tokio::task::spawn_blocking(move || crate::file::read(&path, limit).map(Arc::new))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 /// The public key stored next to a private key as `<name>.pub`.
 async fn public_half(private: &Path) -> Option<PublicKey> {
     let mut path = OsString::from(private);
     path.push(".pub");
-    let text = tokio::fs::read_to_string(PathBuf::from(path)).await.ok()?;
-    PublicKey::from_openssh(&text).ok()
+    let bytes = read_key(PathBuf::from(path), MAX_PUBLIC_KEY).await.ok()?;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    PublicKey::from_openssh(text).ok()
 }
 
 fn lost(error: russh::Error) -> SessionError {
     SessionError::ConnectionLost(error.to_string())
+}
+
+#[cfg(test)]
+mod material_tests {
+    use super::*;
+    #[tokio::test]
+    async fn private_and_public_material_limits_are_enforced_before_decode() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("key");
+        std::fs::write(&path, vec![b'x'; MAX_PRIVATE_KEY + 1]).unwrap();
+        assert!(read_key(path.clone(), MAX_PRIVATE_KEY).await.is_err());
+        std::fs::write(&path, vec![b'x'; MAX_PUBLIC_KEY + 1]).unwrap();
+        assert!(read_key(path.clone(), MAX_PUBLIC_KEY).await.is_err());
+        std::fs::write(&path, b"not a private key").unwrap();
+        let bytes = read_key(path, MAX_PRIVATE_KEY).await.unwrap();
+        assert!(decode(bytes.clone(), None).await.is_err());
+        assert_eq!(Arc::strong_count(&bytes), 1);
+    }
 }

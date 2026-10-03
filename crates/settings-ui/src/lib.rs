@@ -1,9 +1,9 @@
 //! A single settings tab, using the same schema and store as the terminal.
 
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Task, Window,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
+        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputState},
@@ -18,9 +18,7 @@ use nocterm_settings::{
     AppearanceMode, CONNECT_TIMEOUT_RANGE, CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE,
     LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, Settings,
 };
-use nocterm_ui::{
-    ActiveDesign as _, ActiveSettings as _, IconName, SettingsStore, update_settings,
-};
+use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName, SettingsStore, save_settings};
 use nocterm_workspace::{
     Item, ItemEvent, OpenSettings, SettingsPageHandle, SettingsPageSpec, Workspace,
 };
@@ -124,6 +122,27 @@ impl Fields {
                 .expect("serializable environment"),
             auto_lock: settings.vault.auto_lock_minutes.to_string(),
         }
+    }
+
+    fn values(self) -> [String; 16] {
+        [
+            self.font_family,
+            self.font_size,
+            self.line_height,
+            self.scrollback,
+            self.term,
+            self.timeout,
+            self.keepalive,
+            self.local_program,
+            self.local_args,
+            self.local_cwd,
+            self.local_env,
+            self.remote_program,
+            self.remote_args,
+            self.remote_cwd,
+            self.remote_env,
+            self.auto_lock,
+        ]
     }
 
     fn apply(&self, mut settings: Settings) -> Result<Settings, String> {
@@ -238,6 +257,8 @@ pub struct SettingsView {
     pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
     focus: FocusHandle,
     draft: Settings,
+    base_revision: u64,
+    saving: Option<Task<()>>,
     session_options: Entity<nocterm_ui::SessionOptionsEditor>,
     inputs: Vec<Entity<InputState>>,
     message: Option<(SharedString, bool)>,
@@ -255,25 +276,8 @@ impl SettingsView {
     ) -> Self {
         let draft = cx.settings().clone();
         let fields = Fields::from_settings(&draft);
-        let values = [
-            fields.font_family,
-            fields.font_size,
-            fields.line_height,
-            fields.scrollback,
-            fields.term,
-            fields.timeout,
-            fields.keepalive,
-            fields.local_program,
-            fields.local_args,
-            fields.local_cwd,
-            fields.local_env,
-            fields.remote_program,
-            fields.remote_args,
-            fields.remote_cwd,
-            fields.remote_env,
-            fields.auto_lock,
-        ];
-        let inputs = values
+        let inputs = fields
+            .values()
             .into_iter()
             .map(|value| cx.new(|cx| InputState::new(window, cx).default_value(value)))
             .collect();
@@ -286,6 +290,8 @@ impl SettingsView {
             focus: cx.focus_handle(),
             session_options,
             draft,
+            base_revision: cx.global::<SettingsStore>().revision(),
+            saving: None,
             inputs,
             message: None,
         }
@@ -332,6 +338,9 @@ impl SettingsView {
         cx.notify();
     }
     fn apply(&mut self, cx: &mut Context<Self>) {
+        if self.saving.is_some() {
+            return;
+        }
         let text = |index: usize| self.inputs[index].read(cx).value().to_string();
         let fields = Fields {
             font_family: text(0),
@@ -361,57 +370,87 @@ impl SettingsView {
             settings.logging = options.logging.unwrap_or_default();
             Ok(settings)
         });
-        match result {
-            Ok(settings) => match update_settings(cx, |current| *current = settings.clone()) {
-                Ok(()) => {
-                    self.draft = settings;
-                    let persistent = cx.global::<SettingsStore>().is_persistent();
-                    self.message = Some((
-                        if persistent {
-                            "Settings saved."
-                        } else {
-                            "Settings applied for this run. Saving is unavailable."
-                        }
-                        .into(),
-                        false,
-                    ));
-                }
-                Err(error) => {
-                    self.message = Some((format!("Could not save settings: {error}").into(), true))
-                }
-            },
-            Err(error) => self.message = Some((error.into(), true)),
+        let settings = match result {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.message = Some((error.into(), true));
+                cx.notify();
+                return;
+            }
+        };
+        let task = save_settings(cx, self.base_revision, settings.clone());
+        // In-memory settings publish synchronously, preserving existing clients
+        // which edit and immediately read their active settings.
+        use futures::FutureExt as _;
+        let mut task = Box::pin(task);
+        if let Some(result) = task.as_mut().now_or_never() {
+            self.saved(result, settings, cx);
+        } else {
+            self.message = Some(("Saving settings…".into(), false));
+            self.saving = Some(cx.spawn(async move |this, cx| {
+                let result = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.saving = None;
+                    this.saved(result, settings, cx);
+                });
+            }));
+            cx.notify();
         }
+    }
+    fn saved(&mut self, result: Result<u64, String>, settings: Settings, cx: &mut Context<Self>) {
+        match result {
+            Ok(revision) => {
+                self.base_revision = revision;
+                self.draft = settings;
+                let persistent = cx.global::<SettingsStore>().is_persistent();
+                self.message = Some((
+                    if persistent {
+                        "Settings saved."
+                    } else {
+                        "Settings applied for this run. Saving is unavailable."
+                    }
+                    .into(),
+                    false,
+                ));
+            }
+            Err(error) => {
+                self.message = Some((format!("Could not save settings: {error}").into(), true))
+            }
+        }
+        cx.notify();
+    }
+    fn replace_form(&mut self, settings: Settings, window: &mut Window, cx: &mut Context<Self>) {
+        self.draft = settings;
+        let options = global_options(&self.draft);
+        self.session_options
+            .update(cx, |editor, cx| editor.reset(options, window, cx));
+        for (input, value) in self
+            .inputs
+            .iter()
+            .zip(Fields::from_settings(&self.draft).values())
+        {
+            input.update(cx, |input, cx| input.set_value(value, window, cx));
+        }
+    }
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving.is_some() {
+            return;
+        }
+        self.base_revision = cx.global::<SettingsStore>().revision();
+        self.replace_form(cx.settings().clone(), window, cx);
+        self.message = Some((
+            "Saved settings loaded. Unsaved edits were discarded.".into(),
+            false,
+        ));
         cx.notify();
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.draft = Settings::default();
-        let options = global_options(&self.draft);
-        self.session_options
-            .update(cx, |editor, cx| editor.reset(options, window, cx));
-        let fields = Fields::from_settings(&self.draft);
-        let values = [
-            fields.font_family,
-            fields.font_size,
-            fields.line_height,
-            fields.scrollback,
-            fields.term,
-            fields.timeout,
-            fields.keepalive,
-            fields.local_program,
-            fields.local_args,
-            fields.local_cwd,
-            fields.local_env,
-            fields.remote_program,
-            fields.remote_args,
-            fields.remote_cwd,
-            fields.remote_env,
-            fields.auto_lock,
-        ];
-        for (input, value) in self.inputs.iter().zip(values) {
-            input.update(cx, |input, cx| input.set_value(value, window, cx));
+        if self.saving.is_some() {
+            return;
         }
+        // Restoring defaults changes the draft, not its optimistic base revision.
+        self.replace_form(Settings::default(), window, cx);
         self.message = Some((
             "Defaults restored in the form. Apply to save.".into(),
             false,
@@ -429,7 +468,11 @@ impl SettingsView {
         v_flex()
             .gap_1()
             .child(label)
-            .child(Input::new(&self.inputs[index]).small())
+            .child(
+                Input::new(&self.inputs[index])
+                    .small()
+                    .disabled(self.saving.is_some()),
+            )
             .child(
                 div()
                     .text_xs()
@@ -486,6 +529,7 @@ impl Render for SettingsView {
             appearance = appearance.child(
                 Button::new(("appearance", index))
                     .small()
+                    .disabled(self.saving.is_some())
                     .ghost()
                     .label(label)
                     .selected(mode == value)
@@ -507,6 +551,7 @@ impl Render for SettingsView {
             cursor = cursor.child(
                 Button::new(("cursor", index))
                     .small()
+                    .disabled(self.saving.is_some())
                     .ghost()
                     .label(label)
                     .selected(shape == value)
@@ -548,6 +593,7 @@ impl Render for SettingsView {
                             .child(
                                 Button::new("cursor-blink")
                                     .small()
+                                    .disabled(self.saving.is_some())
                                     .ghost()
                                     .label("Blink cursor")
                                     .selected(self.draft.terminal.cursor_blink)
@@ -560,6 +606,7 @@ impl Render for SettingsView {
                             .child(
                                 Button::new("copy-select")
                                     .small()
+                                    .disabled(self.saving.is_some())
                                     .ghost()
                                     .label("Copy on selection")
                                     .selected(self.draft.terminal.copy_on_select)
@@ -570,6 +617,20 @@ impl Render for SettingsView {
                                     })),
                             ),
                     )
+                    .child(
+                        Button::new("clipboard-write")
+                            .small().ghost()
+                            .label("Allow programs to write clipboard")
+                            .disabled(self.saving.is_some())
+                            .selected(self.draft.terminal.clipboard_write == nocterm_settings::ClipboardWritePolicy::FocusedTerminal)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.draft.terminal.clipboard_write = if this.draft.terminal.clipboard_write == nocterm_settings::ClipboardWritePolicy::Deny {
+                                    nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                                } else { nocterm_settings::ClipboardWritePolicy::Deny };
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Off by default. When allowed, only the focused terminal can write your clipboard using OSC 52."))
                     .child(self.field(3, "Scrollback lines", "0–1000000 lines.", cx))
                     .child(
                         h_flex()
@@ -577,6 +638,7 @@ impl Render for SettingsView {
                             .child(
                                 Button::new("line-numbers")
                                     .small()
+                                    .disabled(self.saving.is_some())
                                     .ghost()
                                     .label("Line numbers")
                                     .selected(self.draft.terminal.show_line_numbers)
@@ -589,6 +651,7 @@ impl Render for SettingsView {
                             .child(
                                 Button::new("timestamps")
                                     .small()
+                                    .disabled(self.saving.is_some())
                                     .ghost()
                                     .label("Line timestamps (UTC)")
                                     .selected(self.draft.terminal.show_timestamps)
@@ -630,6 +693,7 @@ impl Render for SettingsView {
             .child(
                 Button::new("local-integration")
                     .small()
+                    .disabled(self.saving.is_some())
                     .ghost()
                     .label("Local shell integration")
                     .selected(self.draft.local.integration)
@@ -683,6 +747,7 @@ impl Render for SettingsView {
             .child(
                 Button::new("remote-integration")
                     .small()
+                    .disabled(self.saving.is_some())
                     .ghost()
                     .label("Remote shell integration")
                     .selected(self.draft.ssh.launch.integration)
@@ -723,12 +788,21 @@ impl Render for SettingsView {
                     .gap_2()
                     .child(
                         Button::new("settings-reset")
+                            .disabled(self.saving.is_some())
                             .ghost()
                             .label("Restore defaults")
                             .on_click(cx.listener(Self::reset_click)),
                     )
                     .child(
+                        Button::new("settings-reload")
+                            .ghost()
+                            .label("Reload saved settings")
+                            .disabled(self.saving.is_some())
+                            .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+                    )
+                    .child(
                         Button::new("settings-apply")
+                            .disabled(self.saving.is_some())
                             .primary()
                             .label("Apply")
                             .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
@@ -1025,7 +1099,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn apply_reports_save_failure_and_keeps_active_and_draft_values(cx: &mut TestAppContext) {
+    async fn apply_reports_save_failure_and_keeps_active_and_draft_values(cx: &mut TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
@@ -1045,6 +1119,15 @@ mod tests {
             view.update(cx, |view, cx| {
                 view.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx));
                 view.apply(cx);
+                assert!(view.saving.is_some());
+                assert_eq!(*cx.settings(), Settings::default());
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, _, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.saving.is_none());
                 let (message, error) = view.message.as_ref().unwrap();
                 assert!(*error);
                 assert!(message.starts_with("Could not save settings:"));
@@ -1056,6 +1139,69 @@ mod tests {
                     "retain the edit for retry"
                 );
             });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn stale_settings_draft_retains_edits_until_reload_and_defaults_do_not_rebase(
+        cx: &mut TestAppContext,
+    ) {
+        let (first_window, first, second_window, second) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            nocterm_ui::init(
+                nocterm_ui::DesignTokens::builtin(),
+                SettingsStore::in_memory(Settings::default()),
+                cx,
+            );
+            let (first_window, first) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| SettingsView::new(window, cx))
+                })
+                .unwrap();
+            let (second_window, second) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| SettingsView::new(window, cx))
+                })
+                .unwrap();
+            (first_window, first, second_window, second)
+        });
+        cx.update_window(first_window, |_, window, cx| {
+            first.update(cx, |view, cx| {
+                view.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx));
+                view.apply(cx);
+                assert_eq!(view.base_revision, 1);
+            })
+        })
+        .unwrap();
+        cx.update_window(second_window, |_, window, cx| {
+            second.update(cx, |view, cx| {
+                view.inputs[1].update(cx, |input, cx| input.set_value("20", window, cx));
+                view.apply(cx);
+                assert!(
+                    view.message
+                        .as_ref()
+                        .unwrap()
+                        .0
+                        .contains("Reload saved settings")
+                );
+                assert_eq!(view.inputs[1].read(cx).value(), "20");
+                assert_eq!(cx.settings().terminal.font_size, Some(18.));
+                view.reset(window, cx);
+                assert_eq!(
+                    view.base_revision, 0,
+                    "defaults cannot authorize overwriting a newer draft"
+                );
+                view.apply(cx);
+                assert!(view.message.as_ref().unwrap().1);
+                view.reload(window, cx);
+                assert_eq!(view.base_revision, 1);
+                assert_eq!(view.inputs[1].read(cx).value(), "18");
+                view.inputs[1].update(cx, |input, cx| input.set_value("22", window, cx));
+                view.apply(cx);
+                assert!(!view.message.as_ref().unwrap().1);
+                assert_eq!(cx.settings().terminal.font_size, Some(22.));
+            })
         })
         .unwrap();
     }

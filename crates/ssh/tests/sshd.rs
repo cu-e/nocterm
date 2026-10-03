@@ -377,6 +377,43 @@ async fn a_changed_host_key_is_refused() {
 }
 
 #[tokio::test]
+async fn revoked_host_key_cannot_be_accepted_or_reach_authentication() {
+    let Some(sshd) = Sshd::start() else { return };
+    let key = fs::read_to_string(sshd.root().join("host_key.pub")).unwrap();
+    fs::write(
+        sshd.root().join("known_hosts"),
+        format!(
+            "{} {key}\n@revoked {} {key}",
+            sshd.host_label(),
+            sshd.host_label()
+        ),
+    )
+    .unwrap();
+    let transport = sshd.transport("plain");
+    let session = transport.open(sshd.request());
+    let reason = closed(&session, no_prompts).await;
+    assert!(
+        matches!(reason, CloseReason::Failed(SessionError::Other(message)) if message.contains("revoked"))
+    );
+}
+
+#[tokio::test]
+async fn malformed_host_trust_store_never_becomes_an_unknown_host_prompt() {
+    let Some(sshd) = Sshd::start() else { return };
+    fs::write(
+        sshd.root().join("known_hosts"),
+        format!("{} ssh-ed25519 invalid-key", sshd.host_label()),
+    )
+    .unwrap();
+    let transport = sshd.transport("plain");
+    let session = transport.open(sshd.request());
+    let reason = closed(&session, no_prompts).await;
+    assert!(
+        matches!(reason, CloseReason::Failed(SessionError::Other(message)) if message.contains("cannot verify host keys"))
+    );
+}
+
+#[tokio::test]
 async fn rejecting_the_host_key_ends_the_session() {
     let Some(sshd) = Sshd::start() else { return };
 

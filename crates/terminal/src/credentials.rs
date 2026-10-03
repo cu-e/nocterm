@@ -6,7 +6,7 @@ use nocterm_vault::{CredentialBinding, VaultService};
 use nocterm_workspace::SessionSpec;
 use std::{rc::Rc, sync::Arc};
 
-type Saved = Rc<dyn Fn(&SessionSpec, CredentialId, &mut App) -> Result<(), String>>;
+type Saved = Rc<dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>>>;
 pub(crate) struct ActiveCredentials {
     service: Arc<VaultService>,
     saved: Saved,
@@ -17,7 +17,7 @@ impl Global for ActiveCredentials {}
 /// connections/recent targets. It receives no plaintext secret.
 pub fn init_credentials(
     service: Arc<VaultService>,
-    on_saved: impl Fn(&SessionSpec, CredentialId, &mut App) -> Result<(), String> + 'static,
+    on_saved: impl Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>> + 'static,
     cx: &mut App,
 ) {
     cx.set_global(ActiveCredentials {
@@ -160,19 +160,14 @@ impl Terminal {
         let epoch = self.credentials.epoch;
         cx.spawn(async move |this, cx| {
             let result = future.await;
-            let _ = this.update(cx, |this, cx| {
+            let association = this.update(cx, |this, cx| {
                 if epoch != this.credentials.epoch {
-                    return;
+                    return None;
                 }
                 match result {
                     Ok(id) => {
                         this.set_credential_id(id);
-                        this.credentials.message = Some(match saved(&spec, id, cx) {
-                            Ok(()) => "Credential saved in the encrypted vault.".into(),
-                            Err(error) => format!(
-                                "Credential saved; could not link it to connection history: {error}"
-                            ),
-                        });
+                        return Some(saved(&spec, id, cx));
                     }
                     Err(error) => {
                         this.credentials.message =
@@ -180,7 +175,23 @@ impl Terminal {
                     }
                 }
                 cx.emit(TerminalEvent::Changed);
+                None
             });
+            if let Ok(Some(association)) = association {
+                let result = association.await;
+                let _ = this.update(cx, |this, cx| {
+                    if epoch != this.credentials.epoch {
+                        return;
+                    }
+                    this.credentials.message = Some(match result {
+                        Ok(()) => "Credential saved in the encrypted vault.".into(),
+                        Err(error) => format!(
+                            "Credential saved; could not link it to connection history: {error}"
+                        ),
+                    });
+                    cx.emit(TerminalEvent::Changed);
+                });
+            }
         })
         .detach();
     }

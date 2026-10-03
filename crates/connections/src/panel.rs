@@ -146,9 +146,13 @@ impl ConnectionsPanel {
                 .on_ok(move |_, window, cx| {
                     let deleted = Connections::global(cx)
                         .update(cx, |connections, cx| connections.delete_profile(id, cx));
-                    if let Err(error) = deleted {
-                        window.push_notification(error, cx);
-                    }
+                    window
+                        .spawn(cx, async move |cx| {
+                            if let Err(error) = deleted.await {
+                                let _ = cx.update(|window, cx| window.push_notification(error, cx));
+                            }
+                        })
+                        .detach();
                     true
                 })
         });
@@ -169,11 +173,15 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        if let Err(error) = self.connections.update(cx, |connections, cx| {
+        let moved = self.connections.update(cx, |connections, cx| {
             connections.move_profile(dragged.0, group, cx)
-        }) {
-            window.push_notification(error, cx);
-        }
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            if let Err(error) = moved.await {
+                let _ = cx.update(|window, cx| window.push_notification(error, cx));
+            }
+        })
+        .detach();
     }
 
     fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
@@ -317,23 +325,11 @@ impl ConnectionsPanel {
         let connections = self.connections.read(cx);
         let profiles = connections.profiles();
 
-        let top: Vec<Profile> = profiles
-            .in_group(None, &filter)
+        let (top, groups) = profiles.grouped(&filter);
+        let top: Vec<_> = top.into_iter().cloned().collect();
+        let groups: Vec<_> = groups
             .into_iter()
-            .cloned()
-            .collect();
-        let groups: Vec<(String, Vec<Profile>)> = profiles
-            .groups()
-            .into_iter()
-            .map(|group| {
-                let members = profiles
-                    .in_group(Some(group), &filter)
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                (group.to_owned(), members)
-            })
-            .filter(|(_, members)| !filtering || !members.is_empty())
+            .map(|(name, members)| (name, members.into_iter().cloned().collect::<Vec<_>>()))
             .collect();
         let empty = profiles.is_empty() && groups.is_empty();
         let nothing_matches = top.is_empty() && groups.is_empty();
@@ -440,7 +436,12 @@ impl Focusable for ConnectionsPanel {
 
 impl Render for ConnectionsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let load_error = self.connections.read(cx).load_error().map(str::to_owned);
+        let load_error = self
+            .connections
+            .read(cx)
+            .load_error()
+            .or_else(|| self.connections.read(cx).persistence_error())
+            .map(str::to_owned);
         let theme = cx.theme();
         let danger = theme.danger;
 
@@ -478,7 +479,7 @@ impl Render for ConnectionsPanel {
                         .p_2()
                         .text_xs()
                         .text_color(danger)
-                        .child(format!("Saved connections could not be read. {error}")),
+                        .child(format!("Connections: {error}")),
                 )
             })
             .child(div().flex_1().min_h_0().child(self.render_list(cx)))
@@ -488,6 +489,7 @@ impl Render for ConnectionsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt as _;
     use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 
     #[gpui_kit::test]
@@ -511,8 +513,16 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             let connections = Connections::global(cx);
             connections.update(cx, |connections, cx| {
-                connections.save_profile(a.clone(), cx).unwrap();
-                connections.save_profile(b, cx).unwrap();
+                connections
+                    .save_profile(a.clone(), cx)
+                    .now_or_never()
+                    .unwrap()
+                    .unwrap();
+                connections
+                    .save_profile(b, cx)
+                    .now_or_never()
+                    .unwrap()
+                    .unwrap();
             });
             let panel = cx.new(|cx| {
                 ConnectionsPanel::new(connections.clone(), workspace.downgrade(), window, cx)

@@ -418,6 +418,32 @@ fn traversal_source_is_rejected_before_queueing() {
     }
     assert!(transfers.snapshot().is_empty());
 }
+
+#[test]
+fn oversized_downloads_are_rejected_before_opening_remote_files_or_local_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    let fs = Fs::default();
+    let transfers = Transfers::new().unwrap();
+    for sources in [
+        vec!["/missing".into(); 4_097],
+        vec![format!("/{}", "a".repeat(16 * 1024))],
+        vec![format!("/{}", "a".repeat(1024)); 1_024],
+    ] {
+        assert!(matches!(
+            transfers.enqueue_download(DownloadRequest {
+                sources,
+                target: target("host"),
+                local_destination: root.path().into(),
+                fs: Arc::new(fs.clone()),
+                collisions: CollisionPolicy::Skip,
+            }),
+            Err(nocterm_transfers::QueueError::RequestTooLarge)
+        ));
+    }
+    assert!(transfers.snapshot().is_empty());
+    assert_eq!(fs.0.live.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
 #[cfg(unix)]
 #[test]
 fn destination_links_are_rejected_and_ancestor_swap_cannot_escape_capability() {

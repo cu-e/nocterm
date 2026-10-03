@@ -24,6 +24,7 @@
 | `ssh.launch.program` | ["string","null"] | `null` | Shell executable. Empty means the system or server default. |
 | `ssh.proxy` | object | `{"type":"direct"}` |  |
 | `terminal.charset` | ["utf8","windows1251","koi8_r","windows1252","gbk"] | `"utf8"` |  |
+| `terminal.clipboard_write` | ["deny","focused_terminal"] | `"deny"` | Permission for terminal output (OSC 52) to change the system clipboard. |
 | `terminal.copy_on_select` | "boolean" | `false` | Copy text to the clipboard as soon as it is selected. |
 | `terminal.cursor_blink` | "boolean" | `true` | Blink the cursor while the terminal has focus. |
 | `terminal.cursor_shape` | ["block","bar","underline"] | `"block"` | Shape of the terminal cursor. |

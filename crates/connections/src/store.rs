@@ -134,13 +134,44 @@ impl Profiles {
                     .filter_map(|profile| profile.group.as_deref()),
             )
             .collect();
-        groups.sort_by(|left, right| {
-            left.to_lowercase()
-                .cmp(&right.to_lowercase())
-                .then(left.cmp(right))
-        });
+        groups.sort_by_cached_key(|name| (name.to_lowercase(), *name));
         groups.dedup();
         groups
+    }
+
+    /// Group and filter once, rather than rescanning every profile for every folder.
+    pub fn grouped(&self, filter: &str) -> (Vec<&Profile>, Vec<(String, Vec<&Profile>)>) {
+        let filter = filter.trim().to_lowercase();
+        let mut groups: Vec<_> = self
+            .groups()
+            .into_iter()
+            .map(|name| (name.to_owned(), Vec::new()))
+            .collect();
+        let indices: std::collections::HashMap<_, _> = groups
+            .iter()
+            .enumerate()
+            .map(|(index, (name, _))| (name.clone(), index))
+            .collect();
+        let mut top = Vec::new();
+        for profile in &self.list {
+            if !profile.matches_normalized(&filter) {
+                continue;
+            }
+            if let Some(group) = &profile.group {
+                groups[indices[group]].1.push(profile);
+            } else {
+                top.push(profile);
+            }
+        }
+        top.sort_by_cached_key(|profile| (profile.name.to_lowercase(), profile.name.as_str()));
+        for (_, members) in &mut groups {
+            members
+                .sort_by_cached_key(|profile| (profile.name.to_lowercase(), profile.name.as_str()));
+        }
+        if !filter.is_empty() {
+            groups.retain(|(_, members)| !members.is_empty());
+        }
+        (top, groups)
     }
 
     /// The profiles filed under `group` (`None`: at the top level) that match
@@ -160,7 +191,9 @@ impl Profile {
     /// Whether `filter` occurs, ignoring case, in the name, the destination or
     /// the folder. An empty filter matches everything.
     pub fn matches(&self, filter: &str) -> bool {
-        let filter = filter.trim().to_lowercase();
+        self.matches_normalized(&filter.trim().to_lowercase())
+    }
+    fn matches_normalized(&self, filter: &str) -> bool {
         filter.is_empty()
             || [
                 self.name.as_str(),
@@ -170,7 +203,7 @@ impl Profile {
                 self.group.as_deref().unwrap_or_default(),
             ]
             .iter()
-            .any(|field| field.to_lowercase().contains(&filter))
+            .any(|field| field.to_lowercase().contains(filter))
     }
 }
 
@@ -472,5 +505,40 @@ mod tests {
         let text = toml::to_string(&recents).unwrap();
 
         assert_eq!(toml::from_str::<Recents>(&text).unwrap(), recents);
+    }
+    #[test]
+    fn one_pass_grouped_view_preserves_folders_filters_and_case_order() {
+        let mut profiles = Profiles::default();
+        let saved = profile("Archived", "old.host", Some("Empty"));
+        profiles.upsert(saved.clone());
+        profiles.remove(saved.id);
+        profiles.upsert(profile("beta", "build.host", Some("Work")));
+        profiles.upsert(profile("Alpha", "build.host", Some("Work")));
+        profiles.upsert(profile("Standalone", "other.host", None));
+        let (top, groups) = profiles.grouped("");
+        assert_eq!(
+            top.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Standalone"]
+        );
+        assert_eq!(
+            groups
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["Empty", "Work"]
+        );
+        assert!(groups[0].1.is_empty());
+        assert_eq!(
+            groups[1]
+                .1
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha", "beta"]
+        );
+        let (top, groups) = profiles.grouped(" BUILD ");
+        assert!(top.is_empty());
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].1, profiles.in_group(Some("Work"), "BUILD"));
     }
 }

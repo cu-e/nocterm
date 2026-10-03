@@ -16,7 +16,7 @@ mod theme;
 
 pub use design::{ActiveDesign, Design};
 pub use icons::{Assets, IconName};
-pub use settings::{ActiveSettings, SettingsStore, update_settings};
+pub use settings::{ActiveSettings, SettingsStore, save_settings, update_settings};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
 
@@ -35,6 +35,7 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) {
 
     cx.set_global(Design::new(tokens));
     cx.set_global(settings);
+    settings::init(cx);
     apply_theme(cx);
 
     cx.observe_global::<Design>(apply_theme).detach();
