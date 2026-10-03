@@ -13,8 +13,8 @@ use nocterm_session::{
 use nocterm_settings::{CursorShape, TerminalSettings};
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
 use nocterm_vt::{
-    Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchPoint,
-    SearchProgress, SearchResult, TermSize,
+    Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
+    SearchPoint, SearchProgress, SearchResult, TermSize,
 };
 use nocterm_workspace::{SessionContext, SessionSpec};
 
@@ -44,6 +44,7 @@ pub enum TerminalEvent {
 #[derive(Default)]
 pub struct FindState {
     pub query: String,
+    pub options: SearchOptions,
     pub searching: bool,
     /// Counts are final when `searching` is false; active may be an early preview.
     pub result: SearchResult,
@@ -645,6 +646,7 @@ impl Terminal {
         self.find_task = None;
         self.emulator.clear_search();
         self.find = FindState {
+            options: self.find.options,
             query: query
                 .chars()
                 .take(nocterm_vt::MAX_SEARCH_QUERY + 1)
@@ -652,6 +654,15 @@ impl Terminal {
             ..Default::default()
         };
         self.scan_find(direction, anchor, Duration::ZERO, cx);
+    }
+
+    pub fn set_find_options(&mut self, options: SearchOptions, cx: &mut Context<Self>) {
+        if self.find.options == options {
+            return;
+        }
+        self.find.options = options;
+        let anchor = self.find.result.active.map(|found| found.start);
+        self.scan_find(SearchDirection::Stay, anchor, Duration::ZERO, cx);
     }
 
     pub fn find_next(&mut self, previous: bool, cx: &mut Context<Self>) {
@@ -670,7 +681,10 @@ impl Terminal {
 
     pub fn clear_find(&mut self, cx: &mut Context<Self>) {
         self.find_task = None;
-        self.find = FindState::default();
+        self.find = FindState {
+            options: self.find.options,
+            ..Default::default()
+        };
         self.emulator.clear_search();
         cx.emit(TerminalEvent::Output);
     }
@@ -702,6 +716,7 @@ impl Terminal {
     ) {
         self.find_task = None;
         self.find.error = None;
+        self.find.result = SearchResult::default();
         self.emulator.clear_search();
         if self.find.query.is_empty() {
             self.find.searching = false;
@@ -709,7 +724,12 @@ impl Terminal {
             cx.emit(TerminalEvent::Output);
             return;
         }
-        let mut scan = match self.emulator.search(&self.find.query, direction, anchor) {
+        let mut scan = match self.emulator.search_with_options(
+            &self.find.query,
+            self.find.options,
+            direction,
+            anchor,
+        ) {
             Ok(scan) => scan,
             Err(error) => {
                 self.find.error = Some(error);
@@ -727,8 +747,12 @@ impl Terminal {
             loop {
                 let progress = this.update(cx, |this, cx| {
                     if restart {
-                        let Ok(fresh) = this.emulator.search(&this.find.query, direction, anchor)
-                        else {
+                        let Ok(fresh) = this.emulator.search_with_options(
+                            &this.find.query,
+                            this.find.options,
+                            direction,
+                            anchor,
+                        ) else {
                             return SearchProgress::Invalidated;
                         };
                         scan = fresh;
@@ -745,6 +769,14 @@ impl Terminal {
                         this.emulator.show_search_match(found);
                         cx.emit(TerminalEvent::Output);
                     }
+                    if let SearchProgress::Failed(error) = &progress {
+                        this.find.error = Some(error.clone());
+                        this.find.result = SearchResult::default();
+                        this.find.searching = false;
+                        this.find_task = None;
+                        this.emulator.clear_search();
+                        cx.emit(TerminalEvent::Output);
+                    }
                     if let SearchProgress::Complete(result) = progress {
                         this.find.result = result;
                         this.find.searching = false;
@@ -759,6 +791,23 @@ impl Terminal {
                     progress
                 });
                 match progress {
+                    Ok(SearchProgress::Work(work)) => {
+                        let result = cx
+                            .background_executor()
+                            .spawn(async move { work.run() })
+                            .await;
+                        let accepted =
+                            this.update(cx, |this, _| scan.accept_work(&this.emulator, result));
+                        if matches!(accepted, Ok(SearchProgress::Invalidated)) {
+                            restart = true;
+                            cx.background_executor()
+                                .timer(Duration::from_millis(100))
+                                .await;
+                        } else if accepted.is_err() {
+                            break;
+                        }
+                        // A batch can contain many short logical lines; no per-line timer.
+                    }
                     Ok(SearchProgress::Searching) => {
                         cx.background_executor()
                             .timer(Duration::from_millis(1))

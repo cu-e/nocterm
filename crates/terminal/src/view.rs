@@ -70,6 +70,7 @@ pub struct TerminalView {
     scroll_remainder: f32,
     secret: Option<SecretField>,
     find: Option<FindField>,
+    notice_messages: [Option<String>; 3],
     _subscriptions: Vec<Subscription>,
 }
 
@@ -131,6 +132,7 @@ impl TerminalView {
             scroll_remainder: 0.0,
             secret: None,
             find: None,
+            notice_messages: Default::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -149,10 +151,14 @@ impl TerminalView {
         match event {
             TerminalEvent::Changed => {
                 self.sync_secret_field(window, cx);
+                self.sync_operational_notices(window, cx);
                 cx.emit(ItemEvent::Changed);
                 cx.notify();
             }
-            TerminalEvent::Output => cx.notify(),
+            TerminalEvent::Output => {
+                self.sync_operational_notices(window, cx);
+                cx.notify();
+            }
             // A visual or audible bell is a setting still to come.
             TerminalEvent::Bell => {}
             TerminalEvent::ClipboardWrite(text) => {
@@ -163,6 +169,59 @@ impl TerminalView {
                 {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 }
+            }
+        }
+    }
+
+    fn sync_operational_notices(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.terminal.read(cx);
+        let messages = [
+            terminal
+                .is_connected()
+                .then(|| terminal.credential_message().map(str::to_owned))
+                .flatten(),
+            terminal.text_error(),
+            terminal.recording_status().and_then(|status| status.error),
+        ];
+        for (index, message) in messages.into_iter().enumerate() {
+            if self.notice_messages[index] == message {
+                continue;
+            }
+            self.notice_messages[index] = message.clone();
+            let Some(message) = message else { continue };
+            match index {
+                0 => {
+                    let terminal = self.terminal.downgrade();
+                    nocterm_ui::notice::warning_action(
+                        window,
+                        cx,
+                        "terminal-credential",
+                        "Credential storage",
+                        message,
+                        "Dismiss",
+                        move |_, cx| {
+                            if let Some(terminal) = terminal.upgrade() {
+                                terminal.update(cx, |terminal, cx| {
+                                    terminal.clear_credential_message(cx)
+                                });
+                            }
+                        },
+                    );
+                }
+                1 => nocterm_ui::notice::error(
+                    window,
+                    cx,
+                    "terminal-input",
+                    "Terminal input",
+                    message,
+                ),
+                _ => nocterm_ui::notice::error(
+                    window,
+                    cx,
+                    "terminal-recording",
+                    "Session recording",
+                    message,
+                ),
             }
         }
     }
@@ -525,6 +584,21 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn toggle_find_option(
+        &mut self,
+        edit: impl FnOnce(&mut nocterm_vt::SearchOptions),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut options = self.terminal.read(cx).find().options;
+        edit(&mut options);
+        self.terminal
+            .update(cx, |terminal, cx| terminal.set_find_options(options, cx));
+        if let Some(field) = &self.find {
+            window.focus(&field.input.read(cx).focus_handle(cx), cx);
+        }
+    }
+
     fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let field = self.find.as_ref()?;
         let find = self.terminal.read(cx).find();
@@ -571,6 +645,51 @@ impl TerminalView {
                                 .child(Input::new(&field.input).small()),
                         )
                         .child(
+                            Button::new("find-regex")
+                                .ghost()
+                                .small()
+                                .label(".*")
+                                .selected(find.options.regex)
+                                .tooltip("Use regular expression (per logical line)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_find_option(
+                                        |options| options.regex = !options.regex,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("find-case-sensitive")
+                                .ghost()
+                                .small()
+                                .label("Aa")
+                                .selected(find.options.case_sensitive)
+                                .tooltip("Match case")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_find_option(
+                                        |options| options.case_sensitive = !options.case_sensitive,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("find-whole-word")
+                                .ghost()
+                                .small()
+                                .label("ab")
+                                .selected(find.options.whole_word)
+                                .tooltip("Match whole word")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_find_option(
+                                        |options| options.whole_word = !options.whole_word,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
                             Button::new("find-previous")
                                 .ghost()
                                 .small()
@@ -609,7 +728,11 @@ impl TerminalView {
                             .text_xs()
                             .min_w_0()
                             .truncate()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(if find.error.is_some() {
+                                cx.theme().danger
+                            } else {
+                                cx.theme().muted_foreground
+                            })
                             .child(label),
                     )
                 })
@@ -1128,48 +1251,9 @@ impl Render for TerminalView {
                     .child(element.render()),
             )
             .children(self.render_prompt(cx))
-            .children(self.render_status(cx))
-            .when(
-                matches!(self.terminal.read(cx).status(), Status::Connected),
-                |root| {
-                    let message = self
-                        .terminal
-                        .read(cx)
-                        .credential_message()
-                        .map(str::to_owned);
-                    root.when_some(message, |root, message| {
-                        root.child(
-                            h_flex()
-                                .absolute()
-                                .bottom_0()
-                                .left_0()
-                                .right_0()
-                                .p_2()
-                                .gap_2()
-                                .bg(cx.theme().popover)
-                                .child(div().flex_1().text_xs().child(message))
-                                .child(
-                                    Button::new("dismiss-credential-notice")
-                                        .ghost()
-                                        .small()
-                                        .label("Dismiss")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.terminal.update(cx, |terminal, cx| {
-                                                terminal.clear_credential_message(cx)
-                                            })
-                                        })),
-                                ),
-                        )
-                    })
-                },
-            );
+            .children(self.render_status(cx));
         let terminal = self.terminal.read(cx);
         let recording = terminal.recording_status();
-        let message = terminal.text_error().or_else(|| {
-            recording
-                .as_ref()
-                .and_then(|recording| recording.error.clone())
-        });
         let active = terminal.is_recording();
         let connected = terminal.is_connected();
         let path = recording
@@ -1187,9 +1271,6 @@ impl Render for TerminalView {
                     .py_1()
                     .gap_1()
                     .bg(cx.theme().background)
-                    .when_some(message, |footer, message| {
-                        footer.child(div().text_xs().text_color(cx.theme().danger).child(message))
-                    })
                     .child(
                         h_flex()
                             .gap_2()

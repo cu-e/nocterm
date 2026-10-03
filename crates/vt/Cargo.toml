@@ -11,6 +11,8 @@ layer = "domain"
 
 [dependencies]
 alacritty_terminal.workspace = true
+regex.workspace = true
+regex-syntax.workspace = true
 
 [lints]
 workspace = true

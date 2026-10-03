@@ -4976,6 +4976,8 @@ name = "nocterm-vt"
 version = "0.0.0"
 dependencies = [
  "alacritty_terminal",
+ "regex",
+ "regex-syntax",
 ]
 
 [[package]]

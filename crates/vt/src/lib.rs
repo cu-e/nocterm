@@ -18,8 +18,8 @@ mod paste;
 mod search;
 
 pub use search::{
-    MAX_SEARCH_QUERY, SearchDirection, SearchMatch, SearchPoint, SearchProgress, SearchResult,
-    SearchScan,
+    MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchMatch,
+    SearchOptions, SearchPoint, SearchProgress, SearchResult, SearchScan,
 };
 
 pub use emulator::{

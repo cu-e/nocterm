@@ -91,6 +91,8 @@ futures = "0.3"
 gpui-kit = "0.7"
 parking_lot = "0.12"
 portable-pty = "0.9"
+regex = "1"
+regex-syntax = "0.8"
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3"
 schemars = "1"

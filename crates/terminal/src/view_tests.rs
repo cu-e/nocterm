@@ -397,3 +397,191 @@ fn osc52_cannot_write_from_a_focused_terminal_in_an_inactive_window(cx: &mut Tes
         );
     });
 }
+
+#[gpui_kit::test]
+fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut TestAppContext) {
+    let (handle, view, transport) = fixture(cx);
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(b"Cat cat concatenate".to_vec()),
+    );
+    let driver = transport.drivers.lock().unwrap()[0].clone();
+    drain(&driver);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.open_find(Some("cat".into()), false, window, cx)
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    complete(cx, &view);
+    assert_eq!(
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        2
+    );
+    for (button, count) in [
+        ("find-case-sensitive", 3),
+        ("find-whole-word", 2),
+        ("find-regex", 2),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(button, cx);
+            let input = &view.read(cx).find.as_ref().unwrap().input;
+            assert!(input.read(cx).focus_handle(cx).is_focused(window));
+            assert_eq!(input.read(cx).value().as_ref(), "cat");
+        })
+        .unwrap();
+        complete(cx, &view);
+        assert_eq!(
+            view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+            count
+        );
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.dispatch_action(Box::new(native_input::SelectAll), cx);
+        window.input("[", cx);
+    })
+    .unwrap();
+    complete(cx, &view);
+    view.read_with(cx, |v, cx| {
+        let find = v.terminal.read(cx).find();
+        assert!(
+            find.error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid or oversized")
+        );
+        assert_eq!(find.result.count, 0);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("find-regex", cx);
+    })
+    .unwrap();
+    complete(cx, &view);
+    assert!(view.read_with(cx, |v, cx| v.terminal.read(cx).find().error.is_none()));
+    assert!(
+        drain(&driver).is_empty(),
+        "search switches leaked input to shell"
+    );
+}
+
+#[gpui_kit::test]
+fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
+    cx: &mut TestAppContext,
+) {
+    let (handle, view, transport) = fixture(cx);
+    emit(cx, &transport, 0, Event::Output(b"ID1 id2 xid3 ".to_vec()));
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.open_find(Some(r"id\d+".into()), false, window, cx);
+            v.terminal.update(cx, |t, cx| {
+                t.set_find_options(
+                    nocterm_vt::SearchOptions {
+                        regex: true,
+                        case_sensitive: false,
+                        whole_word: true,
+                    },
+                    cx,
+                )
+            });
+        });
+    })
+    .unwrap();
+    // Invalidate a scan before its background work finishes.
+    emit(cx, &transport, 0, Event::Output(b"ID4 ".to_vec()));
+    complete(cx, &view);
+    assert_eq!(
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        3
+    );
+    // Completed scans restart after the output throttle with the same options.
+    emit(cx, &transport, 0, Event::Output(b"id5 ".to_vec()));
+    complete(cx, &view);
+    assert_eq!(
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        4
+    );
+    cx.update(|cx| {
+        view.update(cx, |v, cx| {
+            v.terminal.update(cx, |t, cx| {
+                t.resize(nocterm_vt::TermSize::new(9, 4, 0, 0), cx)
+            });
+        })
+    });
+    complete(cx, &view);
+    view.read_with(cx, |v, cx| {
+        let find = v.terminal.read(cx).find();
+        assert_eq!(find.result.count, 4);
+        assert!(find.options.regex && !find.options.case_sensitive && find.options.whole_word);
+    });
+}
+
+#[gpui_kit::test]
+fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::component::WindowExt as _;
+    let (handle, view, _) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.terminal.update(cx, |t, _| {
+                t.credentials.message =
+                    Some("Credential was not saved; unlock the vault and retry.".into())
+            });
+        });
+        window.render_frame(cx);
+        assert!(
+            window.notifications(cx).is_empty(),
+            "render posted an operational notice"
+        );
+        view.update(cx, |v, cx| {
+            v.terminal
+                .update(cx, |_, cx| cx.emit(TerminalEvent::Changed));
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(window.notifications(cx).len(), 1);
+        window.render_frame(cx);
+        window.click("notice-action", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |v, cx| {
+        v.terminal.read(cx).credential_message().is_none()
+    }));
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.clear_notifications(cx);
+        view.update(cx, |v, cx| {
+            v.terminal.update(cx, |t, cx| t.start_recording(cx))
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(window.notifications(cx).len(), 1);
+        window.clear_notifications(cx);
+        view.update(cx, |v, cx| {
+            v.terminal
+                .update(cx, |_, cx| cx.emit(TerminalEvent::Output))
+        });
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.notifications(cx).is_empty(),
+            "unchanged error returned after dismissal"
+        );
+    })
+    .unwrap();
+}
