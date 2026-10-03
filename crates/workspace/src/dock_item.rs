@@ -4,12 +4,14 @@ use std::rc::Rc;
 use crate::{ItemHandle, TabState, Workspace};
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         dock::{BasePanel, Panel, PanelEvent},
         h_flex,
         input::{Input, InputEvent, InputState},
+        menu::{ContextMenuExt as _, PopupMenuItem},
     },
     div,
     prelude::*,
@@ -146,9 +148,12 @@ impl Panel for DockItem {
             TabState::Ended => cx.theme().danger,
         };
         let workspace = self.workspace.clone();
+        let menu_workspace = workspace.clone();
         let id = self.item.item_id();
         let bottom = self.bottom;
         h_flex()
+            .id(("tab-title", id.as_u64()))
+            .test_support()
             .pl_2()
             .pr_1()
             .gap_2()
@@ -212,6 +217,61 @@ impl Panel for DockItem {
                         });
                     }),
             )
+            .context_menu(move |mut menu, _, cx| {
+                use crate::workspace::TabCloseScope;
+                if bottom {
+                    let workspace = menu_workspace.clone();
+                    return menu
+                        .item(PopupMenuItem::new("Close Terminal").on_click(
+                            move |_, window, cx| {
+                                let _ = workspace.update(cx, |workspace, cx| {
+                                    workspace.close_local_terminal(window, cx)
+                                });
+                            },
+                        ))
+                        .separator()
+                        .menu("Settings", Box::new(crate::OpenSettings));
+                }
+                for (label, scope) in [
+                    ("Close Tab", TabCloseScope::Current),
+                    ("Close Other Tabs in Pane", TabCloseScope::Others),
+                    ("Close Tabs to the Left", TabCloseScope::Left),
+                    ("Close Tabs to the Right", TabCloseScope::Right),
+                    ("Close All Tabs", TabCloseScope::All),
+                ] {
+                    let disabled = menu_workspace.upgrade().is_none_or(|workspace| {
+                        workspace.read(cx).tabs_to_close(id, scope, cx).is_empty()
+                    });
+                    let workspace = menu_workspace.clone();
+                    menu = menu.item(PopupMenuItem::new(label).disabled(disabled).on_click(
+                        move |_, window, cx| {
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.close_tabs(id, scope, window, cx)
+                            });
+                        },
+                    ));
+                }
+                menu = menu.separator();
+                for (label, placement) in [
+                    (
+                        "Split Vertically — Right",
+                        gpui_kit::component::Placement::Right,
+                    ),
+                    (
+                        "Split Horizontally — Below",
+                        gpui_kit::component::Placement::Bottom,
+                    ),
+                ] {
+                    let workspace = menu_workspace.clone();
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.split_item(id, placement, window, cx)
+                        });
+                    }));
+                }
+                menu.separator()
+                    .menu("Settings", Box::new(crate::OpenSettings))
+            })
     }
 }
 impl Render for DockItem {

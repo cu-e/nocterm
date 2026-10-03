@@ -146,6 +146,7 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
             workspace.toggle_local_terminal(window, cx);
             assert_eq!(closes.get(), 0);
             workspace.close_local_terminal(window, cx);
+            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
             assert_eq!(closes.get(), 1);
             assert_eq!(
                 workspace.active_item().unwrap().item_id(),
@@ -157,6 +158,153 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     assert_eq!(closes.get(), 1);
+}
+
+#[gpui_kit::test]
+fn close_scopes_follow_reordered_pane_tabs_and_do_not_close_other_panes(cx: &mut TestAppContext) {
+    use crate::TabCloseScope;
+    let (window, workspace) = fixture(cx);
+    let closes = Rc::new(Cell::new(0));
+    cx.update_window(window, |_, window, cx| {
+        let a = probe(cx, closes.clone());
+        let b = probe(cx, closes.clone());
+        let c = probe(cx, closes.clone());
+        let isolated = probe(cx, closes.clone());
+        workspace.update(cx, |workspace, cx| {
+            for item in [&a, &b, &c, &isolated] {
+                workspace.add_item(item.clone(), window, cx);
+            }
+            workspace.split_active(Placement::Right, window, cx);
+            workspace.activate_item_by_id(c.entity_id(), window, cx);
+            workspace.move_active_tab(-1, window, cx); // a, c, b
+            workspace.activate_item_by_id(isolated.entity_id(), window, cx);
+            assert_eq!(
+                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Left, cx),
+                [a.entity_id()]
+            );
+            assert_eq!(
+                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Right, cx),
+                [b.entity_id()]
+            );
+            assert_eq!(
+                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Others, cx),
+                [a.entity_id(), b.entity_id()]
+            );
+            workspace.close_tabs(c.entity_id(), TabCloseScope::Others, window, cx);
+            assert_eq!(
+                workspace.active_item().unwrap().item_id(),
+                isolated.entity_id()
+            );
+            assert_eq!(workspace.items.len(), 2);
+            assert_eq!(groups(workspace, cx), 2);
+            assert_eq!(closes.get(), 2);
+            let local = probe(cx, Rc::new(Cell::new(0)));
+            workspace.set_local_terminal(local, window, cx);
+            workspace.close_tabs(c.entity_id(), TabCloseScope::All, window, cx);
+            assert!(workspace.items.is_empty());
+            assert!(workspace.local_terminal.is_some());
+            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert_eq!(closes.get(), 4);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        closes.get(),
+        4,
+        "native deferred removal must not close twice"
+    );
+}
+
+#[gpui_kit::test]
+fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
+    let (handle, workspace) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.sidebar_open = false;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        let settings = window.find("open-settings").bounds();
+        assert!(window.viewport_size().width - settings.right() < gpui_kit::px(16.));
+        assert!(window.try_find("toggle-local-terminal").is_some());
+        assert!(window.try_find("open-settings").is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn tab_context_menu_closes_clicked_inactive_tab_and_not_active_tab(cx: &mut TestAppContext) {
+    let (handle, workspace) = fixture(cx);
+    let closes = Rc::new(Cell::new(0));
+    let (a, b) = cx
+        .update_window(handle, |_, window, cx| {
+            let a = probe(cx, closes.clone());
+            let b = probe(cx, closes.clone());
+            workspace.update(cx, |workspace, cx| {
+                workspace.add_item(a.clone(), window, cx);
+                workspace.add_item(b.clone(), window, cx);
+            });
+            window.render_frame(cx);
+            window.right_click(("tab-title", a.entity_id().as_u64()), cx);
+            (a, b)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("popup-menu").is_some());
+        window.press("down", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.items.len(), 1);
+        assert_eq!(workspace.active_item().unwrap().item_id(), b.entity_id());
+        assert_ne!(workspace.active_item().unwrap().item_id(), a.entity_id());
+    });
+    assert_eq!(closes.get(), 1);
+}
+
+#[gpui_kit::test]
+fn tab_context_menu_splits_clicked_tab_without_recreating_it(cx: &mut TestAppContext) {
+    let (handle, workspace) = fixture(cx);
+    let closes = Rc::new(Cell::new(0));
+    let clicked = cx
+        .update_window(handle, |_, window, cx| {
+            let a = probe(cx, closes.clone());
+            let b = probe(cx, closes.clone());
+            let c = probe(cx, closes.clone());
+            workspace.update(cx, |workspace, cx| {
+                for item in [a, b.clone(), c] {
+                    workspace.add_item(item, window, cx);
+                }
+            });
+            window.render_frame(cx);
+            window.right_click(("tab-title", b.entity_id().as_u64()), cx);
+            b
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(6usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(groups(workspace, cx), 2);
+        assert_eq!(workspace.items.len(), 3);
+        assert!(
+            workspace
+                .items
+                .iter()
+                .any(|item| item.handle.item_id() == clicked.entity_id())
+        );
+    });
+    assert_eq!(closes.get(), 0);
 }
 
 #[gpui_kit::test]

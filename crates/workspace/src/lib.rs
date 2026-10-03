@@ -24,13 +24,15 @@ mod dock_item;
 mod item;
 mod local_terminal;
 mod panel;
+mod settings_page;
 mod workspace;
 
 pub use actions::*;
 pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::LocalTerminal;
 pub use panel::{Panel, PanelHandle};
-pub use workspace::{SessionSpec, Workspace, WorkspaceEvent};
+pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
+pub use workspace::{SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
 
 /// The key context of the workspace, for keymap entries.
 pub const KEY_CONTEXT: &str = "Workspace";

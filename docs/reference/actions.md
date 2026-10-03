@@ -16,8 +16,12 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `terminal::ScrollToBottom` | Scroll back to the live screen. | `shift-end` (linux, windows; Terminal); `cmd-end` (macos; Terminal) |
 | `terminal::ScrollToTop` | Scroll to the oldest line of history. | `shift-home` (linux, windows; Terminal); `cmd-home` (macos; Terminal) |
 | `terminal::ToggleRecording` | Start or stop output-only session recording. |  |
+| `workspace::CloseAllTabs` | Close all central tabs, retaining the local terminal. |  |
 | `workspace::CloseLocalTerminal` | Close the bottom local terminal and end its process. |  |
+| `workspace::CloseOtherTabs` | Close other tabs in the active pane. |  |
 | `workspace::CloseTab` | Close the active tab. | `ctrl-shift-w` (linux, windows; Workspace); `cmd-w` (macos; Workspace) |
+| `workspace::CloseTabsLeft` | Close tabs to the left of the active tab in its pane. |  |
+| `workspace::CloseTabsRight` | Close tabs to the right of the active tab in its pane. |  |
 | `workspace::MoveTabLeft` | Move the active tab one position to the left in its pane. | `ctrl-alt-left` (linux, windows; Workspace); `cmd-alt-left` (macos; Workspace) |
 | `workspace::MoveTabRight` | Move the active tab one position to the right in its pane. | `ctrl-alt-right` (linux, windows; Workspace); `cmd-alt-right` (macos; Workspace) |
 | `workspace::NewTab` | Open the menu of connections to start a new tab from. | `ctrl-shift-t` (linux, windows; Workspace); `cmd-t` (macos; Workspace) |

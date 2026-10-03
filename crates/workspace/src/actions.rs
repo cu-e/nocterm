@@ -5,6 +5,14 @@ gpui_kit::actions!(
         NewTab,
         /// Close the active tab.
         CloseTab,
+        /// Close other tabs in the active pane.
+        CloseOtherTabs,
+        /// Close tabs to the left of the active tab in its pane.
+        CloseTabsLeft,
+        /// Close tabs to the right of the active tab in its pane.
+        CloseTabsRight,
+        /// Close all central tabs, retaining the local terminal.
+        CloseAllTabs,
         /// Switch to the tab on the right, wrapping around.
         NextTab,
         /// Switch to the tab on the left, wrapping around.

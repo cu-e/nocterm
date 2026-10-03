@@ -56,6 +56,17 @@ pub enum WorkspaceEvent {
     LocalDirectoryChanged,
 }
 
+/// Close commands use the clicked tab's pane and its current visual order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabCloseScope {
+    Current,
+    Others,
+    Left,
+    Right,
+    /// All central tabs; the independent local terminal is left running.
+    All,
+}
+
 type SessionOpener = Rc<dyn Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>)>;
 type ActionRegistration = Box<dyn Fn(Div, &mut Context<Workspace>) -> Div>;
 
@@ -292,6 +303,89 @@ impl Workspace {
         }
     }
 
+    pub(crate) fn tabs_to_close(
+        &self,
+        id: gpui_kit::EntityId,
+        scope: TabCloseScope,
+        cx: &App,
+    ) -> Vec<gpui_kit::EntityId> {
+        let Some(clicked) = self.items.iter().find(|item| item.handle.item_id() == id) else {
+            return Vec::new();
+        };
+        if scope == TabCloseScope::All {
+            return self
+                .items
+                .iter()
+                .map(|item| item.handle.item_id())
+                .collect();
+        }
+        let panel = PanelId::from(clicked.dock_item.entity_id());
+        let dock = self.dock.read(cx);
+        let Some(tree) = dock.layout(DockPlacement::Center) else {
+            return Vec::new();
+        };
+        let Some(node) = tree
+            .find_panel_node(panel)
+            .and_then(|node| tree.find_node(node))
+        else {
+            return Vec::new();
+        };
+        let PaneRef::Tabs { panels, .. } = node.kind() else {
+            return Vec::new();
+        };
+        let Some(clicked_ix) = panels.iter().position(|candidate| *candidate == panel) else {
+            return Vec::new();
+        };
+        panels
+            .iter()
+            .enumerate()
+            .filter(|(ix, _)| match scope {
+                TabCloseScope::Current => *ix == clicked_ix,
+                TabCloseScope::Others => *ix != clicked_ix,
+                TabCloseScope::Left => *ix < clicked_ix,
+                TabCloseScope::Right => *ix > clicked_ix,
+                TabCloseScope::All => true,
+            })
+            .filter_map(|(_, panel)| {
+                self.items
+                    .iter()
+                    .find(|item| PanelId::from(item.dock_item.entity_id()) == *panel)
+                    .map(|item| item.handle.item_id())
+            })
+            .collect()
+    }
+
+    pub fn close_tabs(
+        &mut self,
+        id: gpui_kit::EntityId,
+        scope: TabCloseScope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Resolve visual order before mutations collapse or renumber native panes.
+        let ids = self.tabs_to_close(id, scope, cx);
+        for id in ids {
+            if let Some(ix) = self
+                .items
+                .iter()
+                .position(|item| item.handle.item_id() == id)
+            {
+                self.close_item(ix, window, cx);
+            }
+        }
+    }
+
+    fn close_active_tabs(
+        &mut self,
+        scope: TabCloseScope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.active_item().map(|item| item.item_id()) {
+            self.close_tabs(id, scope, window, cx);
+        }
+    }
+
     pub fn close_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if ix >= self.items.len() {
             return;
@@ -494,9 +588,18 @@ impl Workspace {
 
     pub fn close_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(local) = self.local_terminal.take() {
-            self.dock
-                .update(cx, |dock, cx| dock.remove_panel(local.item, window, cx));
+            self.dock.update(cx, |dock, cx| {
+                dock.remove_panel(local.item, window, cx);
+                if dock.is_empty(DockPlacement::Bottom, cx) {
+                    dock.remove_dock(DockPlacement::Bottom, window, cx);
+                }
+            });
             local.handle.close(window, cx);
+            if let Some(item) = self.active_item() {
+                window.focus(&item.focus_handle(cx), cx);
+            } else {
+                window.focus(&self.focus_handle, cx);
+            }
             cx.emit(WorkspaceEvent::LocalDirectoryChanged);
             cx.notify();
         }
@@ -536,7 +639,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
+        let Some(id) = self.active_item().map(|item| item.item_id()) else {
+            return;
+        };
+        self.split_item(id, placement, window, cx);
+    }
+
+    pub fn split_item(
+        &mut self,
+        id: gpui_kit::EntityId,
+        placement: gpui_kit::component::Placement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.items.iter().find(|item| item.handle.item_id() == id) else {
             return;
         };
         let panel = PanelId::from(open.dock_item.entity_id());
@@ -881,50 +997,55 @@ impl Workspace {
                     .child(div().flex_1().min_h_0().child(panel.view()))
             })
             .when(panel.is_none(), |sidebar| sidebar.child(div().flex_1()))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(theme.sidebar_border)
-                    .children(self.panels.iter().enumerate().map(|(ix, panel)| {
-                        Button::new(("sidebar-panel", ix))
-                            .ghost()
-                            .small()
-                            .icon(panel.icon(cx))
-                            .tooltip(panel.title(cx))
-                            .selected(ix == self.active_panel)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.activate_panel(ix, window, cx);
-                            }))
-                    }))
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("toggle-local-terminal")
-                            .ghost()
-                            .small()
-                            .icon(IconName::SquareTerminal)
-                            .tooltip("Local Terminal")
-                            .selected(
-                                self.local_terminal.is_some()
-                                    && self.dock.read(cx).is_dock_open(DockPlacement::Bottom),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_local_terminal(window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("open-settings")
-                            .ghost()
-                            .small()
-                            .icon(IconName::Settings)
-                            .tooltip("Settings")
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(OpenSettings.boxed_clone(), cx);
-                            }),
-                    ),
-            )
+    }
+
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div().id("workspace-footer").w_full().flex_shrink_0().child(
+            h_flex()
+                .gap_1()
+                .px_2()
+                .py_1()
+                .border_t_1()
+                .border_color(theme.sidebar_border)
+                .children(self.panels.iter().enumerate().map(|(ix, panel)| {
+                    Button::new(("sidebar-panel", ix))
+                        .ghost()
+                        .small()
+                        .icon(panel.icon(cx))
+                        .tooltip(panel.title(cx))
+                        .selected(self.sidebar_open && ix == self.active_panel)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.activate_panel(ix, window, cx);
+                        }))
+                }))
+                .child(div().flex_1())
+                .children(self.status_views.iter().cloned())
+                .child(
+                    Button::new("toggle-local-terminal")
+                        .ghost()
+                        .small()
+                        .icon(IconName::SquareTerminal)
+                        .tooltip("Local Terminal")
+                        .selected(
+                            self.local_terminal.is_some()
+                                && self.dock.read(cx).is_dock_open(DockPlacement::Bottom),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_local_terminal(window, cx)
+                        })),
+                )
+                .child(
+                    Button::new("open-settings")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Settings)
+                        .tooltip("Settings")
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
+                        }),
+                ),
+        )
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -976,6 +1097,18 @@ impl Render for Workspace {
             .text_color(theme.foreground)
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(|this, _: &crate::CloseOtherTabs, window, cx| {
+                this.close_active_tabs(TabCloseScope::Others, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::CloseTabsLeft, window, cx| {
+                this.close_active_tabs(TabCloseScope::Left, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::CloseTabsRight, window, cx| {
+                this.close_active_tabs(TabCloseScope::Right, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::CloseAllTabs, window, cx| {
+                this.close_active_tabs(TabCloseScope::All, window, cx)
+            }))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_previous_tab))
             .on_action(cx.listener(Self::on_toggle_sidebar))
@@ -1036,18 +1169,7 @@ impl Render for Workspace {
                         .child(resizable_panel().child(self.render_content(cx))),
                 ),
             )
-            .when(!self.status_views.is_empty(), |root| {
-                root.child(
-                    h_flex()
-                        .flex_shrink_0()
-                        .min_h_6()
-                        .px_2()
-                        .gap_2()
-                        .border_t_1()
-                        .border_color(cx.theme().border)
-                        .children(self.status_views.iter().cloned()),
-                )
-            })
+            .child(self.render_footer(cx))
     }
 }
 
