@@ -466,6 +466,17 @@ mod tests {
         Entity<VaultView>,
         Arc<VaultService>,
     ) {
+        setup_with_device(cx, path, None)
+    }
+    fn setup_with_device(
+        cx: &mut TestAppContext,
+        path: PathBuf,
+        device: Option<Arc<dyn DeviceUnlockProvider>>,
+    ) -> (
+        gpui_kit::AnyWindowHandle,
+        Entity<VaultView>,
+        Arc<VaultService>,
+    ) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             nocterm_ui::init(
@@ -473,7 +484,7 @@ mod tests {
                 SettingsStore::in_memory(Settings::default()),
                 cx,
             );
-            let service = init(path, cx).unwrap();
+            let service = init_with_device_unlock(path, device, cx).unwrap();
             let (handle, view) =
                 gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                     cx.new(|cx| VaultView::new(window, cx))
@@ -481,6 +492,89 @@ mod tests {
                 .unwrap();
             (handle, view, service)
         })
+    }
+
+    struct MissingBroker;
+    impl DeviceUnlockProvider for MissingBroker {
+        fn probe(&self) -> Result<DeviceCapability, nocterm_vault::DeviceUnlockError> {
+            Ok(DeviceCapability {
+                availability: DeviceAvailability::BrokerMissing,
+                label: "Fingerprint".into(),
+                detail: "Install the optional broker; password unlock still works.".into(),
+                enabled: false,
+                session_only: true,
+            })
+        }
+        fn enroll(
+            &self,
+            _: nocterm_vault::VaultBinding,
+            _: nocterm_vault::VaultKey,
+            _: &nocterm_vault::DeviceCancellation,
+        ) -> Result<Vec<u8>, nocterm_vault::DeviceUnlockError> {
+            panic!("unavailable device enrollment must not be called")
+        }
+        fn release(
+            &self,
+            _: nocterm_vault::VaultBinding,
+            _: &[u8],
+            _: &nocterm_vault::DeviceCancellation,
+        ) -> Result<nocterm_vault::VaultKey, nocterm_vault::DeviceUnlockError> {
+            panic!("unavailable device release must not be called")
+        }
+        fn remove(
+            &self,
+            _: nocterm_vault::VaultBinding,
+            _: &[u8],
+        ) -> Result<(), nocterm_vault::DeviceUnlockError> {
+            panic!("unavailable device registration does not exist")
+        }
+    }
+
+    #[gpui_kit::test]
+    fn missing_broker_disables_native_buttons_and_preserves_password_fallback(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let (handle, view, service) = setup_with_device(
+            cx,
+            directory.path().join("vault"),
+            Some(Arc::new(MissingBroker)),
+        );
+        block_on(service.probe_device_unlock()).unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(
+                view.read(cx).device.as_ref().unwrap().availability,
+                DeviceAvailability::BrokerMissing
+            );
+            window.render_frame(cx);
+            window.click("vault-device-enable", cx);
+            window.click("vault-device-unlock", cx);
+            assert!(!view.read(cx).busy);
+            view.update(cx, |view, cx| {
+                view.password.update(cx, |input, cx| {
+                    input.set_value("portable master password", window, cx)
+                });
+                view.confirm.update(cx, |input, cx| {
+                    input.set_value("portable master password", window, cx)
+                });
+                view.submit(window, cx);
+            });
+        })
+        .unwrap();
+        block_on(service.list()).unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(service.is_unlocked());
+            window.render_frame(cx);
+            window.click("vault-device-enable", cx);
+            assert!(!view.read(cx).busy);
+            view.update(cx, |view, cx| view.lock(window, cx));
+            assert!(!service.is_unlocked());
+        })
+        .unwrap();
+        block_on(service.unlock(Secret::new("portable master password"))).unwrap();
+        assert!(service.is_unlocked());
     }
     #[gpui_kit::test]
     fn refresh_and_delete_buttons_update_credentials_saved_by_another_feature(

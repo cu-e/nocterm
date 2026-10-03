@@ -185,4 +185,45 @@ mod tests {
         }
         assert!(store.enroll(a, id, Zeroizing::new([0; 32])).is_err());
     }
+
+    #[test]
+    fn total_capacity_recovers_after_expired_and_disconnected_clients() {
+        let mut store = Store::default();
+        let id = "a".repeat(64);
+        let mut oldest = None;
+        for uid in 1000..1000 + MAX_ENTRIES as u32 {
+            let connection = format!(":1.{uid}");
+            let token = store
+                .enroll(owner(uid, &connection), id.clone(), Zeroizing::new([0; 32]))
+                .unwrap();
+            if oldest.is_none() {
+                oldest = Some((owner(uid, &connection), token));
+            }
+        }
+        let newcomer = owner(2000, ":1.2000");
+        assert!(
+            store
+                .enroll(newcomer.clone(), id.clone(), Zeroizing::new([0; 32]))
+                .is_err()
+        );
+        let (first, token) = oldest.unwrap();
+        let entry = store.entry(&first, &id, &token).unwrap();
+        let cancel = entry.cancel.clone();
+        entry.busy = true;
+        entry.touched = Instant::now() - LIFETIME - Duration::from_secs(1);
+        let admitted = store
+            .enroll(newcomer.clone(), id.clone(), Zeroizing::new([0; 32]))
+            .unwrap();
+        assert!(cancel.load(Ordering::SeqCst));
+        assert!(store.entry(&first, &id, &token).is_err());
+        let cancel = store
+            .entry(&newcomer, &id, &admitted)
+            .unwrap()
+            .cancel
+            .clone();
+        store.disconnected(&newcomer.connection);
+        assert!(cancel.load(Ordering::SeqCst));
+        assert!(store.entry(&newcomer, &id, &admitted).is_err());
+        assert!(store.enroll(newcomer, id, Zeroizing::new([0; 32])).is_ok());
+    }
 }

@@ -4,7 +4,7 @@ mod service;
 #[cfg(target_os = "linux")]
 mod store;
 #[cfg(target_os = "linux")]
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     service::run().await
 }

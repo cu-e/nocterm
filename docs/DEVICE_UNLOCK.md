@@ -76,6 +76,9 @@ cancel or delete them. fprintd's unique owner must belong to root; only its own
 `verify-match` completed signal releases a key. Failed matches, reader contention,
 disconnect, timeout and cancellation refuse release. Keys are zeroized on drop,
 and the broker limits total and per-user registrations and its systemd resources.
+The broker claims the reader before subscribing to verification events, then
+starts the new scan. A completion from the previous claim cannot authorize the
+new request; a synchronous completion from the new scan is still observed.
 
 This protects against reading device metadata and bypassing a process-local
 authentication flag. It does not protect an unlocked process from a debugger,
@@ -89,6 +92,28 @@ epoch cancellation and an isolated fake-fprintd D-Bus protocol. They do not clai
 real fingerprint recognition. Native CI compiles/links macOS and Windows adapters
 and runs tests without requesting biometric input. Hardware tests require a person
 and are recorded separately; the system broker is not installed by tests.
+
+## Verification recorded for this implementation
+
+On Linux, the required workspace build, formatting, Clippy, documentation and
+architecture checks passed. The workspace suite passed 371 tests, including 24
+real local SSH/SFTP tests; the vendored terminal suite passed 135 tests and native
+menu tests passed two. The regression for a previous claim's successful signal
+first reproduced an unauthorized key release, then passed after the sequencing
+fix. After limiting the broker runtime to two worker threads, its build, Clippy,
+formatting and five tests passed again.
+
+Windows MSVC cross-target check and Clippy passed; Windows runtime and native
+macOS build/runtime were not exercised on this Linux host. A native Wayland
+startup smoke test mapped a separate Nocterm window using temporary application
+directories. Passive detection found an enrolled fingerprint reader and reported
+the missing optional broker correctly. No actual authentication scan was requested,
+and no system service or authentication policy was installed or changed.
+
+The dependency audit still reports the existing unpatched transitive RSA advisory
+[RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071.html) and five
+informational maintenance notices. No advisory exclusions were added; this
+dependency audit is not a green security certification.
 
 Relevant platform contracts: [Apple biometric keychain policy](https://developer.apple.com/documentation/security/secaccesscontrolcreateflags/biometrycurrentset),
 [Windows Hello signing](https://learn.microsoft.com/en-us/windows/apps/develop/security/windows-hello),

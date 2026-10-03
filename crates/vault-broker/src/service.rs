@@ -109,15 +109,18 @@ impl Broker {
                 }
             }
             let device = chosen.ok_or_else(|| denied("No enrolled fingerprint reader"))?;
-            let mut statuses = device
-                .receive_signal("VerifyStatus")
-                .await
-                .map_err(denied)?;
             let _: () = device
                 .call("Claim", &(user.name.as_str(),))
                 .await
                 .map_err(denied)?;
             claimed = Some(device.clone());
+            // Claim is the exclusive boundary between verification owners.
+            // Subscribe afterwards to exclude a previous owner's completion,
+            // but before VerifyStart to retain synchronous fresh results.
+            let mut statuses = device
+                .receive_signal("VerifyStatus")
+                .await
+                .map_err(denied)?;
             if cancel.load(Ordering::SeqCst) {
                 return Err(denied("Authentication cancelled"));
             }
@@ -364,7 +367,20 @@ mod tests {
                 vec!["left-index-finger".into()]
             }
         }
-        fn claim(&self, _username: &str) {}
+        async fn claim(
+            &self,
+            _username: &str,
+            #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        ) -> zbus::fdo::Result<()> {
+            // A completion from a previous claim can still arrive while a new
+            // caller is claiming the reader. It is not proof of this scan.
+            if self.mode.load(Ordering::SeqCst) == 3 {
+                Self::verify_status(&emitter, "verify-match", true)
+                    .await
+                    .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+            }
+            Ok(())
+        }
         fn release(&self) {}
         fn verify_stop(&self) {}
         async fn verify_start(
@@ -375,7 +391,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let result = match self.mode.load(Ordering::SeqCst) {
                 0 => Self::verify_status(&emitter, "verify-match", true).await,
-                1 => Self::verify_status(&emitter, "verify-no-match", true).await,
+                1 | 3 => Self::verify_status(&emitter, "verify-no-match", true).await,
                 _ => Ok(()),
             };
             result.map_err(|error| zbus::fdo::Error::Failed(error.to_string()))
@@ -461,6 +477,14 @@ mod tests {
             .call("Release", &(binding.as_str(), token.as_str()))
             .await;
         assert!(attempt.is_err());
+        mode.store(3, Ordering::SeqCst);
+        let attempt: Result<Vec<u8>, _> = owner
+            .call("Release", &(binding.as_str(), token.as_str()))
+            .await;
+        assert!(
+            attempt.is_err(),
+            "a previous claim's successful signal cannot authorize a failed fresh scan"
+        );
         mode.store(2, Ordering::SeqCst);
         let args = (binding.as_str(), token.as_str());
         let pending = owner.call::<_, _, Vec<u8>>("Release", &args);

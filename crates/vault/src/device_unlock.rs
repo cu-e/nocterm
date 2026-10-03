@@ -521,4 +521,116 @@ mod tests {
         ));
         assert!(provider.key.lock().unwrap().is_none());
     }
+
+    struct Prompt {
+        fake: Fake,
+        entered: std::sync::mpsc::Sender<()>,
+        resume: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl DeviceUnlockProvider for Prompt {
+        fn probe(&self) -> Result<DeviceCapability, DeviceUnlockError> {
+            self.fake.probe()
+        }
+        fn enroll(
+            &self,
+            binding: VaultBinding,
+            key: VaultKey,
+            cancel: &DeviceCancellation,
+        ) -> Result<Vec<u8>, DeviceUnlockError> {
+            self.fake.enroll(binding, key, cancel)
+        }
+        fn release(
+            &self,
+            binding: VaultBinding,
+            token: &[u8],
+            cancel: &DeviceCancellation,
+        ) -> Result<VaultKey, DeviceUnlockError> {
+            let key = self.fake.release(binding, token, cancel)?;
+            self.entered.send(()).unwrap();
+            self.resume
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            // A native provider can complete after cancellation. The vault must
+            // independently reject the returned key at its own commit boundary.
+            Ok(key)
+        }
+        fn remove(&self, binding: VaultBinding, token: &[u8]) -> Result<(), DeviceUnlockError> {
+            self.fake.remove(binding, token)
+        }
+    }
+
+    #[test]
+    fn worker_lock_during_native_prompt_rejects_success_and_queued_credentials() {
+        use futures::executor::block_on;
+        use std::{sync::mpsc, time::Duration};
+        let temp = tempfile::tempdir().unwrap();
+        let (entered, ready) = mpsc::channel();
+        let (resume, wait) = mpsc::channel();
+        let provider = Arc::new(Prompt {
+            fake: Fake::new(),
+            entered,
+            resume: Mutex::new(wait),
+        });
+        let service = crate::VaultService::new_with_device_unlock(
+            temp.path().join("vault.bin"),
+            Duration::from_secs(60),
+            Some(provider),
+        )
+        .unwrap();
+        block_on(service.create(Secret::new("long master password"))).unwrap();
+        block_on(service.enable_device_unlock()).unwrap();
+        service.lock();
+        let unlock = service.unlock_with_device();
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        let queued_credentials = service.list();
+        service.lock();
+        assert!(!service.is_unlocked());
+        resume.send(()).unwrap();
+        assert!(matches!(block_on(unlock), Err(VaultError::Cancelled)));
+        assert!(matches!(
+            block_on(queued_credentials),
+            Err(VaultError::Cancelled)
+        ));
+        assert!(!service.is_unlocked());
+        block_on(service.unlock(Secret::new("long master password"))).unwrap();
+        assert!(service.is_unlocked(), "password fallback still works");
+    }
+
+    #[test]
+    fn vault_replacement_during_native_prompt_refuses_stale_decrypted_state() {
+        use futures::executor::block_on;
+        use std::{sync::mpsc, time::Duration};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("vault.bin");
+        let (entered, ready) = mpsc::channel();
+        let (resume, wait) = mpsc::channel();
+        let provider = Arc::new(Prompt {
+            fake: Fake::new(),
+            entered,
+            resume: Mutex::new(wait),
+        });
+        let service = crate::VaultService::new_with_device_unlock(
+            &path,
+            Duration::from_secs(60),
+            Some(provider),
+        )
+        .unwrap();
+        block_on(service.create(Secret::new("long master password"))).unwrap();
+        block_on(service.enable_device_unlock()).unwrap();
+        service.lock();
+        let unlock = service.unlock_with_device();
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut other = Vault::new(&path);
+        other.unlock(Secret::new("long master password")).unwrap();
+        other
+            .change_password(Secret::new("replacement master password"))
+            .unwrap();
+        resume.send(()).unwrap();
+        assert!(matches!(block_on(unlock), Err(VaultError::Conflict)));
+        assert!(!service.is_unlocked());
+        block_on(service.unlock(Secret::new("replacement master password"))).unwrap();
+        assert!(service.is_unlocked());
+    }
 }
