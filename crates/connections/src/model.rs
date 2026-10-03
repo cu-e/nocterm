@@ -62,7 +62,8 @@ pub struct Connections {
     recents_file: Option<PathBuf>,
     /// Invalid user configuration remains read-only until fixed externally.
     load_error: Option<String>,
-    persistence_error: Option<String>,
+    profile_persistence_error: Option<String>,
+    recents_persistence_error: Option<String>,
     pending: VecDeque<PendingWrite>,
     writer: Option<Task<()>>,
     recents_writer: Option<Task<()>>,
@@ -96,7 +97,8 @@ impl Connections {
             profiles_file: None,
             recents_file: None,
             load_error: None,
-            persistence_error: None,
+            profile_persistence_error: None,
+            recents_persistence_error: None,
             pending: VecDeque::new(),
             writer: None,
             recents_writer: None,
@@ -163,7 +165,9 @@ impl Connections {
     }
     /// Failures remain visible in every Connections panel, including recent bookkeeping.
     pub fn persistence_error(&self) -> Option<&str> {
-        self.persistence_error.as_deref()
+        self.profile_persistence_error
+            .as_deref()
+            .or(self.recents_persistence_error.as_deref())
     }
 
     /// Adds or updates a profile; completion means the write succeeded.
@@ -382,7 +386,7 @@ impl Connections {
                         Err(error) => Err(error),
                     };
                     let _ = this.update(cx, |this, cx| {
-                        this.persistence_error = result.clone().err();
+                        this.profile_persistence_error = result.clone().err();
                         cx.notify();
                     });
                     let _ = pending.done.send(result);
@@ -462,9 +466,11 @@ impl Connections {
                     if result.is_ok() {
                         this.recents_written_revision = revision;
                     }
-                    if let Err(error) = result {
-                        this.persistence_error =
-                            Some(format!("Could not save recent connections: {error}"));
+                    let error = result
+                        .err()
+                        .map(|error| format!("Could not save recent connections: {error}"));
+                    if this.recents_persistence_error != error {
+                        this.recents_persistence_error = error;
                         cx.notify();
                     }
                     if this.recents_revision != revision {
@@ -677,7 +683,7 @@ mod tests {
         );
         // A normal UI mutation remains runnable while disk completion is held.
         entity.update(cx, |c, _| {
-            c.persistence_error = Some("UI remains responsive".into())
+            c.profile_persistence_error = Some("UI remains responsive".into())
         });
         first_send.send(Ok(())).unwrap();
         cx.run_until_parked();
@@ -787,6 +793,76 @@ mod tests {
                 .await
                 .unwrap_err()
                 .contains("shutting down")
+        );
+    }
+
+    #[gpui_kit::test]
+    async fn successful_profile_save_preserves_recents_failure_until_recents_retry_succeeds(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let blocked_recents = directory.path().join("recents.toml");
+        fs::create_dir(&blocked_recents).unwrap();
+        let original = profile("Build");
+        let entity = cx.new(|_| Connections::in_memory());
+        entity
+            .update(cx, |c, cx| c.save_profile(original.clone(), cx))
+            .await
+            .unwrap();
+        entity.update(cx, |c, cx| {
+            c.profiles_file = Some(directory.path().join("connections.toml"));
+            c.recents_file = Some(blocked_recents.clone());
+            c.record_use(&spec_for_profile(&original), Some(original.id), cx);
+        });
+        cx.run_until_parked();
+        let failure = entity.read_with(cx, |c, _| {
+            assert!(c.recents_written_revision < c.recents_revision);
+            c.persistence_error().unwrap().to_owned()
+        });
+        assert!(failure.contains("Could not save recent connections"));
+        entity
+            .update(cx, |c, cx| {
+                c.move_profile(original.id, Some("Work".into()), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            entity.read_with(cx, |c, _| c.persistence_error().map(str::to_owned)),
+            Some(failure)
+        );
+        entity.read_with(cx, |c, _| {
+            assert!(c.recents_written_revision < c.recents_revision)
+        });
+        fs::remove_dir(&blocked_recents).unwrap();
+        entity.update(cx, |c, cx| {
+            c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        });
+        cx.run_until_parked();
+        entity.read_with(cx, |c, _| {
+            assert!(c.persistence_error().is_none());
+            assert_eq!(c.recents_written_revision, c.recents_revision);
+        });
+        assert_eq!(
+            persist::load::<Recents>(&blocked_recents).unwrap().unwrap(),
+            entity.read_with(cx, |c, _| c.recents.clone())
+        );
+        // The opposite writer must preserve ownership of a profile failure too.
+        entity.update(cx, |c, _| c.profiles_file = Some(directory.path().into()));
+        assert!(
+            entity
+                .update(cx, |c, cx| c.move_profile(original.id, None, cx))
+                .await
+                .is_err()
+        );
+        let profile_failure =
+            entity.read_with(cx, |c, _| c.persistence_error().unwrap().to_owned());
+        entity.update(cx, |c, cx| {
+            c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            entity.read_with(cx, |c, _| c.persistence_error().map(str::to_owned)),
+            Some(profile_failure)
         );
     }
 
