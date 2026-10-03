@@ -28,6 +28,8 @@ pub(crate) struct DockItem {
     editing_blur: Option<Subscription>,
     focus: FocusHandle,
     bottom: bool,
+    /// Hiding the bottom dock detaches its panel without ending the session.
+    suppress_next_removal: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<PanelEvent> for DockItem {}
@@ -62,6 +64,7 @@ impl DockItem {
             editing_blur: None,
             focus,
             bottom,
+            suppress_next_removal: false,
             _subscriptions: subscriptions,
         }
     }
@@ -71,6 +74,9 @@ impl DockItem {
         cx.defer_in(window, move |_, _, cx| {
             let _ = workspace.update(cx, |workspace, cx| workspace.mark_active(id, cx));
         });
+    }
+    pub(crate) fn detach_without_closing(&mut self) {
+        self.suppress_next_removal = true;
     }
     pub(crate) fn start_alias(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_some() {
@@ -129,6 +135,9 @@ impl BasePanel for DockItem {
         "nocterm.item"
     }
     fn on_removed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.suppress_next_removal) {
+            return;
+        }
         let workspace = self.workspace.clone();
         let id = self.item.item_id();
         let bottom = self.bottom;

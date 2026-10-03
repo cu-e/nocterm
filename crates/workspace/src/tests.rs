@@ -9,6 +9,7 @@ use gpui_kit::{
     },
     div,
     prelude::*,
+    px,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -589,7 +590,7 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
         let local = probe(cx, closes.clone());
         workspace.update(cx, |workspace, cx| {
             workspace.add_item(central.clone(), window, cx);
-            workspace.set_local_terminal(local, window, cx);
+            workspace.set_local_terminal(local.clone(), window, cx);
             assert_eq!(
                 workspace.active_item().unwrap().item_id(),
                 central.entity_id()
@@ -599,7 +600,19 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
                 Some(PathBuf::from("/tmp"))
             );
             workspace.toggle_local_terminal(window, cx);
+            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(!workspace.local_terminal_is_visible(cx));
+            assert_eq!(closes.get(), 0);
+            assert_eq!(
+                workspace.local_terminal.as_ref().unwrap().handle.item_id(),
+                local.entity_id()
+            );
             workspace.toggle_local_terminal(window, cx);
+            assert!(workspace.local_terminal_is_visible(cx));
+            assert_eq!(
+                workspace.local_terminal.as_ref().unwrap().handle.item_id(),
+                local.entity_id()
+            );
             assert_eq!(closes.get(), 0);
             workspace.close_local_terminal(window, cx);
             assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
@@ -608,6 +621,41 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
                 workspace.active_item().unwrap().item_id(),
                 central.entity_id()
             );
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(closes.get(), 1);
+}
+
+#[gpui_kit::test]
+fn hidden_local_terminal_keeps_height_and_closes_exactly_once(cx: &mut TestAppContext) {
+    let (window, workspace) = fixture(cx);
+    let closes = Rc::new(Cell::new(0));
+    cx.update_window(window, |_, window, cx| {
+        let local = probe(cx, closes.clone());
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_local_terminal(local.clone(), window, cx);
+            workspace.dock.update(cx, |dock, cx| {
+                dock.set_dock_size(DockPlacement::Bottom, px(260.), window, cx);
+            });
+            workspace.toggle_local_terminal(window, cx);
+            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert_eq!(
+                workspace.local_terminal_cwd(cx),
+                Some(PathBuf::from("/tmp"))
+            );
+            workspace.toggle_local_terminal(window, cx);
+            assert_eq!(
+                workspace.dock.read(cx).dock_size(DockPlacement::Bottom),
+                Some(px(260.))
+            );
+            workspace.toggle_local_terminal(window, cx);
+            workspace.close_local_terminal(window, cx);
+            assert_eq!(closes.get(), 1);
+            assert!(workspace.local_terminal.is_none());
+            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
         });
         window.render_frame(cx);
     })

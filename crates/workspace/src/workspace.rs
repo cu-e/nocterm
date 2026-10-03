@@ -2,7 +2,7 @@ use std::{path::PathBuf, rc::Rc};
 
 use gpui_kit::{
     Action, Anchor, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Menu, MouseButton, SharedString, Subscription, Window,
+    FocusHandle, Focusable, Menu, MouseButton, Pixels, SharedString, Subscription, Window,
     base::GlobalState,
     component::{
         ActiveTheme as _, Icon, ResizableState, Selectable as _, Sizable as _, StyledExt as _,
@@ -94,6 +94,8 @@ struct BottomTerminal {
     item: Entity<crate::dock_item::DockItem>,
     handle: Rc<dyn ItemHandle>,
     local: Box<dyn crate::local_terminal::LocalTerminalHandle>,
+    attached: bool,
+    height: Pixels,
     _subscription: Subscription,
     _focus_subscription: Subscription,
 }
@@ -102,6 +104,8 @@ pub struct Workspace {
     focus_handle: FocusHandle,
     dock: Entity<DockArea>,
     _dock_subscription: Subscription,
+    _dock_observer: Subscription,
+    dock_hide_queued: bool,
     local_terminal: Option<BottomTerminal>,
     local_opener: Option<LocalOpener>,
     items: Vec<OpenItem>,
@@ -135,6 +139,7 @@ impl Workspace {
         skin.set_close_button_visible(false, cx);
         skin.set_toggle_button_visible(false, cx);
         let subscription = cx.subscribe_in(&dock, window, |this, _, _: &DockEvent, window, cx| {
+            this.schedule_hidden_dock_detach(window, cx);
             let focused = this
                 .items
                 .iter()
@@ -145,9 +150,16 @@ impl Workspace {
             }
             cx.notify();
         });
+        // Dock resizing changes its open state with `notify`, without emitting
+        // DockEvent. Observe both paths so a closed bottom strip disappears.
+        let observer = cx.observe_in(&dock, window, |this, _, window, cx| {
+            this.schedule_hidden_dock_detach(window, cx);
+        });
         let mut this = Self {
             dock,
             _dock_subscription: subscription,
+            _dock_observer: observer,
+            dock_hide_queued: false,
             local_terminal: None,
             local_opener: None,
             focus_handle: cx.focus_handle(),
@@ -619,6 +631,8 @@ impl Workspace {
             item: dock_item,
             handle,
             local: Box::new(item),
+            attached: true,
+            height,
             _subscription: subscription,
             _focus_subscription: focus_subscription,
         });
@@ -626,20 +640,93 @@ impl Workspace {
     }
 
     pub fn toggle_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(local) = &self.local_terminal {
-            let open = self.dock.read(cx).is_dock_open(DockPlacement::Bottom);
-            let focus = local.handle.focus_handle(cx);
-            self.dock.update(cx, |dock, cx| {
-                dock.toggle_dock(DockPlacement::Bottom, window, cx)
-            });
-            if !open {
-                window.focus(&focus, cx);
-            } else if let Some(item) = self.active_item() {
-                window.focus(&item.focus_handle(cx), cx);
-            }
+        if self
+            .local_terminal
+            .as_ref()
+            .is_some_and(|local| local.attached)
+        {
+            self.hide_local_terminal(window, cx);
+        } else if self.local_terminal.is_some() {
+            self.show_local_terminal(window, cx);
         } else if let Some(opener) = self.local_opener.clone() {
             opener(self, window, cx);
         }
+        cx.notify();
+    }
+
+    fn schedule_hidden_dock_detach(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.dock_hide_queued
+            || !self
+                .local_terminal
+                .as_ref()
+                .is_some_and(|local| local.attached)
+            || self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+        {
+            return;
+        }
+        self.dock_hide_queued = true;
+        let workspace = cx.weak_entity();
+        cx.defer_in(window, move |_, window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.dock_hide_queued = false;
+                if workspace
+                    .local_terminal
+                    .as_ref()
+                    .is_some_and(|local| local.attached)
+                    && !workspace.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+                {
+                    workspace.hide_local_terminal(window, cx);
+                }
+            });
+        });
+    }
+
+    fn hide_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(local) = self.local_terminal.as_mut().filter(|local| local.attached) else {
+            return;
+        };
+        local.attached = false;
+        local.height = self
+            .dock
+            .read(cx)
+            .dock_size(DockPlacement::Bottom)
+            .unwrap_or(local.height);
+        local
+            .item
+            .update(cx, |item, _| item.detach_without_closing());
+        let item = local.item.clone();
+        self.dock.update(cx, |dock, cx| {
+            dock.remove_panel(item, window, cx);
+            if dock.is_empty(DockPlacement::Bottom, cx) {
+                dock.remove_dock(DockPlacement::Bottom, window, cx);
+            }
+        });
+        if let Some(item) = self.active_item() {
+            window.focus(&item.focus_handle(cx), cx);
+        } else {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    fn show_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(local) = self.local_terminal.as_mut().filter(|local| !local.attached) else {
+            return;
+        };
+        local.attached = true;
+        let item = local.item.clone();
+        let height = local.height;
+        let focus = local.handle.focus_handle(cx);
+        self.dock.update(cx, |dock, cx| {
+            dock.add_panel_view(
+                panel_handle(item),
+                DockPlacement::Bottom,
+                Some(height),
+                window,
+                cx,
+            )
+        });
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -677,10 +764,12 @@ impl Workspace {
         if self.local_terminal.is_none() {
             self.toggle_local_terminal(window, cx);
         }
-        if !self.dock.read(cx).is_dock_open(DockPlacement::Bottom) {
-            self.dock.update(cx, |dock, cx| {
-                dock.toggle_dock(DockPlacement::Bottom, window, cx)
-            });
+        if self
+            .local_terminal
+            .as_ref()
+            .is_some_and(|local| !local.attached)
+        {
+            self.show_local_terminal(window, cx);
         }
         self.local_terminal
             .as_ref()
@@ -1051,7 +1140,10 @@ impl Workspace {
         self.sidebar_open
     }
     pub fn local_terminal_is_visible(&self, cx: &App) -> bool {
-        self.local_terminal.is_some() && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+        self.local_terminal
+            .as_ref()
+            .is_some_and(|local| local.attached)
+            && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
     }
 
     /// Supplies window-specific menus to the toolkit's standard menu bar.
@@ -1289,10 +1381,7 @@ impl Workspace {
                         .small()
                         .icon(IconName::SquareTerminal)
                         .tooltip("Local Terminal")
-                        .selected(
-                            self.local_terminal.is_some()
-                                && self.dock.read(cx).is_dock_open(DockPlacement::Bottom),
-                        )
+                        .selected(self.local_terminal_is_visible(cx))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_local_terminal(window, cx)
                         })),
@@ -1311,7 +1400,7 @@ impl Workspace {
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.items.is_empty() && self.local_terminal.is_none() {
+        if self.items.is_empty() && !self.local_terminal_is_visible(cx) {
             v_flex()
                 .size_full()
                 .items_center()
