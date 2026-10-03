@@ -4750,6 +4750,7 @@ name = "nocterm-core"
 version = "0.0.0"
 dependencies = [
  "directories",
+ "nix 0.28.0",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

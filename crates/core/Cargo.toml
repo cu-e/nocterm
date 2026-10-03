@@ -17,6 +17,9 @@ toml.workspace = true
 toml_edit.workspace = true
 tempfile.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", features = ["user"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 
