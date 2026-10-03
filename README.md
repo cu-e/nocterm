@@ -6,6 +6,26 @@ connections, quick connect, recent destinations, a local shell, an Explorer and
 streaming SFTP uploads and downloads. Passwords can be saved in a portable
 encrypted vault.
 
+The title bar provides Session, Edit, Search, Window and Help menus. Session
+offers connection lifecycle, output recording, settings, profiles and window
+commands. Edit routes clipboard operations to the focused terminal or text field;
+Copy Connection Name includes the tab's alias. Window exposes the existing split,
+pane and tab controls. Help → About shows the packaged release version.
+
+Search → Find searches literal Unicode text across the screen and retained
+history. Find Next/Previous wrap; Find Next Selected Text uses the current
+selection. Search highlights do not replace the clipboard selection. On Linux
+and Windows use `Ctrl+Shift+F` to open search, `F3`/`Shift+F3` to navigate and
+`Ctrl+F3` to search the selection. macOS uses `Cmd+F` and `Cmd+F3`. Enter navigates
+and Escape closes the search field without sending those keys to the shell.
+Search yields between scan slices. Rapidly changing output can leave results
+pending until a consistent scan completes.
+
+Session → Preferences → Session Settings applies per-session options to the next
+reconnect without changing its saved profile. Default Session Settings opens the
+SSH defaults. New Window shares application services while keeping its own tabs,
+focus and menus; Close Window closes only that window.
+
 ## Build and run
 
 Install the Rust toolchain specified by `rust-toolchain.toml`. On Debian or

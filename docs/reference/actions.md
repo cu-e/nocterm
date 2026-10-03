@@ -10,33 +10,54 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |
 | `terminal::Paste` | Paste the clipboard into the terminal. | `ctrl-shift-v` (linux, windows; Terminal); `shift-insert` (linux, windows; Terminal); `cmd-v` (macos; Terminal) |
-| `terminal::Reconnect` | Connect again after the session ended. | `ctrl-shift-r` (linux, windows; Terminal); `cmd-r` (macos; Terminal) |
+| `terminal::Reconnect` | Reconnect this tab using its next-launch options. | `ctrl-shift-r` (linux, windows; Terminal); `cmd-r` (macos; Terminal) |
 | `terminal::ScrollPageDown` | Scroll forward by one screen. | `shift-pagedown` (linux, windows; Terminal); `shift-pagedown` (macos; Terminal) |
 | `terminal::ScrollPageUp` | Scroll back by one screen. | `shift-pageup` (linux, windows; Terminal); `shift-pageup` (macos; Terminal) |
 | `terminal::ScrollToBottom` | Scroll back to the live screen. | `shift-end` (linux, windows; Terminal); `cmd-end` (macos; Terminal) |
 | `terminal::ScrollToTop` | Scroll to the oldest line of history. | `shift-home` (linux, windows; Terminal); `cmd-home` (macos; Terminal) |
 | `terminal::ToggleRecording` | Start or stop output-only session recording. |  |
+| `workspace::About` | Show application information. |  |
+| `workspace::ClearSelection` | Clear the terminal selection. |  |
 | `workspace::CloseAllTabs` | Close all central tabs, retaining the local terminal. |  |
 | `workspace::CloseLocalTerminal` | Close the bottom local terminal and end its process. |  |
 | `workspace::CloseOtherTabs` | Close other tabs in the active pane. |  |
 | `workspace::CloseTab` | Close the active tab. | `ctrl-shift-w` (linux, windows; Workspace); `cmd-w` (macos; Workspace) |
 | `workspace::CloseTabsLeft` | Close tabs to the left of the active tab in its pane. |  |
 | `workspace::CloseTabsRight` | Close tabs to the right of the active tab in its pane. |  |
+| `workspace::CloseWindow` | Close this window. | `ctrl-alt-w` (linux, windows; Workspace); `cmd-shift-w` (macos; Workspace) |
+| `workspace::CopyConnectionName` | Copy the displayed connection name or alias. |  |
+| `workspace::DefaultSessionSettings` | Edit default session options. |  |
+| `workspace::DisconnectSession` | Disconnect the focused session. |  |
+| `workspace::EditCopy` | Copy the current terminal selection. |  |
+| `workspace::EditPaste` | Paste the clipboard into the focused terminal. |  |
+| `workspace::Find` | Open terminal search. | `ctrl-shift-f` (linux, windows; Workspace); `cmd-f` (macos; Workspace) |
+| `workspace::FindNext` | Select the next search match. | `f3` (linux, windows; Workspace); `f3` (macos; Workspace) |
+| `workspace::FindNextSelection` | Search for the current terminal selection. | `ctrl-f3` (linux, windows; Workspace); `cmd-f3` (macos; Workspace) |
+| `workspace::FindPrevious` | Select the previous search match. | `shift-f3` (linux, windows; Workspace); `shift-f3` (macos; Workspace) |
+| `workspace::LogsDirectory` | Open the terminal recordings directory. |  |
 | `workspace::MoveTabLeft` | Move the active tab one position to the left in its pane. | `ctrl-alt-left` (linux, windows; Workspace); `cmd-alt-left` (macos; Workspace) |
 | `workspace::MoveTabRight` | Move the active tab one position to the right in its pane. | `ctrl-alt-right` (linux, windows; Workspace); `cmd-alt-right` (macos; Workspace) |
 | `workspace::NewTab` | Open the menu of connections to start a new tab from. | `ctrl-shift-t` (linux, windows; Workspace); `cmd-t` (macos; Workspace) |
+| `workspace::NewWindow` | Open another application window. | `ctrl-alt-n` (linux, windows; Workspace); `cmd-shift-n` (macos; Workspace) |
 | `workspace::NextPane` | Focus the next pane in layout order. | `ctrl-alt-pagedown` (linux, windows; Workspace); `cmd-alt-pagedown` (macos; Workspace) |
 | `workspace::NextPanel` | Show the next sidebar panel, wrapping around. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
+| `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |
 | `workspace::OpenVault` | Open the encrypted credential vault. |  |
 | `workspace::PreviousPane` | Focus the preceding pane in layout order. | `ctrl-alt-pageup` (linux, windows; Workspace); `cmd-alt-pageup` (macos; Workspace) |
 | `workspace::PreviousTab` | Switch to the tab on the left, wrapping around. | `ctrl-pageup` (linux, windows; Workspace); `ctrl-shift-tab` (linux, windows; Workspace); `cmd-shift-[` (macos; Workspace); `ctrl-shift-tab` (macos; Workspace) |
+| `workspace::ProfilesDirectory` | Open the directory containing connection profiles. |  |
 | `workspace::Quit` | Quit the application. | `ctrl-shift-q` (linux, windows; Workspace); `cmd-q` (macos; Workspace) |
+| `workspace::ReconnectSession` | Reconnect the focused session. |  |
 | `workspace::RenameTab` | Edit the active tab's display alias. | `ctrl-shift-f2` (linux, windows; Workspace); `cmd-shift-f2` (macos; Workspace) |
+| `workspace::SelectAll` | Select all terminal content. |  |
+| `workspace::SessionSettings` | Edit options of the focused session. |  |
 | `workspace::SplitDown` | Move the active tab into a new pane below. | `ctrl-alt-shift-down` (linux, windows; Workspace); `cmd-alt-shift-down` (macos; Workspace) |
 | `workspace::SplitLeft` | Move the active tab into a new pane on the left. | `ctrl-alt-shift-left` (linux, windows; Workspace); `cmd-alt-shift-left` (macos; Workspace) |
 | `workspace::SplitRight` | Move the active tab into a new pane on the right. | `ctrl-alt-shift-right` (linux, windows; Workspace); `cmd-alt-shift-right` (macos; Workspace) |
 | `workspace::SplitUp` | Move the active tab into a new pane above. | `ctrl-alt-shift-up` (linux, windows; Workspace); `cmd-alt-shift-up` (macos; Workspace) |
+| `workspace::StartRecording` | Start recording terminal output. |  |
+| `workspace::StopRecording` | Stop recording terminal output. |  |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `cmd-`` (macos; Workspace) |
 | `workspace::ToggleSidebar` | Show or hide the sidebar. | `ctrl-shift-b` (linux, windows; Workspace); `cmd-b` (macos; Workspace) |

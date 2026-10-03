@@ -118,6 +118,28 @@ outside PTY columns/selection and hides it in alternate screen. See the
 
 ## Extension points
 
+The composition root supplies Session/Edit/Search/Window/Help descriptors to
+Workspace's native `AppMenuBar`. `ItemCommand` routes feature operations without
+Workspace depending on Terminal. Each window snapshots enabled/checked state
+before opening; an open popup retains its originating Item. A focused bottom
+terminal takes priority over the central Item. Native clipboard/edit actions
+continue to dispatch to native text fields, including dialogs. The maintained
+[GPUI Component patch](../vendor/gpui-component/NOCTERM.md) updates menu snapshots
+without replacing native trigger entities or process-wide menu state.
+
+VT's literal Unicode search uses bounded KMP scan steps over grid cells and their
+combining characters, with memory proportional to the query rather than the
+number of matches or history size. Soft wraps preserve text continuity; hard
+line breaks prevent cross-line matches. Terminal schedules scan slices and
+invalidates matches when output, geometry or screen changes. A rapidly changing
+buffer can defer a complete result, but stale highlights are cleared and input
+remains responsive. Search highlights and clipboard selection are independent.
+
+Session Settings reuses the validated session options editor for transient
+overrides. Safe reconnect retires the previous session, event pump, prompts and
+remote filesystem before starting a new epoch. The application window factory
+reuses global services rather than initializing another vault or transfer queue.
+
 Add a new Item for another kind of tab, a Panel for another sidebar section or a
 registered action for a command. Observe the terminal model or session contract
 for integrations. Add another Transport implementation to support another kind
