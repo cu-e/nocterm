@@ -160,6 +160,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (AnyWindowHandle, Entity<Terminal>, SessionSpec) {
         let spec = SessionSpec {
+            profile: None,
             options,
             title: "Production".into(),
             target: Target::new("operator", "production.example", 2222),

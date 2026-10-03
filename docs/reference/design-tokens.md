@@ -27,6 +27,9 @@
 | `dark.terminal.white` | "string" | `"#e5e5e5"` | ANSI colour 7. |
 | `dark.terminal.yellow` | "string" | `"#e5e510"` | ANSI colour 3. |
 | `dark.ui` | "object" | `{}` |  |
+| `layout.agent_panel_max_width` | "number" | `64.0` | Maximum AI panel width, in rem. |
+| `layout.agent_panel_min_width` | "number" | `18.0` | Minimum AI panel width, in rem. |
+| `layout.agent_panel_width` | "number" | `26.0` | Initial width of the AI panel, in rem. |
 | `layout.button_height` | "number" | `1.75` | Height of a default button; other button sizes keep their relative hierarchy. |
 | `layout.button_padding` | "number" | `0.5` | Horizontal padding of a default button. |
 | `layout.connection_description_height` | "number" | `6.0` | Height of the connection description text area. |

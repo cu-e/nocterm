@@ -37,6 +37,7 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::submenu(
                 Menu::new("Preferences").items([
                     MenuItem::action("Settings", OpenSettings).disabled(!in_workspace),
+                    MenuItem::action("AI Settings", OpenAiSettings).disabled(!in_workspace),
                     MenuItem::action("Session Settings", SessionSettings)
                         .disabled(!enabled(ItemCommand::SessionSettings)),
                     MenuItem::action("Default Session Settings", DefaultSessionSettings)
@@ -97,6 +98,9 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::action("Local Terminal", ToggleLocalTerminal)
                 .checked(workspace.local_terminal_is_visible(cx))
                 .disabled(!in_workspace),
+            MenuItem::action("AI Agents", ToggleRightPanel)
+                .checked(workspace.right_panel_is_open())
+                .disabled(!in_workspace || !workspace.right_panel_is_available()),
         ]),
         Menu::new("Help").items([MenuItem::action("About Nocterm", About)]),
     ]

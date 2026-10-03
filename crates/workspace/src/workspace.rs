@@ -2,7 +2,8 @@ use std::{path::PathBuf, rc::Rc};
 
 use gpui_kit::{
     Action, Anchor, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Menu, MouseButton, Pixels, SharedString, Subscription, Window,
+    FocusHandle, Focusable, Menu, MouseButton, Pixels, SharedString, Subscription,
+    TestSupportExt as _, Window,
     base::GlobalState,
     component::{
         ActiveTheme as _, Icon, ResizableState, Selectable as _, Sizable as _, StyledExt as _,
@@ -26,7 +27,7 @@ use nocterm_ui::{ActiveDesign as _, IconName};
 
 use crate::{
     CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
-    OpenSettings, Panel, PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
+    Panel, PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -40,6 +41,8 @@ pub struct SessionSpec {
     pub options: nocterm_session::SessionOptions,
     /// The tab's title.
     pub title: SharedString,
+    /// Saved profile identity, independent of display aliases.
+    pub profile: Option<SharedString>,
     pub target: Target,
     pub auth: Auth,
     pub launch: Option<nocterm_session::ShellLaunch>,
@@ -49,6 +52,8 @@ pub struct SessionSpec {
 /// What the workspace tells its observers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    /// Terminal membership or metadata changed.
+    ItemsChanged,
     /// Another tab became active, or the last one closed.
     ActiveItemChanged,
     /// The session behind the active tab is a different one, or changed
@@ -113,7 +118,13 @@ pub struct Workspace {
     panels: Vec<Box<dyn PanelHandle>>,
     active_panel: usize,
     sidebar_open: bool,
-    sidebar: Entity<ResizableState>,
+    body: Entity<ResizableState>,
+    right_panel: Option<Box<dyn crate::right_panel::RightPanelHandle>>,
+    right_panel_open: bool,
+    right_panel_attention: bool,
+    right_panel_available: bool,
+    right_panel_maximized: bool,
+    right_panel_subscription: Option<Subscription>,
     new_tab_menu: Option<NewTabMenu>,
     new_tab_menu_open: bool,
     session_opener: Option<SessionOpener>,
@@ -126,6 +137,7 @@ pub struct Workspace {
     menu_focus: FocusHandle,
     menu_item: Option<EntityId>,
     last_command_item: Option<EntityId>,
+    connection_directory: Option<Rc<dyn crate::ConnectionDirectory>>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -168,7 +180,13 @@ impl Workspace {
             panels: Vec::new(),
             active_panel: 0,
             sidebar_open: true,
-            sidebar: cx.new(|_| ResizableState::default()),
+            body: cx.new(|_| ResizableState::default()),
+            right_panel: None,
+            right_panel_open: false,
+            right_panel_attention: false,
+            right_panel_available: false,
+            right_panel_maximized: false,
+            right_panel_subscription: None,
             new_tab_menu: None,
             new_tab_menu_open: false,
             session_opener: None,
@@ -180,6 +198,7 @@ impl Workspace {
             menu_focus: cx.focus_handle(),
             menu_item: None,
             last_command_item: None,
+            connection_directory: None,
         };
         macro_rules! item_action {
             ($action:ty, $command:ident) => {
@@ -243,6 +262,7 @@ impl Workspace {
                             open.dock_item.update(cx, |_, cx| cx.notify());
                         }
                         this.announce_session(cx);
+                        cx.emit(WorkspaceEvent::ItemsChanged);
                         cx.notify();
                     }
                     ItemEvent::CloseRequested => {
@@ -308,11 +328,70 @@ impl Workspace {
             _focus_subscription: focus_subscription,
         });
         self.activate_item(self.items.len() - 1, window, cx);
+        cx.emit(WorkspaceEvent::ItemsChanged);
     }
 
     /// Open items in stable registration order. The native dock owns their display order.
     pub fn items(&self) -> impl Iterator<Item = &dyn ItemHandle> {
         self.items.iter().map(|open| open.handle.as_ref())
+    }
+
+    pub fn set_connection_directory(&mut self, directory: Rc<dyn crate::ConnectionDirectory>) {
+        self.connection_directory = Some(directory);
+    }
+    pub fn connection_directory(&self) -> Option<Rc<dyn crate::ConnectionDirectory>> {
+        self.connection_directory.clone()
+    }
+
+    pub fn active_terminal(&self, cx: &App) -> Option<EntityId> {
+        let terminals = self.terminals(cx);
+        self.last_command_item
+            .filter(|id| terminals.iter().any(|entry| entry.item == *id))
+            .or_else(|| {
+                self.active_item()
+                    .filter(|item| item.terminal_access(cx).is_some())
+                    .map(|item| item.item_id())
+            })
+    }
+
+    pub fn terminals(&self, cx: &App) -> Vec<crate::TerminalEntry> {
+        let mut entries: Vec<_> = self
+            .items
+            .iter()
+            .filter_map(|open| {
+                Some(crate::TerminalEntry {
+                    item: open.handle.item_id(),
+                    access: open.handle.terminal_access(cx)?,
+                    title: open
+                        .dock_item
+                        .read(cx)
+                        .alias
+                        .clone()
+                        .unwrap_or_else(|| open.handle.tab_title(cx)),
+                    active: false,
+                    bottom: false,
+                })
+            })
+            .collect();
+        if let Some(local) = &self.local_terminal
+            && let Some(access) = local.handle.terminal_access(cx)
+        {
+            entries.push(crate::TerminalEntry {
+                item: local.handle.item_id(),
+                access,
+                title: local.handle.tab_title(cx),
+                active: false,
+                bottom: true,
+            });
+        }
+        let active = self
+            .last_command_item
+            .filter(|id| entries.iter().any(|entry| entry.item == *id))
+            .or_else(|| self.active_item().map(|item| item.item_id()));
+        for entry in &mut entries {
+            entry.active = active == Some(entry.item);
+        }
+        entries
     }
 
     pub fn active_item(&self) -> Option<&dyn ItemHandle> {
@@ -329,6 +408,7 @@ impl Workspace {
     }
 
     pub fn activate_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_right_panel_maximized(false, cx);
         let Some(open) = self.items.get(ix) else {
             return;
         };
@@ -455,6 +535,7 @@ impl Workspace {
         }
         let previous_active = self.active_item().map(|item| item.item_id());
         let closed = self.items.remove(ix);
+        cx.emit(WorkspaceEvent::ItemsChanged);
         let closed_id = closed.handle.item_id();
         let node = self
             .dock
@@ -602,6 +683,7 @@ impl Workspace {
                         local.item.update(cx, |_, cx| cx.notify());
                     }
                     cx.emit(WorkspaceEvent::LocalDirectoryChanged);
+                    cx.emit(WorkspaceEvent::ItemsChanged);
                     cx.notify();
                 }
                 ItemEvent::CloseRequested => this.close_local_terminal(window, cx),
@@ -636,10 +718,12 @@ impl Workspace {
             _subscription: subscription,
             _focus_subscription: focus_subscription,
         });
+        cx.emit(WorkspaceEvent::ItemsChanged);
         cx.notify();
     }
 
     pub fn toggle_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_right_panel_maximized(false, cx);
         if self
             .local_terminal
             .as_ref()
@@ -745,6 +829,7 @@ impl Workspace {
                 window.focus(&self.focus_handle, cx);
             }
             cx.emit(WorkspaceEvent::LocalDirectoryChanged);
+            cx.emit(WorkspaceEvent::ItemsChanged);
             cx.notify();
         }
     }
@@ -949,6 +1034,7 @@ impl Workspace {
 
     /// Shows the panel at `ix`, opening the sidebar if it is closed.
     pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_right_panel_maximized(false, cx);
         let Some(panel) = self.panels.get(ix) else {
             return;
         };
@@ -970,11 +1056,104 @@ impl Workspace {
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_right_panel_maximized(false, cx);
         self.sidebar_open = !self.sidebar_open;
         if !self.sidebar_open
             && let Some(item) = self.active_item()
         {
             let focus = item.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn set_right_panel<T: crate::RightPanel>(
+        &mut self,
+        panel: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.right_panel_subscription =
+            Some(
+                cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
+                    crate::RightPanelEvent::ToggleMaximized => {
+                        this.set_right_panel_maximized(!this.right_panel_maximized, cx)
+                    }
+                    crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
+                }),
+            );
+        self.right_panel = Some(Box::new(panel));
+        cx.notify();
+    }
+
+    pub fn set_right_panel_available(
+        &mut self,
+        available: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.right_panel_available = available;
+        if !available {
+            self.close_right_panel(window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn set_right_panel_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
+        if self.right_panel_attention != attention {
+            self.right_panel_attention = attention;
+            cx.notify();
+        }
+    }
+    pub fn right_panel_is_available(&self) -> bool {
+        self.right_panel_available && self.right_panel.is_some()
+    }
+    pub fn right_panel_is_open(&self) -> bool {
+        self.right_panel_open
+    }
+    pub fn right_panel_is_maximized(&self) -> bool {
+        self.right_panel_maximized
+    }
+
+    pub fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.right_panel_is_available() {
+            return;
+        }
+        if self.right_panel_open {
+            self.close_right_panel(window, cx);
+        } else {
+            self.right_panel_open = true;
+            if let Some(panel) = &self.right_panel {
+                window.focus(&panel.focus_handle(cx), cx);
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn set_right_panel_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
+        let maximized = maximized && self.right_panel_is_available() && self.right_panel_open;
+        if self.right_panel_maximized == maximized {
+            return;
+        }
+        self.right_panel_maximized = maximized;
+        if let Some(panel) = &self.right_panel {
+            panel.set_maximized(maximized, cx);
+        }
+        cx.notify();
+    }
+
+    fn close_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let had_focus = self
+            .right_panel
+            .as_ref()
+            .is_some_and(|panel| panel.focus_handle(cx).contains_focused(window, cx));
+        self.set_right_panel_maximized(false, cx);
+        self.right_panel_open = false;
+        if had_focus {
+            let focus = self
+                .active_item()
+                .map(|item| item.focus_handle(cx))
+                .unwrap_or_else(|| self.focus_handle.clone());
             window.focus(&focus, cx);
         }
         cx.notify();
@@ -1386,16 +1565,27 @@ impl Workspace {
                             this.toggle_local_terminal(window, cx)
                         })),
                 )
-                .child(
-                    Button::new("open-settings")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Settings)
-                        .tooltip("Settings")
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenSettings.boxed_clone(), cx);
-                        }),
-                ),
+                .when(self.right_panel_is_available(), |footer| {
+                    footer.child(
+                        Button::new("toggle-right-panel")
+                            .ghost()
+                            .small()
+                            .icon(if self.right_panel_attention {
+                                IconName::ShieldCheck
+                            } else {
+                                IconName::PanelRight
+                            })
+                            .tooltip(if self.right_panel_attention {
+                                "AI Agents: permission required"
+                            } else {
+                                "AI Agents"
+                            })
+                            .selected(self.right_panel_open)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_right_panel(window, cx)
+                            })),
+                    )
+                }),
         )
     }
 
@@ -1438,6 +1628,9 @@ impl Render for Workspace {
         let sidebar_width = rems(layout.sidebar_width).to_pixels(rem_size);
         let sidebar_range = rems(layout.sidebar_min_width).to_pixels(rem_size)
             ..rems(layout.sidebar_max_width).to_pixels(rem_size);
+        let agent_width = rems(layout.agent_panel_width).to_pixels(rem_size);
+        let agent_range = rems(layout.agent_panel_min_width).to_pixels(rem_size)
+            ..rems(layout.agent_panel_max_width).to_pixels(rem_size);
         let theme = cx.theme();
 
         let mut root = v_flex()
@@ -1464,6 +1657,16 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_previous_tab))
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_next_panel))
+            .on_action(
+                cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
+                    this.toggle_right_panel(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
+                    this.set_right_panel_maximized(!this.right_panel_maximized, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &crate::MoveTabLeft, window, cx| {
                 this.move_active_tab(-1, window, cx)
             }))
@@ -1508,21 +1711,45 @@ impl Render for Workspace {
             root = register(root, cx);
         }
 
+        let body = if self.right_panel_maximized {
+            div()
+                .id("workspace-right-panel")
+                .test_support()
+                .size_full()
+                .when_some(self.right_panel.as_ref(), |body, panel| {
+                    body.child(panel.view())
+                })
+                .into_any_element()
+        } else {
+            h_resizable("workspace-body")
+                .with_state(&self.body)
+                .child(
+                    resizable_panel()
+                        .size(sidebar_width)
+                        .size_range(sidebar_range)
+                        .visible(self.sidebar_open)
+                        .child(self.render_sidebar(cx)),
+                )
+                .child(resizable_panel().child(self.render_content(cx)))
+                .when_some(self.right_panel.as_ref(), |body, panel| {
+                    body.child(
+                        resizable_panel()
+                            .size(agent_width)
+                            .size_range(agent_range)
+                            .visible(self.right_panel_open && self.right_panel_available)
+                            .child(
+                                div()
+                                    .id("workspace-right-panel")
+                                    .test_support()
+                                    .size_full()
+                                    .child(panel.view()),
+                            ),
+                    )
+                })
+                .into_any_element()
+        };
         root.child(self.render_title_bar(cx))
-            .child(
-                div().flex_1().min_h_0().child(
-                    h_resizable("workspace-body")
-                        .with_state(&self.sidebar)
-                        .child(
-                            resizable_panel()
-                                .size(sidebar_width)
-                                .size_range(sidebar_range)
-                                .visible(self.sidebar_open)
-                                .child(self.render_sidebar(cx)),
-                        )
-                        .child(resizable_panel().child(self.render_content(cx))),
-                ),
-            )
+            .child(div().flex_1().min_h_0().child(body))
             .child(self.render_footer(cx))
     }
 }

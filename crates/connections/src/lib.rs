@@ -10,6 +10,7 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 
+mod directory;
 mod editor;
 mod menu;
 mod model;
@@ -49,7 +50,13 @@ pub fn init(paths: Option<&Paths>, cx: &mut App) {
 /// Adds the connections panel, the new-tab menu and the commands to a
 /// workspace.
 pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    workspace.set_connection_directory(std::rc::Rc::new(directory::Directory));
     let connections = Connections::global(cx);
+    cx.observe(&connections, |_, _, cx| {
+        cx.emit(nocterm_workspace::WorkspaceEvent::ItemsChanged);
+        cx.notify();
+    })
+    .detach();
     let handle = cx.entity().downgrade();
 
     let panel = cx.new(|cx| ConnectionsPanel::new(connections.clone(), handle.clone(), window, cx));

@@ -32,6 +32,9 @@ pub struct TextTail {
     pub first_line: u64,
     /// Number the next line printed will get; the cursor for `since_line`.
     pub next_line: u64,
+    /// Inclusive continuation cursor. Replace the previously returned final
+    /// line when using this cursor: output may append to an existing line.
+    pub resume_line: u64,
     /// Older text matching the query was left out to honour the limits.
     pub truncated: bool,
     /// The text is the visible screen of a full-screen program.
@@ -48,7 +51,9 @@ impl Emulator {
         let grid = self.search_grid();
         let alt_screen = self.modes().alt_screen;
         let next_line = self.output_line_number().saturating_add(1);
-        let since = query.since_line.filter(|_| !alt_screen);
+        // A saved cursor outside this lineage needs a fresh bounded snapshot.
+        let reset_cursor = query.since_line.is_some_and(|since| since > next_line);
+        let since = query.since_line.filter(|_| !alt_screen && !reset_cursor);
         let top = grid.topmost_line();
         let columns = grid.columns();
         let wraps = |line: Line| {
@@ -61,7 +66,7 @@ impl Emulator {
         // output that follows them.
         let mut lines: Vec<(u64, String)> = Vec::new();
         let mut used = 0usize;
-        let mut truncated = false;
+        let mut truncated = reset_cursor;
         let mut newer = next_line;
         let mut end = grid.bottommost_line();
         while end >= top {
@@ -107,6 +112,13 @@ impl Emulator {
             end = next_end;
         }
 
+        if let Some(since) = since {
+            // History eviction means the requested beginning is no longer present.
+            if lines.last().is_some_and(|(number, _)| *number > since) && end < top {
+                truncated = true;
+            }
+        }
+        let resume_line = lines.first().map_or(next_line, |(number, _)| *number);
         let first_line = lines.last().map_or(next_line, |(number, _)| *number);
         let text = lines
             .into_iter()
@@ -118,6 +130,7 @@ impl Emulator {
             text,
             first_line,
             next_line,
+            resume_line,
             truncated,
             alt_screen,
         }
@@ -251,6 +264,59 @@ mod tests {
         });
         assert_eq!(third.text, "");
         assert_eq!(third.first_line, third.next_line);
+    }
+
+    #[test]
+    fn inclusive_resume_returns_appended_line_without_newline() {
+        let mut terminal = emulator(10, 3, 100);
+        terminal.advance(b"one\r\npartial");
+        let first = terminal.text(query(100, 1024));
+        terminal.advance(b"END");
+        let second = terminal.text(TextQuery {
+            since_line: Some(first.resume_line),
+            ..query(100, 1024)
+        });
+        assert_eq!(second.text, "partialEND");
+        assert_eq!(second.first_line, first.resume_line);
+        assert_eq!(second.resume_line, first.resume_line);
+    }
+
+    #[test]
+    fn resume_survives_reflow_and_reports_evicted_history() {
+        let mut terminal = emulator(10, 2, 1);
+        terminal.advance(b"partial");
+        let first = terminal.text(query(100, 1024));
+        terminal.resize(TermSize::new(4, 2, 8, 16));
+        terminal.advance(b"END");
+        let tail = terminal.text(TextQuery {
+            since_line: Some(first.resume_line),
+            ..query(100, 1024)
+        });
+        assert_eq!(tail.text, "partialEND");
+        terminal.advance(b"\r\n2\r\n3\r\n4\r\n5\r\n");
+        let tail = terminal.text(TextQuery {
+            since_line: Some(first.resume_line),
+            ..query(100, 1024)
+        });
+        assert!(tail.truncated);
+    }
+
+    #[test]
+    fn cursor_from_another_lineage_returns_fresh_snapshot() {
+        let mut terminal = emulator(10, 3, 100);
+        terminal.advance(b"new");
+        let tail = terminal.text(TextQuery {
+            since_line: Some(9999),
+            ..query(100, 1024)
+        });
+        assert_eq!(tail.text, "new");
+        assert!(tail.truncated);
+        terminal.advance(b"\x1b[2J\x1b[3J\x1b[Hafter clear");
+        let tail = terminal.text(TextQuery {
+            since_line: Some(tail.resume_line),
+            ..query(100, 1024)
+        });
+        assert_eq!(tail.text, "after clear");
     }
 
     #[test]

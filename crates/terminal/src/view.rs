@@ -1308,6 +1308,11 @@ impl Render for TerminalView {
 }
 
 impl Item for TerminalView {
+    fn terminal_access(&self) -> Option<std::rc::Rc<dyn nocterm_workspace::TerminalAccess>> {
+        Some(std::rc::Rc::new(crate::access::Access(
+            self.terminal.downgrade(),
+        )))
+    }
     fn command_enabled(&self, command: ItemCommand, cx: &App) -> bool {
         let terminal = self.terminal.read(cx);
         match command {
@@ -1545,6 +1550,7 @@ mod prompt_tests {
                 let view = cx.new(|cx| {
                     TerminalView::new(
                         SessionSpec {
+                            profile: None,
                             options: Default::default(),
                             title: "test".into(),
                             target: Target::new("me", "host", 22),

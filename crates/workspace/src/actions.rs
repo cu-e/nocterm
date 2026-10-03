@@ -19,6 +19,12 @@ gpui_kit::actions!(
         PreviousTab,
         /// Show or hide the sidebar.
         ToggleSidebar,
+        /// Show or hide the AI panel.
+        ToggleRightPanel,
+        /// Expand or restore the AI panel in the workspace body.
+        ToggleRightPanelMaximized,
+        /// Open AI settings.
+        OpenAiSettings,
         /// Show the next sidebar panel, wrapping around.
         NextPanel,
         /// Open the settings.

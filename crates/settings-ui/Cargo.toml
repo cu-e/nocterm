@@ -10,6 +10,7 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-ai.workspace = true
 nocterm-settings.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true

@@ -128,3 +128,20 @@ warnings denied. A separate optional standalone vendor format check differs
 from default stable rustfmt because the copied upstream sources retain their
 original style; the required workspace format check passes. No formatting
 check was weakened and no mass vendor reformat was introduced.
+
+## ACP AI panel boundary
+
+AI context is built from allowlisted Workspace terminal/connection contracts,
+never complete profiles or SessionSpec/Auth/credential/proxy/launch values.
+Subprocess environments are cleared and filtered even for explicit overrides;
+MCP registrations bind tools to a chat and attachment checks repeat after
+approval. Bounded lines, image decoding and terminal reads protect resource
+boundaries. Error/stderr and metadata filtering remains heuristic.
+
+Local agents run without a sandbox as the same user and may independently read
+user files. Runtime-directory permissions and a bridge token do not protect
+against a same-user process that has obtained the token. Windows termination
+and listener permissions have different guarantees from Unix. See
+[AI agents](AI_AGENTS.md) for the complete threat model and verification scope.
+This section describes implementation boundaries, not a claim of independent
+security review or successful smoke checks for all real agents.

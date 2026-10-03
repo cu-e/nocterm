@@ -91,6 +91,7 @@ impl Terminal {
     pub fn new_local(cx: &mut Context<Self>) -> Self {
         Self::new_kind(
             SessionSpec {
+                profile: None,
                 options: Default::default(),
                 title: "Local terminal".into(),
                 target: nocterm_session::Target::new("local", "localhost", 22),
@@ -494,6 +495,53 @@ impl Terminal {
     }
 
     // ── Input ────────────────────────────────────────────────────────────────
+
+    pub(crate) fn agent_prompt_state(&self) -> (Option<bool>, bool) {
+        let integration = self.integration.borrow();
+        (
+            self.local.then_some(integration.at_prompt),
+            integration.dirty_input,
+        )
+    }
+
+    pub(crate) fn agent_send(
+        &mut self,
+        text: &str,
+        command: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !self.is_connected() || self.prompt.is_some() {
+            return Err("Terminal is unavailable or waiting for authentication.".into());
+        }
+        if text.len() > 16 * 1024 {
+            return Err("Terminal input exceeds 16 KiB.".into());
+        }
+        if command {
+            if text.contains(['\0', '\r', '\n']) {
+                return Err("Run one command without control characters.".into());
+            }
+            let integration = self.integration.borrow();
+            if self.emulator.modes().alt_screen
+                || (self.local && (!integration.at_prompt || integration.dirty_input))
+            {
+                return Err(
+                    "The terminal is busy, has unfinished input, or is in an alternate screen."
+                        .into(),
+                );
+            }
+        }
+        let text = if command {
+            format!("{text}\r")
+        } else {
+            text.to_owned()
+        };
+        let bytes = self.codec.encode(&text)?;
+        if !self.send(bytes) {
+            return Err("Terminal input queue rejected the input.".into());
+        }
+        cx.emit(TerminalEvent::Changed);
+        Ok(())
+    }
 
     /// Encodes only user text. Protocol replies and mouse messages use send unchanged.
     pub fn send_text(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -1030,6 +1078,7 @@ mod credential_tests {
             cx.new(|cx| {
                 Terminal::new(
                     SessionSpec {
+                        profile: None,
                         options: Default::default(),
                         title: "test".into(),
                         target: target.clone(),
@@ -1159,6 +1208,7 @@ mod credential_tests {
             cx.new(|cx| {
                 Terminal::new(
                     SessionSpec {
+                        profile: None,
                         options: Default::default(),
                         title: "test".into(),
                         target: target.clone(),
@@ -1259,6 +1309,7 @@ mod recording_tests {
             cx.new(|cx| {
                 let mut terminal = Terminal::new(
                     SessionSpec {
+                        profile: None,
                         options: Default::default(),
                         title: "test".into(),
                         target: Target::new("me", "host", 22),
@@ -1311,6 +1362,7 @@ mod recording_tests {
             cx.new(|cx| {
                 Terminal::new(
                     SessionSpec {
+                        profile: None,
                         options: Default::default(),
                         title: "test".into(),
                         target: Target::new("me", "host", 22),

@@ -793,7 +793,8 @@ impl Render for ConnectionEditor {
                 .child(Self::render_field("User", &self.user, cx))
                 .child(Self::render_field("Folder", &self.group, cx))
                 .child(div().text_xs().text_color(muted).child("Description"))
-                .child(div().id("editor-description").test_support().h(description_height).child(Textarea::new(&self.description).h(description_height).aria_label("Connection description"))),
+                .child(div().id("editor-description").test_support().h(description_height).child(Textarea::new(&self.description).h(description_height).aria_label("Connection description")))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Shared with AI agents when this connection is attached. Avoid secrets in descriptions.")),
             EditorSection::Authentication => v_flex().gap_3()
                 .child(div().text_xs().text_color(muted).child("Sign in"))
                 .child(self.render_auth_choice(cx))

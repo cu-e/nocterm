@@ -1,5 +1,7 @@
 //! A single settings tab, using the same schema and store as the terminal.
 
+mod ai_page;
+
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Task, Window,
     component::{
@@ -28,6 +30,7 @@ const BUILTIN_PAGES: &[(&str, &str)] = &[
     ("terminal", "Terminal"),
     ("local-shell", "Local shell"),
     ("ssh", "SSH"),
+    ("ai", "AI"),
 ];
 
 /// Installs Settings with its built-in pages.
@@ -253,6 +256,7 @@ fn global_options(settings: &Settings) -> nocterm_settings::SessionOptions {
 
 /// Settings edits are a draft until Apply succeeds.
 pub struct SettingsView {
+    ai: ai_page::AiForm,
     selected_page: usize,
     pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
     focus: FocusHandle,
@@ -275,6 +279,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let draft = cx.settings().clone();
+        let ai = ai_page::AiForm::new(&draft.ai, window, cx);
         let fields = Fields::from_settings(&draft);
         let inputs = fields
             .values()
@@ -285,6 +290,7 @@ impl SettingsView {
         let session_options =
             cx.new(|cx| nocterm_ui::SessionOptionsEditor::new(options, false, window, cx));
         Self {
+            ai,
             selected_page: 0,
             pages: pages.into_iter().map(|spec| (spec, None)).collect(),
             focus: cx.focus_handle(),
@@ -368,6 +374,7 @@ impl SettingsView {
             settings.terminal.charset = options.charset.unwrap_or_default();
             settings.ssh.proxy = options.proxy.unwrap_or_default();
             settings.logging = options.logging.unwrap_or_default();
+            self.ai.apply(&mut settings.ai, cx)?;
             Ok(settings)
         });
         let settings = match result {
@@ -439,6 +446,7 @@ impl SettingsView {
         cx.notify();
     }
     fn replace_form(&mut self, settings: Settings, window: &mut Window, cx: &mut Context<Self>) {
+        self.ai = ai_page::AiForm::new(&settings.ai, window, cx);
         self.draft = settings;
         let options = global_options(&self.draft);
         self.session_options
@@ -509,6 +517,7 @@ impl Focusable for SettingsView {
             1 => self.inputs[0].read(cx).focus_handle(cx),
             2 => self.inputs[7].read(cx).focus_handle(cx),
             3 => self.inputs[5].read(cx).focus_handle(cx),
+            4 => self.focus.clone(),
             index => self.pages[index - BUILTIN_PAGES.len()]
                 .1
                 .as_ref()
@@ -776,6 +785,7 @@ impl Render for SettingsView {
                     })),
             )
             })
+            .when(self.selected_page == 4, |form| form.child(self.render_ai(cx)))
             .when(self.selected_page_id() == "vault", |form| {
                 form.child(self.field(
                     15,

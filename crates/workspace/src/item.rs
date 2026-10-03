@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Render,
@@ -43,6 +43,10 @@ pub trait Item: Render + Focusable + EventEmitter<ItemEvent> {
     /// The sidebar's file browser, and any future integration that acts on
     /// "the current host", reads the active tab's session through this.
     fn session(&self, _cx: &App) -> Option<SessionContext> {
+        None
+    }
+
+    fn terminal_access(&self) -> Option<Rc<dyn crate::TerminalAccess>> {
         None
     }
 
@@ -107,6 +111,7 @@ impl SessionContext {
 /// An [`Item`] of any type, as the workspace holds it.
 pub trait ItemHandle: 'static {
     fn item_id(&self) -> EntityId;
+    fn terminal_access(&self, cx: &App) -> Option<Rc<dyn crate::TerminalAccess>>;
     fn view(&self) -> AnyView;
     fn tab_title(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, cx: &App) -> IconName;
@@ -119,6 +124,9 @@ pub trait ItemHandle: 'static {
 }
 
 impl<T: Item> ItemHandle for Entity<T> {
+    fn terminal_access(&self, cx: &App) -> Option<Rc<dyn crate::TerminalAccess>> {
+        self.read(cx).terminal_access()
+    }
     fn item_id(&self) -> EntityId {
         self.entity_id()
     }

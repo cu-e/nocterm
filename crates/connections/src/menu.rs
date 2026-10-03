@@ -88,6 +88,7 @@ impl NewTabMenu {
         self.quick_connect
             .update(cx, |input, cx| input.set_value("", window, cx));
         let spec = SessionSpec {
+            profile: None,
             options: Default::default(),
             title: target.to_string().into(),
             target,

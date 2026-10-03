@@ -15,6 +15,7 @@
 //! [`init`], and the workspace reaches this crate through [`open_session`],
 //! installed as its session opener.
 
+mod access;
 mod codec;
 mod credentials;
 mod recording;

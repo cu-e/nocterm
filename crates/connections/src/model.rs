@@ -569,6 +569,7 @@ impl Connections {
         match recent.profile.and_then(|id| self.profiles.get(id)) {
             Some(profile) => spec_for_profile(profile),
             None => SessionSpec {
+                profile: None,
                 options: recent.options.clone(),
                 title: recent.target.to_string().into(),
                 target: recent.target.clone(),
@@ -582,6 +583,7 @@ impl Connections {
 
 pub fn spec_for_profile(profile: &Profile) -> SessionSpec {
     SessionSpec {
+        profile: Some(profile.id.to_string().into()),
         options: profile.options.clone(),
         title: profile.name.clone().into(),
         target: profile.target.clone(),

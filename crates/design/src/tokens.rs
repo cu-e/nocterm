@@ -97,6 +97,12 @@ pub struct Shape {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
+    /// Initial width of the AI panel, in rem.
+    pub agent_panel_width: f32,
+    /// Minimum AI panel width, in rem.
+    pub agent_panel_min_width: f32,
+    /// Maximum AI panel width, in rem.
+    pub agent_panel_max_width: f32,
     /// Initial width of the left sidebar.
     pub sidebar_width: f32,
     /// Narrowest the sidebar can be dragged.
@@ -407,6 +413,24 @@ impl DesignTokens {
             layout.sidebar_width,
             layout.sidebar_min_width,
             layout.sidebar_max_width,
+        )?;
+        within(
+            "layout.agent_panel_min_width",
+            layout.agent_panel_min_width,
+            1.0,
+            100.0,
+        )?;
+        within(
+            "layout.agent_panel_max_width",
+            layout.agent_panel_max_width,
+            layout.agent_panel_min_width,
+            100.0,
+        )?;
+        within(
+            "layout.agent_panel_width",
+            layout.agent_panel_width,
+            layout.agent_panel_min_width,
+            layout.agent_panel_max_width,
         )?;
         within("layout.tab_max_width", layout.tab_max_width, 4.0, 100.0)?;
         within("layout.terminal_padding", layout.terminal_padding, 0.0, 8.0)?;

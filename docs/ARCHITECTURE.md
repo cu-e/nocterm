@@ -177,8 +177,22 @@ Add a new Item for another kind of tab, a Panel for another sidebar section or a
 registered action for a command. Observe the terminal model or session contract
 for integrations. Add another Transport implementation to support another kind
 of session. Theme changes belong in the token source or its user override.
-IDE features, AI, collaboration, Vim mode and an extension runtime are future
-consumers of these boundaries; no implementations are included now.
+IDE features, collaboration, Vim mode and an extension runtime remain future
+consumers of these boundaries.
+
+The ACP AI panel uses three layers: `nocterm-ai` declares runtime-neutral agent
+contracts and bounded context/tool rules; `nocterm-acp` supplies subprocess and
+authenticated local bridge adapters; `nocterm-agent` supplies GPUI lifecycle and
+chat UI. App injects the adapter. Workspace exposes allowlisted `TerminalAccess`
+and `ConnectionDirectory` seams so the agent feature never imports other
+features. The right panel lives outside the tab dock and remains available with
+no tabs; maximize uses the working area while preserving the footer.
+
+AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
+permissions, tool registrations, processes and panel visibility across windows.
+History is in memory; favorites have a separate state file. See
+[AI agents](AI_AGENTS.md) for protocol, limits and privacy boundaries. Local
+agent processes are not sandboxed.
 
 ## Generated documentation
 

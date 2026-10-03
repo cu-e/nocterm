@@ -35,6 +35,7 @@ os = ["linux", "windows"]
 "ctrl-alt-pageup" = "workspace::PreviousPane"
 "ctrl-shift-f2" = "workspace::RenameTab"
 "ctrl-`" = "workspace::ToggleLocalTerminal"
+"ctrl-alt-i" = "workspace::ToggleRightPanel"
 "ctrl-alt-n" = "workspace::NewWindow"
 "ctrl-alt-w" = "workspace::CloseWindow"
 "ctrl-shift-f" = "workspace::Find"
@@ -68,6 +69,7 @@ os = ["macos"]
 "cmd-alt-pageup" = "workspace::PreviousPane"
 "cmd-shift-f2" = "workspace::RenameTab"
 "cmd-`" = "workspace::ToggleLocalTerminal"
+"cmd-alt-i" = "workspace::ToggleRightPanel"
 "cmd-shift-n" = "workspace::NewWindow"
 "cmd-shift-w" = "workspace::CloseWindow"
 "cmd-f" = "workspace::Find"
@@ -103,3 +105,16 @@ os = ["macos"]
 "cmd-home" = "terminal::ScrollToTop"
 "cmd-end" = "terminal::ScrollToBottom"
 "cmd-r" = "terminal::Reconnect"
+
+# AI panel controls.
+[[section]]
+context = "AgentPanel"
+os = ["linux", "windows"]
+[section.bindings]
+"ctrl-alt-m" = "agent::ToggleModelPicker"
+
+[[section]]
+context = "AgentPanel"
+os = ["macos"]
+[section.bindings]
+"cmd-alt-m" = "agent::ToggleModelPicker"

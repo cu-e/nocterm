@@ -20,18 +20,26 @@
 //! provides it.
 
 mod actions;
+mod connection_directory;
 mod dock_item;
 mod item;
 mod local_terminal;
 mod panel;
+mod right_panel;
 mod settings_page;
+mod terminal_access;
 mod workspace;
 
 pub use actions::*;
+pub use connection_directory::{ConnectionDirectory, ConnectionSummary};
 pub use item::{Item, ItemCommand, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::LocalTerminal;
 pub use panel::{Panel, PanelHandle};
+pub use right_panel::{RightPanel, RightPanelEvent};
 pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
+pub use terminal_access::{
+    TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
+};
 pub use workspace::{SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
 
 /// The key context of the workspace, for keymap entries.

@@ -6,6 +6,11 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 
 | Action | Description | Bindings |
 | --- | --- | --- |
+| `agent::AttachImage` |  |  |
+| `agent::NewThread` |  |  |
+| `agent::ShowHistory` |  |  |
+| `agent::StopGeneration` |  |  |
+| `agent::ToggleModelPicker` |  | `ctrl-alt-m` (linux, windows; AgentPanel); `cmd-alt-m` (macos; AgentPanel) |
 | `connections::NewConnection` | Open the form for a new saved connection. | `ctrl-shift-n` (linux, windows; Workspace); `cmd-n` (macos; Workspace) |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |
@@ -42,6 +47,7 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::NextPane` | Focus the next pane in layout order. | `ctrl-alt-pagedown` (linux, windows; Workspace); `cmd-alt-pagedown` (macos; Workspace) |
 | `workspace::NextPanel` | Show the next sidebar panel, wrapping around. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
+| `workspace::OpenAiSettings` | Open AI settings. |  |
 | `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |
 | `workspace::OpenVault` | Open the encrypted credential vault. |  |
@@ -60,4 +66,6 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `cmd-`` (macos; Workspace) |
+| `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-i` (linux, windows; Workspace); `cmd-alt-i` (macos; Workspace) |
+| `workspace::ToggleRightPanelMaximized` | Expand or restore the AI panel in the workspace body. |  |
 | `workspace::ToggleSidebar` | Show or hide the sidebar. | `ctrl-shift-b` (linux, windows; Workspace); `cmd-b` (macos; Workspace) |

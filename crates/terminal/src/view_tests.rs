@@ -41,6 +41,7 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TerminalView>, A
             cx.new(|cx| {
                 TerminalView::new(
                     SessionSpec {
+                        profile: None,
                         title: "test".into(),
                         target: nocterm_session::Target::new("test", "host", 22),
                         auth: nocterm_session::Auth::Password,

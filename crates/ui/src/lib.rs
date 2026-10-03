@@ -6,6 +6,7 @@
 //! onto the component library's theme, so standard components follow the
 //! tokens without any view repeating a colour or a size.
 
+mod ai;
 mod design;
 mod drag_preview;
 mod icons;
@@ -16,6 +17,7 @@ pub use session_options::SessionOptionsEditor;
 mod terminal_style;
 mod theme;
 
+pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::DragPreview;
 pub use icons::{Assets, IconName};

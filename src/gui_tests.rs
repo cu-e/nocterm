@@ -34,6 +34,7 @@ impl Transport for MockTransport {
 
 fn spec(host: &str) -> SessionSpec {
     SessionSpec {
+        profile: None,
         options: Default::default(),
         title: host.to_owned().into(),
         target: nocterm_session::Target::new("test", host, 22),
@@ -85,6 +86,15 @@ fn fixture_with_vault(
         }
         nocterm_terminal::init(transport.clone(), cx);
         nocterm_connections::init(None, cx);
+        nocterm_agent::init(
+            nocterm_agent::AgentServices {
+                connector: Arc::new(nocterm_acp::AcpConnector),
+                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+                state_file: paths.state_dir().join("agents.toml"),
+                workdir: paths.state_dir().join("agent-workspace"),
+            },
+            cx,
+        );
         crate::keymap::load(cx);
         super::application::register(paths, vault_ready, cx);
         let (window, workspace) =
@@ -95,6 +105,7 @@ fn fixture_with_vault(
                     nocterm_connections::register(&mut workspace, window, cx);
                     super::register_settings(&mut workspace, vault_ready);
                     nocterm_files::register(&mut workspace, window, cx);
+                    nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
                     workspace
                 })
@@ -728,6 +739,114 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
             "one click must reopen the session even from sidebar focus"
         );
         assert!(terminal.read(cx).focus_handle(cx).is_focused(window));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_ui::update_settings;
+    let (window, workspace, _, _) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(workspace.read(cx).right_panel_is_available());
+        window.dispatch_action(Box::new(nocterm_workspace::ToggleRightPanel), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        assert!(workspace.read(cx).right_panel_is_open());
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(nocterm_workspace::OpenAiSettings), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        let settings = workspace
+            .read(cx)
+            .find_item::<nocterm_settings_ui::SettingsView>()
+            .unwrap();
+        assert_eq!(settings.read(cx).selected_page_id(), "ai");
+        update_settings(cx, |settings| settings.ai.enabled = false).detach();
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, _, cx| {
+        assert!(!workspace.read(cx).right_panel_is_available());
+        assert!(!workspace.read(cx).right_panel_is_open());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_markers(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_ai::context::{ConnectionDescriptor, TerminalDescriptor, context_block};
+    let (window, workspace, _, _) = fixture(cx);
+    let markers = [
+        "PRIVATE_KEY_PATH_MARKER",
+        "LAUNCH_ENV_SECRET_MARKER",
+        "PROXY_HOST_PRIVATE_MARKER",
+        "c0ffee00c0ffee00c0ffee00c0ffee00",
+    ];
+    cx.update_window(window, |_, window, cx| {
+        let mut source = spec("safe.example");
+        source.auth = nocterm_session::Auth::Key {
+            path: std::path::PathBuf::from(markers[0]),
+        };
+        source.launch = Some(nocterm_session::ShellLaunch {
+            env: std::collections::BTreeMap::from([("PRIVATE_VAR".into(), markers[1].into())]),
+            ..Default::default()
+        });
+        source.credential = Some(markers[3].parse().unwrap());
+        source.options.proxy = Some(nocterm_settings::ProxyConfig::HttpConnect {
+            host: markers[2].into(),
+            port: 8080,
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_session(source, window, cx)
+        });
+        let descriptors = workspace
+            .read(cx)
+            .terminals(cx)
+            .into_iter()
+            .map(|entry| {
+                let info = entry.access.info(cx).unwrap();
+                TerminalDescriptor {
+                    id: format!("{:?}", entry.item),
+                    title: entry.title.to_string(),
+                    local: info.local,
+                    cwd: info.cwd.map(|p| p.to_string_lossy().into_owned()),
+                    status: format!("{:?}", info.status),
+                    connection: info.target.map(|target| ConnectionDescriptor {
+                        id: String::new(),
+                        name: info.title.to_string(),
+                        group: None,
+                        description: String::new(),
+                        host: target.host,
+                        port: target.port,
+                        user: target.user,
+                    }),
+                }
+            })
+            .collect::<Vec<_>>();
+        let context = context_block(&descriptors);
+        let list_response = nocterm_ai::mcp::tool_result(
+            serde_json::json!(1),
+            Ok(serde_json::json!({"context":context})),
+        )
+        .to_string();
+        assert!(list_response.contains("safe.example"));
+        for marker in markers {
+            assert!(
+                !list_response.contains(marker),
+                "Source field leaked: {marker}"
+            );
+        }
     })
     .unwrap();
 }

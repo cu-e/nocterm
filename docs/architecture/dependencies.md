@@ -6,7 +6,10 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
+| `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
+| `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
 | `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
@@ -15,7 +18,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session adapter. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: their schema and their file. |
-| `nocterm-settings-ui` | feature | `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
+| `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
 | `nocterm-ssh` | adapter | `nocterm-session` | SSH and SFTP transport, implemented with russh. |
 | `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
@@ -29,6 +32,9 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 ```mermaid
 graph TD
+    nocterm --> nocterm_acp
+    nocterm --> nocterm_agent
+    nocterm --> nocterm_ai
     nocterm --> nocterm_connections
     nocterm --> nocterm_core
     nocterm --> nocterm_design
@@ -43,6 +49,16 @@ graph TD
     nocterm --> nocterm_ui
     nocterm --> nocterm_vault_ui
     nocterm --> nocterm_workspace
+    nocterm_acp --> nocterm_ai
+    nocterm_acp --> nocterm_core
+    nocterm_acp --> nocterm_settings
+    nocterm_agent --> nocterm_ai
+    nocterm_agent --> nocterm_core
+    nocterm_agent --> nocterm_settings
+    nocterm_agent --> nocterm_ui
+    nocterm_agent --> nocterm_workspace
+    nocterm_ai --> nocterm_core
+    nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_core
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_ui
@@ -56,6 +72,7 @@ graph TD
     nocterm_local --> nocterm_session
     nocterm_session --> nocterm_settings
     nocterm_settings --> nocterm_core
+    nocterm_settings_ui --> nocterm_ai
     nocterm_settings_ui --> nocterm_settings
     nocterm_settings_ui --> nocterm_ui
     nocterm_settings_ui --> nocterm_workspace

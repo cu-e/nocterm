@@ -5,6 +5,7 @@
 //! window. It is the only crate that names every other one; nothing else
 //! does any wiring.
 
+mod agent_bridge;
 mod app_menus;
 mod application;
 mod keymap;
@@ -24,13 +25,21 @@ use nocterm_design::DesignTokens;
 use nocterm_settings::{Settings, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_ui::SettingsStore;
-use nocterm_workspace::{DefaultSessionSettings, OpenSSHSettings, OpenVault, Workspace};
+use nocterm_workspace::{
+    DefaultSessionSettings, OpenAiSettings, OpenSSHSettings, OpenVault, Workspace,
+};
 use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
 const APP_ID: &str = "dev.nocterm.Nocterm";
 
 fn main() -> anyhow::Result<()> {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "agent-bridge")
+    {
+        return agent_bridge::run_from_environment().map_err(anyhow::Error::msg);
+    }
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -55,6 +64,15 @@ fn main() -> anyhow::Result<()> {
                 cx,
             );
             nocterm_connections::init(Some(&paths), cx);
+            nocterm_agent::init(
+                nocterm_agent::AgentServices {
+                    connector: Arc::new(nocterm_acp::AcpConnector),
+                    bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+                    state_file: paths.state_dir().join("agents.toml"),
+                    workdir: paths.state_dir().join("agent-workspace"),
+                },
+                cx,
+            );
             let vault_ready = match nocterm_vault_ui::init_with_device_unlock(
                 paths.config_dir().join("vault.bin"),
                 Some(nocterm_device_unlock::provider()),
@@ -130,6 +148,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, window, cx);
+            nocterm_agent::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);
             workspace
         });
@@ -153,6 +172,16 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
                 nocterm_settings_ui::open_page(workspace, "ssh", &pages, window, cx);
+            });
+        });
+    });
+    let ai = pages.clone();
+    workspace.register_action(move |_, _: &OpenAiSettings, window, cx| {
+        let workspace = cx.entity().downgrade();
+        let pages = ai.clone();
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                nocterm_settings_ui::open_page(workspace, "ai", &pages, window, cx);
             });
         });
     });

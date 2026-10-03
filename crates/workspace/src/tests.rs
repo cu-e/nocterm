@@ -2,7 +2,7 @@ use crate::{Item, ItemEvent, LocalTerminal, Workspace};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
-    Window, WindowOptions,
+    TestSupportExt as _, Window, WindowOptions,
     component::{
         Placement, WindowExt as _,
         dock::{DockPlacement, PaneRef},
@@ -730,10 +730,10 @@ fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
             cx.notify();
         });
         window.render_frame(cx);
-        let settings = window.find("open-settings").bounds();
+        let settings = window.find("toggle-local-terminal").bounds();
         assert!(window.viewport_size().width - settings.right() < gpui_kit::px(16.));
         assert!(window.try_find("toggle-local-terminal").is_some());
-        assert!(window.try_find("open-settings").is_some());
+        assert!(window.try_find("open-settings").is_none());
     })
     .unwrap();
 }
@@ -1115,6 +1115,89 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
                 .is_none(),
             "closed Item removes its cached connected session"
         );
+    })
+    .unwrap();
+}
+
+struct RightProbe {
+    focus: FocusHandle,
+    maximized: bool,
+}
+impl EventEmitter<crate::RightPanelEvent> for RightProbe {}
+impl Focusable for RightProbe {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for RightProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("right-probe")
+            .test_support()
+            .size_full()
+            .track_focus(&self.focus)
+            .child("AI")
+    }
+}
+impl crate::Panel for RightProbe {
+    fn title(&self, _: &App) -> gpui_kit::SharedString {
+        "AI Agents".into()
+    }
+    fn icon(&self, _: &App) -> nocterm_ui::IconName {
+        nocterm_ui::IconName::Bot
+    }
+}
+impl crate::RightPanel for RightProbe {
+    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
+        self.maximized = maximized;
+        cx.notify();
+    }
+}
+
+#[gpui_kit::test]
+fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mut TestAppContext) {
+    let (handle, workspace) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.resize(gpui_kit::size(px(1800.), px(760.)));
+        let panel = cx.new(|cx| RightProbe {
+            focus: cx.focus_handle(),
+            maximized: false,
+        });
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_right_panel(panel.clone(), window, cx);
+            workspace.toggle_right_panel(window, cx);
+            assert!(!workspace.right_panel_is_open());
+            workspace.set_right_panel_available(true, window, cx);
+            workspace.toggle_right_panel(window, cx);
+            assert!(workspace.right_panel_is_open());
+            assert!(panel.read(cx).focus.is_focused(window));
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("right-probe").is_some());
+        assert!(window.try_find("empty-new-tab").is_some());
+        assert!(window.try_find("open-settings").is_none());
+        let toggle = window.find("toggle-right-panel").bounds();
+        assert!(toggle.left() > window.find("toggle-local-terminal").bounds().right());
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_right_panel_maximized(true, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("empty-new-tab").is_none());
+        assert!(window.try_find("toggle-right-panel").is_some());
+        assert!(panel.read(cx).maximized);
+        assert!(
+            (window.find("right-probe").bounds().size.width - window.viewport_size().width).abs()
+                < px(2.)
+        );
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_right_panel_available(false, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("toggle-right-panel").is_none());
+        assert!(window.try_find("right-probe").is_none());
+        assert!(window.try_find("empty-new-tab").is_some());
+        assert!(!panel.read(cx).maximized);
+        assert!(workspace.read(cx).focus_handle.is_focused(window));
     })
     .unwrap();
 }

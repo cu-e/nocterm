@@ -69,7 +69,7 @@ accepts, Escape cancels, and an empty alias restores the original title. Aliases
 belong to open tabs. Right-click a tab to close it, close other/left/right tabs,
 close all central tabs, split its pane or open Settings. Close commands apply to
 the clicked pane and never close the bottom local shell. Pane and bottom-terminal
-dividers can be resized. The section, terminal and settings buttons occupy a
+dividers can be resized. The section, local terminal and AI panel buttons occupy a
 full-width bottom bar, including when the sidebar is hidden. Closing the last
 bottom terminal removes its empty pane and resize handle.
 
@@ -113,7 +113,7 @@ requires supported shell integration and a known empty prompt. Unsupported shell
 or an active command report the limitation. Remote paths are never sent to this
 local shell.
 
-Settings are opened with the gear button or `Ctrl+,` (`Cmd+,` on macOS). Switch
+Settings are opened through Session → Preferences → Settings or `Ctrl+,` (`Cmd+,` on macOS). Switch
 between Appearance, Terminal, Local shell, SSH and Vault tabs. Edit the form and
 Apply; switching sections preserves the draft. Appearance, terminal font, cursor,
 scrollback and optional line
@@ -197,6 +197,25 @@ for tests; the native shutdown diagnostic still needs an upstream reproduction.
 
 The terminal emulator is a maintained local patch of alacritty_terminal 0.26.0.
 See [the patch notes](vendor/alacritty_terminal/NOCTERM.md) before updating it.
+
+## AI agents
+
+The right AI panel supports ACP agents Claude, Codex, Hermes and custom
+executables, with terminal/connection/group context, capability-driven model
+and effort controls, model favorites and image input. Open it from the footer
+or Window → AI Agents (Ctrl+Alt+I / Cmd+Alt+I). AI Settings is available from
+Session → Preferences and the normal Settings shortcut. Disabling AI closes
+chats and stops its processes; nothing launches before a chat is created.
+
+The built-in Claude/Codex commands use pinned npm ACP adapters and need Node.js
+and npm (`npx`); Claude requires Node.js 22 or later. Hermes uses `hermes acp`.
+Desktop PATH can differ from your shell; absolute executable overrides are
+available in AI Settings. Chat history is in memory, and model favorites persist
+in `agents.toml`.
+
+Local agents are not sandboxed and may read your user files. Nocterm excludes
+SSH/vault credential fields from context; terminal-output filtering cannot
+recognize every secret. See [AI setup, tools and privacy](docs/AI_AGENTS.md).
 
 ## License
 

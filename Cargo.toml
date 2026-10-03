@@ -10,6 +10,9 @@ publish = false
 layer = "app"
 
 [dependencies]
+nocterm-ai.workspace = true
+nocterm-acp.workspace = true
+nocterm-agent.workspace = true
 nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
 nocterm-core.workspace = true
@@ -36,6 +39,7 @@ tracing-subscriber.workspace = true
 workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
 futures.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -55,6 +59,10 @@ edition = "2024"
 license-file = "LICENSE"
 
 [workspace.dependencies]
+nocterm-ai = { path = "crates/ai" }
+nocterm-acp = { path = "crates/acp" }
+nocterm-agent = { path = "crates/agent" }
+
 # Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
 nocterm-device-unlock = { path = "crates/device-unlock" }
 nocterm-connections = { path = "crates/connections" }
@@ -73,6 +81,12 @@ nocterm-vt = { path = "crates/vt" }
 nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
+
+agent-client-protocol = "=2.2.0"
+agent-client-protocol-schema = "=1.9.1"
+base64 = "0.22"
+async-io = "2"
+async-process = "2"
 
 argon2 = { version = "0.6", features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", features = ["zeroize"] }

@@ -48,6 +48,9 @@ button_size = 13.0               # px · default action labels
 # ── Layout (rem) ──────────────────────────────────────────────────────────────
 
 [layout]
+agent_panel_width = 26.0       # initial AI panel width
+agent_panel_min_width = 18.0   # minimum AI panel width
+agent_panel_max_width = 64.0   # maximum AI panel width
 sidebar_width     = 17.0         # initial width of the left sidebar
 sidebar_min_width = 12.0         # the sidebar cannot be dragged narrower …
 sidebar_max_width = 32.0         # … or wider than this
