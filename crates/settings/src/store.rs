@@ -121,6 +121,36 @@ mod tests {
     }
 
     #[test]
+    fn only_changed_ai_settings_are_written() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(directory.path().join("settings.toml"));
+        let mut settings = Settings::default();
+        settings.ai.approval.terminal_write = crate::ApprovalPolicy::Allow;
+        settings.ai.agents.insert(
+            "hermes".to_owned(),
+            crate::AgentServerSettings {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        settings.ai.agents.insert(
+            "mine".to_owned(),
+            crate::AgentServerSettings {
+                command: Some("/opt/mine".to_owned()),
+                ..Default::default()
+            },
+        );
+
+        file.save(&settings).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(file.path()).unwrap(),
+            "[ai.agents.hermes]\nenabled = false\n\n[ai.agents.mine]\ncommand = \"/opt/mine\"\n\n[ai.approval]\nterminal_write = \"allow\"\n"
+        );
+        assert_eq!(file.load().unwrap(), settings);
+    }
+
+    #[test]
     fn loading_sanitizes_out_of_range_values() {
         let directory = tempfile::tempdir().unwrap();
         let file = SettingsFile::new(directory.path().join("settings.toml"));

@@ -36,6 +36,8 @@ pub struct Settings {
     pub local: ShellSettings,
     /// Portable credential vault behavior.
     pub vault: VaultSettings,
+    /// AI agents and what they may do.
+    pub ai: crate::AiSettings,
 }
 
 /// How the interface looks.
@@ -241,6 +243,7 @@ impl Settings {
             terminal.term = TerminalSettings::default().term;
         }
         self.vault.auto_lock_minutes = self.vault.auto_lock_minutes.clamp(1, 1440);
+        self.ai.sanitize();
         self
     }
 }
