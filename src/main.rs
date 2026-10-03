@@ -117,6 +117,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
     };
 
     gpui_kit::open_window(options, cx, |window, cx| {
+        window.set_window_title("Nocterm");
         // "System" appearance follows the desktop as it changes.
         window
             .observe_window_appearance(|_, cx| nocterm_ui::apply_theme(cx))
