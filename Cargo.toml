@@ -41,11 +41,12 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["vendor/alacritty_terminal"]
+exclude = ["vendor/alacritty_terminal", "vendor/gpui-component"]
 resolver = "3"
 
 [patch.crates-io]
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
+gpui-component = { path = "vendor/gpui-component" }
 
 [workspace.package]
 edition = "2024"

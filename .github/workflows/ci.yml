@@ -70,6 +70,8 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
       - run: cargo test --manifest-path vendor/alacritty_terminal/Cargo.toml --lib
+      - name: Verify native menu patch
+        run: cargo test --manifest-path vendor/gpui-component/Cargo.toml --locked --features test-support --lib menu::app_menu_bar
       - run: cargo xtask docs --check
       - run: cargo xtask architecture
       - run: cargo doc --locked --workspace --no-deps
