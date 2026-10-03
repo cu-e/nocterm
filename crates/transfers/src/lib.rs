@@ -15,7 +15,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::AsyncReadExt,
@@ -135,6 +135,7 @@ impl Request {
     }
 }
 struct Batch {
+    created: Instant,
     request: Request,
     progress: Mutex<Progress>,
     cancel: AtomicBool,
@@ -144,6 +145,7 @@ struct Batch {
 impl Batch {
     fn new(request: Request) -> Self {
         Self {
+            created: Instant::now(),
             progress: Mutex::new(Progress {
                 id: Uuid::new_v4(),
                 target: request.target().clone(),
@@ -248,7 +250,8 @@ impl Transfers {
         if batches.len() >= 64 {
             let old = batches
                 .iter()
-                .find(|(_, b)| b.progress.lock().state.finished())
+                .filter(|(_, b)| b.progress.lock().state.finished())
+                .min_by_key(|(_, b)| b.created)
                 .map(|(id, _)| *id);
             if let Some(id) = old {
                 batches.remove(&id);
@@ -258,11 +261,14 @@ impl Transfers {
         Ok(id)
     }
     pub fn snapshot(&self) -> Vec<Progress> {
-        self.batches
+        let mut ordered = self
+            .batches
             .lock()
             .values()
-            .map(|b| b.progress.lock().clone())
-            .collect()
+            .map(|b| (b.created, b.progress.lock().clone()))
+            .collect::<Vec<_>>();
+        ordered.sort_by_key(|(created, _)| *created);
+        ordered.into_iter().map(|(_, progress)| progress).collect()
     }
     pub fn cancel(&self, id: Uuid) {
         if let Some(batch) = self.batches.lock().get(&id) {
