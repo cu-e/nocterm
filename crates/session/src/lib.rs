@@ -12,7 +12,7 @@ mod secret;
 mod session;
 mod target;
 
-pub use fs::{DirEntry, EntryKind, FsError, FsFuture, RemoteFs};
+pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,

@@ -2,7 +2,7 @@
 use crate::connection::Client;
 use futures::{FutureExt, channel::oneshot};
 use nocterm_session::{
-    DirEntry, EntryKind, FsError, FsFuture, RemoteFs,
+    DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs,
     fs::{RemoteDownload, RemoteUpload, UploadMode, path},
 };
 use russh::client::Handle;
@@ -27,6 +27,11 @@ pub(crate) enum FsRequest {
     Home(Answer<String>),
     ReadDir(String, Answer<Vec<DirEntry>>),
     Stat(String, Answer<Option<DirEntry>>),
+    Metadata(String, Answer<FileMetadata>),
+    Rename(String, String, Answer<()>),
+    RemoveFile(String, Answer<()>),
+    RemoveDir(String, Answer<()>),
+    SetPermissions(String, u32, Answer<()>),
     CreateDir(String, Answer<()>),
     Upload(String, UploadMode, Answer<Box<dyn RemoteUpload>>),
     WriteBatch(Uuid, Vec<Vec<u8>>, Answer<()>),
@@ -82,6 +87,36 @@ impl SshFs {
     }
 }
 impl RemoteFs for SshFs {
+    fn capabilities(&self) -> FsCapabilities {
+        let available = !self.requests.is_closed();
+        FsCapabilities {
+            metadata: available,
+            rename: available,
+            remove: available,
+            set_permissions: available,
+        }
+    }
+    fn metadata(&self, path: &str) -> FsFuture<FileMetadata> {
+        let path = path.to_owned();
+        self.request(move |reply| FsRequest::Metadata(path, reply))
+    }
+    fn rename(&self, old: &str, new: &str) -> FsFuture<()> {
+        let old = old.to_owned();
+        let new = new.to_owned();
+        self.request(move |reply| FsRequest::Rename(old, new, reply))
+    }
+    fn remove_file(&self, path: &str) -> FsFuture<()> {
+        let path = path.to_owned();
+        self.request(move |reply| FsRequest::RemoveFile(path, reply))
+    }
+    fn remove_dir(&self, path: &str) -> FsFuture<()> {
+        let path = path.to_owned();
+        self.request(move |reply| FsRequest::RemoveDir(path, reply))
+    }
+    fn set_permissions(&self, path: &str, permissions: u32) -> FsFuture<()> {
+        let path = path.to_owned();
+        self.request(move |reply| FsRequest::SetPermissions(path, permissions, reply))
+    }
     fn home(&self) -> FsFuture<String> {
         self.request(FsRequest::Home)
     }
@@ -282,6 +317,36 @@ async fn dispatch(
                 Err(e) => Err(e),
             });
         }
+        FsRequest::Metadata(path, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => metadata(&s, &path).await,
+                Err(e) => Err(e),
+            });
+        }
+        FsRequest::Rename(old, new, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => rename(&s, &old, &new).await,
+                Err(e) => Err(e),
+            });
+        }
+        FsRequest::RemoveFile(path, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => remove_file(&s, &path).await,
+                Err(e) => Err(e),
+            });
+        }
+        FsRequest::RemoveDir(path, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => remove_dir(&s, &path).await,
+                Err(e) => Err(e),
+            });
+        }
+        FsRequest::SetPermissions(path, permissions, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => set_permissions(&s, &path, permissions).await,
+                Err(e) => Err(e),
+            });
+        }
         FsRequest::CreateDir(path, reply) => {
             let _ = reply.send(match result {
                 Ok(s) => create_dir(&s, &path).await,
@@ -378,6 +443,110 @@ fn entry(name: String, attrs: &FileAttributes) -> DirEntry {
         size: attrs.size,
     }
 }
+fn checked_path(path: &str, mutation: bool) -> Result<&str, FsError> {
+    if !path.starts_with('/') || path.contains('\0') {
+        return Err(FsError::Other(
+            "remote paths must be absolute without NUL".into(),
+        ));
+    }
+    let trimmed = path.trim_end_matches('/');
+    if mutation && (trimmed.is_empty() || path.split('/').any(|part| part == "." || part == "..")) {
+        return Err(FsError::Other(
+            "cannot modify the remote root or dot path components".into(),
+        ));
+    }
+    Ok(if trimmed.is_empty() { "/" } else { trimmed })
+}
+async fn metadata(sftp: &Sftp, path: &str) -> Result<FileMetadata, FsError> {
+    let path = checked_path(path, false)?;
+    let attrs = sftp
+        .raw
+        .lstat(path)
+        .await
+        .map_err(|e| fs_error(e, path))?
+        .attrs;
+    Ok(FileMetadata {
+        kind: entry_kind(attrs.file_type()),
+        is_symlink: attrs.file_type() == FileType::Symlink,
+        size: attrs.size,
+        permissions: attrs.permissions.map(|permissions| permissions & 0o7777),
+        uid: attrs.uid,
+        gid: attrs.gid,
+        modified: attrs.mtime.map(u64::from),
+    })
+}
+async fn rename(sftp: &Sftp, old: &str, new: &str) -> Result<(), FsError> {
+    let old = checked_path(old, true)?;
+    let new = checked_path(new, true)?;
+    // SFTP v3 RENAME refuses existing destinations; never select the replacing
+    // posix-rename extension used by explicitly authorized transfer Replace.
+    if stat(sftp, new).await?.is_some() {
+        return Err(FsError::AlreadyExists { path: new.into() });
+    }
+    sftp.raw
+        .rename(old, new)
+        .await
+        .map(|_| ())
+        .map_err(|e| fs_error(e, old))
+}
+async fn remove_file(sftp: &Sftp, path: &str) -> Result<(), FsError> {
+    let path = checked_path(path, true)?;
+    let attrs = metadata(sftp, path).await?;
+    if attrs.kind == EntryKind::Directory && !attrs.is_symlink {
+        return Err(FsError::Other(format!(
+            "{path}: is a directory; use empty-directory removal"
+        )));
+    }
+    sftp.raw
+        .remove(path)
+        .await
+        .map(|_| ())
+        .map_err(|e| fs_error(e, path))
+}
+async fn remove_dir(sftp: &Sftp, path: &str) -> Result<(), FsError> {
+    let path = checked_path(path, true)?;
+    let attrs = metadata(sftp, path).await?;
+    if attrs.kind != EntryKind::Directory || attrs.is_symlink {
+        return Err(FsError::Other(format!("{path}: is not a real directory")));
+    }
+    sftp.raw
+        .rmdir(path)
+        .await
+        .map(|_| ())
+        .map_err(|e| fs_error(e, path))
+}
+async fn set_permissions(sftp: &Sftp, path: &str, permissions: u32) -> Result<(), FsError> {
+    let path = checked_path(path, true)?;
+    if permissions & !0o7777 != 0 {
+        return Err(FsError::Other(
+            "permissions must contain only POSIX bits 0o0000..0o7777".into(),
+        ));
+    }
+    let attrs = sftp
+        .raw
+        .lstat(path)
+        .await
+        .map_err(|e| fs_error(e, path))?
+        .attrs;
+    if attrs.permissions.is_none_or(|mode| mode & 0o170000 == 0)
+        || attrs.file_type() == FileType::Symlink
+    {
+        return Err(FsError::Unsupported(
+            "changing permissions on links or objects with unknown type".into(),
+        ));
+    }
+    // SFTP v3 has no no-follow SETSTAT. This rejects a link observed by LSTAT,
+    // but an external server-side replacement between these requests cannot be
+    // excluded by this protocol. Only permissions are sent; size/owner/time stay.
+    let mut updated = FileAttributes::empty();
+    updated.permissions = Some(permissions);
+    sftp.raw
+        .setstat(path, updated)
+        .await
+        .map(|_| ())
+        .map_err(|e| fs_error(e, path))
+}
+
 async fn read_dir(sftp: &Sftp, dir: &str) -> Result<Vec<DirEntry>, FsError> {
     let handle = sftp
         .raw
@@ -416,6 +585,7 @@ async fn read_dir(sftp: &Sftp, dir: &str) -> Result<Vec<DirEntry>, FsError> {
     result
 }
 async fn create_dir(sftp: &Sftp, path: &str) -> Result<(), FsError> {
+    let path = checked_path(path, true)?;
     if let Some(entry) = stat(sftp, path).await? {
         return if entry.kind == EntryKind::Directory && !entry.is_symlink {
             Ok(())

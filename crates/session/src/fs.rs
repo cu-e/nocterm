@@ -7,6 +7,39 @@ pub type FsFuture<T> = BoxFuture<'static, Result<T, FsError>>;
 
 /// A file system on the other end of a session.
 pub trait RemoteFs: Send + Sync + 'static {
+    /// Supported operations. Permission/connection errors still come from each
+    /// request; an unavailable adapter leaves every optional capability false.
+    fn capabilities(&self) -> FsCapabilities {
+        FsCapabilities::default()
+    }
+
+    /// Detailed metadata of the path itself; final links are never followed.
+    fn metadata(&self, _path: &str) -> FsFuture<FileMetadata> {
+        Box::pin(async { Err(FsError::Unsupported("detailed file metadata".into())) })
+    }
+
+    /// Rename an entry without replacing an existing destination.
+    fn rename(&self, _old: &str, _new: &str) -> FsFuture<()> {
+        Box::pin(async { Err(FsError::Unsupported("file rename".into())) })
+    }
+
+    /// Unlink one file or link, without traversing the final link.
+    fn remove_file(&self, _path: &str) -> FsFuture<()> {
+        Box::pin(async { Err(FsError::Unsupported("file removal".into())) })
+    }
+
+    /// Remove one empty real directory. Recursive deletion belongs to callers.
+    fn remove_dir(&self, _path: &str) -> FsFuture<()> {
+        Box::pin(async { Err(FsError::Unsupported("directory removal".into())) })
+    }
+
+    /// Set POSIX permission bits, at most 0o7777. Final links are refused.
+    /// Path-based protocols may still have an unavoidable server-side race
+    /// between metadata verification and applying permissions.
+    fn set_permissions(&self, _path: &str, _permissions: u32) -> FsFuture<()> {
+        Box::pin(async { Err(FsError::Unsupported("file permissions".into())) })
+    }
+
     /// The directory a new shell starts in, as an absolute path.
     fn home(&self) -> FsFuture<String>;
 
@@ -33,6 +66,29 @@ pub trait RemoteFs: Send + Sync + 'static {
     fn download(&self, _path: &str) -> FsFuture<Box<dyn RemoteDownload>> {
         Box::pin(async { Err(FsError::Unsupported("file download".into())) })
     }
+}
+
+/// Optional operations advertised independently of a particular protocol.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FsCapabilities {
+    pub metadata: bool,
+    pub rename: bool,
+    pub remove: bool,
+    pub set_permissions: bool,
+}
+
+/// Metadata for one path, without changing the lightweight directory listing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileMetadata {
+    pub kind: EntryKind,
+    pub is_symlink: bool,
+    pub size: Option<u64>,
+    /// POSIX permission bits, excluding the file type; absent when unsupported.
+    pub permissions: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    /// Modification time in UTC seconds since the Unix epoch.
+    pub modified: Option<u64>,
 }
 
 /// Publication policy, independent of SFTP implementation.
@@ -175,5 +231,38 @@ pub mod path {
             assert_eq!(file_name("/"), "/");
             assert_eq!(file_name("relative"), "relative");
         }
+    }
+}
+
+#[cfg(test)]
+mod optional_operations_tests {
+    use super::*;
+    struct ReadOnly;
+    impl RemoteFs for ReadOnly {
+        fn home(&self) -> FsFuture<String> {
+            Box::pin(async { Ok("/".into()) })
+        }
+        fn read_dir(&self, _path: &str) -> FsFuture<Vec<DirEntry>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+    #[test]
+    fn existing_read_only_adapters_advertise_no_mutations_and_fail_explicitly() {
+        let fs = ReadOnly;
+        assert_eq!(fs.capabilities(), FsCapabilities::default());
+        futures::executor::block_on(async {
+            assert!(matches!(
+                fs.metadata("/file").await,
+                Err(FsError::Unsupported(_))
+            ));
+            for result in [
+                fs.rename("/old", "/new").await,
+                fs.remove_file("/file").await,
+                fs.remove_dir("/dir").await,
+                fs.set_permissions("/file", 0o600).await,
+            ] {
+                assert!(matches!(result, Err(FsError::Unsupported(_))));
+            }
+        });
     }
 }

@@ -14,6 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+#[path = "cases/file_operations.rs"]
+mod file_operations;
+
 #[path = "cases/download.rs"]
 mod download;
 
