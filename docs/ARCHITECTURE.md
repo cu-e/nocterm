@@ -71,7 +71,9 @@ the grouped sidebar, profile editor and quick-connect menu. Editor sections reta
 one draft, with a scrollable active form, multiline description and fixed footer;
 typed validation selects the section containing the invalid field. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
-names keep empty groups available as drop targets. `nocterm-settings-ui`
+names keep empty groups available as drop targets. Group rename, ungroup and
+delete are single queued mutations; removed profiles unlink their recents and
+vault credentials are left untouched. `nocterm-settings-ui`
 contributes a single settings Item with native page tabs; it validates a draft,
 saves it, and publishes changes through SettingsStore only after a successful
 write. Persistent writes run through bounded ordered background queues;

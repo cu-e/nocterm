@@ -113,6 +113,53 @@ impl Profiles {
         Some(profile)
     }
 
+    /// Whether `name` is an existing or remembered folder.
+    pub fn has_group(&self, name: &str) -> bool {
+        self.folders.iter().any(|folder| folder == name)
+            || self
+                .list
+                .iter()
+                .any(|profile| profile.group.as_deref() == Some(name))
+    }
+
+    /// Renames a folder; renaming onto an existing folder merges the two.
+    pub fn rename_group(&mut self, from: &str, to: &str) {
+        if from == to {
+            return;
+        }
+        for profile in &mut self.list {
+            if profile.group.as_deref() == Some(from) {
+                profile.group = Some(to.to_owned());
+            }
+        }
+        self.forget_group(from);
+        self.remember_group(Some(to));
+    }
+
+    /// Files the folder's connections at the top level and forgets the folder.
+    pub fn ungroup(&mut self, group: &str) {
+        for profile in &mut self.list {
+            if profile.group.as_deref() == Some(group) {
+                profile.group = None;
+            }
+        }
+        self.forget_group(group);
+    }
+
+    /// Deletes the folder and its connections, returning the removed ones.
+    pub fn remove_group(&mut self, group: &str) -> Vec<Profile> {
+        let (removed, kept) = std::mem::take(&mut self.list)
+            .into_iter()
+            .partition(|profile| profile.group.as_deref() == Some(group));
+        self.list = kept;
+        self.forget_group(group);
+        removed
+    }
+
+    fn forget_group(&mut self, group: &str) {
+        self.folders.retain(|existing| existing != group);
+    }
+
     fn remember_group(&mut self, group: Option<&str>) {
         if let Some(group) = group
             && !self.folders.iter().any(|existing| existing == group)
@@ -388,6 +435,92 @@ mod tests {
         assert_eq!(restored.get(original.id), Some(&original));
         restored.remove(original.id);
         assert_eq!(restored.groups(), ["Personal", "Work"]);
+    }
+
+    #[test]
+    fn rename_group_moves_members_and_empty_folders() {
+        let mut profiles = Profiles::default();
+        let mut build = profile("Build", "build.local", Some("Work"));
+        build.description = "ci".into();
+        profiles.upsert(build.clone());
+        profiles.upsert(profile("Pi", "pi.local", None));
+        let gone = profile("Gone", "gone.local", Some("Empty"));
+        profiles.upsert(gone.clone());
+        profiles.remove(gone.id);
+
+        profiles.rename_group("Work", "Team");
+        profiles.rename_group("Empty", "Spare");
+
+        let moved = profiles.get(build.id).unwrap();
+        assert_eq!(moved.group.as_deref(), Some("Team"));
+        assert_eq!(moved.description, "ci");
+        assert_eq!(profiles.groups(), ["Spare", "Team"]);
+        let text = toml::to_string(&profiles).unwrap();
+        let restored: Profiles = toml::from_str(&text).unwrap();
+        assert_eq!(restored.groups(), ["Spare", "Team"]);
+        assert!(!restored.has_group("Work"));
+    }
+
+    #[test]
+    fn rename_group_merges_and_is_case_sensitive() {
+        let mut profiles = Profiles::default();
+        profiles.upsert(profile("A", "a.local", Some("Work")));
+        profiles.upsert(profile("B", "b.local", Some("Personal")));
+        profiles.upsert(profile("C", "c.local", Some("work")));
+
+        profiles.rename_group("Work", "Personal");
+        assert_eq!(profiles.groups(), ["Personal", "work"]);
+        assert_eq!(profiles.in_group(Some("Personal"), "").len(), 2);
+        assert_eq!(profiles.in_group(Some("work"), "").len(), 1);
+    }
+
+    #[test]
+    fn ungroup_files_members_at_top_level_and_forgets_folder() {
+        let mut profiles = Profiles::default();
+        profiles.upsert(profile("A", "a.local", Some("Work")));
+        profiles.upsert(profile("B", "b.local", Some("Other")));
+        let mut remembered = profile("C", "c.local", Some("Old"));
+        profiles.upsert(remembered.clone());
+        remembered.group = None;
+        profiles.upsert(remembered);
+
+        profiles.ungroup("Work");
+        profiles.ungroup("Old");
+
+        assert_eq!(profiles.in_group(None, "").len(), 2);
+        assert_eq!(profiles.groups(), ["Other"]);
+    }
+
+    #[test]
+    fn remove_group_drops_only_members_and_does_not_resurrect_folder() {
+        let mut profiles = Profiles::default();
+        profiles.upsert(profile("A", "a.local", Some("Work")));
+        profiles.upsert(profile("B", "b.local", Some("Other")));
+        profiles.upsert(profile("C", "c.local", None));
+
+        let removed = profiles.remove_group("Work");
+
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].name, "A");
+        assert_eq!(profiles.iter().count(), 2);
+        assert_eq!(profiles.groups(), ["Other"]);
+        assert!(!profiles.has_group("Work"));
+    }
+
+    #[test]
+    fn group_actions_on_unknown_or_identical_names_change_nothing() {
+        let mut profiles = Profiles::default();
+        profiles.upsert(profile("A", "a.local", Some("Work")));
+        profiles.upsert(profile("B", "b.local", None));
+        let before = toml::to_string(&profiles).unwrap();
+
+        profiles.rename_group("Work", "Work");
+        profiles.rename_group("Missing", "Missing");
+        profiles.ungroup("Missing");
+        let removed = profiles.remove_group("Missing");
+
+        assert!(removed.is_empty());
+        assert_eq!(toml::to_string(&profiles).unwrap(), before);
     }
 
     #[test]

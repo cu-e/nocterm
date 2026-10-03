@@ -76,6 +76,11 @@ bottom terminal removes its empty pane and resize handle.
 Drag saved connections onto folder headers or Ungrouped to change their group;
 collapsed and empty folders remain drop targets. Moving a connection keeps its
 authentication, launch options, description and credential ID.
+Double-click a folder name to rename it inline (Enter or leaving the field saves,
+Escape cancels); renaming to an existing folder name merges the two. Hovering a
+folder header shows expand/collapse and delete buttons. Deleting a folder asks
+whether to delete its connections or ungroup them; saved vault credentials and
+open sessions are kept.
 The connection editor groups fields into Connection, Authentication, Session and
 Launch sections. Switching sections keeps the draft; descriptions accept multiple
 lines. Operation notices appear at the side of the window with recovery actions.

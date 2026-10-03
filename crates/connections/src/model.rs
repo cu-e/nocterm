@@ -36,6 +36,16 @@ enum Mutation {
         group: Option<String>,
     },
     Delete(ProfileId),
+    RenameGroup {
+        from: String,
+        to: String,
+    },
+    Ungroup(String),
+    /// Deletes a group only while it still holds exactly the `expected` members.
+    DeleteGroup {
+        group: String,
+        expected: Vec<ProfileId>,
+    },
     Credential {
         target: Target,
         auth: Auth,
@@ -216,6 +226,33 @@ impl Connections {
     ) -> Task<Result<(), String>> {
         self.enqueue(Mutation::Delete(id), cx)
     }
+    /// Renames a group; an existing group with the new name absorbs it.
+    pub fn rename_group(
+        &mut self,
+        from: String,
+        to: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), String>> {
+        self.enqueue(Mutation::RenameGroup { from, to }, cx)
+    }
+    /// Moves a group's connections to the top level and removes the group.
+    pub fn ungroup(&mut self, group: String, cx: &mut Context<Self>) -> Task<Result<(), String>> {
+        self.enqueue(Mutation::Ungroup(group), cx)
+    }
+    /// Deletes a group and its connections, provided its members are still
+    /// exactly `expected` (the ones the user was shown) when the write runs.
+    pub fn delete_group(
+        &mut self,
+        group: String,
+        expected: Vec<ProfileId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), String>> {
+        self.enqueue(Mutation::DeleteGroup { group, expected }, cx)
+    }
+    #[cfg(test)]
+    pub(crate) fn set_profiles_file_for_test(&mut self, path: Option<PathBuf>) {
+        self.profiles_file = path;
+    }
     pub fn associate_credential(
         &mut self,
         target: &Target,
@@ -258,6 +295,39 @@ impl Connections {
             Mutation::Delete(id) => {
                 profiles.remove(*id);
             }
+            Mutation::RenameGroup { from, to } => {
+                if !profiles.has_group(from) {
+                    return Err("Group no longer exists".into());
+                }
+                let to = to.trim();
+                if to.is_empty() {
+                    return Err("Group name cannot be empty".into());
+                }
+                profiles.rename_group(from, to);
+            }
+            Mutation::Ungroup(group) => {
+                if !profiles.has_group(group) {
+                    return Err("Group no longer exists".into());
+                }
+                profiles.ungroup(group);
+            }
+            Mutation::DeleteGroup { group, expected } => {
+                if !profiles.has_group(group) {
+                    return Err("Group no longer exists".into());
+                }
+                let mut current: Vec<_> = profiles
+                    .iter()
+                    .filter(|profile| profile.group.as_deref() == Some(group.as_str()))
+                    .map(|profile| profile.id.to_string())
+                    .collect();
+                let mut expected: Vec<_> = expected.iter().map(ToString::to_string).collect();
+                current.sort();
+                expected.sort();
+                if current != expected {
+                    return Err("Group changed; review it again.".into());
+                }
+                profiles.remove_group(group);
+            }
             Mutation::Credential { target, auth, id } => {
                 for profile in profiles
                     .iter_mut()
@@ -282,6 +352,8 @@ impl Connections {
         }
         let metadata_bytes = match &mutation {
             Mutation::Move { group, .. } => group.as_ref().map_or(0, String::len),
+            Mutation::RenameGroup { from, to } => from.len().saturating_add(to.len()),
+            Mutation::Ungroup(group) | Mutation::DeleteGroup { group, .. } => group.len(),
             Mutation::Credential { target, auth, .. } => target
                 .host
                 .len()
@@ -400,23 +472,30 @@ impl Connections {
         })
     }
     fn publish(&mut self, profiles: Profiles, mutation: &Mutation, cx: &mut Context<Self>) {
+        let kept: std::collections::HashSet<ProfileId> =
+            profiles.iter().map(|profile| profile.id).collect();
+        let removed: Vec<ProfileId> = self
+            .profiles
+            .iter()
+            .map(|profile| profile.id)
+            .filter(|id| !kept.contains(id))
+            .collect();
         self.profiles = profiles;
-        match mutation {
-            Mutation::Delete(id) => {
-                self.recents.unlink(*id);
-                self.schedule_recents(cx);
+        if !removed.is_empty() {
+            for id in removed {
+                self.recents.unlink(id);
             }
-            Mutation::Credential { target, auth, id } => {
-                for recent in self
-                    .recents
-                    .iter_mut()
-                    .filter(|r| &r.target == target && &r.auth == auth)
-                {
-                    recent.credential = Some(*id);
-                }
-                self.schedule_recents(cx);
+            self.schedule_recents(cx);
+        }
+        if let Mutation::Credential { target, auth, id } = mutation {
+            for recent in self
+                .recents
+                .iter_mut()
+                .filter(|r| &r.target == target && &r.auth == auth)
+            {
+                recent.credential = Some(*id);
             }
-            _ => {}
+            self.schedule_recents(cx);
         }
         cx.notify();
     }
@@ -771,6 +850,243 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[gpui_kit::test]
+    async fn group_mutations_apply_atomically_and_unlink_recents(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let grouped = |name: &str, group: Option<&str>| {
+            let mut item = profile(name);
+            item.target = Target::new("ci", name, 22);
+            item.group = group.map(Into::into);
+            item
+        };
+        let (a, b, c) = (
+            grouped("a", Some("Work")),
+            grouped("b", Some("Work")),
+            grouped("c", Some("Other")),
+        );
+        let entity = cx.new(|_| Connections::in_memory());
+        for item in [&a, &b, &c] {
+            entity
+                .update(cx, |e, cx| e.save_profile(item.clone(), cx))
+                .await
+                .unwrap();
+        }
+        entity.update(cx, |e, cx| {
+            e.record_use(&spec_for_profile(&a), Some(a.id), cx);
+            e.record_use(&spec_for_profile(&c), Some(c.id), cx);
+        });
+        entity
+            .update(cx, |e, cx| e.rename_group("Work".into(), "Team".into(), cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            entity.read_with(cx, |e, _| e.profiles.get(a.id).unwrap().group.clone()),
+            Some("Team".into())
+        );
+        entity
+            .update(cx, |e, cx| e.ungroup("Team".into(), cx))
+            .await
+            .unwrap();
+        entity.read_with(cx, |e, _| {
+            assert_eq!(e.profiles.get(b.id).unwrap().group, None);
+            assert_eq!(e.profiles.groups(), ["Other"]);
+        });
+        entity
+            .update(cx, |e, cx| e.rename_group("Work".into(), "X".into(), cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| e.ungroup("Work".into(), cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| e.delete_group("Work".into(), vec![], cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| {
+                e.rename_group("Other".into(), String::new(), cx)
+            })
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| e.rename_group("Other".into(), " \t".into(), cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| {
+                e.rename_group("Other".into(), "x".repeat(MAX_PROFILE_BYTES + 1), cx)
+            })
+            .await
+            .unwrap_err();
+
+        entity
+            .update(cx, |e, cx| e.delete_group("Other".into(), vec![c.id], cx))
+            .await
+            .unwrap();
+        entity.read_with(cx, |e, _| {
+            assert!(e.profiles.get(c.id).is_none());
+            assert!(e.profiles.get(a.id).is_some() && e.profiles.get(b.id).is_some());
+            assert!(e.profiles.groups().is_empty());
+            assert!(e.recents.iter().all(|recent| recent.profile != Some(c.id)));
+            assert!(e.recents.iter().any(|recent| recent.profile == Some(a.id)));
+            assert_eq!(e.recents.iter().count(), 2);
+        });
+    }
+
+    #[gpui_kit::test]
+    async fn delete_group_rejects_members_that_changed_since_they_were_shown(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let mut a = profile("a");
+        a.group = Some("Work".into());
+        let b = profile("b");
+        let entity = cx.new(|_| Connections::in_memory());
+        for item in [&a, &b] {
+            entity
+                .update(cx, |e, cx| e.save_profile(item.clone(), cx))
+                .await
+                .unwrap();
+        }
+        // `b` is moved into the group after the dialog listed only `a`.
+        entity
+            .update(cx, |e, cx| e.move_profile(b.id, Some("Work".into()), cx))
+            .await
+            .unwrap();
+        let before = entity.read_with(cx, |e, _| e.profiles.clone());
+        let error = entity
+            .update(cx, |e, cx| e.delete_group("Work".into(), vec![a.id], cx))
+            .await
+            .unwrap_err();
+        assert!(error.contains("changed"), "{error}");
+        assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
+        entity
+            .update(cx, |e, cx| {
+                e.delete_group("Work".into(), vec![b.id, a.id], cx)
+            })
+            .await
+            .unwrap();
+        assert!(entity.read_with(cx, |e, _| e.profiles.is_empty()));
+    }
+
+    #[gpui_kit::test]
+    async fn rename_group_trims_the_new_name(cx: &mut gpui_kit::TestAppContext) {
+        let mut a = profile("a");
+        a.group = Some("Work".into());
+        let mut b = profile("b");
+        b.group = Some("Team".into());
+        let entity = cx.new(|_| Connections::in_memory());
+        for item in [&a, &b] {
+            entity
+                .update(cx, |e, cx| e.save_profile(item.clone(), cx))
+                .await
+                .unwrap();
+        }
+        entity
+            .update(cx, |e, cx| {
+                e.rename_group("Work".into(), "  Team\t".into(), cx)
+            })
+            .await
+            .unwrap();
+        entity.read_with(cx, |e, _| {
+            assert_eq!(e.profiles.groups(), ["Team"]);
+            assert_eq!(e.profiles.get(a.id).unwrap().group.as_deref(), Some("Team"));
+        });
+    }
+
+    #[gpui_kit::test]
+    async fn group_mutations_fail_after_load_error_or_write_failure(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let mut item = profile("a");
+        item.group = Some("Work".into());
+        let entity = cx.new(|_| Connections::in_memory());
+        entity
+            .update(cx, |e, cx| e.save_profile(item.clone(), cx))
+            .await
+            .unwrap();
+        let before = entity.read_with(cx, |e, _| e.profiles.clone());
+        let dir = tempfile::tempdir().unwrap();
+        entity.update(cx, |e, _| e.profiles_file = Some(dir.path().into()));
+        entity
+            .update(cx, |e, cx| e.delete_group("Work".into(), vec![item.id], cx))
+            .await
+            .unwrap_err();
+        assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
+        entity.update(cx, |e, _| {
+            e.profiles_file = None;
+            e.load_error = Some("Invalid TOML".into());
+        });
+        entity
+            .update(cx, |e, cx| e.rename_group("Work".into(), "T".into(), cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| e.ungroup("Work".into(), cx))
+            .await
+            .unwrap_err();
+        entity
+            .update(cx, |e, cx| e.delete_group("Work".into(), vec![item.id], cx))
+            .await
+            .unwrap_err();
+        assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
+    }
+
+    #[gpui_kit::test]
+    async fn recents_are_scheduled_only_when_a_group_mutation_removes_profiles(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let mut a = profile("a");
+        a.target = Target::new("ci", "a", 22);
+        a.group = Some("Work".into());
+        let entity = cx.new(|_| Connections::in_memory());
+        entity
+            .update(cx, |e, cx| e.save_profile(a.clone(), cx))
+            .await
+            .unwrap();
+        for (name, folder) in [("e1", "Empty1"), ("e2", "Empty2")] {
+            let mut empty = profile(name);
+            empty.target = Target::new("ci", name, 22);
+            empty.group = Some(folder.into());
+            entity
+                .update(cx, |e, cx| e.save_profile(empty.clone(), cx))
+                .await
+                .unwrap();
+            entity
+                .update(cx, |e, cx| e.move_profile(empty.id, None, cx))
+                .await
+                .unwrap();
+        }
+        let revision =
+            |cx: &mut gpui_kit::TestAppContext| entity.read_with(cx, |e, _| e.recents_revision);
+        let base = revision(cx);
+        entity
+            .update(cx, |e, cx| e.move_profile(a.id, Some("Other".into()), cx))
+            .await
+            .unwrap();
+        entity
+            .update(cx, |e, cx| {
+                e.rename_group("Other".into(), "Work".into(), cx)
+            })
+            .await
+            .unwrap();
+        entity
+            .update(cx, |e, cx| e.ungroup("Empty1".into(), cx))
+            .await
+            .unwrap();
+        entity
+            .update(cx, |e, cx| e.delete_group("Empty2".into(), vec![], cx))
+            .await
+            .unwrap();
+        assert_eq!(revision(cx), base, "nothing was removed");
+        entity
+            .update(cx, |e, cx| e.delete_group("Work".into(), vec![a.id], cx))
+            .await
+            .unwrap();
+        assert_eq!(revision(cx), base.wrapping_add(1));
     }
 
     #[gpui_kit::test]

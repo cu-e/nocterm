@@ -3,12 +3,13 @@
 use std::collections::HashSet;
 
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
-    WeakEntity, Window,
+    App, ClickEvent, Context, Entity, FocusHandle, Focusable, MouseButton, SharedString,
+    Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
+        dialog::DialogFooter,
         h_flex,
         input::{Input, InputEvent, InputState},
         v_flex,
@@ -28,9 +29,60 @@ use crate::{
 
 /// Shared by every row, so hovering a row reveals only its own buttons.
 const ROW_GROUP: &str = "connection-row";
+/// Same for group headers.
+const GROUP_HEADER: &str = "connection-group-header";
+
+/// A group name being edited in place.
+struct GroupRename {
+    group: String,
+    input: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Clone, Copy)]
+enum GroupAction {
+    Ungroup,
+    Delete,
+}
 
 #[derive(Clone)]
 struct DraggedProfile(ProfileId);
+
+fn run_group_action(
+    action: GroupAction,
+    group: String,
+    expected: Vec<ProfileId>,
+    panel: WeakEntity<ConnectionsPanel>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (done, key, title) = Connections::global(cx).update(cx, |connections, cx| match action {
+        GroupAction::Ungroup => (
+            connections.ungroup(group.clone(), cx),
+            "connections-ungroup",
+            "Could not ungroup connections",
+        ),
+        GroupAction::Delete => (
+            connections.delete_group(group.clone(), expected, cx),
+            "connections-delete-group",
+            "Could not delete group",
+        ),
+    });
+    window
+        .spawn(cx, async move |cx| match done.await {
+            Ok(()) => {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.collapsed.remove(&group);
+                    cx.notify();
+                });
+            }
+            Err(error) => {
+                let _ = cx
+                    .update(|window, cx| nocterm_ui::notice::error(window, cx, key, title, error));
+            }
+        })
+        .detach();
+}
 
 fn description_preview(description: &str) -> String {
     description
@@ -59,6 +111,7 @@ pub struct ConnectionsPanel {
     filter: Entity<InputState>,
     /// Folders the user folded away.
     collapsed: HashSet<String>,
+    renaming: Option<GroupRename>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -71,7 +124,19 @@ impl ConnectionsPanel {
     ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
         let subscriptions = vec![
-            cx.observe(&connections, |_, _, cx| cx.notify()),
+            cx.observe_in(&connections, window, |this, connections, window, cx| {
+                // The group may have been deleted or ungrouped while being renamed.
+                if let Some(rename) = &this.renaming
+                    && !connections.read(cx).profiles().has_group(&rename.group)
+                {
+                    let focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
+                    this.renaming = None;
+                    if focused {
+                        window.focus(&this.focus_handle, cx);
+                    }
+                }
+                cx.notify();
+            }),
             cx.subscribe_in(&filter, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => cx.notify(),
                 // Enter opens the only match.
@@ -85,6 +150,7 @@ impl ConnectionsPanel {
             focus_handle: cx.focus_handle(),
             filter,
             collapsed: HashSet::new(),
+            renaming: None,
             _subscriptions: subscriptions,
         }
     }
@@ -167,7 +233,164 @@ impl ConnectionsPanel {
         });
     }
 
+    fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
+        // The delete only applies while the group still holds these connections.
+        let members: Vec<ProfileId> = self
+            .connections
+            .read(cx)
+            .profiles()
+            .in_group(Some(&group), "")
+            .iter()
+            .map(|profile| profile.id)
+            .collect();
+        let count = members.len();
+        let panel = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let description = match count {
+                0 => "This group is empty.".to_owned(),
+                1 => "1 connection in this group. Delete it, or ungroup to move it to Ungrouped. Open sessions stay open. Saved vault credentials are kept.".to_owned(),
+                n => format!("{n} connections in this group. Delete them, or ungroup to move them to Ungrouped. Open sessions stay open. Saved vault credentials are kept."),
+            };
+            let action = |id: &'static str, label: &'static str, action: GroupAction| {
+                let (group, panel, members) = (group.clone(), panel.clone(), members.clone());
+                Button::new(id)
+                    .label(label)
+                    .when(matches!(action, GroupAction::Delete), |button| button.danger())
+                    .on_click(move |_: &ClickEvent, window, cx| {
+                        run_group_action(
+                            action,
+                            group.clone(),
+                            members.clone(),
+                            panel.clone(),
+                            window,
+                            cx,
+                        );
+                        window.close_dialog(cx);
+                    })
+            };
+            alert
+                .title(format!("Delete group “{group}”?"))
+                .description(description)
+                // Enter must neither delete nor dismiss: only the buttons act.
+                .on_ok(|_, _, _| false)
+                .footer(
+                    DialogFooter::new()
+                        .child(Button::new("group-delete-cancel").label("Cancel").on_click(
+                            |_: &ClickEvent, window, cx| window.close_dialog(cx),
+                        ))
+                        .when(count > 0, |footer| {
+                            footer.child(action(
+                                "group-delete-ungroup",
+                                "Ungroup",
+                                GroupAction::Ungroup,
+                            ))
+                        })
+                        .child(action(
+                            "group-delete-all",
+                            if count > 0 {
+                                "Delete group and connections"
+                            } else {
+                                "Delete group"
+                            },
+                            GroupAction::Delete,
+                        )),
+                )
+        });
+    }
+
+    fn start_rename(&mut self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming.as_ref().is_some_and(|r| r.group == group) {
+            return;
+        }
+        self.finish_rename(true, false, window, cx);
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(group.to_owned()));
+        let focus = input.read(cx).focus_handle(cx);
+        let subscriptions = vec![
+            cx.subscribe_in(&input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.finish_rename(true, true, window, cx);
+                }
+            }),
+            cx.on_blur(&focus, window, |this, window, cx| {
+                this.finish_rename(true, false, window, cx)
+            }),
+        ];
+        self.renaming = Some(GroupRename {
+            group: group.to_owned(),
+            input,
+            _subscriptions: subscriptions,
+        });
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn finish_rename(
+        &mut self,
+        accept: bool,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Dropping the state first also drops the blur subscription.
+        let Some(GroupRename { group, input, .. }) = self.renaming.take() else {
+            return;
+        };
+        if restore_focus {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+        if !accept {
+            return;
+        }
+        let to = input.read(cx).value().trim().to_owned();
+        if to.is_empty() || to == group {
+            return;
+        }
+        // Show the new state at once; the old group's folded state wins a merge.
+        let old_collapsed = self.collapsed.contains(&group);
+        let target_collapsed = self.collapsed.contains(&to);
+        if old_collapsed {
+            self.collapsed.insert(to.clone());
+        } else {
+            self.collapsed.remove(&to);
+        }
+        let renamed = self.connections.update(cx, |connections, cx| {
+            connections.rename_group(group.clone(), to.clone(), cx)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = renamed.await;
+            let failed = result.is_err();
+            let _ = this.update(cx, |this, cx| {
+                if failed {
+                    if target_collapsed {
+                        this.collapsed.insert(to.clone());
+                    } else {
+                        this.collapsed.remove(&to);
+                    }
+                } else {
+                    this.collapsed.remove(&group);
+                }
+                cx.notify();
+            });
+            if let Err(error) = result {
+                let _ = cx.update(|window, cx| {
+                    nocterm_ui::notice::error(
+                        window,
+                        cx,
+                        "connections-rename-group",
+                        "Could not rename group",
+                        error,
+                    )
+                });
+            }
+        })
+        .detach();
+    }
+
     fn toggle_group(&mut self, group: &str, cx: &mut Context<Self>) {
+        if self.renaming.as_ref().is_some_and(|r| r.group == group) {
+            return;
+        }
         if !self.collapsed.remove(group) {
             self.collapsed.insert(group.to_owned());
         }
@@ -297,9 +520,59 @@ impl ConnectionsPanel {
         let theme = cx.theme();
         let name = group.to_owned();
         let drop_group = name.clone();
+        let renaming = self.renaming.as_ref().filter(|r| r.group == group);
+        let label = match renaming {
+            Some(rename) => {
+                let group = name.clone();
+                div()
+                    .id(SharedString::from(format!("group-rename-{group}")))
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&rename.input).small())
+                    .on_click(|_: &ClickEvent, _, cx| cx.stop_propagation())
+                    .on_key_down(
+                        cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                            if event.keystroke.key == "escape" {
+                                cx.stop_propagation();
+                                this.finish_rename(false, true, window, cx);
+                            }
+                        }),
+                    )
+                    .into_any_element()
+            }
+            None => {
+                let group = name.clone();
+                div()
+                    .id(SharedString::from(format!("group-name-{name}")))
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(name.clone())
+                    // Keep the header from also treating the second click as a toggle.
+                    .on_mouse_down(MouseButton::Left, |event, _, cx| {
+                        if event.click_count == 2 {
+                            cx.stop_propagation();
+                        }
+                    })
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        if event.click_count() == 2 {
+                            // Undo the first click's toggle, then edit.
+                            cx.stop_propagation();
+                            this.toggle_group(&group, cx);
+                            this.start_rename(&group, window, cx);
+                        }
+                    }))
+                    .into_any_element()
+            }
+        };
+        let toggle_group = name.clone();
+        let delete_group = name.clone();
         h_flex()
             .id(SharedString::from(format!("group-{group}")))
             .test_support()
+            .group(GROUP_HEADER)
             .gap_1()
             .mx_1()
             .px_1()
@@ -332,7 +605,40 @@ impl ConnectionsPanel {
                 })
                 .small(),
             )
-            .child(div().truncate().child(name.clone()))
+            .child(label)
+            .when(renaming.is_none(), |header| {
+                header.child(
+                    h_flex()
+                        .invisible()
+                        .group_hover(GROUP_HEADER, |buttons| buttons.visible())
+                        .child(
+                            Button::new(SharedString::from(format!("group-toggle-{group}")))
+                                .ghost()
+                                .xsmall()
+                                .icon(if collapsed {
+                                    IconName::ChevronRight
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .tooltip(if collapsed { "Expand" } else { "Collapse" })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_group(&toggle_group, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("group-delete-{group}")))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Trash)
+                                .tooltip("Delete group")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.confirm_delete_group(delete_group.clone(), window, cx);
+                                })),
+                        ),
+                )
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_group(&name, cx)))
     }
 
@@ -687,5 +993,554 @@ mod tests {
             opened.borrow().is_empty(),
             "a drag must not open an SSH session"
         );
+    }
+
+    fn gp(name: &str, group: Option<&str>) -> Profile {
+        Profile {
+            id: ProfileId::generate(),
+            name: name.into(),
+            group: group.map(Into::into),
+            target: nocterm_session::Target::new("ci", name, 22),
+            description: String::new(),
+            options: Default::default(),
+            auth: Default::default(),
+            credential: None,
+            launch: None,
+        }
+    }
+
+    fn setup(
+        cx: &mut TestAppContext,
+        profiles: &[Profile],
+    ) -> (
+        gpui_kit::AnyWindowHandle,
+        Entity<ConnectionsPanel>,
+        crate::test_support::Opened,
+    ) {
+        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let panel = cx
+            .update_window(handle, |_, window, cx| {
+                let connections = Connections::global(cx);
+                for profile in profiles {
+                    connections.update(cx, |connections, cx| {
+                        connections
+                            .save_profile(profile.clone(), cx)
+                            .now_or_never()
+                            .unwrap()
+                            .unwrap();
+                    });
+                }
+                let panel = cx.new(|cx| {
+                    ConnectionsPanel::new(connections.clone(), workspace.downgrade(), window, cx)
+                });
+                workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+                window.render_frame(cx);
+                panel
+            })
+            .unwrap();
+        (handle, panel, opened)
+    }
+
+    fn profiles_of(cx: &mut TestAppContext) -> crate::store::Profiles {
+        cx.read(|cx| Connections::global(cx).read(cx).profiles().clone())
+    }
+
+    fn start_rename_via_double_click(
+        cx: &mut TestAppContext,
+        handle: gpui_kit::AnyWindowHandle,
+        group: &str,
+    ) {
+        cx.update_window(handle, |_, window, cx| {
+            window.double_click(SharedString::from(format!("group-name-{group}")), cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(SharedString::from(format!("group-rename-{group}")))
+                    .is_some()
+            );
+        })
+        .unwrap();
+    }
+
+    fn set_rename_value(
+        cx: &mut TestAppContext,
+        handle: gpui_kit::AnyWindowHandle,
+        panel: &Entity<ConnectionsPanel>,
+        value: &str,
+    ) {
+        cx.update_window(handle, |_, window, cx| {
+            let input = panel.read(cx).renaming.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| {
+                input.set_value(value.to_owned(), window, cx)
+            });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn double_click_renames_group_keeping_collapsed_state(cx: &mut TestAppContext) {
+        let a = gp("a", Some("Work"));
+        let (handle, panel, opened) = setup(cx, std::slice::from_ref(&a));
+        cx.update_window(handle, |_, window, cx| {
+            window.click("group-Work", cx);
+            window.render_frame(cx);
+            assert!(panel.read(cx).collapsed.contains("Work"));
+        })
+        .unwrap();
+        start_rename_via_double_click(cx, handle, "Work");
+        cx.update_window(handle, |_, _, cx| {
+            assert!(panel.read(cx).collapsed.contains("Work"));
+        })
+        .unwrap();
+        set_rename_value(cx, handle, &panel, "  Team ");
+        cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let panel = panel.read(cx);
+            assert!(panel.renaming.is_none());
+            assert!(panel.collapsed.contains("Team") && !panel.collapsed.contains("Work"));
+            assert!(window.try_find("group-Team").is_some());
+            assert!(window.try_find("group-Work").is_none());
+        })
+        .unwrap();
+        assert_eq!(
+            profiles_of(cx).get(a.id).unwrap().group.as_deref(),
+            Some("Team")
+        );
+        assert!(opened.borrow().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn rename_escape_cancels_and_noop_values_change_nothing(cx: &mut TestAppContext) {
+        let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+        let before = profiles_of(cx);
+        for value in ["Other", "  ", "Work"] {
+            start_rename_via_double_click(cx, handle, "Work");
+            set_rename_value(cx, handle, &panel, value);
+            if value == "Other" {
+                cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+                    .unwrap();
+            } else {
+                cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+                    .unwrap();
+            }
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(panel.read(cx).renaming.is_none());
+            })
+            .unwrap();
+            assert_eq!(profiles_of(cx), before, "{value:?}");
+        }
+    }
+
+    #[gpui_kit::test]
+    fn rename_commits_on_blur_and_merges_into_existing_group(cx: &mut TestAppContext) {
+        let (a, b) = (gp("a", Some("Work")), gp("b", Some("Personal")));
+        let (handle, panel, _) = setup(cx, &[a.clone(), b.clone()]);
+        // Blur events are only dispatched while the window counts as active.
+        cx.update_window(handle, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.run_until_parked();
+        start_rename_via_double_click(cx, handle, "Work");
+        set_rename_value(cx, handle, &panel, "Personal");
+        cx.update_window(handle, |_, window, cx| {
+            let filter = panel.read(cx).filter.read(cx).focus_handle(cx);
+            let input = panel.read(cx).renaming.as_ref().unwrap().input.clone();
+            assert!(
+                input.read(cx).focus_handle(cx).is_focused(window),
+                "rename input focused"
+            );
+            window.focus(&filter, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.run_until_parked();
+        let profiles = profiles_of(cx);
+        assert_eq!(
+            profiles.get(a.id).unwrap().group.as_deref(),
+            Some("Personal")
+        );
+        assert_eq!(profiles.groups(), ["Personal"]);
+    }
+
+    #[gpui_kit::test]
+    fn header_click_toggles_once_and_hover_buttons_do_not_double_fire(cx: &mut TestAppContext) {
+        let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("group-Work", cx);
+            assert!(panel.read(cx).collapsed.contains("Work"));
+            window.hover("group-Work", cx);
+            window.render_frame(cx);
+            window.click("group-toggle-Work", cx);
+            assert!(!panel.read(cx).collapsed.contains("Work"));
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+    }
+
+    fn open_group_dialog(cx: &mut TestAppContext, handle: gpui_kit::AnyWindowHandle) {
+        cx.update_window(handle, |_, window, cx| {
+            window.hover("group-Work", cx);
+            window.render_frame(cx);
+            window.click("group-delete-Work", cx);
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+        })
+        .unwrap();
+        // Let the dialog's entrance animation finish so button hit boxes are final.
+        std::thread::sleep(
+            *gpui_kit::component::dialog::ANIMATION_DURATION + std::time::Duration::from_millis(50),
+        );
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn delete_dialog_cancel_escape_and_enter_change_nothing(cx: &mut TestAppContext) {
+        let (handle, _, _) = setup(cx, &[gp("a", Some("Work"))]);
+        let before = profiles_of(cx);
+        open_group_dialog(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            window.press("enter", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(profiles_of(cx), before);
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.has_active_dialog(cx), "Enter must not dismiss it");
+            window.press("escape", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        open_group_dialog(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("group-delete-cancel", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(profiles_of(cx), before);
+    }
+
+    #[gpui_kit::test]
+    fn delete_dialog_ungroups_or_deletes_members(cx: &mut TestAppContext) {
+        let (a, b, c) = (
+            gp("a", Some("Work")),
+            gp("b", Some("Work")),
+            gp("c", Some("Other")),
+        );
+        let (handle, _, opened) = setup(cx, &[a.clone(), b.clone(), c.clone()]);
+        cx.update(|cx| {
+            let spec = spec_for_profile(&a);
+            Connections::global(cx).update(cx, |connections, cx| {
+                connections.record_use(&spec, Some(a.id), cx)
+            });
+        });
+        open_group_dialog(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("group-delete-ungroup", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let profiles = profiles_of(cx);
+        assert_eq!(profiles.get(a.id).unwrap().group, None);
+        assert_eq!(profiles.get(b.id).unwrap().group, None);
+        assert_eq!(profiles.groups(), ["Other"]);
+
+        let (a, b, c) = (gp("a", Some("Work")), gp("b", Some("Work")), c);
+        cx.update_window(handle, |_, _, cx| {
+            Connections::global(cx).update(cx, |connections, cx| {
+                for p in [&a, &b] {
+                    connections.save_profile(p.clone(), cx).now_or_never();
+                }
+                connections.record_use(&spec_for_profile(&a), Some(a.id), cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        open_group_dialog(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("group-delete-all", cx);
+            window.render_frame(cx);
+            assert!(!window.has_active_dialog(cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let profiles = profiles_of(cx);
+        assert!(profiles.get(a.id).is_none() && profiles.get(b.id).is_none());
+        assert!(profiles.get(c.id).is_some());
+        assert_eq!(profiles.groups(), ["Other"]);
+        cx.read(|cx| {
+            let connections = Connections::global(cx);
+            assert!(
+                connections
+                    .read(cx)
+                    .recents()
+                    .iter()
+                    .all(|recent| recent.profile != Some(a.id))
+            );
+        });
+        assert!(opened.borrow().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn empty_group_dialog_offers_only_delete(cx: &mut TestAppContext) {
+        let item = gp("a", Some("Work"));
+        let (handle, _, _) = setup(cx, std::slice::from_ref(&item));
+        cx.update_window(handle, |_, _, cx| {
+            Connections::global(cx).update(cx, |connections, cx| {
+                connections.move_profile(item.id, None, cx).now_or_never();
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        open_group_dialog(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            assert!(window.try_find("group-delete-ungroup").is_none());
+            window.click("group-delete-all", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(profiles_of(cx).groups().is_empty());
+    }
+
+    fn collapse(cx: &mut TestAppContext, handle: gpui_kit::AnyWindowHandle, group: &str) {
+        cx.update_window(handle, |_, window, cx| {
+            window.click(SharedString::from(format!("group-{group}")), cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    }
+
+    fn commit_rename(
+        cx: &mut TestAppContext,
+        handle: gpui_kit::AnyWindowHandle,
+        panel: &Entity<ConnectionsPanel>,
+        value: &str,
+    ) {
+        set_rename_value(cx, handle, panel, value);
+        cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
+
+    fn collapsed_of(cx: &mut TestAppContext, panel: &Entity<ConnectionsPanel>) -> Vec<String> {
+        let mut names: Vec<String> =
+            cx.read(|cx| panel.read(cx).collapsed.iter().cloned().collect());
+        names.sort();
+        names
+    }
+
+    #[gpui_kit::test]
+    fn merge_rename_collapsed_state_follows_the_renamed_group(cx: &mut TestAppContext) {
+        let (a, b) = (gp("a", Some("Work")), gp("b", Some("Personal")));
+        let (handle, panel, _) = setup(cx, &[a.clone(), b.clone()]);
+        // Work folded, Personal open: the merged group stays folded.
+        collapse(cx, handle, "Work");
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "Personal");
+        assert_eq!(collapsed_of(cx, &panel), ["Personal"]);
+        assert_eq!(profiles_of(cx).groups(), ["Personal"]);
+
+        // Work open, Personal folded: the merged group opens.
+        let c = gp("c", Some("Work"));
+        cx.update_window(handle, |_, _, cx| {
+            Connections::global(cx).update(cx, |connections, cx| {
+                connections.save_profile(c.clone(), cx).now_or_never();
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        assert_eq!(collapsed_of(cx, &panel), ["Personal"]);
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "Personal");
+        assert!(collapsed_of(cx, &panel).is_empty());
+        assert_eq!(profiles_of(cx).in_group(Some("Personal"), "").len(), 3);
+    }
+
+    #[gpui_kit::test]
+    fn rename_in_progress_is_dropped_when_its_group_is_deleted(cx: &mut TestAppContext) {
+        let (a, b) = (gp("a", Some("Work")), gp("b", Some("Personal")));
+        let (handle, panel, _) = setup(cx, &[a.clone(), b.clone()]);
+        collapse(cx, handle, "Personal");
+        start_rename_via_double_click(cx, handle, "Work");
+        // The group disappears while its name is being edited.
+        cx.update_window(handle, |_, _, cx| {
+            Connections::global(cx).update(cx, |connections, cx| {
+                connections
+                    .delete_group("Work".into(), vec![a.id], cx)
+                    .now_or_never()
+                    .unwrap()
+                    .unwrap();
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        // The stale rename is dropped, so nothing can be committed later.
+        cx.read(|cx| assert!(panel.read(cx).renaming.is_none()));
+        assert_eq!(collapsed_of(cx, &panel), ["Personal"]);
+        let profiles = profiles_of(cx);
+        assert_eq!(profiles.groups(), ["Personal"]);
+        assert!(profiles.get(a.id).is_none() && profiles.get(b.id).is_some());
+    }
+
+    #[gpui_kit::test]
+    fn rename_keeps_unicode_and_interior_whitespace_and_trims_unicode_space(
+        cx: &mut TestAppContext,
+    ) {
+        let a = gp("a", Some("Work"));
+        let (handle, panel, _) = setup(cx, std::slice::from_ref(&a));
+        // Only Unicode whitespace trims to nothing: a no-op.
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "\u{3000} \u{a0}");
+        assert_eq!(
+            profiles_of(cx).get(a.id).unwrap().group.as_deref(),
+            Some("Work")
+        );
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "\u{3000}Zürich  \u{1f680} 東京\u{a0}");
+        assert_eq!(
+            profiles_of(cx).get(a.id).unwrap().group.as_deref(),
+            Some("Zürich  \u{1f680} 東京")
+        );
+        // Names differ only by case: a new group, not a merge.
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        start_rename_via_double_click(cx, handle, "Zürich  \u{1f680} 東京");
+        commit_rename(cx, handle, &panel, "ZÜRICH  \u{1f680} 東京");
+        assert_eq!(
+            profiles_of(cx).get(a.id).unwrap().group.as_deref(),
+            Some("ZÜRICH  \u{1f680} 東京")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn rename_with_active_filter_moves_hidden_members_too(cx: &mut TestAppContext) {
+        let (a, b) = (gp("alpha", Some("Work")), gp("zulu", Some("Work")));
+        let (handle, panel, _) = setup(cx, &[a.clone(), b.clone()]);
+        cx.update_window(handle, |_, window, cx| {
+            let filter = panel.read(cx).filter.clone();
+            filter.update(cx, |input, cx| input.set_value("alp", window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "Team");
+        let profiles = profiles_of(cx);
+        assert_eq!(profiles.get(a.id).unwrap().group.as_deref(), Some("Team"));
+        assert_eq!(profiles.get(b.id).unwrap().group.as_deref(), Some("Team"));
+        assert_eq!(profiles.groups(), ["Team"]);
+    }
+
+    #[gpui_kit::test]
+    fn header_toggle_button_round_trips(cx: &mut TestAppContext) {
+        let (handle, panel, opened) = setup(cx, &[gp("a", Some("Work"))]);
+        for expected in [true, false, true] {
+            cx.update_window(handle, |_, window, cx| {
+                window.hover("group-Work", cx);
+                window.render_frame(cx);
+                window.click("group-toggle-Work", cx);
+                window.render_frame(cx);
+                assert_eq!(panel.read(cx).collapsed.contains("Work"), expected);
+            })
+            .unwrap();
+        }
+        assert!(opened.borrow().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn double_click_on_name_leaves_collapsed_state_unchanged(cx: &mut TestAppContext) {
+        let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+        for _ in 0..2 {
+            // A real double click is click counts 1 and 2: the first toggles,
+            // the second undoes it and starts the rename.
+            start_rename_via_double_click(cx, handle, "Work");
+            assert!(collapsed_of(cx, &panel).is_empty());
+            cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+                .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+                .unwrap();
+        }
+        assert!(collapsed_of(cx, &panel).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn rename_input_is_dropped_when_its_group_disappears(cx: &mut TestAppContext) {
+        let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+        start_rename_via_double_click(cx, handle, "Work");
+        cx.update_window(handle, |_, _, cx| {
+            Connections::global(cx).update(cx, |connections, cx| {
+                connections.ungroup("Work".into(), cx).now_or_never();
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.read(|cx| assert!(panel.read(cx).renaming.is_none()));
+    }
+
+    #[gpui_kit::test]
+    fn failed_merge_rename_restores_the_target_collapsed_state(cx: &mut TestAppContext) {
+        let (a, b) = (gp("a", Some("Work")), gp("b", Some("Personal")));
+        let (handle, panel, _) = setup(cx, &[a, b]);
+        let before = profiles_of(cx);
+        collapse(cx, handle, "Personal");
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            Connections::global(cx).update(cx, |connections, _| {
+                connections.set_profiles_file_for_test(Some(directory.path().into()))
+            })
+        });
+        // Work is open, so the optimistic merge unfolds Personal until it fails.
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "Personal");
+        cx.run_until_parked();
+        assert_eq!(collapsed_of(cx, &panel), ["Personal"]);
+        assert_eq!(profiles_of(cx), before);
+    }
+
+    #[gpui_kit::test]
+    fn failed_rename_rolls_back_collapsed_state_and_profiles(cx: &mut TestAppContext) {
+        let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+        let before = profiles_of(cx);
+        collapse(cx, handle, "Work");
+        // Saving fails: the profiles path is a directory.
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            Connections::global(cx).update(cx, |connections, _| {
+                connections.set_profiles_file_for_test(Some(directory.path().into()))
+            })
+        });
+        start_rename_via_double_click(cx, handle, "Work");
+        commit_rename(cx, handle, &panel, "Team");
+        cx.run_until_parked();
+        assert_eq!(collapsed_of(cx, &panel), ["Work"]);
+        assert_eq!(profiles_of(cx), before);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("group-Work").is_some());
+            assert!(window.try_find("group-Team").is_none());
+        })
+        .unwrap();
     }
 }
