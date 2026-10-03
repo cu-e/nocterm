@@ -14,6 +14,12 @@ mod emulator;
 mod keys;
 mod mouse;
 mod paste;
+mod search;
+
+pub use search::{
+    MAX_SEARCH_QUERY, SearchDirection, SearchMatch, SearchPoint, SearchProgress, SearchResult,
+    SearchScan,
+};
 
 pub use emulator::{
     Cell, CellPoint, Color, Cursor, CursorShape, Effect, Emulator, EmulatorOptions, Frame,

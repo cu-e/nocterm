@@ -9,7 +9,7 @@ use alacritty_terminal::{
     Term,
     event::{Event, EventListener, WindowSize},
     grid::{Dimensions, Scroll as GridScroll},
-    index::{Column, Point, Side as GridSide},
+    index::{Column, Line, Point, Side as GridSide},
     selection::{Selection, SelectionType},
     term::{Config, TermMode, cell::Flags, color::COUNT as COLOR_SLOTS, viewport_to_point},
     vte::ansi::{
@@ -144,6 +144,8 @@ pub struct Cell {
     pub spacer: bool,
     /// Inside the selection.
     pub selected: bool,
+    /// The active search result, independent from selection and clipboard text.
+    pub search_hit: bool,
 }
 
 impl Default for Cell {
@@ -156,6 +158,7 @@ impl Default for Cell {
             wide: false,
             spacer: false,
             selected: false,
+            search_hit: false,
         }
     }
 }
@@ -376,6 +379,8 @@ pub struct Emulator {
     events: Arc<Mutex<Vec<Event>>>,
     size: TermSize,
     palette: Palette,
+    generation: u64,
+    search_match: Option<(u64, crate::SearchMatch)>,
 }
 
 impl Emulator {
@@ -387,6 +392,8 @@ impl Emulator {
             events,
             size,
             palette: Palette::default(),
+            generation: 0,
+            search_match: None,
         }
     }
 
@@ -402,6 +409,9 @@ impl Emulator {
 
     /// Feed output with an explicit host-observation clock. Useful for replay and tests.
     pub fn advance_at(&mut self, bytes: &[u8], timestamp_ms: u64) -> Vec<Effect> {
+        if !bytes.is_empty() {
+            self.generation = self.generation.wrapping_add(1);
+        }
         self.term.set_output_timestamp_ms(timestamp_ms);
         self.parser.advance(&mut self.term, bytes);
         self.take_effects()
@@ -418,6 +428,7 @@ impl Emulator {
 
     /// Ends a synchronized update and applies everything it held back.
     pub fn finish_sync(&mut self) -> Vec<Effect> {
+        self.generation = self.generation.wrapping_add(1);
         self.parser.stop_sync(&mut self.term);
         self.take_effects()
     }
@@ -433,12 +444,14 @@ impl Emulator {
 
     pub fn resize(&mut self, size: TermSize) {
         if size != self.size {
+            self.generation = self.generation.wrapping_add(1);
             self.size = size;
             self.term.resize(size);
         }
     }
 
     pub fn set_options(&mut self, options: EmulatorOptions) {
+        self.generation = self.generation.wrapping_add(1);
         self.term.set_options(options.to_config());
     }
 
@@ -500,6 +513,73 @@ impl Emulator {
 
     pub fn clear_selection(&mut self) {
         self.term.selection = None;
+    }
+
+    /// Selects retained history and the screen without touching search state.
+    pub fn select_all(&mut self) {
+        let grid = self.term.grid();
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            Point::new(grid.topmost_line(), Column(0)),
+            GridSide::Left,
+        );
+        selection.update(
+            Point::new(grid.bottommost_line(), Column(grid.columns() - 1)),
+            GridSide::Right,
+        );
+        self.term.selection = Some(selection);
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn search_grid(
+        &self,
+    ) -> &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell> {
+        self.term.grid()
+    }
+
+    pub fn search(
+        &self,
+        query: &str,
+        direction: crate::SearchDirection,
+        anchor: Option<crate::SearchPoint>,
+    ) -> Result<crate::SearchScan, String> {
+        crate::SearchScan::new(self, query, direction, anchor)
+    }
+
+    pub fn selection_start(&self) -> Option<crate::SearchPoint> {
+        let range = self.term.selection.as_ref()?.to_range(&self.term)?;
+        Some(crate::SearchPoint {
+            line: range.start.line.0,
+            column: range.start.column.0 as u16,
+            part: 0,
+        })
+    }
+
+    pub fn clear_search(&mut self) {
+        self.search_match = None;
+    }
+
+    /// Publishes a current-generation match and brings its start into view.
+    pub fn show_search_match(&mut self, result: crate::SearchMatch) {
+        let grid = self.term.grid();
+        if result.start > result.end
+            || result.start.line < grid.topmost_line().0
+            || result.end.line > grid.bottommost_line().0
+            || usize::from(result.start.column) >= grid.columns()
+            || usize::from(result.end.column) >= grid.columns()
+        {
+            return;
+        }
+        self.search_match = Some((self.generation, result));
+        let row = result.start.line + self.term.grid().display_offset() as i32;
+        if row < 0 || row >= i32::from(self.size.rows) {
+            let offset = (-result.start.line).max(0) as usize;
+            let delta = offset as i32 - self.term.grid().display_offset() as i32;
+            self.term.scroll_display(GridScroll::Delta(delta));
+        }
     }
 
     /// The selected text, if anything is selected.
@@ -571,6 +651,18 @@ impl Emulator {
                 selected: content
                     .selection
                     .is_some_and(|selection| selection.contains(indexed.point)),
+                search_hit: self.search_match.is_some_and(|(generation, range)| {
+                    if generation != self.generation {
+                        return false;
+                    }
+                    let point = (indexed.point.line.0, col);
+                    let end_cell = &self.term.grid()
+                        [Point::new(Line(range.end.line), Column(usize::from(range.end.column)))];
+                    let end_col = usize::from(range.end.column)
+                        + usize::from(end_cell.flags.contains(Flags::WIDE_CHAR));
+                    point >= (range.start.line, usize::from(range.start.column))
+                        && point <= (range.end.line, end_col)
+                }),
             };
             if let Some(combining) = cell.zerowidth().filter(|chars| !chars.is_empty()) {
                 frame.combining.push((ix, combining.iter().collect()));
