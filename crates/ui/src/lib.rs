@@ -7,7 +7,9 @@
 //! tokens without any view repeating a colour or a size.
 
 mod design;
+mod drag_preview;
 mod icons;
+pub mod notice;
 mod session_options;
 mod settings;
 pub use session_options::SessionOptionsEditor;
@@ -15,6 +17,7 @@ mod terminal_style;
 mod theme;
 
 pub use design::{ActiveDesign, Design};
+pub use drag_preview::DragPreview;
 pub use icons::{Assets, IconName};
 pub use settings::{ActiveSettings, SettingsStore, save_settings, update_settings};
 pub use terminal_style::{TerminalStyle, hsla};

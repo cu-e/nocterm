@@ -241,6 +241,12 @@ impl SessionOptionsEditor {
             .child(Input::new(input))
     }
 }
+
+impl gpui_kit::Focusable for SessionOptionsEditor {
+    fn focus_handle(&self, cx: &App) -> gpui_kit::FocusHandle {
+        self.term.read(cx).focus_handle(cx)
+    }
+}
 impl Render for SessionOptionsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let proxy = Self::selected(&self.proxy, cx);
