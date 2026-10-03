@@ -61,6 +61,7 @@
 | `shape.radius` | ["number","null"] | `null` | Corner radius of controls, in pixels. Unset: 6. |
 | `shape.radius_lg` | ["number","null"] | `null` | Corner radius of dialogs, popovers and notifications, in pixels. Unset: 8. |
 | `shape.shadow` | ["boolean","null"] | `null` | Whether controls cast elevation shadows. Unset: yes. |
+| `typography.explorer_size` | ["number","null"] | `12.0` | Explorer file and folder text size in pixels. Unset: 12. |
 | `typography.mono_font` | ["string","null"] | `null` | Terminal font family. Unset: the platform's monospace font. |
 | `typography.mono_size` | ["number","null"] | `null` | Terminal font size in pixels. Unset: 13. |
 | `typography.terminal_line_height` | "number" | `1.2999999523162842` | Terminal line height, as a multiple of the terminal font size. |

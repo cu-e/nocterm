@@ -59,6 +59,9 @@ pub struct Typography {
     /// Terminal font size in pixels. Unset: 13.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mono_size: Option<f32>,
+    /// Explorer file and folder text size in pixels. Unset: 12.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explorer_size: Option<f32>,
     /// Terminal line height, as a multiple of the terminal font size.
     pub terminal_line_height: f32,
 }
@@ -346,6 +349,9 @@ impl DesignTokens {
         }
         if let Some(size) = typography.mono_size {
             within("typography.mono_size", size, 6.0, 72.0)?;
+        }
+        if let Some(size) = typography.explorer_size {
+            within("typography.explorer_size", size, 8.0, 24.0)?;
         }
         for (token, family) in [
             ("typography.ui_font", &typography.ui_font),

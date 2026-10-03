@@ -1080,3 +1080,6 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
     service.cancel(job.id);
     wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
 }
+
+#[path = "operations_ui_tests.rs"]
+mod operations_ui;

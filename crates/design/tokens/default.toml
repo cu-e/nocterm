@@ -33,6 +33,7 @@ name = "Nocterm Default"
 # mono_font = "JetBrains Mono"   # unset: the platform's monospace font
 # mono_size = 13.0               # px · terminal text
 terminal_line_height = 1.3       # × the terminal font size
+explorer_size = 12.0             # px · local and remote file/folder rows
 
 
 # ── Shape ─────────────────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 //! A split Explorer with independent local navigation and pinned remote uploads.
+mod dialogs;
 mod local;
+mod local_operations;
+mod operations;
 mod remote;
 #[cfg(test)]
 mod tests;
@@ -11,7 +14,9 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Disableable as _, Icon, ResizableState, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        h_flex, resizable_panel, v_flex, v_resizable,
+        h_flex,
+        menu::ContextMenuExt as _,
+        resizable_panel, v_flex, v_resizable,
     },
     div,
     prelude::*,
@@ -21,13 +26,15 @@ use gpui_kit::{
 use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
-use nocterm_ui::{ActiveSettings as _, IconName};
+use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
 use nocterm_workspace::{Panel, SessionContext, Workspace, WorkspaceEvent};
+use operations::FileTarget;
 use parking_lot::Mutex;
 use remote::{Browser, listing};
 use std::{
     collections::BTreeSet,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -140,6 +147,42 @@ pub struct FilesPanel {
     local_task: Option<Task<()>>,
 }
 impl FilesPanel {
+    fn remote_file_target(&self, index: usize) -> Option<FileTarget> {
+        let entry = self.browser.entries.get(index)?;
+        let session = self.session.as_ref()?;
+        Some(FileTarget::Remote {
+            path: path::join(self.browser.path.as_deref()?, &entry.name),
+            host: session.target.clone(),
+            fs: session.fs.clone()?,
+        })
+    }
+    fn refresh_after_mutation(&self, local: bool, cx: &Context<Self>) -> dialogs::Refresh {
+        let panel = cx.entity().downgrade();
+        let generation = if local {
+            self.local.generation
+        } else {
+            self.browser.generation
+        };
+        let filesystem = self.session.as_ref().and_then(|s| s.fs.clone());
+        Rc::new(move |cx| {
+            let _ = panel.update(cx, |this, cx| {
+                if local {
+                    if this.local.generation == generation
+                        && let Some(path) = this.local.path.clone()
+                    {
+                        this.load_local(path, cx);
+                    }
+                } else if this.browser.generation == generation
+                    && filesystem
+                        .as_ref()
+                        .zip(this.filesystem().as_ref())
+                        .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+                {
+                    this.load(this.browser.path.clone(), cx);
+                }
+            });
+        })
+    }
     fn new(
         workspace: Entity<Workspace>,
         session: Option<SessionContext>,
@@ -437,12 +480,12 @@ impl FilesPanel {
     fn render_remote_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.browser.entries[ix];
         let directory = entry.kind == EntryKind::Directory;
-        let selected = if self.remote_selected.contains(&ix) {
+        let selected: Vec<usize> = if self.remote_selected.contains(&ix) {
             self.remote_selected.iter().copied().collect()
         } else {
             vec![ix]
         };
-        let download = self.remote_paths(selected.into_iter());
+        let download = self.remote_paths(selected.iter().copied());
         let preview = entry.name.clone();
         let destination = self
             .browser
@@ -451,10 +494,17 @@ impl FilesPanel {
             .map(|parent| path::join(parent, &entry.name));
         let drop_path = destination;
         let enabled = self.filesystem().is_some() && !self.browser.loading;
+        let target = self.remote_file_target(ix);
+        let selected_targets = selected
+            .into_iter()
+            .filter_map(|ix| self.remote_file_target(ix))
+            .collect::<Vec<_>>();
+        let refresh = self.refresh_after_mutation(false, cx);
         div()
             .id(("remote-entry", ix))
             .w_full()
             .h_8()
+            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
             .px_2()
             .flex()
             .items_center()
@@ -489,6 +539,17 @@ impl FilesPanel {
                 MouseButton::Left,
                 cx.listener(move |this, event, _, cx| this.select_remote(ix, event, cx)),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.remote_selected.contains(&ix) {
+                        this.remote_selected.clear();
+                        this.remote_selected.insert(ix);
+                        this.remote_anchor = Some(ix);
+                        cx.notify();
+                    }
+                }),
+            )
             .when_some(download, |row, download| {
                 row.on_drag(download, move |files, _, _, cx| {
                     cx.stop_propagation();
@@ -522,6 +583,16 @@ impl FilesPanel {
                         this.enqueue(files.paths().to_vec(), drop_path.clone(), cx);
                     },
                 ))
+            })
+            .context_menu(move |menu, _, _| match &target {
+                Some(target) => dialogs::menu(
+                    menu,
+                    target.clone(),
+                    selected_targets.clone(),
+                    refresh.clone(),
+                    enabled,
+                ),
+                None => menu,
             })
             .into_any_element()
     }
@@ -723,10 +794,19 @@ impl FilesPanel {
         let preview = entry.name.clone();
         let destination = entry.path.clone();
         let directory = entry.kind == EntryKind::Directory && !entry.symlink;
+        let target = FileTarget::Local(entry.path.clone());
+        let selected_targets = paths
+            .iter()
+            .cloned()
+            .map(FileTarget::Local)
+            .collect::<Vec<_>>();
+        let refresh = self.refresh_after_mutation(true, cx);
+        let enabled = !self.local.loading;
         div()
             .id(("local-entry", ix))
             .w_full()
             .h_8()
+            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
             .px_2()
             .flex()
             .items_center()
@@ -761,6 +841,17 @@ impl FilesPanel {
                 MouseButton::Left,
                 cx.listener(move |this, event, _, cx| this.select_local(ix, event, cx)),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.local.selected.contains(&ix) {
+                        this.local.selected.clear();
+                        this.local.selected.insert(ix);
+                        this.local.anchor = Some(ix);
+                        cx.notify();
+                    }
+                }),
+            )
             .on_drag(LocalPaths(paths), move |files, _, _, cx| {
                 cx.stop_propagation();
                 cx.new(|_| DragPreview {
@@ -779,6 +870,15 @@ impl FilesPanel {
                     cx.stop_propagation();
                     this.enqueue_download(files.clone(), Some(destination.clone()), cx);
                 }))
+            })
+            .context_menu(move |menu, _, _| {
+                dialogs::menu(
+                    menu,
+                    target.clone(),
+                    selected_targets.clone(),
+                    refresh.clone(),
+                    enabled,
+                )
             })
             .into_any_element()
     }
