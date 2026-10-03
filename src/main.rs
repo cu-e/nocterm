@@ -5,6 +5,8 @@
 //! window. It is the only crate that names every other one; nothing else
 //! does any wiring.
 
+mod app_menus;
+mod application;
 mod keymap;
 
 #[cfg(test)]
@@ -22,7 +24,7 @@ use nocterm_design::DesignTokens;
 use nocterm_settings::{Settings, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_ui::SettingsStore;
-use nocterm_workspace::{OpenVault, Quit, Workspace};
+use nocterm_workspace::{DefaultSessionSettings, OpenSSHSettings, OpenVault, Workspace};
 use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
@@ -82,7 +84,7 @@ fn main() -> anyhow::Result<()> {
             };
             keymap::load(cx);
 
-            cx.on_action(|_: &Quit, cx| cx.quit());
+            application::register(paths.clone(), vault_ready, cx);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -124,6 +126,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, cx);
+            workspace.set_menu_builder(app_menus::build, window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
@@ -139,9 +142,35 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
         Vec::new()
     };
     nocterm_settings_ui::register_with_pages(workspace, pages.clone());
+    let defaults = pages.clone();
+    workspace.register_action(move |_, _: &DefaultSessionSettings, window, cx| {
+        let workspace = cx.entity().downgrade();
+        let pages = defaults.clone();
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                nocterm_settings_ui::open_page(workspace, "ssh", &pages, window, cx);
+            });
+        });
+    });
+    let ssh = pages.clone();
+    workspace.register_action(move |_, _: &OpenSSHSettings, window, cx| {
+        let workspace = cx.entity().downgrade();
+        let pages = ssh.clone();
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                nocterm_settings_ui::open_page(workspace, "ssh", &pages, window, cx);
+            });
+        });
+    });
     if vault_ready {
-        workspace.register_action(move |workspace, _: &OpenVault, window, cx| {
-            nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+        workspace.register_action(move |_, _: &OpenVault, window, cx| {
+            let workspace = cx.entity().downgrade();
+            let pages = pages.clone();
+            window.defer(cx, move |window, cx| {
+                let _ = workspace.update(cx, |workspace, cx| {
+                    nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+                });
+            });
         });
     }
 }

@@ -35,6 +35,12 @@ os = ["linux", "windows"]
 "ctrl-alt-pageup" = "workspace::PreviousPane"
 "ctrl-shift-f2" = "workspace::RenameTab"
 "ctrl-`" = "workspace::ToggleLocalTerminal"
+"ctrl-alt-n" = "workspace::NewWindow"
+"ctrl-alt-w" = "workspace::CloseWindow"
+"ctrl-shift-f" = "workspace::Find"
+"f3" = "workspace::FindNext"
+"shift-f3" = "workspace::FindPrevious"
+"ctrl-f3" = "workspace::FindNextSelection"
 
 [[section]]
 context = "Workspace"
@@ -62,6 +68,12 @@ os = ["macos"]
 "cmd-alt-pageup" = "workspace::PreviousPane"
 "cmd-shift-f2" = "workspace::RenameTab"
 "cmd-`" = "workspace::ToggleLocalTerminal"
+"cmd-shift-n" = "workspace::NewWindow"
+"cmd-shift-w" = "workspace::CloseWindow"
+"cmd-f" = "workspace::Find"
+"f3" = "workspace::FindNext"
+"shift-f3" = "workspace::FindPrevious"
+"cmd-f3" = "workspace::FindNextSelection"
 
 # ── Terminal ────────────────────────────────────────────────────────────────
 
