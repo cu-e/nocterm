@@ -39,6 +39,9 @@ bitflags! {
 /// Counter for hyperlinks without explicit ID.
 static HYPERLINK_ID_SUFFIX: AtomicU32 = AtomicU32::new(0);
 
+/// Nocterm bound on combining scalars retained by one cell, including scrollback.
+const MAX_ZEROWIDTH_CHARACTERS: usize = 64;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Hyperlink {
@@ -186,6 +189,10 @@ impl Cell {
     /// Write a new zerowidth character to this cell.
     #[inline]
     pub fn push_zerowidth(&mut self, character: char) {
+        // Check before copy-on-write so ignored input cannot clone shared metadata.
+        if self.zerowidth().is_some_and(|chars| chars.len() >= MAX_ZEROWIDTH_CHARACTERS) {
+            return;
+        }
         let extra = self.extra.get_or_insert(Default::default());
         Arc::make_mut(extra).zerowidth.push(character);
     }
@@ -329,6 +336,24 @@ mod tests {
 
         // Ensure that cell size isn't growing by accident.
         assert!(mem::size_of::<Cell>() <= EXPECTED_CELL_SIZE);
+    }
+
+    #[test]
+    fn combining_storage_is_bounded_before_shared_metadata_is_cloned() {
+        let mut cell = Cell::default();
+        for _ in 0..100_000 {
+            cell.push_zerowidth('\u{301}');
+        }
+        assert_eq!(cell.zerowidth().unwrap().len(), 64);
+        assert!(cell.extra.as_ref().unwrap().zerowidth.capacity() <= 64);
+
+        let shared = cell.clone();
+        cell.push_zerowidth('\u{302}');
+        assert!(Arc::ptr_eq(cell.extra.as_ref().unwrap(), shared.extra.as_ref().unwrap()));
+        cell.clear_wide();
+        cell.push_zerowidth('\u{302}');
+        assert_eq!(cell.zerowidth().unwrap(), &['\u{302}']);
+        assert_eq!(shared.zerowidth().unwrap().len(), 64);
     }
 
     #[test]

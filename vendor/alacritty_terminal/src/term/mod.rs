@@ -41,6 +41,11 @@ pub const MIN_SCREEN_LINES: usize = 1;
 /// Max size of the window title stack.
 const TITLE_STACK_MAX_DEPTH: usize = 4096;
 
+/// Nocterm bounds on retained OSC metadata, measured in UTF-8 bytes.
+const TITLE_MAX_BYTES: usize = 4096;
+const HYPERLINK_URI_MAX_BYTES: usize = 4096;
+const HYPERLINK_ID_MAX_BYTES: usize = 1024;
+
 /// Default semantic escape characters.
 pub const SEMANTIC_ESCAPE_CHARS: &str = ",│`|:\"' ()[]{}<>\t";
 
@@ -1948,6 +1953,11 @@ impl<T: EventListener> Handler for Term<T> {
 
     #[inline]
     fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
+        // Invalid links end the current association instead of retaining a stale link.
+        let hyperlink = hyperlink.filter(|link| {
+            link.uri.len() <= HYPERLINK_URI_MAX_BYTES
+                && link.id.as_ref().is_none_or(|id| id.len() <= HYPERLINK_ID_MAX_BYTES)
+        });
         trace!("Setting hyperlink: {hyperlink:?}");
         self.grid.cursor.template.set_hyperlink(hyperlink.map(|e| e.into()));
     }
@@ -2295,6 +2305,10 @@ impl<T: EventListener> Handler for Term<T> {
 
     #[inline]
     fn set_title(&mut self, title: Option<String>) {
+        // Limit before cloning into current title, events, or the title stack.
+        if title.as_ref().is_some_and(|title| title.len() > TITLE_MAX_BYTES) {
+            return;
+        }
         trace!("Setting title to '{title:?}'");
 
         self.title.clone_from(&title);
@@ -3365,6 +3379,47 @@ mod tests {
         term.title = Some("Test".into());
         term.set_title(None);
         assert_eq!(term.title, None);
+    }
+
+    #[test]
+    fn retained_title_and_stack_bytes_are_bounded() {
+        let size = TermSize::new(2, 1);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let valid = "\u{3bb}".repeat(2048);
+        term.set_title(Some(valid.clone()));
+        term.set_title(Some("x".repeat(1 << 20)));
+        assert_eq!(term.title.as_deref(), Some(valid.as_str()));
+        term.set_title(Some(format!("{valid}\u{3bb}")));
+        assert_eq!(term.title.as_deref(), Some(valid.as_str()));
+        for _ in 0..4097 {
+            term.push_title();
+        }
+        assert_eq!(term.title_stack.len(), 4096);
+        let bytes: usize = term.title_stack.iter().flatten().map(String::len).sum();
+        assert_eq!(bytes, 4096 * 4096);
+        term.set_title(None);
+        term.pop_title();
+        assert_eq!(term.title.as_deref(), Some(valid.as_str()));
+    }
+
+    #[test]
+    fn oversized_hyperlinks_clear_the_template_without_changing_old_cells() {
+        let size = TermSize::new(7, 1);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let valid = || Hyperlink { id: Some("\u{3bb}".repeat(512)), uri: "x".repeat(4096) };
+        term.set_hyperlink(Some(valid()));
+        term.input('A');
+        term.set_hyperlink(Some(Hyperlink { id: None, uri: "x".repeat(4097) }));
+        term.input('B');
+        term.set_hyperlink(Some(valid()));
+        term.set_hyperlink(Some(Hyperlink { id: Some("x".repeat(1025)), uri: "ok".into() }));
+        term.input('C');
+        term.set_hyperlink(Some(Hyperlink { id: Some("small".into()), uri: "ok".into() }));
+        term.input('D');
+        assert_eq!(term.grid[Line(0)][Column(0)].hyperlink().unwrap().uri().len(), 4096);
+        assert!(term.grid[Line(0)][Column(1)].hyperlink().is_none());
+        assert!(term.grid[Line(0)][Column(2)].hyperlink().is_none());
+        assert_eq!(term.grid[Line(0)][Column(3)].hyperlink().unwrap().uri(), "ok");
     }
 
     #[test]

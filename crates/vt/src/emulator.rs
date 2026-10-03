@@ -914,6 +914,88 @@ mod tests {
     }
 
     #[test]
+    fn combining_flood_is_bounded_in_grid_snapshot_and_selection() {
+        let mut emulator = emulator(2, 1);
+        emulator.advance(b"a");
+        let marks = "\u{301}".repeat(100_000);
+        for chunk in marks.as_bytes().chunks(997) {
+            emulator.advance(chunk);
+        }
+        assert_eq!(
+            emulator.term.grid()[Point::new(Line(0), Column(0))]
+                .zerowidth()
+                .unwrap()
+                .len(),
+            64
+        );
+        emulator.advance(b"X");
+        let frame = frame(&emulator);
+        assert_eq!(frame.combining, [(0, "\u{301}".repeat(64))]);
+        assert_eq!(frame.row_text(0), "aX");
+        emulator.select_all();
+        assert_eq!(
+            emulator.selection_text().unwrap(),
+            format!("a{}X", "\u{301}".repeat(64))
+        );
+    }
+
+    #[test]
+    fn ordinary_combining_clusters_preserve_wide_and_hidden_attributes() {
+        let mut emulator = emulator(10, 1);
+        emulator.advance("e\u{301}\u{302}日\u{301}\x1b[8mA\u{301}".as_bytes());
+        let frame = frame(&emulator);
+        assert_eq!(
+            frame.combining,
+            [
+                (0, "\u{301}\u{302}".into()),
+                (1, "\u{301}".into()),
+                (3, "\u{301}".into())
+            ]
+        );
+        assert!(frame.cells[1].wide);
+        assert!(frame.cells[3].style.hidden);
+    }
+
+    #[test]
+    fn oversized_osc_metadata_preserves_title_and_ends_hyperlinks() {
+        let mut emulator = emulator(10, 1);
+        assert_eq!(
+            emulator.advance(b"\x1b]0;old\x07"),
+            [Effect::Title(Some("old".into()))]
+        );
+        assert!(
+            emulator
+                .advance(format!("\x1b]0;{}\x07", "x".repeat(4097)).as_bytes())
+                .is_empty()
+        );
+        emulator.advance(b"\x1b[22;0t\x1b]0;new\x07");
+        assert_eq!(
+            emulator.advance(b"\x1b[23;0t"),
+            [Effect::Title(Some("old".into()))]
+        );
+        emulator.advance(b"\x1b]8;id=normal;https://example.org\x07A");
+        emulator.advance(format!("\x1b]8;;{}\x07B", "x".repeat(4097)).as_bytes());
+        emulator.advance(b"\x1b]8;;https://example.org\x07C");
+        emulator
+            .advance(format!("\x1b]8;id={};https://example.org\x07D", "x".repeat(1025)).as_bytes());
+        for column in [0, 2] {
+            assert!(
+                emulator.term.grid()[Point::new(Line(0), Column(column))]
+                    .hyperlink()
+                    .is_some()
+            );
+        }
+        for column in [1, 3] {
+            assert!(
+                emulator.term.grid()[Point::new(Line(0), Column(column))]
+                    .hyperlink()
+                    .is_none()
+            );
+        }
+        assert_eq!(frame(&emulator).row_text(0), "ABCD");
+    }
+
+    #[test]
     fn reports_titles_bells_and_query_replies() {
         let mut emulator = emulator(20, 4);
 
@@ -1239,10 +1321,10 @@ mod osc_limit_tests {
         }
     }
     #[test]
-    fn valid_osc_at_the_byte_limit_is_not_truncated() {
+    fn valid_title_at_the_metadata_limit_is_not_truncated() {
         let mut terminal = emulator();
         terminal.advance(b"\x1b]0;");
-        let title = vec![b'x'; 1024 * 1024 - 3];
+        let title = vec![b'x'; 4096];
         assert!(terminal.advance(&title).is_empty());
         let effects = terminal.advance(b"\x07");
         assert!(

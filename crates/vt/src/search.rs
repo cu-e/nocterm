@@ -389,8 +389,11 @@ mod tests {
 
     #[test]
     fn many_combining_scalars_use_bounded_steps_and_distinct_overlap_anchors() {
-        let mut e = Emulator::new(TermSize::new(2, 1, 0, 0), EmulatorOptions::default());
-        e.advance(format!("a{}", "\u{301}".repeat(5_000)).as_bytes());
+        let mut e = Emulator::new(TermSize::new(100, 2, 0, 0), EmulatorOptions::default());
+        // Keep thousands of scalars under tiny scheduler budgets while respecting
+        // the engine's 64-mark cap per cell.
+        let cluster = format!("a{}", "\u{301}".repeat(50));
+        e.advance(cluster.repeat(100).as_bytes());
         let mut scan = e
             .search("\u{301}\u{301}", SearchDirection::Next, None)
             .unwrap();
@@ -398,7 +401,7 @@ mod tests {
             assert_eq!(scan.step(&e, 1), SearchProgress::Searching);
         }
         let first = finish(&e, "\u{301}\u{301}", SearchDirection::Next, None);
-        assert_eq!(first.count, 4_999);
+        assert_eq!(first.count, 100 * 49);
         let second = finish(
             &e,
             "\u{301}\u{301}",

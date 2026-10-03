@@ -121,4 +121,18 @@ mod tests {
         }
         assert_eq!(output, input);
     }
+
+    #[test]
+    fn osc_at_exact_ingress_limit_is_forwarded_without_truncation() {
+        let mut input = b"\x1b]0;".to_vec();
+        input.extend(std::iter::repeat_n(b'x', MAX_OSC_BYTES - 3));
+        input.push(0x07);
+        let mut guard = OscGuard::default();
+        let mut output: Vec<u8> = Vec::new();
+        for chunk in input.chunks(997) {
+            guard.advance(chunk, |bytes| output.extend(bytes));
+        }
+        assert_eq!(output, input);
+        assert!(guard.payload.capacity() <= MAX_OSC_BYTES);
+    }
 }

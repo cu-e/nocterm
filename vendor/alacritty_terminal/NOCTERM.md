@@ -3,12 +3,14 @@
 Origin: the crates.io `alacritty_terminal` 0.26.0 source distribution,
 [upstream repository](https://github.com/alacritty/alacritty). Original copyright
 headers and [Apache-2.0 license](LICENSE-APACHE) are retained. The internal unit
-tests remain unchanged; Nocterm's additional coverage lives in
-`crates/vt/src/emulator.rs`. This is an internal Cargo patch, not a new published
-terminal library.
+tests remain intact; Nocterm's additional coverage lives beside the modified
+engine methods and in `crates/vt/src/emulator.rs`. This is an internal Cargo patch,
+not a new published terminal library.
 
-Only `src/term/cell.rs` and `src/term/mod.rs` differ from the distribution's
-library sources. Cargo uses the original normalized package dependencies.
+Only `src/term/cell.rs`, `src/term/mod.rs` and `src/tty/unix.rs` differ from the
+distribution's library sources. The Unix shell-user lookup uses equivalent `?`
+error propagation to satisfy current Clippy without changing environment-variable
+fallback behavior. Cargo uses the original normalized package dependencies.
 The upstream 46 MiB reference-recording fixtures and their integration target
 are omitted from this minimal source copy. Upstream's full reference suite can
 be run from its complete source distribution; it is not claimed as part of
@@ -34,6 +36,22 @@ template; it does not retain an unbounded map of old lines. The scrollback limit
 still bounds retained cells and metadata. Marked output blanks count as occupied
 for resize, so explicit blank lines are preserved. Without opt-in, upstream
 cell emptiness and terminal behavior are unchanged.
+
+Untrusted output cannot grow one cell's combining-character vector indefinitely:
+the engine retains at most 64 zero-width scalars per cell and ignores further
+marks until that cell is replaced or cleared. This limit applies before
+copy-on-write, including cells in scrollback, selection and snapshot generation;
+normal combining clusters, wide-character placement and hidden attributes retain
+their original behavior.
+
+Retained titles are limited to 4,096 UTF-8 bytes before publication or copying.
+An oversized title leaves the previous title intact; the existing 4,096-entry
+title-stack limit therefore bounds retained title text to 16 MiB. Hyperlink URIs
+are limited to 4,096 bytes and explicit IDs to 1,024 bytes before creating shared
+cell metadata. Oversized links clear the current association, preserving links
+already attached to earlier cells. Limits reject entire strings rather than
+cutting UTF-8 characters. The VT adapter independently bounds incoming OSC data
+to 1 MiB before the upstream parser allocates its OSC payload buffer.
 
 The VT adapter exports metadata separately from the terminal text. Rendering
 uses UTC `HH:MM:SS`, with this machine's clock; it does not interpret network
