@@ -67,6 +67,9 @@ fn is_auto(auth: &Auth) -> bool {
 /// The contents of `connections.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profiles {
+    /// Remember folders even after their last connection is moved or deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folders: Vec<String>,
     #[serde(default, rename = "connection")]
     list: Vec<Profile>,
 }
@@ -90,6 +93,9 @@ impl Profiles {
 
     /// Replaces the profile with the same id, or adds it at the end.
     pub fn upsert(&mut self, profile: Profile) {
+        let previous = self.get(profile.id).and_then(|item| item.group.clone());
+        self.remember_group(previous.as_deref());
+        self.remember_group(profile.group.as_deref());
         match self
             .list
             .iter_mut()
@@ -102,15 +108,31 @@ impl Profiles {
 
     pub fn remove(&mut self, id: ProfileId) -> Option<Profile> {
         let ix = self.list.iter().position(|profile| profile.id == id)?;
-        Some(self.list.remove(ix))
+        let profile = self.list.remove(ix);
+        self.remember_group(profile.group.as_deref());
+        Some(profile)
     }
 
-    /// The folders in use, sorted case-insensitively.
+    fn remember_group(&mut self, group: Option<&str>) {
+        if let Some(group) = group
+            && !self.folders.iter().any(|existing| existing == group)
+        {
+            self.folders.push(group.to_owned());
+            self.folders.sort();
+        }
+    }
+
+    /// Existing and remembered folders, sorted case-insensitively.
     pub fn groups(&self) -> Vec<&str> {
         let mut groups: Vec<&str> = self
-            .list
+            .folders
             .iter()
-            .filter_map(|profile| profile.group.as_deref())
+            .map(String::as_str)
+            .chain(
+                self.list
+                    .iter()
+                    .filter_map(|profile| profile.group.as_deref()),
+            )
             .collect();
         groups.sort_by(|left, right| {
             left.to_lowercase()
@@ -313,6 +335,26 @@ mod tests {
         assert!(!text.contains("port"), "{text}");
         assert!(!text.contains("auth"), "{text}");
         assert_eq!(toml::from_str::<Profiles>(&text).unwrap(), profiles);
+    }
+
+    #[test]
+    fn legacy_folders_survive_the_last_profile_moving_out_and_back() {
+        let original = profile("Build", "build.local", Some("Work"));
+        // Old versions only recorded folder names on profiles.
+        let text = format!("[[connection]]\n{}", toml::to_string(&original).unwrap());
+        let mut profiles: Profiles = toml::from_str(&text).unwrap();
+        assert_eq!(profiles.groups(), ["Work"]);
+        let mut moved = original.clone();
+        moved.group = Some("Personal".into());
+        profiles.upsert(moved);
+        let text = toml::to_string(&profiles).unwrap();
+        let mut restored: Profiles = toml::from_str(&text).unwrap();
+        assert_eq!(restored.groups(), ["Personal", "Work"]);
+        assert!(restored.in_group(Some("Work"), "").is_empty());
+        restored.upsert(original.clone());
+        assert_eq!(restored.get(original.id), Some(&original));
+        restored.remove(original.id);
+        assert_eq!(restored.groups(), ["Personal", "Work"]);
     }
 
     #[test]

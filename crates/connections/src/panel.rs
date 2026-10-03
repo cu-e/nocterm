@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use gpui_kit::{
     App, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
     WeakEntity, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -27,6 +28,28 @@ use crate::{
 
 /// Shared by every row, so hovering a row reveals only its own buttons.
 const ROW_GROUP: &str = "connection-row";
+
+#[derive(Clone)]
+struct DraggedProfile(ProfileId);
+
+struct ProfileDragPreview(String);
+
+impl Render for ProfileDragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .shadow_sm()
+            .text_sm()
+            .child(Icon::new(IconName::Server).small())
+            .child(self.0.clone())
+    }
+}
 
 pub struct ConnectionsPanel {
     connections: Entity<Connections>,
@@ -138,13 +161,30 @@ impl ConnectionsPanel {
         cx.notify();
     }
 
+    fn move_profile(
+        &mut self,
+        dragged: &DraggedProfile,
+        group: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        if let Err(error) = self.connections.update(cx, |connections, cx| {
+            connections.move_profile(dragged.0, group, cx)
+        }) {
+            window.push_notification(error, cx);
+        }
+    }
+
     fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let id = profile.id;
         let element_id = SharedString::from(format!("connection-{id}"));
+        let name = profile.name.clone();
 
         h_flex()
             .id(element_id)
+            .test_support()
             .group(ROW_GROUP)
             .gap_2()
             .mx_1()
@@ -153,6 +193,10 @@ impl ConnectionsPanel {
             .rounded(theme.radius)
             .cursor_pointer()
             .hover(|row| row.bg(theme.sidebar_accent))
+            .on_drag(DraggedProfile(id), move |_, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| ProfileDragPreview(name.clone()))
+            })
             .when(!profile.description.is_empty(), |row| {
                 let description = profile.description.clone();
                 row.tooltip(move |_, cx| {
@@ -227,8 +271,10 @@ impl ConnectionsPanel {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let name = group.to_owned();
+        let drop_group = name.clone();
         h_flex()
             .id(SharedString::from(format!("group-{group}")))
+            .test_support()
             .gap_1()
             .mx_1()
             .px_1()
@@ -239,6 +285,12 @@ impl ConnectionsPanel {
             .font_semibold()
             .text_color(theme.muted_foreground)
             .hover(|row| row.bg(theme.sidebar_accent))
+            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
+                    this.move_profile(dragged, Some(drop_group.clone()), window, cx)
+                }),
+            )
             .child(
                 Icon::new(if collapsed {
                     IconName::ChevronRight
@@ -281,12 +333,29 @@ impl ConnectionsPanel {
                     .collect::<Vec<_>>();
                 (group.to_owned(), members)
             })
-            .filter(|(_, members)| !members.is_empty())
+            .filter(|(_, members)| !filtering || !members.is_empty())
             .collect();
-        let empty = profiles.is_empty();
+        let empty = profiles.is_empty() && groups.is_empty();
         let nothing_matches = top.is_empty() && groups.is_empty();
 
-        let mut list = v_flex().gap_px().py_1();
+        let mut list = v_flex().gap_px().py_1().child(
+            h_flex()
+                .id("connections-ungrouped")
+                .test_support()
+                .mx_1()
+                .px_2()
+                .py_1()
+                .rounded(cx.theme().radius)
+                .gap_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(IconName::Server).small())
+                .child("Ungrouped")
+                .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+                .on_drop(cx.listener(|this, dragged: &DraggedProfile, window, cx| {
+                    this.move_profile(dragged, None, window, cx)
+                })),
+        );
         for profile in &top {
             list = list.child(self.render_row(profile, cx));
         }
@@ -295,7 +364,18 @@ impl ConnectionsPanel {
             let collapsed = !filtering && self.collapsed.contains(group);
             list = list.child(self.render_group_header(group, collapsed, cx));
             if !collapsed {
-                let mut folder = v_flex().pl_3().gap_px();
+                let drop_group = group.clone();
+                let mut folder = v_flex()
+                    .id(SharedString::from(format!("group-members-{group}")))
+                    .test_support()
+                    .pl_3()
+                    .gap_px()
+                    .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
+                            this.move_profile(dragged, Some(drop_group.clone()), window, cx)
+                        }),
+                    );
                 for profile in members {
                     folder = folder.child(self.render_row(profile, cx));
                 }
@@ -402,5 +482,113 @@ impl Render for ConnectionsPanel {
                 )
             })
             .child(div().flex_1().min_h_0().child(self.render_list(cx)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{TestAppContext, test::TestWindowExt as _};
+
+    #[gpui_kit::test]
+    fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let profile = |name: &str, group: &str| Profile {
+            id: ProfileId::generate(),
+            name: name.into(),
+            group: Some(group.into()),
+            target: nocterm_session::Target::new("ci", name, 22),
+            description: String::new(),
+            options: Default::default(),
+            auth: Default::default(),
+            credential: None,
+            launch: None,
+        };
+        let a = profile("a", "Work");
+        let b = profile("b", "Personal");
+        cx.update_window(handle, |_, window, cx| {
+            let connections = Connections::global(cx);
+            connections.update(cx, |connections, cx| {
+                connections.save_profile(a.clone(), cx).unwrap();
+                connections.save_profile(b, cx).unwrap();
+            });
+            let panel = cx.new(|cx| {
+                ConnectionsPanel::new(connections.clone(), workspace.downgrade(), window, cx)
+            });
+            workspace.update(cx, |workspace, cx| workspace.add_panel(panel, cx));
+            window.render_frame(cx);
+            window.click("group-Personal", cx);
+            window.render_frame(cx);
+            window.drag_to(
+                SharedString::from(format!("connection-{}", a.id)),
+                "group-Personal",
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(
+                Connections::global(cx)
+                    .read(cx)
+                    .profiles()
+                    .get(a.id)
+                    .unwrap()
+                    .group
+                    .as_deref(),
+                Some("Personal")
+            );
+            window.render_frame(cx);
+            assert!(
+                window.try_find("group-Work").is_some(),
+                "last-member folder remains a drop target"
+            );
+            window.click("group-Personal", cx);
+            window.render_frame(cx);
+            window.drag_to(
+                SharedString::from(format!("connection-{}", a.id)),
+                "connections-ungrouped",
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(
+                Connections::global(cx)
+                    .read(cx)
+                    .profiles()
+                    .get(a.id)
+                    .unwrap()
+                    .group
+                    .is_none()
+            );
+            window.render_frame(cx);
+            window.drag_to(
+                SharedString::from(format!("connection-{}", a.id)),
+                "group-Work",
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(
+                Connections::global(cx)
+                    .read(cx)
+                    .profiles()
+                    .get(a.id)
+                    .unwrap()
+                    .group
+                    .as_deref(),
+                Some("Work")
+            )
+        });
+        assert!(
+            opened.borrow().is_empty(),
+            "a drag must not open an SSH session"
+        );
     }
 }

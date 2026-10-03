@@ -80,6 +80,25 @@ impl Connections {
         self.write_profiles(profiles, cx)
     }
 
+    /// Move the current saved profile; a drag carries identity, never stale settings.
+    pub fn move_profile(
+        &mut self,
+        id: ProfileId,
+        group: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let mut profile = self
+            .profiles
+            .get(id)
+            .cloned()
+            .ok_or("Connection no longer exists")?;
+        if profile.group == group {
+            return Ok(());
+        }
+        profile.group = group;
+        self.save_profile(profile, cx)
+    }
+
     pub fn delete_profile(&mut self, id: ProfileId, cx: &mut Context<Self>) -> Result<(), String> {
         let mut profiles = self.profiles.clone();
         if profiles.remove(id).is_none() {
@@ -237,6 +256,48 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    #[gpui_kit::test]
+    fn moves_preserve_latest_attributes_and_roll_back_failed_storage(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile {
+            id: ProfileId::generate(),
+            name: "Build".into(),
+            description: "Retained".into(),
+            options: Default::default(),
+            target: Target::new("ci", "build", 2222),
+            auth: Auth::Password,
+            credential: Some(CredentialId::generate().unwrap()),
+            launch: Some(Default::default()),
+            group: Some("Work".into()),
+        };
+        let entity = cx.new(|_| Connections::in_memory());
+        entity.update(cx, |connections, cx| {
+            connections.save_profile(profile.clone(), cx).unwrap();
+            connections
+                .move_profile(profile.id, Some("Personal".into()), cx)
+                .unwrap();
+            let mut expected = profile.clone();
+            expected.group = Some("Personal".into());
+            assert_eq!(connections.profiles.get(profile.id), Some(&expected));
+            assert_eq!(connections.profiles.groups(), ["Personal", "Work"]);
+            let before = connections.profiles.clone();
+            // A directory cannot be atomically replaced by the TOML file.
+            connections.profiles_file = Some(dir.path().into());
+            assert!(connections.move_profile(profile.id, None, cx).is_err());
+            assert_eq!(connections.profiles, before);
+            connections.profiles_file = None;
+            connections.load_error = Some("Invalid TOML".into());
+            assert!(connections.move_profile(profile.id, None, cx).is_err());
+            assert_eq!(connections.profiles, before);
+            // Dropping on the existing folder does not attempt a write.
+            connections
+                .move_profile(profile.id, Some("Personal".into()), cx)
+                .unwrap();
+        });
+    }
 
     #[test]
     fn saved_profile_keeps_description_and_session_overrides_when_opened() {
