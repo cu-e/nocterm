@@ -12,14 +12,19 @@ commands. Edit routes clipboard operations to the focused terminal or text field
 Copy Connection Name includes the tab's alias. Window exposes the existing split,
 pane and tab controls. Help → About shows the packaged release version.
 
-Search → Find searches literal Unicode text across the screen and retained
-history. Find Next/Previous wrap; Find Next Selected Text uses the current
-selection. Search highlights do not replace the clipboard selection. On Linux
+Search → Find searches the screen and retained history. It starts with literal,
+case-sensitive text; the search bar can switch to regular expressions, ignore
+case or match whole words. Literal searches can span hard line breaks; regular
+expressions search one logical line at a time, joining soft wraps. A regex line
+over 64 KiB reports an error instead of silently skipping results. Find
+Next/Previous wrap; Find Next Selected Text uses the current selection. Search
+highlights do not replace the clipboard selection. On Linux
 and Windows use `Ctrl+Shift+F` to open search, `F3`/`Shift+F3` to navigate and
 `Ctrl+F3` to search the selection. macOS uses `Cmd+F` and `Cmd+F3`. Enter navigates
 and Escape closes the search field without sending those keys to the shell.
-Search yields between scan slices. Rapidly changing output can leave results
-pending until a consistent scan completes.
+Search yields between scan slices and runs regex matching in bounded background
+work. Rapidly changing output can leave results pending until a consistent scan
+completes.
 
 Session → Preferences → Session Settings applies per-session options to the next
 reconnect without changing its saved profile. Default Session Settings opens the
@@ -71,6 +76,9 @@ bottom terminal removes its empty pane and resize handle.
 Drag saved connections onto folder headers or Ungrouped to change their group;
 collapsed and empty folders remain drop targets. Moving a connection keeps its
 authentication, launch options, description and credential ID.
+The connection editor groups fields into Connection, Authentication, Session and
+Launch sections. Switching sections keeps the draft; descriptions accept multiple
+lines. Operation notices appear at the side of the window with recovery actions.
 
 Explorer shows the active remote directory above a persistent local browser.
 Its compact rows use the `typography.explorer_size` design token. Right-click a

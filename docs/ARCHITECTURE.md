@@ -40,7 +40,13 @@ HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
 
 `nocterm-ui` projects tokens/settings into the standard GPUI Kit theme and
-provides shared icons and terminal styling. `nocterm-workspace` owns window
+provides shared icons, terminal styling, standalone drag previews and operational
+notices. Optional toolkit button metrics are projected from design tokens once;
+views retain standard component variants. Notices use the toolkit's window-local
+notification list with stable operation keys and recovery actions, published by
+operation events rather than rendering. Drag previews explicitly carry their
+theme and typography because GPUI renders them outside the application root.
+`nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
 dock Panels. Presentation aliases are separate from Item/session titles. Shared
@@ -48,7 +54,9 @@ actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
 closures snapshot the clicked Item and resolve its current pane order at execution;
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
 footer owns section switches and status views. Removing the last bottom Item also
-removes its Dock instead of merely emptying the tab list. Bottom local
+removes its Dock instead of merely emptying the tab list. Hiding the local dock
+detaches its panel without closing the Item; showing it restores the same Item
+and dock height. Bottom local
 terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
@@ -59,7 +67,9 @@ matching connected contexts also support transfer retry while a utility tab is a
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. `nocterm-connections` owns persisted profiles and recents,
-the grouped sidebar, profile editor and quick-connect menu. Folder membership
+the grouped sidebar, profile editor and quick-connect menu. Editor sections retain
+one draft, with a scrollable active form, multiline description and fixed footer;
+typed validation selects the section containing the invalid field. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. `nocterm-settings-ui`
 contributes a single settings Item with native page tabs; it validates a draft,
@@ -146,11 +156,15 @@ without replacing native trigger entities or process-wide menu state.
 
 VT's literal Unicode search uses bounded KMP scan steps over grid cells and their
 combining characters, with memory proportional to the query rather than the
-number of matches or history size. Soft wraps preserve text continuity; hard
-line breaks prevent cross-line matches. Terminal schedules scan slices and
-invalidates matches when output, geometry or screen changes. A rapidly changing
-buffer can defer a complete result, but stale highlights are cleared and input
-remains responsive. Search highlights and clipboard selection are independent.
+number of matches or history size. It supports case sensitivity and Unicode
+whole-word boundaries, preserves soft wraps and can match an explicit hard line
+break. Regex mode joins soft wraps but matches only within each complete logical
+line. It limits each line to 64 KiB, caps compiled regex size and returns an
+explicit error when a limit is exceeded. Regex batches run off the UI thread;
+Terminal schedules scan slices and invalidates matches when output, geometry or
+screen changes. A rapidly changing buffer can defer a complete result, but
+stale highlights are cleared and input remains responsive. Search highlights
+and clipboard selection are independent.
 
 Session Settings reuses the validated session options editor for transient
 overrides. Safe reconnect retires the previous session, event pump, prompts and
