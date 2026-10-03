@@ -94,7 +94,7 @@ fn fixture_with_vault(
                     workspace.set_session_opener(open_session);
                     nocterm_connections::register(&mut workspace, window, cx);
                     super::register_settings(&mut workspace, vault_ready);
-                    nocterm_files::register(&mut workspace, cx);
+                    nocterm_files::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
                     workspace
                 })

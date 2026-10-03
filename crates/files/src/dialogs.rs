@@ -322,6 +322,9 @@ impl FileDialog {
             }
         });
         let refresh = self.refresh.clone();
+        let kind = self.kind;
+        let dismissed = self.dismissed.clone();
+        let report_cancel = self.cancel.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = worker.await;
             let _ = cx.update(|window, app| {
@@ -330,6 +333,27 @@ impl FileDialog {
                 // and checks the browser generation and filesystem identity.
                 if !metadata_request {
                     (refresh)(app);
+                }
+                // Accepted mutations report failure even if their modal was
+                // closed while the filesystem operation was in flight.
+                if let Err(error) = &result
+                    && (!metadata_request || !dismissed.load(Ordering::Acquire))
+                {
+                    let title = match kind {
+                        Kind::Rename => "Could not rename entry",
+                        Kind::Delete => "Deletion did not finish",
+                        Kind::Properties => "Could not update file properties",
+                    };
+                    let key = match kind {
+                        Kind::Rename => "files-rename",
+                        Kind::Delete => "files-delete",
+                        Kind::Properties => "files-properties",
+                    };
+                    if kind == Kind::Delete && report_cancel.load(Ordering::Acquire) {
+                        nocterm_ui::notice::warning(window, app, key, title, error.to_string());
+                    } else {
+                        nocterm_ui::notice::error(window, app, key, title, error.to_string());
+                    }
                 }
                 this.update(app, |this, cx| {
                     // Rendered listeners may keep a dismissed model alive.
@@ -488,7 +512,7 @@ impl Render for FileDialog {
                 .when(self.targets.len()>8,|v|v.child(div().text_sm().child(format!("… and {} more selected items",self.targets.len()-8)))))
             .when(self.kind==Kind::Properties,|v|v.child(self.properties(cx)))
             .when(self.pending,|v|v.child(div().text_sm().text_color(cx.theme().muted_foreground).child(if self.kind==Kind::Delete{"Deleting… Close requests cancellation."}else{"Working…"})))
-            .when_some(self.error.clone(),|v,e|v.child(div().text_sm().text_color(cx.theme().danger).child(e)))
+
             .when(self.kind==Kind::Properties&&!self.pending&&self.metadata.is_none(),|v|v.child(Button::new("retry-properties").small().ghost().label("Retry").on_click(cx.listener(|this,_,window,cx|this.run(Operation::Metadata,window,cx)))))
     }
 }

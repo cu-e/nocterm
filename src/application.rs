@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use gpui_kit::{
     App, Global,
-    component::{WindowExt as _, button::Button, notification::Notification, v_flex},
+    component::{WindowExt as _, button::Button, v_flex},
     prelude::*,
 };
 use nocterm_core::Paths;
@@ -100,7 +100,7 @@ fn report_error(message: String, cx: &mut App) {
     if let Some(handle) = cx.active_window() {
         cx.defer(move |cx| {
             let _ = handle.update(cx, |_, window, cx| {
-                window.push_notification(Notification::error(message), cx);
+                nocterm_ui::notice::error(window, cx, "application-error", "Application", message);
             });
         });
     }

@@ -36,18 +36,53 @@ pub(super) struct TransferStatus {
     _poll: Task<()>,
 }
 impl TransferStatus {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
-            snapshot: Vec::new(),
-            _poll: cx.spawn(async move |this, cx| {
+            snapshot: service(cx)
+                .map(|service| service.snapshot())
+                .unwrap_or_default(),
+            _poll: cx.spawn_in(window, async move |this, cx| {
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(150))
                         .await;
                     if this
-                        .update(cx, |this, cx| {
+                        .update_in(cx, |this, window, cx| {
                             let snapshot = service(cx).map(|s| s.snapshot()).unwrap_or_default();
                             if snapshot != this.snapshot {
+                                for job in &snapshot {
+                                    if job.state.finished()
+                                        && job.failed_files > 0
+                                        && !this
+                                            .snapshot
+                                            .iter()
+                                            .any(|old| old.id == job.id && old.state.finished())
+                                    {
+                                        let error =
+                                            job.errors.first().cloned().unwrap_or_else(|| {
+                                                format!(
+                                                    "{} files failed; review the transfer queue.",
+                                                    job.failed_files
+                                                )
+                                            });
+                                        nocterm_ui::notice::error_action(
+                                            window,
+                                            cx,
+                                            "files-transfer-failed",
+                                            "Transfer failed",
+                                            error,
+                                            "Open Transfers",
+                                            |window, cx| {
+                                                window.defer(cx, |window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(ShowTransfers),
+                                                        cx,
+                                                    )
+                                                });
+                                            },
+                                        );
+                                    }
+                                }
                                 this.snapshot = snapshot;
                                 cx.notify();
                             }
@@ -84,7 +119,6 @@ pub(super) struct TransfersView {
     focus: FocusHandle,
     workspace: WeakEntity<Workspace>,
     snapshot: Vec<Progress>,
-    error: Option<String>,
     _poll: Task<()>,
 }
 impl TransfersView {
@@ -94,7 +128,6 @@ impl TransfersView {
             focus: cx.focus_handle(),
             workspace,
             snapshot,
-            error: None,
             _poll: cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor()
@@ -146,9 +179,6 @@ impl Render for TransfersView {
                 p.child(div().text_color(cx.theme().muted_foreground).child(
                     "Drag between Local and Remote in Explorer to upload or download files.",
                 ))
-            })
-            .when_some(self.error.as_ref(), |p, e| {
-                p.child(div().text_color(cx.theme().danger).child(e.clone()))
             })
             .children(self.snapshot.iter().map(|job| {
                 let id = job.id;
@@ -211,16 +241,24 @@ impl Render for TransfersView {
                                     .label("Retry")
                                     .disabled(!job.state.finished() || retry_fs.is_none())
                                     .tooltip("Reconnect to this host, then retry explicitly")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |_, _, window, cx| {
                                         if let Some(fs) = retry_fs.clone() {
-                                            this.error = service(cx)
+                                            let error = service(cx)
                                                 .and_then(|s| {
                                                     s.retry(id, fs)
                                                         .map(|_| ())
                                                         .map_err(|e| e.to_string())
                                                 })
                                                 .err();
-                                            cx.notify();
+                                            if let Some(error) = error {
+                                                nocterm_ui::notice::error(
+                                                    window,
+                                                    cx,
+                                                    "files-transfer-retry",
+                                                    "Could not retry transfer",
+                                                    error,
+                                                );
+                                            }
                                         }
                                     })),
                             ),

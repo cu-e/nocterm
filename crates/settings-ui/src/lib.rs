@@ -337,7 +337,7 @@ impl SettingsView {
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
-    fn apply(&mut self, cx: &mut Context<Self>) {
+    fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving.is_some() {
             return;
         }
@@ -384,20 +384,26 @@ impl SettingsView {
         use futures::FutureExt as _;
         let mut task = Box::pin(task);
         if let Some(result) = task.as_mut().now_or_never() {
-            self.saved(result, settings, cx);
+            self.saved(result, settings, window, cx);
         } else {
             self.message = Some(("Saving settings…".into(), false));
-            self.saving = Some(cx.spawn(async move |this, cx| {
+            self.saving = Some(cx.spawn_in(window, async move |this, cx| {
                 let result = task.await;
-                let _ = this.update(cx, |this, cx| {
+                let _ = this.update_in(cx, |this, window, cx| {
                     this.saving = None;
-                    this.saved(result, settings, cx);
+                    this.saved(result, settings, window, cx);
                 });
             }));
             cx.notify();
         }
     }
-    fn saved(&mut self, result: Result<u64, String>, settings: Settings, cx: &mut Context<Self>) {
+    fn saved(
+        &mut self,
+        result: Result<u64, String>,
+        settings: Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match result {
             Ok(revision) => {
                 self.base_revision = revision;
@@ -412,9 +418,22 @@ impl SettingsView {
                     .into(),
                     false,
                 ));
+                nocterm_ui::notice::success(
+                    window,
+                    cx,
+                    "settings-save",
+                    "Settings",
+                    if persistent {
+                        "Settings saved."
+                    } else {
+                        "Settings applied for this run."
+                    },
+                );
             }
             Err(error) => {
-                self.message = Some((format!("Could not save settings: {error}").into(), true))
+                let message = format!("Could not save settings: {error}");
+                self.message = Some((message.clone().into(), true));
+                nocterm_ui::notice::error(window, cx, "settings-save", "Settings", message);
             }
         }
         cx.notify();
@@ -805,7 +824,7 @@ impl Render for SettingsView {
                             .disabled(self.saving.is_some())
                             .primary()
                             .label("Apply")
-                            .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
                     ),
             );
         let tabs = TabBar::new("settings-pages")
@@ -1118,7 +1137,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
                 view.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx));
-                view.apply(cx);
+                view.apply(window, cx);
                 assert!(view.saving.is_some());
                 assert_eq!(*cx.settings(), Settings::default());
             });
@@ -1169,7 +1188,7 @@ mod tests {
         cx.update_window(first_window, |_, window, cx| {
             first.update(cx, |view, cx| {
                 view.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx));
-                view.apply(cx);
+                view.apply(window, cx);
                 assert_eq!(view.base_revision, 1);
             })
         })
@@ -1177,7 +1196,7 @@ mod tests {
         cx.update_window(second_window, |_, window, cx| {
             second.update(cx, |view, cx| {
                 view.inputs[1].update(cx, |input, cx| input.set_value("20", window, cx));
-                view.apply(cx);
+                view.apply(window, cx);
                 assert!(
                     view.message
                         .as_ref()
@@ -1192,13 +1211,13 @@ mod tests {
                     view.base_revision, 0,
                     "defaults cannot authorize overwriting a newer draft"
                 );
-                view.apply(cx);
+                view.apply(window, cx);
                 assert!(view.message.as_ref().unwrap().1);
                 view.reload(window, cx);
                 assert_eq!(view.base_revision, 1);
                 assert_eq!(view.inputs[1].read(cx).value(), "18");
                 view.inputs[1].update(cx, |input, cx| input.set_value("22", window, cx));
-                view.apply(cx);
+                view.apply(window, cx);
                 assert!(!view.message.as_ref().unwrap().1);
                 assert_eq!(cx.settings().terminal.font_size, Some(22.));
             })
@@ -1251,11 +1270,11 @@ mod tests {
             );
             settings.update(cx, |settings, cx| {
                 settings.inputs[1].update(cx, |input, cx| input.set_value("100", window, cx));
-                settings.apply(cx);
+                settings.apply(window, cx);
                 assert!(settings.message.as_ref().unwrap().1);
                 assert_eq!(*cx.settings(), Settings::default());
                 settings.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx));
-                settings.apply(cx);
+                settings.apply(window, cx);
                 assert!(!settings.message.as_ref().unwrap().1);
                 assert_eq!(cx.settings().terminal.font_size, Some(18.));
                 settings.reset(window, cx);

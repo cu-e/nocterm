@@ -129,7 +129,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             workspace.set_local_terminal_opener(nocterm_terminal::open_local);
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
-            nocterm_files::register(&mut workspace, cx);
+            nocterm_files::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);
             workspace
         });

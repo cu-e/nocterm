@@ -9,8 +9,8 @@ mod tests;
 mod transfers;
 
 use gpui_kit::{
-    AnyElement, App, Context, Entity, ExternalPaths, FocusHandle, Focusable, MouseButton,
-    SharedString, Subscription, Task, WeakEntity, Window,
+    AnyElement, AnyWindowHandle, App, Context, Entity, ExternalPaths, FocusHandle, Focusable,
+    MouseButton, SharedString, Subscription, Task, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Icon, ResizableState, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -50,13 +50,13 @@ gpui_kit::actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     transfers::init(cx);
     let active = workspace.active_session(cx);
     let handle = cx.entity();
-    let panel = cx.new(|cx| FilesPanel::new(handle, active, cx));
+    let panel = cx.new(|cx| FilesPanel::new(handle, active, window, cx));
     workspace.add_panel(panel, cx);
-    let status = cx.new(transfers::TransferStatus::new);
+    let status = cx.new(|cx| transfers::TransferStatus::new(window, cx));
     workspace.add_status_view(status, cx);
     workspace.register_action(|workspace, _: &ShowTransfers, window, cx| {
         if let Some(view) = workspace.find_item::<transfers::TransfersView>() {
@@ -76,28 +76,6 @@ struct RemotePaths {
     sources: Vec<String>,
     target: nocterm_session::Target,
     fs: Arc<dyn RemoteFs>,
-}
-struct DragPreview {
-    count: usize,
-    name: String,
-}
-impl Render for DragPreview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(Icon::new(IconName::File).small())
-            .child(if self.count == 1 {
-                self.name.clone()
-            } else {
-                format!("{} items", self.count)
-            })
-    }
 }
 struct LocalBrowser {
     generation: u64,
@@ -140,7 +118,8 @@ pub struct FilesPanel {
     workspace: WeakEntity<Workspace>,
     divider: Entity<ResizableState>,
     collisions: CollisionPolicy,
-    upload_error: Option<String>,
+    statistics_reported: bool,
+    window: AnyWindowHandle,
     _subscription: Subscription,
     _tick: Task<()>,
     remote_task: Option<Task<()>>,
@@ -186,6 +165,7 @@ impl FilesPanel {
     fn new(
         workspace: Entity<Workspace>,
         session: Option<SessionContext>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscription = cx.subscribe(&workspace, |_, workspace, event, cx| {
@@ -200,15 +180,30 @@ impl FilesPanel {
                 cx.notify();
             }
         });
-        let tick = cx.spawn(async move |this, cx| {
+        let tick = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
                 if this
-                    .update(cx, |this, cx| {
+                    .update_in(cx, |this, window, cx| {
                         let statistics = this.local.progress.lock().clone();
                         if statistics != this.local.statistics {
+                            if statistics.complete && statistics.inaccessible > 0 && !this.statistics_reported {
+                                this.statistics_reported = true;
+                                if let Some(path) = this.local.path.clone() {
+                                    let message = statistics.errors.first().cloned().unwrap_or_else(|| format!("{} paths could not be scanned; folder size is partial.", statistics.inaccessible));
+                                    let generation = this.local.generation;
+                                    let panel = cx.entity().downgrade();
+                                    nocterm_ui::notice::warning_action(window, cx, "files-partial-statistics", "Folder size is partial", message, "Recalculate", move |_, cx| {
+                                        let _ = panel.update(cx, |this, cx| {
+                                            if this.local.generation == generation && this.local.path.as_ref() == Some(&path) {
+                                                this.load_local(path.clone(), cx);
+                                            }
+                                        });
+                                    });
+                                }
+                            }
                             this.local.statistics = statistics;
                             cx.notify();
                         }
@@ -230,7 +225,8 @@ impl FilesPanel {
             workspace: workspace.downgrade(),
             divider: cx.new(|_| ResizableState::default()),
             collisions: CollisionPolicy::Skip,
-            upload_error: None,
+            statistics_reported: false,
+            window: window.window_handle(),
             _subscription: subscription,
             _tick: tick,
             remote_task: None,
@@ -270,18 +266,47 @@ impl FilesPanel {
         self.remote_anchor = None;
         self.requested_directory = directory.clone();
         cx.notify();
+        let window = self.window;
+        let retry_directory = directory.clone();
         self.remote_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { listing(fs, directory).await })
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                if this.browser.finish(generation, result) {
-                    cx.notify();
-                }
-            });
+            let error = this
+                .update(cx, |this, cx| {
+                    if this.browser.finish(generation, result) {
+                        cx.notify();
+                        this.browser.error.as_ref().map(ToString::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            if let Some(error) = error {
+                let panel = this.clone();
+                let _ = window.update(cx, |_, window, cx| {
+                    nocterm_ui::notice::error_action(
+                        window,
+                        cx,
+                        "files-remote-list",
+                        "Could not load remote directory",
+                        error,
+                        "Retry",
+                        move |_, cx| {
+                            let _ = panel.update(cx, |this, cx| {
+                                if this.browser.generation == generation {
+                                    this.load(retry_directory.clone(), cx);
+                                }
+                            });
+                        },
+                    );
+                });
+            }
         }));
     }
+
     fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
         self.local.cancel.store(true, Ordering::Release);
         self.local.cancel = Arc::new(AtomicBool::new(false));
@@ -294,7 +319,9 @@ impl FilesPanel {
         let progress = Arc::new(Mutex::new(local::Statistics::default()));
         self.local.progress = progress.clone();
         self.local.statistics = Default::default();
+        self.statistics_reported = false;
         cx.notify();
+        let window = self.window;
         self.local_task = Some(cx.spawn(async move |this, cx| {
             let path = directory.clone();
             let listing_cancel = cancel.clone();
@@ -302,10 +329,10 @@ impl FilesPanel {
                 .background_executor()
                 .spawn(async move { local::read_directory(&path, &listing_cancel) })
                 .await;
-            let loaded = this
+            let outcome = this
                 .update(cx, |this, cx| {
                     if this.local.generation != generation {
-                        return false;
+                        return None;
                     }
                     this.local.loading = false;
                     match result {
@@ -318,22 +345,48 @@ impl FilesPanel {
                         Err(error) => this.local.error = Some(error),
                     }
                     cx.notify();
-                    this.local.error.is_none()
+                    Some(this.local.error.clone())
                 })
-                .unwrap_or(false);
-            if loaded {
-                cx.background_executor()
-                    .spawn(async move {
-                        local::scan(directory, cancel, progress);
-                    })
-                    .await;
+                .ok()
+                .flatten();
+            match outcome {
+                Some(None) => {
+                    cx.background_executor()
+                        .spawn(async move {
+                            local::scan(directory, cancel, progress);
+                        })
+                        .await;
+                }
+                Some(Some(error)) => {
+                    let panel = this.clone();
+                    let _ = window.update(cx, |_, window, cx| {
+                        nocterm_ui::notice::error_action(
+                            window,
+                            cx,
+                            "files-local-list",
+                            "Could not load local directory",
+                            error,
+                            "Retry",
+                            move |_, cx| {
+                                let _ = panel.update(cx, |this, cx| {
+                                    if this.local.generation == generation {
+                                        this.load_local(directory.clone(), cx);
+                                    }
+                                });
+                            },
+                        );
+                    });
+                }
+                None => {}
             }
         }));
     }
+
     fn enqueue(
         &mut self,
         sources: Vec<PathBuf>,
         destination: Option<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let result = match (
@@ -357,13 +410,28 @@ impl FilesPanel {
             }
             _ => Err("Connect to a server and open a remote directory before uploading.".into()),
         };
-        self.upload_error = result.err();
+        if let Err(error) = result {
+            nocterm_ui::notice::error_action(
+                window,
+                cx,
+                "files-enqueue",
+                "Could not queue transfer",
+                error,
+                "Open Transfers",
+                |window, cx| {
+                    window.defer(cx, |window, cx| {
+                        window.dispatch_action(Box::new(ShowTransfers), cx)
+                    });
+                },
+            );
+        }
         cx.notify();
     }
     fn enqueue_download(
         &mut self,
         files: RemotePaths,
         destination: Option<PathBuf>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let result = destination
@@ -383,7 +451,21 @@ impl FilesPanel {
                         .map_err(|error| error.to_string())
                 })
             });
-        self.upload_error = result.err();
+        if let Err(error) = result {
+            nocterm_ui::notice::error_action(
+                window,
+                cx,
+                "files-enqueue",
+                "Could not queue transfer",
+                error,
+                "Open Transfers",
+                |window, cx| {
+                    window.defer(cx, |window, cx| {
+                        window.dispatch_action(Box::new(ShowTransfers), cx)
+                    });
+                },
+            );
+        }
         cx.notify();
     }
     fn remote_paths(&self, indices: impl Iterator<Item = usize>) -> Option<RemotePaths> {
@@ -557,9 +639,12 @@ impl FilesPanel {
             .when_some(download, |row, download| {
                 row.on_drag(download, move |files, _, _, cx| {
                     cx.stop_propagation();
-                    cx.new(|_| DragPreview {
-                        count: files.sources.len(),
-                        name: preview.clone(),
+                    cx.new(|_| {
+                        nocterm_ui::DragPreview::new(
+                            preview.clone(),
+                            files.sources.len(),
+                            IconName::File,
+                        )
                     })
                 })
             })
@@ -576,15 +661,15 @@ impl FilesPanel {
                 })
                 .on_drop(cx.listener({
                     let drop_path = drop_path.clone();
-                    move |this, files: &LocalPaths, _, cx| {
+                    move |this, files: &LocalPaths, window, cx| {
                         cx.stop_propagation();
-                        this.enqueue(files.0.clone(), drop_path.clone(), cx);
+                        this.enqueue(files.0.clone(), drop_path.clone(), window, cx);
                     }
                 }))
                 .on_drop(cx.listener(
-                    move |this, files: &ExternalPaths, _, cx| {
+                    move |this, files: &ExternalPaths, window, cx| {
                         cx.stop_propagation();
-                        this.enqueue(files.paths().to_vec(), drop_path.clone(), cx);
+                        this.enqueue(files.paths().to_vec(), drop_path.clone(), window, cx);
                     },
                 ))
             })
@@ -631,11 +716,11 @@ impl FilesPanel {
                                     || self.local.loading
                                     || self.local.path.is_none(),
                             )
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some(files) =
                                     this.remote_paths(this.remote_selected.iter().copied())
                                 {
-                                    this.enqueue_download(files, None, cx);
+                                    this.enqueue_download(files, None, window, cx);
                                 }
                             })),
                     )
@@ -766,14 +851,6 @@ impl FilesPanel {
                         }),
                     ),
             )
-            .when_some(self.upload_error.as_ref(), |p, e| {
-                p.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().danger)
-                        .child(e.clone()),
-                )
-            })
             .drag_over::<LocalPaths>(|s, _, _, cx| {
                 s.bg(cx.theme().accent)
                     .border_1()
@@ -784,11 +861,11 @@ impl FilesPanel {
                     .border_1()
                     .border_color(cx.theme().primary)
             })
-            .on_drop(cx.listener(|this, files: &LocalPaths, _, cx| {
-                this.enqueue(files.0.clone(), None, cx)
+            .on_drop(cx.listener(|this, files: &LocalPaths, window, cx| {
+                this.enqueue(files.0.clone(), None, window, cx)
             }))
-            .on_drop(cx.listener(|this, files: &ExternalPaths, _, cx| {
-                this.enqueue(files.paths().to_vec(), None, cx)
+            .on_drop(cx.listener(|this, files: &ExternalPaths, window, cx| {
+                this.enqueue(files.paths().to_vec(), None, window, cx)
             }))
             .into_any_element()
     }
@@ -858,9 +935,8 @@ impl FilesPanel {
             )
             .on_drag(LocalPaths(paths), move |files, _, _, cx| {
                 cx.stop_propagation();
-                cx.new(|_| DragPreview {
-                    count: files.0.len(),
-                    name: preview.clone(),
+                cx.new(|_| {
+                    nocterm_ui::DragPreview::new(preview.clone(), files.0.len(), IconName::File)
                 })
             })
             .when(directory, |row| {
@@ -870,10 +946,12 @@ impl FilesPanel {
                         .border_1()
                         .border_color(cx.theme().primary)
                 })
-                .on_drop(cx.listener(move |this, files: &RemotePaths, _, cx| {
-                    cx.stop_propagation();
-                    this.enqueue_download(files.clone(), Some(destination.clone()), cx);
-                }))
+                .on_drop(cx.listener(
+                    move |this, files: &RemotePaths, window, cx| {
+                        cx.stop_propagation();
+                        this.enqueue_download(files.clone(), Some(destination.clone()), window, cx);
+                    },
+                ))
             })
             .context_menu(move |menu, _, _| {
                 dialogs::menu(
@@ -1024,13 +1102,6 @@ impl FilesPanel {
                             .text_color(cx.theme().muted_foreground)
                             .child(information),
                     )
-                    .when(s.inaccessible > 0, |p| {
-                        p.child(div().text_xs().text_color(cx.theme().danger).child(
-                            s.errors.first().cloned().unwrap_or_else(|| {
-                                format!("{} paths could not be scanned", s.inaccessible)
-                            }),
-                        ))
-                    })
                     .child(
                         h_flex()
                             .justify_end()
@@ -1049,7 +1120,15 @@ impl FilesPanel {
                                             let result = workspace.update(cx, |workspace, cx| {
                                                 workspace.change_local_directory(path, window, cx)
                                             });
-                                            this.local.error = result.err();
+                                            if let Err(error) = result {
+                                                nocterm_ui::notice::error(
+                                                    window,
+                                                    cx,
+                                                    "files-shell-directory",
+                                                    "Could not change shell directory",
+                                                    error,
+                                                );
+                                            }
                                             cx.notify();
                                         }
                                     })),
@@ -1079,9 +1158,9 @@ impl FilesPanel {
                     .border_1()
                     .border_color(cx.theme().primary)
             })
-            .on_drop(cx.listener(|this, files: &RemotePaths, _, cx| {
+            .on_drop(cx.listener(|this, files: &RemotePaths, window, cx| {
                 cx.stop_propagation();
-                this.enqueue_download(files.clone(), None, cx);
+                this.enqueue_download(files.clone(), None, window, cx);
             }))
             .into_any_element()
     }
