@@ -1,7 +1,7 @@
-//! A singleton vault tab. Sensitive operations run on VaultService's worker.
+//! The embedded Vault settings page. Sensitive operations run on VaultService's worker.
 use gpui_kit::{
-    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, Global,
-    SharedString, Subscription, Task, Window,
+    App, ClipboardItem, Context, Entity, FocusHandle, Focusable, Global, SharedString,
+    Subscription, Task, Window,
     component::{
         ActiveTheme as _, Disableable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -14,9 +14,9 @@ use gpui_kit::{
     rems,
 };
 use nocterm_session::Secret;
-use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName, SettingsStore};
+use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, SettingsStore};
 use nocterm_vault::{CredentialInfo, VaultFuture, VaultService};
-use nocterm_workspace::{Item, ItemEvent, OpenVault, Workspace};
+use nocterm_workspace::{SettingsPage, SettingsPageSpec};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 struct Service(Arc<VaultService>);
@@ -38,15 +38,11 @@ pub fn init(path: PathBuf, cx: &mut App) -> Result<Arc<VaultService>, nocterm_va
     Ok(service)
 }
 
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(|workspace, _: &OpenVault, window, cx| {
-        if let Some(item) = workspace.find_item::<VaultView>() {
-            workspace.activate_item_by_id(item.entity_id(), window, cx);
-        } else {
-            let item = cx.new(|cx| VaultView::new(window, cx));
-            workspace.add_item(item, window, cx);
-        }
-    });
+/// Supplies the lazy Vault page to the application Settings host.
+pub fn settings_page() -> SettingsPageSpec {
+    SettingsPageSpec::new("vault", "Vault", |window, cx| {
+        cx.new(|cx| VaultView::new(window, cx))
+    })
 }
 
 pub struct VaultView {
@@ -218,7 +214,6 @@ impl VaultView {
         cx.notify();
     }
 }
-impl EventEmitter<ItemEvent> for VaultView {}
 impl Focusable for VaultView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.busy {
@@ -228,20 +223,20 @@ impl Focusable for VaultView {
         }
     }
 }
-impl Item for VaultView {
-    fn tab_title(&self, _: &App) -> SharedString {
-        "Credential vault".into()
-    }
-    fn tab_icon(&self, _: &App) -> IconName {
-        IconName::KeyRound
-    }
-    fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+impl SettingsPage for VaultView {
+    fn on_deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.password
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.confirm
             .update(cx, |input, cx| input.set_value("", window, cx));
     }
+    fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_deactivate(window, cx);
+        self.generation = self.generation.wrapping_add(1);
+        self.records.clear();
+    }
 }
+
 impl Render for VaultView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let unlocked = self.service.is_unlocked();
@@ -252,7 +247,9 @@ impl Render for VaultView {
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child(if unlocked { "Vault unlocked. Only explicitly saved passwords and private key passphrases appear here." } else if exists { "Unlock to use saved credentials. Metadata and secrets remain encrypted while locked." } else { "Create a portable vault encrypted with a master password. Forgetting this password prevents recovery. Choose a unique, strong password." }))
                 .when(!unlocked, |form| form.child(Input::new(&self.password)).when(!exists, |form| form.child(Input::new(&self.confirm))))
                 .when(unlocked, |form| form
-                    .child(div().font_semibold().child("Saved credentials"))
+                    .child(h_flex().justify_between().child(div().font_semibold().child("Saved credentials"))
+                        .child(Button::new("vault-refresh").ghost().label("Refresh").disabled(self.busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))))
                     .when(self.records.is_empty(), |form| form.child("No saved credentials. Choose Remember during SSH authentication after unlocking the vault."))
                     .children(self.records.iter().enumerate().map(|(index, record)| {
                         let id = record.id;
@@ -332,7 +329,7 @@ mod tests {
         path: PathBuf,
     ) -> (
         gpui_kit::AnyWindowHandle,
-        Entity<Workspace>,
+        Entity<VaultView>,
         Arc<VaultService>,
     ) {
         cx.update(|cx| {
@@ -343,37 +340,101 @@ mod tests {
                 cx,
             );
             let service = init(path, cx).unwrap();
-            let (handle, workspace) =
+            let (handle, view) =
                 gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                    cx.new(|cx| {
-                        let mut workspace = Workspace::new(window, cx);
-                        register(&mut workspace);
-                        workspace
-                    })
+                    cx.new(|cx| VaultView::new(window, cx))
                 })
                 .unwrap();
-            (handle, workspace, service)
+            (handle, view, service)
         })
     }
     #[gpui_kit::test]
-    fn singleton_form_checks_confirmation_and_clears_fields_before_async_create(
+    fn refresh_and_delete_buttons_update_credentials_saved_by_another_feature(
         cx: &mut TestAppContext,
     ) {
         let directory = tempfile::tempdir().unwrap();
-        let (handle, workspace, service) = setup(cx, directory.path().join("vault"));
+        let (handle, view, service) = setup(cx, directory.path().join("vault"));
+        block_on(service.create(Secret::new("portable master password"))).unwrap();
+        block_on(service.put(
+            None,
+            "host account".into(),
+            nocterm_vault::CredentialBinding::Password {
+                target: nocterm_session::Target::new("me", "host", 22),
+            },
+            Secret::new("saved account password"),
+        ))
+        .unwrap();
         cx.update_window(handle, |_, window, cx| {
-            window.focus(&workspace.read(cx).focus_handle(cx), cx);
             window.render_frame(cx);
-            window.dispatch_action(Box::new(OpenVault), cx);
+            window.click("vault-refresh", cx);
+        })
+        .unwrap();
+        block_on(service.list()).unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(view.read(cx).records.len(), 1);
+            window.render_frame(cx);
+            window.click(("vault-delete", 0usize), cx);
+        })
+        .unwrap();
+        let records = block_on(service.list()).unwrap();
+        assert!(records.is_empty());
+        cx.run_until_parked();
+        assert!(cx.update(|cx| view.read(cx).records.is_empty()));
+    }
+
+    #[gpui_kit::test]
+    fn page_deactivation_clears_master_drafts_without_locking_the_shared_vault(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let (handle, view, service) = setup(cx, directory.path().join("vault"));
+        block_on(service.create(Secret::new("portable master password"))).unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.password.update(cx, |input, cx| {
+                    input.set_value("unfinished replacement", window, cx)
+                });
+                view.confirm.update(cx, |input, cx| {
+                    input.set_value("unfinished confirmation", window, cx)
+                });
+                SettingsPage::on_deactivate(view, window, cx);
+                assert!(view.password.read(cx).value().is_empty());
+                assert!(view.confirm.read(cx).value().is_empty());
+                assert!(
+                    service.is_unlocked(),
+                    "hiding the page does not revoke credentials in use"
+                );
+                view.password.update(cx, |input, cx| {
+                    input.set_value("closing replacement", window, cx)
+                });
+                let before = view.generation;
+                SettingsPage::on_close(view, window, cx);
+                assert!(view.password.read(cx).value().is_empty());
+                assert_ne!(
+                    view.generation, before,
+                    "late UI results must be stale after close"
+                );
+            });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn embedded_form_checks_confirmation_and_clears_fields_before_async_create(
+        cx: &mut TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let (handle, view, service) = setup(cx, directory.path().join("vault"));
+        cx.update_window(handle, |_, window, cx| {
+            window.focus(&view.read(cx).focus_handle(cx), cx);
+            window.render_frame(cx);
         })
         .unwrap();
         cx.run_until_parked();
         let view = cx
             .update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
-                let view = workspace.read(cx).find_item::<VaultView>().unwrap();
-                window.dispatch_action(Box::new(OpenVault), cx);
-                assert_eq!(workspace.read(cx).items().count(), 1);
                 view.update(cx, |view, cx| {
                     view.password.update(cx, |input, cx| {
                         input.set_value("long master password", window, cx)

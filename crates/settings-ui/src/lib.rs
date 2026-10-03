@@ -7,6 +7,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputState},
+        tab::{Tab, TabBar},
         v_flex,
     },
     div,
@@ -20,18 +21,48 @@ use nocterm_settings::{
 use nocterm_ui::{
     ActiveDesign as _, ActiveSettings as _, IconName, SettingsStore, update_settings,
 };
-use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
+use nocterm_workspace::{
+    Item, ItemEvent, OpenSettings, SettingsPageHandle, SettingsPageSpec, Workspace,
+};
 
-/// Installs the settings command. Reopening focuses the existing tab.
+const BUILTIN_PAGES: &[(&str, &str)] = &[
+    ("appearance", "Appearance"),
+    ("terminal", "Terminal"),
+    ("local-shell", "Local shell"),
+    ("ssh", "SSH"),
+];
+
+/// Installs Settings with its built-in pages.
 pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
-        if let Some(item) = workspace.find_item::<SettingsView>() {
-            workspace.activate_item_by_id(item.entity_id(), window, cx);
-        } else {
-            let item = cx.new(|cx| SettingsView::new(window, cx));
-            workspace.add_item(item, window, cx);
-        }
+    register_with_pages(workspace, Vec::new());
+}
+/// Installs Settings and feature-owned pages supplied by the application.
+pub fn register_with_pages(workspace: &mut Workspace, pages: Vec<SettingsPageSpec>) {
+    workspace.register_action(move |workspace, _: &OpenSettings, window, cx| {
+        open_page(workspace, "", &pages, window, cx);
     });
+}
+/// Opens the singleton Settings Item and selects a page. Empty preserves its selection.
+pub fn open_page(
+    workspace: &mut Workspace,
+    id: &str,
+    pages: &[SettingsPageSpec],
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
+        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), window, cx));
+        workspace.add_item(item.clone(), window, cx);
+        item
+    });
+    if !id.is_empty() {
+        item.update(cx, |view, cx| {
+            if let Some(index) = view.page_index(id) {
+                view.select_page(index, window, cx);
+            }
+        });
+    }
+    workspace.activate_item_by_id(item.entity_id(), window, cx);
 }
 
 #[derive(Default)]
@@ -195,6 +226,9 @@ fn global_options(settings: &Settings) -> nocterm_settings::SessionOptions {
 
 /// Settings edits are a draft until Apply succeeds.
 pub struct SettingsView {
+    selected_page: usize,
+    pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
+    focus: FocusHandle,
     draft: Settings,
     session_options: Entity<nocterm_ui::SessionOptionsEditor>,
     inputs: Vec<Entity<InputState>>,
@@ -202,7 +236,15 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
+    #[cfg(test)]
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_pages(Vec::new(), window, cx)
+    }
+    fn with_pages(
+        pages: Vec<SettingsPageSpec>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let draft = cx.settings().clone();
         let fields = Fields::from_settings(&draft);
         let values = [
@@ -231,6 +273,9 @@ impl SettingsView {
         let session_options =
             cx.new(|cx| nocterm_ui::SessionOptionsEditor::new(options, false, window, cx));
         Self {
+            selected_page: 0,
+            pages: pages.into_iter().map(|spec| (spec, None)).collect(),
+            focus: cx.focus_handle(),
             session_options,
             draft,
             inputs,
@@ -238,6 +283,46 @@ impl SettingsView {
         }
     }
 
+    pub fn selected_page_id(&self) -> &str {
+        if self.selected_page < BUILTIN_PAGES.len() {
+            BUILTIN_PAGES[self.selected_page].0
+        } else {
+            self.pages[self.selected_page - BUILTIN_PAGES.len()].0.id
+        }
+    }
+    fn page_index(&self, id: &str) -> Option<usize> {
+        BUILTIN_PAGES
+            .iter()
+            .position(|(key, _)| *key == id)
+            .or_else(|| {
+                self.pages
+                    .iter()
+                    .position(|(spec, _)| spec.id == id)
+                    .map(|index| index + BUILTIN_PAGES.len())
+            })
+    }
+    fn select_page(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= BUILTIN_PAGES.len() + self.pages.len() || index == self.selected_page {
+            return;
+        }
+        if let Some((_, Some(page))) = self
+            .selected_page
+            .checked_sub(BUILTIN_PAGES.len())
+            .and_then(|index| self.pages.get(index))
+        {
+            page.deactivate(window, cx);
+        }
+        self.selected_page = index;
+        if let Some((spec, page)) = index
+            .checked_sub(BUILTIN_PAGES.len())
+            .and_then(|index| self.pages.get_mut(index))
+            && page.is_none()
+        {
+            *page = Some(spec.create(window, cx));
+        }
+        window.focus(&self.focus_handle(cx), cx);
+        cx.notify();
+    }
     fn apply(&mut self, cx: &mut Context<Self>) {
         let text = |index: usize| self.inputs[index].read(cx).value().to_string();
         let fields = Fields {
@@ -349,7 +434,17 @@ impl SettingsView {
 impl EventEmitter<ItemEvent> for SettingsView {}
 impl Focusable for SettingsView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.inputs[0].read(cx).focus_handle(cx)
+        match self.selected_page {
+            0 => self.focus.clone(),
+            1 => self.inputs[0].read(cx).focus_handle(cx),
+            2 => self.inputs[7].read(cx).focus_handle(cx),
+            3 => self.inputs[5].read(cx).focus_handle(cx),
+            index => self.pages[index - BUILTIN_PAGES.len()]
+                .1
+                .as_ref()
+                .map(|page| page.focus_handle(cx))
+                .unwrap_or_else(|| self.focus.clone()),
+        }
     }
 }
 impl Item for SettingsView {
@@ -358,6 +453,13 @@ impl Item for SettingsView {
     }
     fn tab_icon(&self, _: &App) -> IconName {
         IconName::Settings
+    }
+    fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (_, page) in &self.pages {
+            if let Some(page) = page {
+                page.close(window, cx);
+            }
+        }
     }
 }
 impl Render for SettingsView {
@@ -411,82 +513,87 @@ impl Render for SettingsView {
             .p_6()
             .gap_4()
             .max_w(width)
-            .child(div().text_lg().font_semibold().child("Settings"))
-            .child(div().font_semibold().child("Appearance"))
-            .child(appearance)
-            .child(div().pt_4().font_semibold().child("Terminal"))
-            .child(self.field(0, "Font family", "Leave empty to use the theme font.", cx))
-            .child(self.field(
-                1,
-                "Font size",
-                "6–72 pixels; empty uses the theme size.",
-                cx,
-            ))
-            .child(self.field(
-                2,
-                "Line height",
-                "1–3 times the font size; empty uses the theme value.",
-                cx,
-            ))
-            .child("Cursor shape")
-            .child(cursor)
-            .child(
-                h_flex()
-                    .gap_2()
+            .when(self.selected_page == 0, |form| {
+                form.child(div().font_semibold().child("Appearance"))
+                    .child(appearance)
+            })
+            .when(self.selected_page == 1, |form| {
+                form.child(div().pt_4().font_semibold().child("Terminal"))
+                    .child(self.field(0, "Font family", "Leave empty to use the theme font.", cx))
+                    .child(self.field(
+                        1,
+                        "Font size",
+                        "6–72 pixels; empty uses the theme size.",
+                        cx,
+                    ))
+                    .child(self.field(
+                        2,
+                        "Line height",
+                        "1–3 times the font size; empty uses the theme value.",
+                        cx,
+                    ))
+                    .child("Cursor shape")
+                    .child(cursor)
                     .child(
-                        Button::new("cursor-blink")
-                            .small()
-                            .ghost()
-                            .label("Blink cursor")
-                            .selected(self.draft.terminal.cursor_blink)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.terminal.cursor_blink =
-                                    !this.draft.terminal.cursor_blink;
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("cursor-blink")
+                                    .small()
+                                    .ghost()
+                                    .label("Blink cursor")
+                                    .selected(self.draft.terminal.cursor_blink)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.draft.terminal.cursor_blink =
+                                            !this.draft.terminal.cursor_blink;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("copy-select")
+                                    .small()
+                                    .ghost()
+                                    .label("Copy on selection")
+                                    .selected(self.draft.terminal.copy_on_select)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.draft.terminal.copy_on_select =
+                                            !this.draft.terminal.copy_on_select;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
+                    .child(self.field(3, "Scrollback lines", "0–1000000 lines.", cx))
                     .child(
-                        Button::new("copy-select")
-                            .small()
-                            .ghost()
-                            .label("Copy on selection")
-                            .selected(self.draft.terminal.copy_on_select)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.terminal.copy_on_select =
-                                    !this.draft.terminal.copy_on_select;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(self.field(3, "Scrollback lines", "0–1000000 lines.", cx))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("line-numbers")
-                            .small()
-                            .ghost()
-                            .label("Line numbers")
-                            .selected(self.draft.terminal.show_line_numbers)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.terminal.show_line_numbers =
-                                    !this.draft.terminal.show_line_numbers;
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("line-numbers")
+                                    .small()
+                                    .ghost()
+                                    .label("Line numbers")
+                                    .selected(self.draft.terminal.show_line_numbers)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.draft.terminal.show_line_numbers =
+                                            !this.draft.terminal.show_line_numbers;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("timestamps")
+                                    .small()
+                                    .ghost()
+                                    .label("Line timestamps (UTC)")
+                                    .selected(self.draft.terminal.show_timestamps)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.draft.terminal.show_timestamps =
+                                            !this.draft.terminal.show_timestamps;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
-                    .child(
-                        Button::new("timestamps")
-                            .small()
-                            .ghost()
-                            .label("Line timestamps (UTC)")
-                            .selected(self.draft.terminal.show_timestamps)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.draft.terminal.show_timestamps =
-                                    !this.draft.terminal.show_timestamps;
-                                cx.notify();
-                            })),
-                    ),
-            )
+            })
+            .when(self.selected_page == 2, |form| {
+                form
             .child(div().pt_4().font_semibold().child("Local shell"))
             .child(self.field(
                 7,
@@ -523,6 +630,9 @@ impl Render for SettingsView {
                         cx.notify();
                     })),
             )
+            })
+            .when(self.selected_page == 3, |form| {
+                form
             .child(div().pt_4().font_semibold().child("Session defaults"))
             .child(self.session_options.clone())
             .child(div().pt_4().font_semibold().child("SSH"))
@@ -573,13 +683,15 @@ impl Render for SettingsView {
                         cx.notify();
                     })),
             )
-            .child(div().pt_4().font_semibold().child("Credential vault"))
-            .child(self.field(
-                15,
-                "Automatic lock",
-                "1–1440 minutes since the last vault use.",
-                cx,
-            ));
+            })
+            .when(self.selected_page_id() == "vault", |form| {
+                form.child(self.field(
+                    15,
+                    "Automatic lock",
+                    "1–1440 minutes since the last vault use.",
+                    cx,
+                ))
+            });
         let footer = v_flex()
             .flex_shrink_0()
             .px_6()
@@ -614,17 +726,55 @@ impl Render for SettingsView {
                             .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
                     ),
             );
+        let tabs = TabBar::new("settings-pages")
+            .menu(true)
+            .selected_index(self.selected_page)
+            .children(
+                BUILTIN_PAGES
+                    .iter()
+                    .map(|(_, title)| Tab::new().label(*title)),
+            )
+            .children(
+                self.pages
+                    .iter()
+                    .map(|(spec, _)| Tab::new().label(spec.title.clone())),
+            )
+            .on_click(
+                cx.listener(|this, index: &usize, window, cx| this.select_page(*index, window, cx)),
+            );
+        let content = if let Some((_, Some(page))) = self
+            .selected_page
+            .checked_sub(BUILTIN_PAGES.len())
+            .and_then(|index| self.pages.get(index))
+        {
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .child(form)
+                .child(div().flex_1().min_h_0().child(page.view()))
+                .into_any_element()
+        } else {
+            div()
+                .id(("settings-scroll", self.selected_page))
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(form)
+                .into_any_element()
+        };
         v_flex()
             .size_full()
             .min_h_0()
+            .track_focus(&self.focus)
             .child(
                 div()
-                    .id("settings-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(form),
+                    .flex_shrink_0()
+                    .px_6()
+                    .pt_4()
+                    .child(div().text_lg().font_semibold().child("Settings"))
+                    .child(tabs),
             )
+            .child(content)
             .child(
                 div()
                     .flex_shrink_0()
@@ -649,6 +799,192 @@ impl SettingsView {
 mod tests {
     use super::*;
     use gpui_kit::{TestAppContext, WindowOptions, test::TestWindowExt as _};
+
+    use nocterm_workspace::SettingsPage;
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+
+    struct GuestPage {
+        input: Entity<InputState>,
+        deactivations: Rc<Cell<usize>>,
+        closures: Rc<Cell<usize>>,
+    }
+    impl Focusable for GuestPage {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.input.read(cx).focus_handle(cx)
+        }
+    }
+    impl Render for GuestPage {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().id("guest-page").child(Input::new(&self.input))
+        }
+    }
+    impl SettingsPage for GuestPage {
+        fn on_deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+            self.deactivations.set(self.deactivations.get() + 1);
+            self.input
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+            self.closures.set(self.closures.get() + 1);
+            self.on_deactivate(window, cx);
+        }
+    }
+    #[gpui_kit::test]
+    fn native_pages_preserve_drafts_and_lazy_guests_receive_hide_and_close(
+        cx: &mut TestAppContext,
+    ) {
+        let creations = Rc::new(Cell::new(0));
+        let deactivations = Rc::new(Cell::new(0));
+        let closures = Rc::new(Cell::new(0));
+        let guest = Rc::new(RefCell::new(None::<Entity<GuestPage>>));
+        let descriptor = SettingsPageSpec::new("vault", "Vault", {
+            let creations = creations.clone();
+            let deactivations = deactivations.clone();
+            let closures = closures.clone();
+            let guest = guest.clone();
+            move |window, cx| {
+                creations.set(creations.get() + 1);
+                let entity = cx.new(|cx| GuestPage {
+                    input: cx.new(|cx| InputState::new(window, cx).masked(true)),
+                    deactivations: deactivations.clone(),
+                    closures: closures.clone(),
+                });
+                *guest.borrow_mut() = Some(entity.clone());
+                entity
+            }
+        });
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            nocterm_ui::init(
+                nocterm_ui::DesignTokens::builtin(),
+                SettingsStore::in_memory(Settings::default()),
+                cx,
+            );
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace = Workspace::new(window, cx);
+                    register_with_pages(&mut workspace, vec![descriptor.clone()]);
+                    workspace
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                open_page(workspace, "", std::slice::from_ref(&descriptor), window, cx);
+            })
+        })
+        .unwrap();
+        let settings = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(creations.get(), 0, "guest must be lazy");
+                window.within("settings-pages").click(1usize, cx);
+                let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+                assert_eq!(settings.read(cx).selected_page_id(), "terminal");
+                settings.update(cx, |view, cx| {
+                    view.inputs[1].update(cx, |input, cx| input.set_value("18", window, cx))
+                });
+                window.render_frame(cx);
+                window.within("settings-pages").click(2usize, cx);
+                assert_eq!(settings.read(cx).selected_page_id(), "local-shell");
+                window.render_frame(cx);
+                window.within("settings-pages").click(1usize, cx);
+                assert_eq!(settings.read(cx).inputs[1].read(cx).value(), "18");
+                window.render_frame(cx);
+                window.click("settings-apply", cx);
+                assert_eq!(cx.settings().terminal.font_size, Some(18.));
+                settings
+            })
+            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                open_page(
+                    workspace,
+                    "vault",
+                    std::slice::from_ref(&descriptor),
+                    window,
+                    cx,
+                )
+            });
+            assert_eq!(workspace.read(cx).items().count(), 1);
+            assert_eq!(creations.get(), 1);
+            window.render_frame(cx);
+            window.input("guest master draft", cx);
+            assert_eq!(
+                guest
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .input
+                    .read(cx)
+                    .value(),
+                "guest master draft"
+            );
+            settings.update(cx, |view, cx| {
+                view.inputs[15].update(cx, |input, cx| input.set_value("30", window, cx))
+            });
+            window.click("settings-apply", cx);
+            assert_eq!(cx.settings().vault.auto_lock_minutes, 30);
+            assert_eq!(
+                guest
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .input
+                    .read(cx)
+                    .value(),
+                "guest master draft",
+                "Apply saves settings, not the guest's independent security draft"
+            );
+            window.within("settings-pages").click(0usize, cx);
+            assert_eq!(deactivations.get(), 1);
+            assert!(
+                guest
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .input
+                    .read(cx)
+                    .value()
+                    .is_empty()
+            );
+            assert_eq!(settings.read(cx).selected_page_id(), "appearance");
+            assert!(settings.read(cx).focus_handle(cx).is_focused(window));
+            workspace.update(cx, |workspace, cx| {
+                open_page(
+                    workspace,
+                    "vault",
+                    std::slice::from_ref(&descriptor),
+                    window,
+                    cx,
+                )
+            });
+            assert_eq!(creations.get(), 1, "reuse the guest entity");
+            window.render_frame(cx);
+            window.input("closing guest draft", cx);
+            workspace.update(cx, |workspace, cx| workspace.close_item(0, window, cx));
+            assert_eq!(closures.get(), 1);
+            assert!(
+                guest
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .input
+                    .read(cx)
+                    .value()
+                    .is_empty()
+            );
+        })
+        .unwrap();
+    }
 
     #[test]
     fn launch_fields_preserve_argument_boundaries_and_reject_invalid_environment() {

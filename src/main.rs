@@ -22,7 +22,7 @@ use nocterm_design::DesignTokens;
 use nocterm_settings::{Settings, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_ui::SettingsStore;
-use nocterm_workspace::{Quit, Workspace};
+use nocterm_workspace::{OpenVault, Quit, Workspace};
 use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
@@ -122,17 +122,28 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             workspace.set_session_opener(nocterm_terminal::open_session);
             workspace.set_local_terminal_opener(nocterm_terminal::open_local);
             nocterm_connections::register(&mut workspace, window, cx);
-            nocterm_settings_ui::register(&mut workspace);
+            register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, cx);
-            if vault_ready {
-                nocterm_vault_ui::register(&mut workspace);
-            }
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
         workspace
     })?;
     Ok(())
+}
+
+fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
+    let pages = if vault_ready {
+        vec![nocterm_vault_ui::settings_page()]
+    } else {
+        Vec::new()
+    };
+    nocterm_settings_ui::register_with_pages(workspace, pages.clone());
+    if vault_ready {
+        workspace.register_action(move |workspace, _: &OpenVault, window, cx| {
+            nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+        });
+    }
 }
 
 /// The built-in design tokens with the user's `theme.toml` over them. A

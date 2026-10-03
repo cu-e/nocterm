@@ -51,12 +51,25 @@ fn fixture(
     Entity<TerminalView>,
     Arc<MockTransport>,
 ) {
+    fixture_with_vault(cx, false)
+}
+
+fn fixture_with_vault(
+    cx: &mut TestAppContext,
+    vault_ready: bool,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<TerminalView>,
+    Arc<MockTransport>,
+) {
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal) = cx.update(|cx| {
         gpui_kit::init(cx);
         let directory = tempfile::tempdir().unwrap();
         let mut settings = nocterm_settings::Settings::default();
         settings.local.cwd = Some(directory.path().to_string_lossy().into_owned());
+        let vault_path = directory.path().join("vault.bin");
         cx.set_global(FixtureDirectory {
             _directory: directory,
         });
@@ -65,6 +78,9 @@ fn fixture(
             nocterm_ui::SettingsStore::in_memory(settings),
             cx,
         );
+        if vault_ready {
+            nocterm_vault_ui::init(vault_path, cx).unwrap();
+        }
         nocterm_terminal::init(transport.clone(), cx);
         nocterm_connections::init(None, cx);
         crate::keymap::load(cx);
@@ -74,7 +90,7 @@ fn fixture(
                     let mut workspace = Workspace::new(window, cx);
                     workspace.set_session_opener(open_session);
                     nocterm_connections::register(&mut workspace, window, cx);
-                    nocterm_settings_ui::register(&mut workspace);
+                    super::register_settings(&mut workspace, vault_ready);
                     nocterm_files::register(&mut workspace, cx);
                     workspace
                 })
@@ -131,6 +147,47 @@ fn tab_keys_reach_shell_without_moving_focus(cx: &mut TestAppContext) {
         }
     }
     assert_eq!(inputs, [b"\t".to_vec(), b"\x1b[Z".to_vec()]);
+}
+
+#[gpui_kit::test]
+fn vault_action_opens_the_vault_page_in_the_single_settings_item(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture_with_vault(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::OpenSettings), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let original = workspace.read_with(cx, |w, _| {
+        w.find_item::<nocterm_settings_ui::SettingsView>()
+            .unwrap()
+            .entity_id()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("vault-submit").is_none());
+        window.dispatch_action(Box::new(nocterm_workspace::OpenVault), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("vault-submit").visible());
+        window.dispatch_action(Box::new(nocterm_workspace::OpenVault), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("vault-submit").visible());
+    })
+    .unwrap();
+    assert_eq!(
+        workspace.read_with(cx, |w, _| w
+            .find_item::<nocterm_settings_ui::SettingsView>()
+            .unwrap()
+            .entity_id()),
+        original
+    );
 }
 
 #[gpui_kit::test]
