@@ -28,6 +28,7 @@ then require a read-only reviewer with no blocking findings before merging.
 | SFTP listing and upload-handle registration had no aggregate budget; link metadata requests ran serially. | Entry/name/page limits, invalid-name rejection before joining paths, 128 upload handles, an ordered window of eight link STAT requests. | Protocol fixtures check pipelining, ordering and CLOSE on rejected listings. |
 | Profile/recent/settings fsync ran on the UI thread. Concurrent forms could silently replace newer state. | Bounded ordered background persistence. Profiles validate their original snapshot; settings validate a revision again when dequeued. Publish durable settings/profiles only after success. Recent history coalesces independently of SSH opening. | Concurrent drafts, failed writes, editor preservation and serialized persistence tests. |
 | Explorer sorting repeatedly folded strings inside comparisons on the UI thread. Recursive scans and upload discovery lacked uniform resource bounds. | Sort/filter off the UI thread, precomputed keys, cancellable bounded listing/stat traversal, shared pinned-directory helpers on Unix, source/depth/visit/history limits for transfers. | Admission boundaries, deeply nested trees, cancellation and real filesystem traversal fixtures. |
+| A remote process could grow one cell's combining sequence without limit; title-stack pushes also amplified a large title. | Cap combining sequences at 64 marks before allocation/copy, titles at 4096 UTF-8 bytes, hyperlink URI/ID at 4096/1024 bytes. Reject oversized metadata without partial application. | Independent reproducer, 100,000-mark recovery, ordinary/wide Unicode, title-stack and hyperlink regressions; preserve a 5000-mark search workload across bounded clusters. |
 | Combining characters were present in emulator frames but absent from the renderer's text. | Include the marks with the base cell's style and UTF-8 run lengths; preserve hidden-cell behavior and grid positioning. | Unicode combining and hidden-text regressions. |
 | Unterminated OSC sequences could grow VTE's std-mode buffer without limit. | Bound OSC ingress to 1 MiB before forwarding it to VTE. Discard oversized commands completely; cancellation must not dispatch a truncated prefix. Ordinary output uses borrowed slices. | Fragmented UTF-8/control sequences, exact boundaries, oversized title/clipboard recovery and differential native-parser parity tests. |
 | OSC 52 from a background or untrusted terminal could replace the desktop clipboard. | Denied by default; optional writes require focus on the actual terminal screen in the active application window. Clipboard reads remain denied. | Native GPUI tests exercise default denial, opt-in, search-input focus and blurred terminals. |
@@ -49,6 +50,7 @@ then require a read-only reviewer with no blocking findings before merging.
 | SFTP wire packet / listing | 256 KiB upstream packet cap; 100,000 entries and 16 MiB aggregate names |
 | SFTP handles / link metadata | 128 upload handles; eight concurrent link STAT requests |
 | OSC ingress | 1 MiB per command, before VTE payload allocation |
+| Terminal cell/title metadata | 64 combining marks per cell; 4096-byte titles, at most 16 MiB title-stack text; hyperlink URI/ID 4096/1024 bytes |
 
 ## Retained design constraints
 
@@ -102,7 +104,7 @@ architecture boundaries and rustdoc with warnings denied. Exact final results
 are recorded in the completion report. Native macOS/Windows execution and
 fingerprint interaction cannot be established by Linux tests.
 
-Final Linux audit gates: **348 workspace tests, 0 failed, 0 ignored**, and **24
+Initial Linux audit gates: **348 workspace tests, 0 failed, 0 ignored**, and **24
 mandatory real OpenSSH/SFTP tests**. Formatting, locked all-target workspace
 build/clippy, generated-document freshness, architecture checks and rustdoc with
 warnings denied passed. The independent tester added inactive-window OSC 52 and
@@ -111,3 +113,18 @@ mapped a 948 × 562 window and selected the AMD hardware Vulkan adapter; no imag
 was captured and existing application sessions were left running. This smoke
 establishes window creation/render startup, not interactive behavior of every UI
 control. Independent source review is the final merge gate.
+
+First independent review requested the cell-metadata cap and separate ownership
+of profile/history persistence errors. Both findings were reproduced and fixed;
+successful profile writes now leave an outstanding history error visible. The
+patched engine retains its original 132 tests and adds three regressions.
+Standalone engine clippy also exposed three original Unix error-propagation
+style warnings; equivalent `?` propagation fixed them without disabling a lint.
+
+After review corrections, the same required gates passed again with **353
+workspace tests, 0 failed, 0 ignored**, including the 24 OpenSSH/SFTP tests.
+The standalone patched engine passed **135 tests** and all-target clippy with
+warnings denied. A separate optional standalone vendor format check differs
+from default stable rustfmt because the copied upstream sources retain their
+original style; the required workspace format check passes. No formatting
+check was weakened and no mass vendor reformat was introduced.
