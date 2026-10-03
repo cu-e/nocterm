@@ -679,8 +679,15 @@ impl ConnectionEditor {
                         Button::new("editor-reload-current").small().ghost().label("Reload connection").disabled(self.pending)
                             .tooltip("Discard this draft and load the current saved connection")
                             .on_click(cx.listener(|this, _, window, cx| {
+                                if this.pending || this.dismissed.load(std::sync::atomic::Ordering::Acquire) { return; }
                                 let latest = Connections::global(cx).read(cx).profiles().get(this.id).cloned();
-                                if let Some(profile) = latest { open_editor(Some(profile), this.workspace.clone(), window, cx); }
+                                if let Some(profile) = latest {
+                                    this.dismissed.store(true, std::sync::atomic::Ordering::Release);
+                                    let workspace = this.workspace.clone();
+                                    window.close_dialog(cx);
+                                    // Finish dismissal before mounting the replacement and focusing its input.
+                                    window.defer(cx, move |window, cx| open_editor(Some(profile), workspace, window, cx));
+                                }
                                 else { this.error = Some("This connection was deleted. Close the editor to create a new connection.".into()); cx.notify(); }
                             }))
                     ))
@@ -1153,6 +1160,101 @@ mod tests {
             );
         })
         .unwrap();
+    }
+
+    fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
+        use futures::FutureExt as _;
+        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let original = build_profile(
+            ProfileId::generate(),
+            &fields("old.test"),
+            AuthKind::Auto,
+            Some("tester"),
+            None,
+        )
+        .unwrap();
+        let mut latest = original.clone();
+        latest.name = "Current saved connection".into();
+        latest.target.host = "latest.test".into();
+        latest.description = "Notes changed in another view".into();
+        latest.auth = Auth::Password;
+        let old_editor = cx
+            .update_window(handle, |_, window, cx| {
+                Connections::global(cx).update(cx, |connections, cx| {
+                    connections
+                        .save_profile(original.clone(), cx)
+                        .now_or_never()
+                        .unwrap()
+                        .unwrap();
+                });
+                let editor =
+                    open_editor_view(Some(original.clone()), workspace.downgrade(), window, cx);
+                window.render_frame(cx);
+                window.press("ctrl-a", cx);
+                window.input("Unsaved stale draft", cx);
+                Connections::global(cx).update(cx, |connections, cx| {
+                    connections
+                        .save_profile(latest.clone(), cx)
+                        .now_or_never()
+                        .unwrap()
+                        .unwrap();
+                });
+                window.click("editor-save", cx);
+                editor
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                old_editor.read(cx).error.is_some(),
+                "stale snapshot must conflict"
+            );
+            assert_eq!(
+                old_editor.read(cx).name.read(cx).value().as_ref(),
+                "Unsaved stale draft"
+            );
+            window.click("editor-reload-current", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.focused_input(cx).unwrap().value(cx).as_ref(),
+                latest.name
+            );
+            if save {
+                window.press("ctrl-a", cx);
+                window.input("Saved after reload", cx);
+                window.click("editor-save", cx);
+            } else {
+                window.click("editor-cancel", cx);
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("dialog").is_none(), "finishing the replacement must not reveal the stale editor");
+            assert!(old_editor.read(cx).dismissed.load(std::sync::atomic::Ordering::Acquire));
+            let connections = Connections::global(cx);
+            let stored = connections.read(cx).profiles().get(original.id).unwrap();
+            if save { latest.name = "Saved after reload".into(); }
+            assert_eq!(stored, &latest, "reload must validate against the latest saved snapshot and preserve all of its fields");
+            assert!(opened.borrow().is_empty());
+        }).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn conflict_reload_then_cancel_closes_the_old_editor(cx: &mut TestAppContext) {
+        reload_conflict_then_finish(cx, false);
+    }
+    #[gpui_kit::test]
+    fn conflict_reload_then_save_uses_latest_revision_and_leaves_no_old_editor(
+        cx: &mut TestAppContext,
+    ) {
+        reload_conflict_then_finish(cx, true);
     }
 
     fn fields(host: &str) -> Fields {
