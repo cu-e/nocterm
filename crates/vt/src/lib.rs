@@ -6,6 +6,7 @@
 //! underneath does.
 //!
 //! * [`Emulator`] holds the screen: feed it output, read a [`Frame`].
+//! * [`Emulator::text`] reads the history and screen as bounded plain text.
 //! * [`encode_key`], [`encode_mouse`], [`encode_paste`] and [`encode_focus`]
 //!   produce what to send for user input, given the [`Modes`] the running
 //!   program has set.
@@ -16,6 +17,7 @@ mod mouse;
 mod osc_guard;
 mod paste;
 mod search;
+mod text;
 
 pub use search::{
     MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchMatch,
@@ -29,3 +31,4 @@ pub use emulator::{
 pub use keys::{KeyPress, Modifiers, encode_key};
 pub use mouse::{MouseButton, MouseEvent, MouseEventKind, encode_mouse};
 pub use paste::{encode_focus, encode_paste};
+pub use text::{TextQuery, TextTail};
