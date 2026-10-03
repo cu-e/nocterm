@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::{
     App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, WeakEntity, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
         WindowExt as _,
@@ -14,7 +15,7 @@ use gpui_kit::{
     },
     div,
     prelude::*,
-    rems,
+    px, rems,
 };
 use nocterm_session::{Auth, DEFAULT_PORT, ShellLaunch, Target};
 use nocterm_ui::ActiveDesign as _;
@@ -32,6 +33,53 @@ enum AuthKind {
     Auto,
     Password,
     Key,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditorSection {
+    Connection,
+    Authentication,
+    Session,
+    Launch,
+}
+impl EditorSection {
+    const ALL: [(Self, &'static str, &'static str); 4] = [
+        (Self::Connection, "editor-section-connection", "Connection"),
+        (
+            Self::Authentication,
+            "editor-section-authentication",
+            "Authentication",
+        ),
+        (Self::Session, "editor-section-session", "Session"),
+        (Self::Launch, "editor-section-launch", "Launch"),
+    ];
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ValidationField {
+    Host,
+    Port,
+    User,
+    Key,
+    Credential,
+    Arguments,
+    Environment,
+    Launch,
+    Session,
+    Description,
+}
+#[derive(Debug)]
+struct FormError {
+    field: ValidationField,
+    message: String,
+}
+impl FormError {
+    fn new(field: ValidationField, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            message: message.into(),
+        }
+    }
 }
 
 /// The form's text, as typed.
@@ -61,13 +109,19 @@ fn build_profile(
     auth: AuthKind,
     local_user: Option<&str>,
     home: Option<&Path>,
-) -> Result<Profile, String> {
+) -> Result<Profile, FormError> {
     let host = fields.host.trim();
     if host.is_empty() {
-        return Err("Enter a host name or address.".into());
+        return Err(FormError::new(
+            ValidationField::Host,
+            "Enter a host name or address.",
+        ));
     }
     if host.contains(char::is_whitespace) || host.contains('@') {
-        return Err("The host is just the name or address, as in example.com.".into());
+        return Err(FormError::new(
+            ValidationField::Host,
+            "The host is just the name or address, as in example.com.",
+        ));
     }
 
     let port = match fields.port.trim() {
@@ -76,13 +130,18 @@ fn build_profile(
             .parse::<u16>()
             .ok()
             .filter(|port| *port != 0)
-            .ok_or_else(|| format!("`{port}` is not a port number."))?,
+            .ok_or_else(|| {
+                FormError::new(
+                    ValidationField::Port,
+                    format!("`{port}` is not a port number."),
+                )
+            })?,
     };
 
     let user = match fields.user.trim() {
-        "" => local_user
-            .map(str::to_owned)
-            .ok_or_else(|| "Enter the user to sign in as.".to_owned())?,
+        "" => local_user.map(str::to_owned).ok_or_else(|| {
+            FormError::new(ValidationField::User, "Enter the user to sign in as.")
+        })?,
         user => user.to_owned(),
     };
 
@@ -90,7 +149,12 @@ fn build_profile(
         AuthKind::Auto => Auth::Auto,
         AuthKind::Password => Auth::Password,
         AuthKind::Key => match fields.key_path.trim() {
-            "" => return Err("Choose the private key file to sign in with.".into()),
+            "" => {
+                return Err(FormError::new(
+                    ValidationField::Key,
+                    "Choose the private key file to sign in with.",
+                ));
+            }
             path => Auth::Key {
                 path: expand_home(path, home),
             },
@@ -107,7 +171,10 @@ fn build_profile(
 
     let credential = match fields.credential.trim() {
         "" => None,
-        id => Some(id.parse().map_err(str::to_owned)?),
+        id => Some(
+            id.parse()
+                .map_err(|message| FormError::new(ValidationField::Credential, message))?,
+        ),
     };
     let launch = if fields.override_launch {
         let launch = ShellLaunch {
@@ -115,27 +182,43 @@ fn build_profile(
             args: if fields.args.trim().is_empty() {
                 Vec::new()
             } else {
-                serde_json::from_str(&fields.args)
-                    .map_err(|_| "Arguments must be a JSON array of strings.".to_owned())?
+                serde_json::from_str(&fields.args).map_err(|_| {
+                    FormError::new(
+                        ValidationField::Arguments,
+                        "Arguments must be a JSON array of strings.",
+                    )
+                })?
             },
             cwd: Some(fields.cwd.trim().to_owned()).filter(|value| !value.is_empty()),
             env: if fields.env.trim().is_empty() {
                 Default::default()
             } else {
-                serde_json::from_str(&fields.env)
-                    .map_err(|_| "Environment must be a JSON object of string values.".to_owned())?
+                serde_json::from_str(&fields.env).map_err(|_| {
+                    FormError::new(
+                        ValidationField::Environment,
+                        "Environment must be a JSON object of string values.",
+                    )
+                })?
             },
             integration: fields.launch_integration,
         };
-        launch.validate()?;
+        launch
+            .validate()
+            .map_err(|message| FormError::new(ValidationField::Launch, message))?;
         Some(launch)
     } else {
         None
     };
 
-    fields.options.validate()?;
+    fields
+        .options
+        .validate()
+        .map_err(|message| FormError::new(ValidationField::Session, message))?;
     if fields.description.len() > 16384 {
-        return Err("Description must be at most 16384 bytes.".into());
+        return Err(FormError::new(
+            ValidationField::Description,
+            "Description must be at most 16384 bytes.",
+        ));
     }
     Ok(Profile {
         description: fields.description.trim().to_owned(),
@@ -180,34 +263,59 @@ pub fn open_editor(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let _ = open_editor_view(profile, workspace, window, cx);
+}
+fn open_editor_view(
+    profile: Option<Profile>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ConnectionEditor> {
     let title = if profile.is_some() {
         "Edit Connection"
     } else {
         "New Connection"
     };
-    let width = rems(cx.design().layout.dialog_width).to_pixels(window.rem_size());
+    let width = rems(cx.design().layout.connection_editor_width).to_pixels(window.rem_size());
     let editor = cx.new(|cx| ConnectionEditor::new(profile, workspace, window, cx));
+    let footer = cx.new(|cx| EditorFooter {
+        editor: editor.clone(),
+        _subscription: cx.observe(&editor, |_, _, cx| cx.notify()),
+    });
     let dismissed = editor.read(cx).dismissed.clone();
     let focus = editor.read(cx).focus_handle(cx);
+    let content = editor.clone();
     window.open_dialog(cx, move |dialog, _, _| {
-        let editor = editor.clone();
+        let editor = content.clone();
         let dismissed = dismissed.clone();
         dialog
             .title(title)
             .w(width)
             .child(editor.clone())
+            .footer(footer.clone())
             .on_close(move |_, _, _| dismissed.store(true, std::sync::atomic::Ordering::Release))
             .on_ok(move |_, window, cx| {
-                editor.update(cx, |editor, cx| editor.save(true, window, cx));
+                editor.update(cx, |editor, cx| {
+                    if !editor
+                        .description
+                        .read(cx)
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                    {
+                        editor.save(true, window, cx);
+                    }
+                });
                 // Saving closes the dialog only after validation succeeds.
                 false
             })
     });
     window.focus(&focus, cx);
+    editor
 }
 
 /// The connection form.
 pub struct ConnectionEditor {
+    focus: FocusHandle,
     id: ProfileId,
     editing: bool,
     original: Option<Profile>,
@@ -227,6 +335,7 @@ pub struct ConnectionEditor {
     launch_integration: bool,
     launch_fields: Vec<Entity<InputState>>,
     auth: AuthKind,
+    section: EditorSection,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -353,6 +462,7 @@ impl ConnectionEditor {
         .collect();
 
         Self {
+            focus: cx.focus_handle(),
             id: existing.map_or_else(ProfileId::generate, |profile| profile.id),
             editing: existing.is_some(),
             original: profile.clone(),
@@ -372,6 +482,7 @@ impl ConnectionEditor {
             launch_integration,
             launch_fields,
             auth,
+            section: EditorSection::Connection,
             error: None,
             _subscriptions: subscriptions,
         }
@@ -407,7 +518,7 @@ impl ConnectionEditor {
         fields.options = match self.options.read(cx).options(cx) {
             Ok(options) => options,
             Err(error) => {
-                self.error = Some(error.into());
+                self.show_validation(FormError::new(ValidationField::Session, error), window, cx);
                 cx.notify();
                 return;
             }
@@ -421,7 +532,7 @@ impl ConnectionEditor {
         ) {
             Ok(profile) => profile,
             Err(error) => {
-                self.error = Some(error.into());
+                self.show_validation(error, window, cx);
                 cx.notify();
                 return;
             }
@@ -476,6 +587,39 @@ impl ConnectionEditor {
         cx.notify();
     }
 
+    fn show_validation(&mut self, error: FormError, window: &mut Window, cx: &mut Context<Self>) {
+        let section = match error.field {
+            ValidationField::Key | ValidationField::Credential => EditorSection::Authentication,
+            ValidationField::Arguments | ValidationField::Environment | ValidationField::Launch => {
+                EditorSection::Launch
+            }
+            ValidationField::Session => EditorSection::Session,
+            _ => EditorSection::Connection,
+        };
+        self.select_section(section, window, cx);
+        let input = match error.field {
+            ValidationField::Host => Some(&self.host),
+            ValidationField::Port => Some(&self.port),
+            ValidationField::User => Some(&self.user),
+            ValidationField::Key => Some(&self.key_path),
+            ValidationField::Credential => Some(&self.credential),
+            ValidationField::Arguments => Some(&self.launch_fields[1]),
+            ValidationField::Environment => Some(&self.launch_fields[3]),
+            ValidationField::Launch => Some(&self.launch_fields[0]),
+            _ => None,
+        };
+        let focus = input
+            .map(|input| input.read(cx).focus_handle(cx))
+            .or_else(|| {
+                matches!(error.field, ValidationField::Description)
+                    .then(|| self.description.read(cx).focus_handle(cx))
+            });
+        if let Some(focus) = focus {
+            self.focus_after_render(section, focus, window, cx);
+        }
+        self.error = Some(error.message.into());
+    }
+
     fn render_field(label: &'static str, input: &Entity<InputState>, cx: &App) -> impl IntoElement {
         v_flex()
             .gap_1()
@@ -515,62 +659,20 @@ impl Focusable for ConnectionEditor {
     }
 }
 
-impl Render for ConnectionEditor {
+struct EditorFooter {
+    editor: Entity<ConnectionEditor>,
+    _subscription: Subscription,
+}
+impl Render for EditorFooter {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        let danger = theme.danger;
-        let auth_hint = match self.auth {
-            AuthKind::Auto => "Like ssh: the agent, then your default keys, then a password.",
-            AuthKind::Password => "Always ask for the account's password.",
-            AuthKind::Key => {
-                "Sign in with one private key; its passphrase is asked for if it has one."
-            }
-        };
-
-        v_flex()
-            .gap_3()
-            .child(Self::render_field("Name", &self.name, cx))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_start()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Self::render_field("Host", &self.host, cx)),
-                    )
-                    .child(
-                        div()
-                            .w_24()
-                            .child(Self::render_field("Port", &self.port, cx)),
-                    ),
-            )
-            .child(Self::render_field("User", &self.user, cx))
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_xs().text_color(muted).child("Sign in"))
-                    .child(self.render_auth_choice(cx))
-                    .child(div().text_xs().text_color(muted).child(auth_hint)),
-            )
-            .when(self.auth == AuthKind::Key, |form| {
-                form.child(Self::render_field("Private key", &self.key_path, cx))
-            })
-            .child(Self::render_field("Folder", &self.group, cx))
-            .child(div().text_sm().child("Description"))
-            .child(Textarea::new(&self.description))
-            .child(self.options.clone())
-            .child(Self::render_field("Saved credential ID", &self.credential, cx))
-            .child(div().text_xs().text_color(muted).child("Passwords are saved from the authentication prompt after successful sign in. Leave the ID empty to ask each time."))
-            .child(Button::new("profile-launch-toggle").small().ghost().label("Override SSH launch settings").selected(self.override_launch).on_click(cx.listener(|this, _, _, cx| { this.override_launch = !this.override_launch; cx.notify(); })))
-            .when(self.override_launch, |form| form
-                .child(Self::render_field("Remote executable (empty: default shell)", &self.launch_fields[0], cx))
-                .child(Self::render_field("Arguments as a JSON array", &self.launch_fields[1], cx))
-                .child(Self::render_field("Initial remote directory", &self.launch_fields[2], cx))
-                .child(Self::render_field("Environment as a JSON object", &self.launch_fields[3], cx))
-                .child(Button::new("profile-integration-toggle").small().ghost().label("Shell integration (directory and command tracking)").selected(self.launch_integration).on_click(cx.listener(|this, _, _, cx| { this.launch_integration = !this.launch_integration; cx.notify(); })))
-                .child(div().text_xs().text_color(muted).child("These options apply on the next start or reconnect. Keep secrets in the vault.")))
+        self.editor
+            .update(cx, |editor, cx| editor.render_footer(cx))
+    }
+}
+impl ConnectionEditor {
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let danger = cx.theme().danger;
+        v_flex().id("editor-footer").gap_2()
             .when_some(self.error.clone(), |form, error| {
                 form.child(div().text_sm().text_color(danger).child(error))
                     .when(self.original.is_some(), |form| form.child(
@@ -592,7 +694,10 @@ impl Render for ConnectionEditor {
                         Button::new("editor-cancel")
                             .ghost()
                             .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismissed.store(true, std::sync::atomic::Ordering::Release);
+                                window.close_dialog(cx);
+                            })),
                     )
                     .child(
                         Button::new("editor-save").label(if self.pending { "Saving…" } else { "Save" }).disabled(self.pending).on_click(
@@ -613,6 +718,121 @@ impl Render for ConnectionEditor {
                                 cx.listener(|this, _, window, cx| this.save(true, window, cx)),
                             ),
                     ),
+            )
+    }
+    fn select_section(
+        &mut self,
+        section: EditorSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.section = section;
+        let focus = match section {
+            EditorSection::Connection => self.focus_handle(cx),
+            EditorSection::Authentication => self.credential.read(cx).focus_handle(cx),
+            EditorSection::Session => self.options.read(cx).focus_handle(cx),
+            EditorSection::Launch if self.override_launch => {
+                self.launch_fields[0].read(cx).focus_handle(cx)
+            }
+            EditorSection::Launch => self.focus.clone(),
+        };
+        // Mount the new section before moving focus into its native field.
+        self.focus_after_render(section, focus, window, cx);
+        cx.notify();
+    }
+
+    fn focus_after_render(
+        &self,
+        section: EditorSection,
+        focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            let still_open = editor.upgrade().is_some_and(|editor| {
+                let editor = editor.read(cx);
+                editor.section == section
+                    && !editor.dismissed.load(std::sync::atomic::Ordering::Acquire)
+            });
+            if still_open {
+                window.focus(&focus, cx);
+            }
+        });
+    }
+}
+impl Render for ConnectionEditor {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let layout = &cx.design().layout;
+        let height = rems(layout.connection_editor_height).to_pixels(window.rem_size());
+        let available =
+            (window.viewport_size().height - rems(10.).to_pixels(window.rem_size())).max(px(0.));
+        let nav_width = rems(layout.connection_nav_width);
+        let description_height = rems(layout.connection_description_height);
+        let auth_hint = match self.auth {
+            AuthKind::Auto => "Like ssh: the agent, then your default keys, then a password.",
+            AuthKind::Password => "Always ask for the account's password.",
+            AuthKind::Key => {
+                "Sign in with one private key; its passphrase is asked for if it has one."
+            }
+        };
+        let form = match self.section {
+            EditorSection::Connection => v_flex().gap_3()
+                .child(Self::render_field("Name", &self.name, cx))
+                .child(h_flex().gap_2().items_start()
+                    .child(div().flex_1().child(Self::render_field("Host", &self.host, cx)))
+                    .child(div().w_24().child(Self::render_field("Port", &self.port, cx))))
+                .child(Self::render_field("User", &self.user, cx))
+                .child(Self::render_field("Folder", &self.group, cx))
+                .child(div().text_xs().text_color(muted).child("Description"))
+                .child(div().id("editor-description").test_support().h(description_height).child(Textarea::new(&self.description).h(description_height).aria_label("Connection description"))),
+            EditorSection::Authentication => v_flex().gap_3()
+                .child(div().text_xs().text_color(muted).child("Sign in"))
+                .child(self.render_auth_choice(cx))
+                .child(div().text_xs().text_color(muted).child(auth_hint))
+                .when(self.auth == AuthKind::Key, |form| form.child(Self::render_field("Private key", &self.key_path, cx)))
+                .child(Self::render_field("Saved credential ID", &self.credential, cx))
+                .child(div().text_xs().text_color(muted).child("Passwords are saved from the authentication prompt after successful sign in. Leave the ID empty to ask each time.")),
+            EditorSection::Session => v_flex().gap_3().child(self.options.clone()),
+            EditorSection::Launch => v_flex().gap_3()
+                .child(Button::new("profile-launch-toggle").small().ghost().label("Override SSH launch settings").selected(self.override_launch).on_click(cx.listener(|this, _, _, cx| { this.override_launch = !this.override_launch; cx.notify(); })))
+                .when(self.override_launch, |form| form
+                    .child(Self::render_field("Remote executable (empty: default shell)", &self.launch_fields[0], cx))
+                    .child(Self::render_field("Arguments as a JSON array", &self.launch_fields[1], cx))
+                    .child(Self::render_field("Initial remote directory", &self.launch_fields[2], cx))
+                    .child(Self::render_field("Environment as a JSON object", &self.launch_fields[3], cx))
+                    .child(Button::new("profile-integration-toggle").small().ghost().label("Shell integration (directory and command tracking)").selected(self.launch_integration).on_click(cx.listener(|this, _, _, cx| { this.launch_integration = !this.launch_integration; cx.notify(); })))
+                    .child(div().text_xs().text_color(muted).child("These options apply on the next start or reconnect. Keep secrets in the vault."))),
+        };
+        h_flex()
+            .id("connection-editor")
+            .track_focus(&self.focus)
+            .items_start()
+            .h(height.min(available))
+            .min_h_0()
+            .gap_4()
+            .child(v_flex().w(nav_width).flex_shrink_0().gap_1().children(
+                EditorSection::ALL.into_iter().map(|(section, id, label)| {
+                    Button::new(id)
+                        .w_full()
+                        .ghost()
+                        .label(label)
+                        .selected(self.section == section)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_section(section, window, cx)
+                        }))
+                }),
+            ))
+            .child(
+                div()
+                    .id("editor-section-content")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(form),
             )
     }
 }
@@ -690,6 +910,251 @@ mod tests {
         .unwrap();
     }
 
+    #[gpui_kit::test]
+    fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let editor = cx
+            .update_window(handle, |_, window, cx| {
+                let editor = open_editor_view(None, workspace.downgrade(), window, cx);
+                window.render_frame(cx);
+                window.input("draft.test", cx);
+                let focus = editor.read(cx).description.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+                window.render_frame(cx);
+                window.input("first line", cx);
+                window.press("enter", cx);
+                window.input("second line", cx);
+                editor
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("dialog").is_some(),
+                "Textarea Enter must not submit"
+            );
+            assert!(opened.borrow().is_empty());
+            assert_eq!(
+                editor.read(cx).description.read(cx).value().as_ref(),
+                "first line\nsecond line"
+            );
+            assert!(window.find("editor-description").bounds().size.height >= px(80.));
+            window.click("editor-section-authentication", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("auth-password", cx);
+            window.click("editor-section-session", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("session-term").is_some());
+            window.click("editor-section-launch", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("profile-launch-toggle", cx);
+            editor.update(cx, |editor, cx| {
+                editor.launch_fields[0]
+                    .update(cx, |input, cx| input.set_value("/bin/bash", window, cx));
+            });
+            window.click("editor-section-connection", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(editor.read(cx).fields(cx).host, "draft.test");
+            assert_eq!(
+                editor.read(cx).fields(cx).description,
+                "first line\nsecond line"
+            );
+            assert_eq!(editor.read(cx).auth, AuthKind::Password);
+            window.click("editor-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("dialog").is_none());
+            let profile = Connections::global(cx)
+                .read(cx)
+                .profiles()
+                .iter()
+                .next()
+                .unwrap();
+            assert_eq!(profile.description, "first line\nsecond line");
+            assert_eq!(profile.auth, Auth::Password);
+            assert_eq!(
+                profile.launch.as_ref().unwrap().program.as_deref(),
+                Some("/bin/bash")
+            );
+            assert!(opened.borrow().is_empty(), "Save does not connect");
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn hidden_invalid_fields_open_their_section_and_footer_stays_visible(cx: &mut TestAppContext) {
+        let (handle, workspace, _) = crate::test_support::workspace(cx);
+        cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(560.)));
+        let editor = cx
+            .update_window(handle, |_, window, cx| {
+                let editor = open_editor_view(None, workspace.downgrade(), window, cx);
+                window.render_frame(cx);
+                window.input("valid.test", cx);
+                editor.update(cx, |editor, cx| {
+                    editor.auth = AuthKind::Key;
+                    editor
+                        .credential
+                        .update(cx, |input, cx| input.set_value("not-an-id", window, cx));
+                });
+                window.click("editor-save", cx);
+                editor
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(editor.read(cx).section == EditorSection::Authentication);
+            assert!(
+                editor
+                    .read(cx)
+                    .key_path
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            let save = window.find("editor-save").bounds();
+            assert!(save.bottom() <= window.viewport_size().height);
+            assert!(save.left() >= px(0.) && save.right() <= window.viewport_size().width);
+            editor.update(cx, |editor, cx| {
+                editor
+                    .key_path
+                    .update(cx, |input, cx| input.set_value("/tmp/key", window, cx));
+            });
+            window.click("editor-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                editor
+                    .read(cx)
+                    .credential
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            assert!(editor.read(cx).error.is_some());
+            assert_eq!(
+                Connections::global(cx).read(cx).profiles().iter().count(),
+                0
+            );
+            editor.update(cx, |editor, cx| {
+                editor
+                    .credential
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                editor.options.update(cx, |options, cx| {
+                    options.reset(
+                        nocterm_session::SessionOptions {
+                            term: Some("invalid TERM".into()),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                });
+                editor.select_section(EditorSection::Connection, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("editor-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(editor.read(cx).section == EditorSection::Session);
+            assert!(window.try_find("session-term").is_some());
+            assert!(
+                editor
+                    .read(cx)
+                    .options
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+            assert!(editor.read(cx).error.is_some());
+            assert_eq!(editor.read(cx).fields(cx).host, "valid.test");
+            assert!(window.find("editor-save").bounds().bottom() <= window.viewport_size().height);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn minimum_window_keeps_footer_in_view_for_every_section_and_wrapped_error(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, workspace, _) = crate::test_support::workspace(cx);
+        cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(400.)));
+        let editor = cx.update_window(handle, |_, window, cx| {
+            let editor = open_editor_view(None, workspace.downgrade(), window, cx);
+            editor.update(cx, |editor, cx| {
+                editor.error = Some("Connection changed while this editor was open. Review the current saved connection before applying this draft.".into());
+                cx.notify();
+            });
+            editor
+        }).unwrap();
+        for (_, id, _) in EditorSection::ALL {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(id, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                for button in ["editor-save", "editor-save-connect", "editor-cancel"] {
+                    let bounds = window.find(button).bounds();
+                    assert!(
+                        bounds.top() >= px(0.) && bounds.bottom() <= window.viewport_size().height,
+                        "{button}: {bounds:?}"
+                    );
+                    assert!(
+                        bounds.left() >= px(0.) && bounds.right() <= window.viewport_size().width
+                    );
+                }
+            })
+            .unwrap();
+        }
+        cx.update_window(handle, |_, window, cx| {
+            window.click("editor-cancel", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("dialog").is_none());
+            assert!(
+                editor
+                    .read(cx)
+                    .dismissed
+                    .load(std::sync::atomic::Ordering::Acquire)
+            );
+        })
+        .unwrap();
+    }
+
     fn fields(host: &str) -> Fields {
         Fields {
             host: host.to_owned(),
@@ -705,6 +1170,7 @@ mod tests {
             Some("me"),
             Some(Path::new("/home/me")),
         )
+        .map_err(|error| error.message)
     }
 
     #[test]
@@ -801,6 +1267,7 @@ mod tests {
                 None
             )
             .unwrap_err()
+            .message
             .contains("user")
         );
     }

@@ -32,22 +32,23 @@ const ROW_GROUP: &str = "connection-row";
 #[derive(Clone)]
 struct DraggedProfile(ProfileId);
 
-struct ProfileDragPreview(String);
-
-impl Render for ProfileDragPreview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .rounded(cx.theme().radius)
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_sm()
-            .text_sm()
-            .child(Icon::new(IconName::Server).small())
-            .child(self.0.clone())
+fn description_preview(description: &str) -> String {
+    description
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(160)
+        .collect()
+}
+fn description_tooltip(description: &str) -> String {
+    let mut chars = description.chars();
+    let text: String = chars.by_ref().take(512).collect();
+    if chars.next().is_some() {
+        format!("{text}…")
+    } else {
+        text
     }
 }
 
@@ -149,7 +150,15 @@ impl ConnectionsPanel {
                     window
                         .spawn(cx, async move |cx| {
                             if let Err(error) = deleted.await {
-                                let _ = cx.update(|window, cx| window.push_notification(error, cx));
+                                let _ = cx.update(|window, cx| {
+                                    nocterm_ui::notice::error(
+                                        window,
+                                        cx,
+                                        "connections-delete",
+                                        "Could not delete connection",
+                                        error,
+                                    )
+                                });
                             }
                         })
                         .detach();
@@ -178,7 +187,15 @@ impl ConnectionsPanel {
         });
         cx.spawn_in(window, async move |_, cx| {
             if let Err(error) = moved.await {
-                let _ = cx.update(|window, cx| window.push_notification(error, cx));
+                let _ = cx.update(|window, cx| {
+                    nocterm_ui::notice::error(
+                        window,
+                        cx,
+                        "connections-move",
+                        "Could not move connection",
+                        error,
+                    )
+                });
             }
         })
         .detach();
@@ -203,10 +220,10 @@ impl ConnectionsPanel {
             .hover(|row| row.bg(theme.sidebar_accent))
             .on_drag(DraggedProfile(id), move |_, _, _, cx| {
                 cx.stop_propagation();
-                cx.new(|_| ProfileDragPreview(name.clone()))
+                cx.new(|_| nocterm_ui::DragPreview::new(name.clone(), 1, IconName::Server))
             })
             .when(!profile.description.is_empty(), |row| {
-                let description = profile.description.clone();
+                let description = description_tooltip(&profile.description);
                 row.tooltip(move |_, cx| {
                     cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(description.clone()))
                         .into()
@@ -235,7 +252,7 @@ impl ConnectionsPanel {
                                 .text_xs()
                                 .truncate()
                                 .text_color(theme.muted_foreground)
-                                .child(profile.description.clone()),
+                                .child(description_preview(&profile.description)),
                         )
                     }),
             )
@@ -492,6 +509,18 @@ mod tests {
     use futures::FutureExt as _;
     use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 
+    #[test]
+    fn description_preview_and_tooltip_are_bounded_without_losing_unicode() {
+        let long = format!("\n  {}\nsecond line", "я".repeat(1000));
+        let preview = description_preview(&long);
+        assert_eq!(preview.chars().count(), 160);
+        assert!(!preview.contains('\n'));
+        let tooltip = description_tooltip(&long);
+        assert_eq!(tooltip.chars().count(), 513);
+        assert!(tooltip.ends_with('…'));
+        assert_eq!(description_preview("\n\t"), "");
+    }
+
     #[gpui_kit::test]
     fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(
         cx: &mut TestAppContext,
@@ -531,11 +560,69 @@ mod tests {
             window.render_frame(cx);
             window.click("group-Personal", cx);
             window.render_frame(cx);
-            window.drag_to(
-                SharedString::from(format!("connection-{}", a.id)),
-                "group-Personal",
+            use gpui_kit::{
+                InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+            };
+            let from = window
+                .find(SharedString::from(format!("connection-{}", a.id)))
+                .bounds()
+                .center();
+            let to = window.find("group-Personal").bounds().center();
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: from,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
                 cx,
             );
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: from,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: to,
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(
+                cx.has_active_drag(),
+                "a real row creates its typed drag payload"
+            );
+            let preview = window.find("drag-preview").bounds();
+            assert!(
+                preview.size.height > gpui_kit::px(20.) && preview.size.height < gpui_kit::px(80.),
+                "preview geometry must be independent of terminal font size"
+            );
+            assert!(
+                preview.size.width > gpui_kit::px(40.) && preview.size.width <= gpui_kit::px(320.)
+            );
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: to,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(!cx.has_active_drag());
         })
         .unwrap();
         cx.run_until_parked();
