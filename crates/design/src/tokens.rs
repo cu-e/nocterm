@@ -62,6 +62,8 @@ pub struct Typography {
     /// Explorer file and folder text size in pixels. Unset: 12.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explorer_size: Option<f32>,
+    /// Default button label size in pixels. Other button sizes keep their relative hierarchy.
+    pub button_size: f32,
     /// Terminal line height, as a multiple of the terminal font size.
     pub terminal_line_height: f32,
 }
@@ -111,6 +113,18 @@ pub struct Layout {
     pub dialog_width: f32,
     /// Maximum width of the settings form and its footer.
     pub settings_width: f32,
+    /// Width of the connection editor including its section navigation.
+    pub connection_editor_width: f32,
+    /// Maximum height of the connection editor's scrolling form.
+    pub connection_editor_height: f32,
+    /// Width of the connection editor's section navigation.
+    pub connection_nav_width: f32,
+    /// Height of the connection description text area.
+    pub connection_description_height: f32,
+    /// Height of a default button; other button sizes keep their relative hierarchy.
+    pub button_height: f32,
+    /// Horizontal padding of a default button.
+    pub button_padding: f32,
     /// Initial height of the independent local terminal dock, in rem.
     pub local_terminal_height: f32,
 }
@@ -353,6 +367,7 @@ impl DesignTokens {
         if let Some(size) = typography.explorer_size {
             within("typography.explorer_size", size, 8.0, 24.0)?;
         }
+        within("typography.button_size", typography.button_size, 8.0, 24.0)?;
         for (token, family) in [
             ("typography.ui_font", &typography.ui_font),
             ("typography.mono_font", &typography.mono_font),
@@ -398,6 +413,32 @@ impl DesignTokens {
         within("layout.picker_width", layout.picker_width, 10.0, 100.0)?;
         within("layout.dialog_width", layout.dialog_width, 10.0, 100.0)?;
         within("layout.settings_width", layout.settings_width, 10.0, 100.0)?;
+        within(
+            "layout.connection_editor_width",
+            layout.connection_editor_width,
+            20.0,
+            100.0,
+        )?;
+        within(
+            "layout.connection_editor_height",
+            layout.connection_editor_height,
+            10.0,
+            100.0,
+        )?;
+        within(
+            "layout.connection_nav_width",
+            layout.connection_nav_width,
+            4.0,
+            30.0,
+        )?;
+        within(
+            "layout.connection_description_height",
+            layout.connection_description_height,
+            2.0,
+            30.0,
+        )?;
+        within("layout.button_height", layout.button_height, 1.0, 4.0)?;
+        within("layout.button_padding", layout.button_padding, 0.1, 2.0)?;
         within(
             "layout.local_terminal_height",
             layout.local_terminal_height,

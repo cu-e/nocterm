@@ -4,7 +4,10 @@ use std::rc::Rc;
 
 use gpui_kit::{
     App, WindowAppearance,
-    component::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode, ThemeRegistry},
+    component::{
+        Theme, ThemeConfig, ThemeConfigColors, ThemeMode, ThemeRegistry, button::ButtonMetrics,
+    },
+    px,
 };
 use nocterm_design::{Color, DesignTokens};
 use nocterm_settings::AppearanceMode;
@@ -16,6 +19,12 @@ use crate::{ActiveDesign, ActiveSettings};
 /// appearance setting, and repaints every window.
 pub fn apply_theme(cx: &mut App) {
     let tokens = cx.design().clone();
+    let rem = tokens.typography.ui_size.unwrap_or(16.0);
+    cx.set_global(ButtonMetrics {
+        font_size: px(tokens.typography.button_size),
+        height: px(tokens.layout.button_height * rem),
+        padding: px(tokens.layout.button_padding * rem),
+    });
     let dark = match cx.settings().appearance.mode {
         AppearanceMode::System => matches!(
             cx.window_appearance(),

@@ -34,6 +34,7 @@ name = "Nocterm Default"
 # mono_size = 13.0               # px · terminal text
 terminal_line_height = 1.3       # × the terminal font size
 explorer_size = 12.0             # px · local and remote file/folder rows
+button_size = 13.0               # px · default action labels
 
 
 # ── Shape ─────────────────────────────────────────────────────────────────────
@@ -56,6 +57,12 @@ picker_width      = 22.0         # the "new tab" picker
 dialog_width      = 30.0         # the connection editor
 local_terminal_height = 15.0     # initial height of the bottom local shell
 settings_width    = 45.0         # the settings form and its footer
+connection_editor_width = 45.0  # connection editor, including section navigation
+connection_editor_height = 32.0 # maximum connection editor form height
+connection_nav_width = 9.0     # connection editor section navigation
+connection_description_height = 6.0 # connection description textarea
+button_height = 1.75            # default button height
+button_padding = 0.5            # default horizontal button padding
 
 
 # ── Light palette ─────────────────────────────────────────────────────────────

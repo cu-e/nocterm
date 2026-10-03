@@ -27,6 +27,12 @@
 | `dark.terminal.white` | "string" | `"#e5e5e5"` | ANSI colour 7. |
 | `dark.terminal.yellow` | "string" | `"#e5e510"` | ANSI colour 3. |
 | `dark.ui` | "object" | `{}` |  |
+| `layout.button_height` | "number" | `1.75` | Height of a default button; other button sizes keep their relative hierarchy. |
+| `layout.button_padding` | "number" | `0.5` | Horizontal padding of a default button. |
+| `layout.connection_description_height` | "number" | `6.0` | Height of the connection description text area. |
+| `layout.connection_editor_height` | "number" | `32.0` | Maximum height of the connection editor's scrolling form. |
+| `layout.connection_editor_width` | "number" | `45.0` | Width of the connection editor including its section navigation. |
+| `layout.connection_nav_width` | "number" | `9.0` | Width of the connection editor's section navigation. |
 | `layout.dialog_width` | "number" | `30.0` | Width of the connection editor dialog. |
 | `layout.local_terminal_height` | "number" | `15.0` | Initial height of the independent local terminal dock, in rem. |
 | `layout.picker_width` | "number" | `22.0` | Width of the "new tab" picker. |
@@ -61,6 +67,7 @@
 | `shape.radius` | ["number","null"] | `null` | Corner radius of controls, in pixels. Unset: 6. |
 | `shape.radius_lg` | ["number","null"] | `null` | Corner radius of dialogs, popovers and notifications, in pixels. Unset: 8. |
 | `shape.shadow` | ["boolean","null"] | `null` | Whether controls cast elevation shadows. Unset: yes. |
+| `typography.button_size` | "number" | `13.0` | Default button label size in pixels. Other button sizes keep their relative hierarchy. |
 | `typography.explorer_size` | ["number","null"] | `12.0` | Explorer file and folder text size in pixels. Unset: 12. |
 | `typography.mono_font` | ["string","null"] | `null` | Terminal font family. Unset: the platform's monospace font. |
 | `typography.mono_size` | ["number","null"] | `null` | Terminal font size in pixels. Unset: 13. |

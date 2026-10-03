@@ -6,7 +6,7 @@ commit `0c830f4d257e69fdd17200650533ab4ca9a40cc0`, path `crates/component`.
 The upstream source, copyright notices and Apache-2.0 license are retained.
 This is an internal Cargo patch; the crate is excluded from Nocterm's workspace.
 
-Only `src/menu/app_menu_bar.rs` changes library behavior. `AppMenuBar::set_menus`
+`src/menu/app_menu_bar.rs` changes menu behavior. `AppMenuBar::set_menus`
 updates a closed menu bar's snapshot in place, retaining existing menu entities,
 button identities and keyboard focus. `is_open` lets the window preserve an open
 popup's snapshot. Existing global `reload` behavior stays unchanged. Nocterm
@@ -29,3 +29,10 @@ When updating GPUI Kit, compare the patched module with upstream. Preserve toolk
 action-context restoration, native input dispatch and trigger identity. Re-run
 workspace menu tests and the component's menu-bar regression. Remove this patch
 when upstream exposes equivalent safe per-window updates.
+
+`src/button/button.rs` also accepts an optional application-global
+`ButtonMetrics`. Nocterm projects its design tokens onto that global in
+`nocterm-ui`; standard gpui-component button variants and theme colours remain
+unchanged. Without the global, the upstream button dimensions apply. An
+explicit custom `Size::Size` also keeps its requested size. This keeps compact
+product-wide sizing in one place, including buttons supplied by the toolkit.

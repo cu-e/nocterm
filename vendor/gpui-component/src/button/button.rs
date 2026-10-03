@@ -16,6 +16,37 @@ use gpui::{
     prelude::FluentBuilder as _, relative, transparent_white,
 };
 
+/// Product-wide button metrics. Installing this optional global changes only
+/// the size of standard buttons; variants and theme colours remain native.
+#[derive(Clone, Copy)]
+pub struct ButtonMetrics {
+    pub font_size: Pixels,
+    pub height: Pixels,
+    pub padding: Pixels,
+}
+
+impl gpui::Global for ButtonMetrics {}
+
+impl ButtonMetrics {
+    fn for_size(self, size: Size) -> Option<(Pixels, Pixels, Pixels)> {
+        match size {
+            Size::XSmall => Some((self.height * 0.7, self.padding * 0.5, self.font_size * 0.85)),
+            Size::Small => Some((
+                self.height * 0.85,
+                self.padding * 0.75,
+                self.font_size * 0.92,
+            )),
+            Size::Medium => Some((self.height, self.padding, self.font_size)),
+            Size::Large => Some((
+                self.height * 1.14,
+                self.padding * 1.25,
+                self.font_size * 1.08,
+            )),
+            Size::Size(_) => None,
+        }
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub enum ButtonRounded {
     None,
@@ -628,6 +659,8 @@ impl RenderOnce for Button {
             ButtonRounded::None => Pixels::ZERO,
         };
 
+        let metrics = cx.try_global::<ButtonMetrics>().copied();
+        let button_metrics = metrics.and_then(|metrics| metrics.for_size(self.size));
         let root = base
             .cursor_default()
             .flex()
@@ -646,29 +679,45 @@ impl RenderOnce for Button {
             .when(!style.no_padding(), |this| {
                 if self.label.is_none() && children.is_empty() {
                     // Icon Button
-                    match self.size {
-                        Size::Size(px) => this.size(px),
-                        Size::XSmall => this.size_5(),
-                        Size::Small => this.size_6(),
-                        Size::Large | Size::Medium => this.size_8(),
+                    if let Some((height, _, _)) = button_metrics {
+                        this.size(height)
+                    } else {
+                        match self.size {
+                            Size::Size(px) => this.size(px),
+                            Size::XSmall => this.size_5(),
+                            Size::Small => this.size_6(),
+                            Size::Large | Size::Medium => this.size_8(),
+                        }
                     }
                 } else {
                     // Normal Button
-                    match self.size {
-                        Size::Size(size) => this.px(size * 0.2),
-                        Size::XSmall => this.h_5().px_1().when(self.compact, |this| this.min_w_5()),
-                        Size::Small => this
-                            .h_6()
-                            .px_2()
-                            .when(self.compact, |this| this.min_w_6().px_1p5()),
-                        Size::Medium => this
-                            .h_8()
-                            .px_2p5()
-                            .when(self.compact, |this| this.min_w_8().px_2()),
-                        Size::Large => this
-                            .h_8()
-                            .px_3()
-                            .when(self.compact, |this| this.min_w_8().px_2()),
+                    if let Some((height, padding, _)) = button_metrics {
+                        this.h(height)
+                            .px(if self.compact {
+                                padding * 0.75
+                            } else {
+                                padding
+                            })
+                            .when(self.compact, |this| this.min_w(height))
+                    } else {
+                        match self.size {
+                            Size::Size(size) => this.px(size * 0.2),
+                            Size::XSmall => {
+                                this.h_5().px_1().when(self.compact, |this| this.min_w_5())
+                            }
+                            Size::Small => this
+                                .h_6()
+                                .px_2()
+                                .when(self.compact, |this| this.min_w_6().px_1p5()),
+                            Size::Medium => this
+                                .h_8()
+                                .px_2p5()
+                                .when(self.compact, |this| this.min_w_8().px_2()),
+                            Size::Large => this
+                                .h_8()
+                                .px_3()
+                                .when(self.compact, |this| this.min_w_8().px_2()),
+                        }
                     }
                 }
             })
@@ -735,6 +784,7 @@ impl RenderOnce for Button {
             .items_center()
             .justify_center()
             .button_text_size(self.size)
+            .when_some(button_metrics, |this, (_, _, font)| this.text_size(font))
             .map(|this| match self.size {
                 Size::XSmall => this.gap_1(),
                 Size::Small => this.gap_1(),
