@@ -1,4 +1,6 @@
 //! Native key-release adapters, injected by the application composition root.
+#[cfg(any(target_os = "macos", test))]
+mod cancellation;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]

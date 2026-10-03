@@ -5,6 +5,9 @@
 
 void* create_la_context();
 void drop_la_context(void* ctx);
+void* create_keychain_la_context();
+void* retain_la_context(void* ctx);
+void invalidate_la_context(void* ctx);
 void set_localized_cancel_title(void* ctx, char* reason);
 int32_t can_evaluate_policy(void *ctx, int32_t policy);
 void evaluate_policy(void* ctx, int32_t policy, char* reason, void* user_data, void* callback);

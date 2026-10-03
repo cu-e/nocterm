@@ -6,8 +6,9 @@ use nocterm_vault::{
 };
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
+    item::{CloudSync, ItemClass, ItemSearchOptions, SearchResult},
     passwords::{
-        AccessControlOptions, PasswordOptions, delete_generic_password_options, generic_password,
+        AccessControlOptions, PasswordOptions, delete_generic_password_options,
         set_generic_password_options,
     },
 };
@@ -88,14 +89,34 @@ impl DeviceUnlockProvider for MacOs {
         cancel: &DeviceCancellation,
     ) -> Result<VaultKey, E> {
         cancel.check()?;
-        let bytes =
-            zeroize::Zeroizing::new(generic_password(options(binding, token)?).map_err(|e| {
-                match e.code() {
+        let context = tid::KeychainContext::new().ok_or(E::Unavailable)?;
+        let invalidation = context.invalidation_handle();
+        let mut search = ItemSearchOptions::new();
+        search
+            .class(ItemClass::generic_password())
+            .service(SERVICE)
+            .account(&account(binding, token)?)
+            .cloud_sync(CloudSync::MatchSyncNo)
+            .ignore_legacy_keychains()
+            .load_data(true)
+            .limit(1)
+            .local_authentication_context(Some(context.authentication_context()));
+        let bytes = crate::cancellation::run(
+            cancel,
+            std::time::Duration::from_secs(30),
+            move || invalidation.invalidate(),
+            || {
+                let mut results = search.search().map_err(|e| match e.code() {
                     -128 => E::Cancelled,
                     -25300 => E::Invalidated,
                     _ => platform(e),
+                })?;
+                match results.pop() {
+                    Some(SearchResult::Data(bytes)) => Ok(zeroize::Zeroizing::new(bytes)),
+                    _ => Err(E::Invalidated),
                 }
-            })?);
+            },
+        )?;
         cancel.check()?;
         if bytes.len() != 32 {
             return Err(E::Invalidated);

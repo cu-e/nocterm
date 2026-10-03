@@ -30,6 +30,9 @@
 //! ```
 #![deny(missing_docs)]
 
+mod keychain_context;
+pub use keychain_context::{KeychainContext, KeychainInvalidation};
+
 use num::FromPrimitive;
 use parking_lot::Mutex;
 use std::cell::Cell;

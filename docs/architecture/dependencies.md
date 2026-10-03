@@ -10,7 +10,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
-| `nocterm-device-unlock` | adapter | `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
+| `nocterm-device-unlock` | adapter | `nocterm-session`, `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
 | `nocterm-files` | feature | `nocterm-session`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session adapter. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
@@ -47,6 +47,7 @@ graph TD
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_ui
     nocterm_connections --> nocterm_workspace
+    nocterm_device_unlock --> nocterm_session
     nocterm_device_unlock --> nocterm_vault
     nocterm_files --> nocterm_session
     nocterm_files --> nocterm_transfers

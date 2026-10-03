@@ -28,3 +28,7 @@ sha2 = "0.10"
 chacha20poly1305.workspace = true
 [lints]
 workspace = true
+[dev-dependencies]
+tempfile.workspace = true
+futures.workspace = true
+nocterm-session.workspace = true

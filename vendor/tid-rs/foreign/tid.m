@@ -6,7 +6,31 @@ void* create_la_context() {
 }
 
 void drop_la_context(void* ctx) {
-    [(__bridge LAContext*)ctx release];
+    @autoreleasepool {
+        [(__bridge LAContext*)ctx release];
+    }
+}
+
+void* create_keychain_la_context() {
+    @autoreleasepool {
+        LAContext* context = [[LAContext alloc] init];
+        context.localizedReason = @"Unlock Nocterm credential vault";
+        context.localizedFallbackTitle = @"";
+        context.touchIDAuthenticationAllowableReuseDuration = 0;
+        return (__bridge void*)context;
+    }
+}
+
+void* retain_la_context(void* ctx) {
+    @autoreleasepool {
+        return (__bridge void*)[(__bridge LAContext*)ctx retain];
+    }
+}
+
+void invalidate_la_context(void* ctx) {
+    @autoreleasepool {
+        [(__bridge LAContext*)ctx invalidate];
+    }
 }
 
 void set_localized_cancel_title(void* ctx, char* reason) {

@@ -22,10 +22,13 @@ separately on the destination. There is no cloud synchronization of device keys.
 | Linux | Root-owned Nocterm broker verifies the user's enrolled finger with root-owned fprintd before releasing a session key | Optional system service below. After each Nocterm start or broker restart, enable again after password unlock. Keys are memory-only, connection-bound and expire after eight hours. |
 
 macOS capability detection uses the small safe `tid-rs` LocalAuthentication bridge;
-its result only controls availability. The actual secret is released by the
-Keychain access-control policy through the maintained `security-framework` crate.
-The older bridge has no access to vault keys. Windows uses Microsoft's `windows`
-bindings and Linux uses `zbus` and `nix`. No application code adds unsafe FFI.
+its preflight result only controls availability. A narrow local bridge also owns
+the query's retained `LAContext` and a single-use invalidation handle. The actual
+secret is released by the Keychain access-control policy through the maintained
+`security-framework` crate. The bridge never receives vault keys or evaluates a
+separate authentication-success gate. Windows uses Microsoft's `windows`
+bindings and Linux uses `zbus` and `nix`. Workspace crates forbid unsafe Rust;
+the small vendored bridge isolates reviewed native reference/lifecycle operations.
 
 Windows packaged applications have stronger credential namespace isolation than
 unpackaged executables. Namespace validation prevents accidental cross-vault
@@ -63,10 +66,19 @@ or setuid helper is installed.
 
 ## Security boundaries
 
-Only the vault worker holds the password-derived wrapping key. Native release
+Within the desktop process, password-derived wrapping keys stay on the vault
+worker. Native providers store and release them under their platform protection.
+Native release
 must match the current vault ID and salt, and the vault file is compared again
 after any authentication prompt. Lock, cancellation and leaving the Vault page
 invalidate an epoch; a late successful native response cannot reopen the vault.
+macOS passes its fresh context to `kSecUseAuthenticationContext`. A scoped, joined
+watchdog invalidates that context on cancellation or after 30 seconds, terminating
+the outstanding policy evaluation and freeing the vault worker for password
+fallback. There is no detached native query; the context and its invalidation
+handle hold independent native retains until query and watchdog both finish.
+The native bridge uses autorelease pools on background threads. Real Touch ID
+prompt cancellation still requires native macOS hardware verification.
 The portable authenticated envelope also rejects a wrong native key. Native
 registration is cleaned up if companion-file persistence fails.
 
@@ -76,6 +88,8 @@ cancel or delete them. fprintd's unique owner must belong to root; only its own
 `verify-match` completed signal releases a key. Failed matches, reader contention,
 disconnect, timeout and cancellation refuse release. Keys are zeroized on drop,
 and the broker limits total and per-user registrations and its systemd resources.
+Expiry uses a fixed interval independent of bus traffic, so frequent connection
+events cannot postpone erasure of expired registrations.
 The broker claims the reader before subscribing to verification events, then
 starts the new scan. A completion from the previous claim cannot authorize the
 new request; a synchronous completion from the new scan is still observed.
@@ -96,12 +110,19 @@ and are recorded separately; the system broker is not installed by tests.
 ## Verification recorded for this implementation
 
 On Linux, the required workspace build, formatting, Clippy, documentation and
-architecture checks passed. The workspace suite passed 371 tests, including 24
+architecture checks passed. The final workspace suite passed 375 tests, including 24
 real local SSH/SFTP tests; the vendored terminal suite passed 135 tests and native
 menu tests passed two. The regression for a previous claim's successful signal
 first reproduced an unauthorized key release, then passed after the sequencing
 fix. After limiting the broker runtime to two worker threads, its build, Clippy,
 formatting and five tests passed again.
+
+Follow-up regressions also reproduced both review findings against the old code:
+continuous private-bus events prevented expiry cleanup, and cancellation without
+native invalidation blocked password fallback on the single vault worker. Both
+passed with the periodic expiry timer and joined cancellation runner. The final
+broker suite passed six tests. These cancellation tests exercise a blocking test
+query; they do not establish real Touch ID prompt behavior.
 
 Windows MSVC cross-target check and Clippy passed; Windows runtime and native
 macOS build/runtime were not exercised on this Linux host. A native Wayland
