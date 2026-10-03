@@ -27,17 +27,35 @@ the MSVC toolchain and its C++ build tools. CI currently verifies Linux.
 
 Open a connection from the `+` menu. Save a profile with New Connection, or enter
 `user@host[:port]` in Quick Connect. First connections ask you to verify the host
-key. Passwords and key passphrases are requested when needed. Open Credential Vault
-from the `+` menu to create or unlock a vault, then explicitly choose Remember in
+key. Passwords and key passphrases are requested when needed. Open Settings → Vault
+(also reachable from Credential Vault in the `+` menu) to create or unlock a vault,
+then explicitly choose Remember in
 the authentication prompt; only successful authentication saves a credential.
 Interactive/MFA answers are never saved. See [vault security](docs/VAULT.md).
 
 Drag a tab to reorder it or onto a pane edge to split horizontally/vertically;
 the dock previews the destination. Double-click its title to set an alias. Enter
 accepts, Escape cancels, and an empty alias restores the original title. Aliases
-belong to open tabs. Pane and bottom-terminal dividers can be resized.
+belong to open tabs. Right-click a tab to close it, close other/left/right tabs,
+close all central tabs, split its pane or open Settings. Close commands apply to
+the clicked pane and never close the bottom local shell. Pane and bottom-terminal
+dividers can be resized. The section, terminal and settings buttons occupy a
+full-width bottom bar, including when the sidebar is hidden. Closing the last
+bottom terminal removes its empty pane and resize handle.
+
+Drag saved connections onto folder headers or Ungrouped to change their group;
+collapsed and empty folders remain drop targets. Moving a connection keeps its
+authentication, launch options, description and credential ID.
 
 Explorer shows the active remote directory above a persistent local browser.
+Its compact rows use the `typography.explorer_size` design token. Right-click a
+file/folder to rename, copy its name/path, delete or open Properties. Properties
+show type, size, owner IDs, UTC modification time and editable POSIX permission
+checkboxes when the filesystem supports them; symbolic-link permissions are
+read-only. Rename refuses an existing destination. Delete permanently removes
+selected entries, including folder contents, after confirmation. Stop interrupts
+between operations; completed deletions cannot be undone. Open dialogs retain
+their original computer, directory and server after navigating or changing tabs.
 Drag selected local files/folders, or files from the OS, onto a remote directory.
 Skip is the default collision policy; Rename and explicit Replace are available.
 Drag remote files/folders onto a local directory, or select them and use Download
@@ -57,8 +75,10 @@ requires supported shell integration and a known empty prompt. Unsupported shell
 or an active command report the limitation. Remote paths are never sent to this
 local shell.
 
-Settings are opened with the gear button or `Ctrl+,` (`Cmd+,` on macOS). Edit the
-form and Apply. Appearance, terminal font, cursor, scrollback and optional line
+Settings are opened with the gear button or `Ctrl+,` (`Cmd+,` on macOS). Switch
+between Appearance, Terminal, Local shell, SSH and Vault tabs. Edit the form and
+Apply; switching sections preserves the draft. Appearance, terminal font, cursor,
+scrollback and optional line
 gutters update in open terminals. Line numbers identify logical lines through
 wrapping/reflow; timestamps use UTC and the local host's first observation of
 output. Both are hidden in alternate-screen programs and excluded from copying.
@@ -120,7 +140,8 @@ The SSH tests start private local OpenSSH servers with temporary keys. With
 Some OpenSSH installations need `/run/sshd` created by the system administrator.
 The tests never connect to your saved hosts. Unit tests do not open a GUI;
 manual verification on a desktop should cover focus, input, host-key prompts,
-pane dragging/resizing, aliases, selection/clipboard, reconnect, SFTP transfers,
+pane dragging/resizing, aliases, tab and Explorer context menus, selection/clipboard,
+connection folder drops, reconnect, SFTP transfers,
 local-shell directory synchronization, vault locking and settings. Linux tests
 exercise Bash/Zsh/fish and OpenSSH; macOS, Windows and PowerShell execution need
 platform-specific verification.

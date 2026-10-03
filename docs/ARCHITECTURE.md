@@ -34,7 +34,11 @@ provides shared icons and terminal styling. `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
 dock Panels. Presentation aliases are separate from Item/session titles. Shared
-actions operate the same dock for keyboard split/reorder/focus. Bottom local
+actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
+closures snapshot the clicked Item and resolve its current pane order at execution;
+closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
+footer owns section switches and status views. Removing the last bottom Item also
+removes its Dock instead of merely emptying the tab list. Bottom local
 terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
@@ -45,14 +49,33 @@ matching connected contexts also support transfer retry while a utility tab is a
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. `nocterm-connections` owns persisted profiles and recents,
-the grouped sidebar, profile editor and quick-connect menu. `nocterm-settings-ui`
-contributes a single settings Item; it validates a draft, saves it, and publishes
-changes through SettingsStore only after a successful write. `nocterm-files`
+the grouped sidebar, profile editor and quick-connect menu. Folder membership
+changes persist a complete profile before publishing new state; explicit folder
+names keep empty groups available as drop targets. `nocterm-settings-ui`
+contributes a single settings Item with native page tabs; it validates a draft,
+saves it, and publishes changes through SettingsStore only after a successful
+write. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition
+root inject the lazy Vault page without feature-to-feature dependencies. Page
+deactivation/closure clears transient secrets. `nocterm-files`
 contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
 half uses home/listing requests; the local half owns navigation, selection and a
 cancellable background logical-size scan. Request tasks are dropped when
 superseded, and generations reject stale replies. The local cwd bridge goes
 through Workspace's `LocalTerminal` contract, without Files depending on Terminal.
+
+Explorer context menus snapshot typed local/remote targets. A mutation dialog runs
+I/O on the background executor; completion refreshes only a matching navigation
+generation and filesystem instance. New metadata/rename/remove/permission methods
+on RemoteFs advertise capabilities and default to Unsupported, preserving custom
+transports. Unix local operations traverse retained directory descriptors with
+no-follow opens; deletion unlinks links and walks real directories. Recursive
+deletion has cancellation points and depth/entry limits, without rollback. Windows
+uses a safe atomic no-replace move and bounded path-based deletion; reparse-point
+and ancestor checks reject existing links but cannot eliminate active ancestor
+replacement races. Native Windows execution remains a separate verification step. SFTP
+mutations remain path-based: v3 cannot atomically pin identity between LSTAT and
+READDIR/SETSTAT/REMOVE, so concurrent server-side path replacement remains a
+protocol limitation. Removing a normal symbolic link never traverses its target.
 
 Typed session options inherit global TERM, charset, proxy and output-recording
 defaults, with explicit profile/quick-connect overrides. A shared options form in
