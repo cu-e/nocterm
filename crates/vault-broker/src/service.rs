@@ -286,15 +286,27 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     connection.request_name(NAME).await?;
+    observe_connections(connection, store, Duration::from_secs(30)).await
+}
+async fn observe_connections(
+    connection: Connection,
+    store: Arc<Mutex<Store>>,
+    expiry_period: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     let dbus = DBusProxy::new(&connection).await?;
     let mut changes = dbus.receive_name_owner_changed().await?;
+    let mut expiry = tokio::time::interval(expiry_period);
+    expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            change=changes.next()=>{
-                let Some(change)=change else {break;};let args=change.args()?;
-                if args.new_owner().is_none() {store.lock().await.disconnected(args.name().as_str());}
+            change = changes.next() => {
+                let Some(change) = change else { break; };
+                let args = change.args()?;
+                if args.new_owner().is_none() {
+                    store.lock().await.disconnected(args.name().as_str());
+                }
             }
-            _=tokio::time::sleep(Duration::from_secs(30))=>store.lock().await.expire(),
+            _ = expiry.tick() => store.lock().await.expire(),
         }
     }
     Ok(())
@@ -316,8 +328,12 @@ mod tests {
     }
     impl Bus {
         fn new() -> Self {
-            let config = std::env::temp_dir()
-                .join(format!("nocterm-broker-test-{}.conf", std::process::id()));
+            static NEXT_BUS: AtomicUsize = AtomicUsize::new(0);
+            let config = std::env::temp_dir().join(format!(
+                "nocterm-broker-test-{}-{}.conf",
+                std::process::id(),
+                NEXT_BUS.fetch_add(1, Ordering::Relaxed)
+            ));
             std::fs::write(&config, r#"<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth><policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>"#).unwrap();
             let mut child = Command::new("dbus-daemon")
                 .arg(format!("--config-file={}", config.display()))
@@ -409,6 +425,81 @@ mod tests {
             .build()
             .await
             .unwrap()
+    }
+    #[tokio::test]
+    async fn key_expiry_runs_while_unrelated_name_ownership_keeps_changing() {
+        let bus = Bus::new();
+        let service = connect(&bus).await;
+        let client = connect(&bus).await;
+        let churner = connect(&bus).await;
+        let owner = Owner {
+            uid: nix::unistd::getuid().as_raw(),
+            connection: client.unique_name().unwrap().to_string(),
+        };
+        let binding = "a".repeat(64);
+        let store = Arc::new(Mutex::new(Store::default()));
+        let token = store
+            .lock()
+            .await
+            .enroll(
+                owner.clone(),
+                binding.clone(),
+                zeroize::Zeroizing::new([42; 32]),
+            )
+            .unwrap();
+        let observe_store = store.clone();
+        let observer = tokio::spawn(async move {
+            observe_connections(service, observe_store, Duration::from_millis(30))
+                .await
+                .unwrap();
+        });
+        let events = Arc::new(AtomicUsize::new(0));
+        let produced = events.clone();
+        let traffic = tokio::spawn(async move {
+            loop {
+                churner
+                    .request_name("dev.nocterm.ExpiryChurn")
+                    .await
+                    .unwrap();
+                churner
+                    .release_name("dev.nocterm.ExpiryChurn")
+                    .await
+                    .unwrap();
+                produced.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(3)).await;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while events.load(Ordering::SeqCst) < 5 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // Age the registration after the observer and real bus traffic started.
+        // No further Store::entry call can perform opportunistic expiration.
+        let cancelled = {
+            let mut store = store.lock().await;
+            let entry = store.entry(&owner, &binding, &token).unwrap();
+            entry.touched -= Duration::from_secs(9 * 60 * 60);
+            entry.cancel.clone()
+        };
+        let expired = tokio::time::timeout(Duration::from_millis(750), async {
+            while !cancelled.load(Ordering::SeqCst) || events.load(Ordering::SeqCst) <= 5 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        let observed_events = events.load(Ordering::SeqCst);
+        traffic.abort();
+        observer.abort();
+        let _ = traffic.await;
+        let _ = observer.await;
+        assert!(expired.is_ok(), "bus traffic prevented expired key erasure");
+        assert!(
+            observed_events > 5,
+            "the bus stopped changing before key expiry"
+        );
     }
     #[tokio::test]
     async fn private_bus_enforces_owner_and_actual_verification_before_key_release() {
