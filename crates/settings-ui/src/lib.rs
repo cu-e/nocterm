@@ -38,8 +38,16 @@ pub fn register(workspace: &mut Workspace) {
 }
 /// Installs Settings and feature-owned pages supplied by the application.
 pub fn register_with_pages(workspace: &mut Workspace, pages: Vec<SettingsPageSpec>) {
-    workspace.register_action(move |workspace, _: &OpenSettings, window, cx| {
-        open_page(workspace, "", &pages, window, cx);
+    workspace.register_action(move |_, _: &OpenSettings, window, cx| {
+        let workspace = cx.entity().downgrade();
+        let pages = pages.clone();
+        // Popup dismissal restores its old action context first. Opening the
+        // Item afterwards lets its own field keep keyboard focus.
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                open_page(workspace, "", &pages, window, cx);
+            });
+        });
     });
 }
 /// Opens the singleton Settings Item and selects a page. Empty preserves its selection.
