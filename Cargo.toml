@@ -1,0 +1,137 @@
+[package]
+name = "nocterm"
+description = "A fast, extensible SSH client."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "app"
+
+[dependencies]
+nocterm-connections.workspace = true
+nocterm-core.workspace = true
+nocterm-design.workspace = true
+nocterm-files.workspace = true
+nocterm-local.workspace = true
+nocterm-session.workspace = true
+nocterm-settings.workspace = true
+nocterm-settings-ui.workspace = true
+nocterm-ssh.workspace = true
+nocterm-terminal.workspace = true
+nocterm-vault-ui.workspace = true
+nocterm-ui.workspace = true
+nocterm-workspace.workspace = true
+
+anyhow.workspace = true
+gpui-kit.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+futures.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[workspace]
+members = ["crates/*", "xtask"]
+exclude = ["vendor/alacritty_terminal"]
+resolver = "3"
+
+[patch.crates-io]
+alacritty_terminal = { path = "vendor/alacritty_terminal" }
+
+[workspace.package]
+edition = "2024"
+license-file = "LICENSE"
+
+[workspace.dependencies]
+# Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
+nocterm-connections = { path = "crates/connections" }
+nocterm-core = { path = "crates/core" }
+nocterm-design = { path = "crates/design" }
+nocterm-files = { path = "crates/files" }
+nocterm-local = { path = "crates/local" }
+nocterm-session = { path = "crates/session" }
+nocterm-settings = { path = "crates/settings" }
+nocterm-settings-ui = { path = "crates/settings-ui" }
+nocterm-ssh = { path = "crates/ssh" }
+nocterm-terminal = { path = "crates/terminal" }
+nocterm-transfers = { path = "crates/transfers" }
+nocterm-ui = { path = "crates/ui" }
+nocterm-vt = { path = "crates/vt" }
+nocterm-workspace = { path = "crates/workspace" }
+nocterm-vault = { path = "crates/vault" }
+nocterm-vault-ui = { path = "crates/vault-ui" }
+
+argon2 = { version = "0.6", features = ["zeroize"] }
+chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
+getrandom = "0.4"
+secrecy = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+fs2 = "0.4"
+encoding_rs = "0.8"
+alacritty_terminal = "0.26"
+anyhow = "1"
+async-channel = "2"
+directories = "6"
+futures = "0.3"
+gpui-kit = "0.7"
+parking_lot = "0.12"
+portable-pty = "0.9"
+russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "3"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util", "fs"] }
+toml = "1"
+toml_edit = "0.25"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+# GPUI views and delegates routinely exceed the default thresholds.
+type_complexity = "allow"
+too_many_arguments = "allow"
+
+[profile.dev]
+debug = "limited"
+split-debuginfo = "unpacked"
+
+# Rendering, text shaping and crypto are unusable unoptimised, even in debug builds.
+[profile.dev.package]
+argon2 = { opt-level = 3 }
+blake2 = { opt-level = 3 }
+alacritty_terminal = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+resvg = { opt-level = 3 }
+ring = { opt-level = 3 }
+russh = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+vte = { opt-level = 3 }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

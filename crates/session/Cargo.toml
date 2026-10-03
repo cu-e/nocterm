@@ -1,0 +1,24 @@
+[package]
+name = "nocterm-session"
+description = "Transport-agnostic session contract: commands, events, prompts and the remote file system."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "domain"
+
+[dependencies]
+nocterm-settings.workspace = true
+async-channel.workspace = true
+futures.workspace = true
+serde.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+
+[lints]
+workspace = true

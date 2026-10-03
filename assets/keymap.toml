@@ -1,0 +1,93 @@
+# Default key bindings.
+#
+# Each section binds keystrokes to actions inside one key context: the view
+# that has focus, or any view around it. Actions are named
+# `<namespace>::<Action>`; `docs/reference/actions.md` lists them all.
+#
+# `os` limits a section to some platforms ("linux", "macos", "windows");
+# without it the section applies everywhere.
+
+# ── Workspace ───────────────────────────────────────────────────────────────
+
+[[section]]
+context = "Workspace"
+os = ["linux", "windows"]
+
+[section.bindings]
+"ctrl-shift-t" = "workspace::NewTab"
+"ctrl-shift-w" = "workspace::CloseTab"
+"ctrl-tab" = "workspace::NextTab"
+"ctrl-shift-tab" = "workspace::PreviousTab"
+"ctrl-pagedown" = "workspace::NextTab"
+"ctrl-pageup" = "workspace::PreviousTab"
+"ctrl-shift-b" = "workspace::ToggleSidebar"
+"ctrl-shift-e" = "workspace::NextPanel"
+"ctrl-," = "workspace::OpenSettings"
+"ctrl-shift-q" = "workspace::Quit"
+"ctrl-shift-n" = "connections::NewConnection"
+"ctrl-alt-left" = "workspace::MoveTabLeft"
+"ctrl-alt-right" = "workspace::MoveTabRight"
+"ctrl-alt-shift-left" = "workspace::SplitLeft"
+"ctrl-alt-shift-right" = "workspace::SplitRight"
+"ctrl-alt-shift-up" = "workspace::SplitUp"
+"ctrl-alt-shift-down" = "workspace::SplitDown"
+"ctrl-alt-pagedown" = "workspace::NextPane"
+"ctrl-alt-pageup" = "workspace::PreviousPane"
+"ctrl-shift-f2" = "workspace::RenameTab"
+"ctrl-`" = "workspace::ToggleLocalTerminal"
+
+[[section]]
+context = "Workspace"
+os = ["macos"]
+
+[section.bindings]
+"cmd-t" = "workspace::NewTab"
+"cmd-w" = "workspace::CloseTab"
+"ctrl-tab" = "workspace::NextTab"
+"ctrl-shift-tab" = "workspace::PreviousTab"
+"cmd-shift-]" = "workspace::NextTab"
+"cmd-shift-[" = "workspace::PreviousTab"
+"cmd-b" = "workspace::ToggleSidebar"
+"cmd-shift-e" = "workspace::NextPanel"
+"cmd-," = "workspace::OpenSettings"
+"cmd-q" = "workspace::Quit"
+"cmd-n" = "connections::NewConnection"
+"cmd-alt-left" = "workspace::MoveTabLeft"
+"cmd-alt-right" = "workspace::MoveTabRight"
+"cmd-alt-shift-left" = "workspace::SplitLeft"
+"cmd-alt-shift-right" = "workspace::SplitRight"
+"cmd-alt-shift-up" = "workspace::SplitUp"
+"cmd-alt-shift-down" = "workspace::SplitDown"
+"cmd-alt-pagedown" = "workspace::NextPane"
+"cmd-alt-pageup" = "workspace::PreviousPane"
+"cmd-shift-f2" = "workspace::RenameTab"
+"cmd-`" = "workspace::ToggleLocalTerminal"
+
+# ── Terminal ────────────────────────────────────────────────────────────────
+
+[[section]]
+context = "Terminal"
+os = ["linux", "windows"]
+
+[section.bindings]
+"ctrl-shift-c" = "terminal::Copy"
+"ctrl-shift-v" = "terminal::Paste"
+"shift-insert" = "terminal::Paste"
+"shift-pageup" = "terminal::ScrollPageUp"
+"shift-pagedown" = "terminal::ScrollPageDown"
+"shift-home" = "terminal::ScrollToTop"
+"shift-end" = "terminal::ScrollToBottom"
+"ctrl-shift-r" = "terminal::Reconnect"
+
+[[section]]
+context = "Terminal"
+os = ["macos"]
+
+[section.bindings]
+"cmd-c" = "terminal::Copy"
+"cmd-v" = "terminal::Paste"
+"shift-pageup" = "terminal::ScrollPageUp"
+"shift-pagedown" = "terminal::ScrollPageDown"
+"cmd-home" = "terminal::ScrollToTop"
+"cmd-end" = "terminal::ScrollToBottom"
+"cmd-r" = "terminal::Reconnect"

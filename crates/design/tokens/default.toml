@@ -1,0 +1,119 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  nocterm · design tokens
+#
+#  The single source of truth for how nocterm looks.
+#
+#  Views never hard-code a colour, a size or a font. They read these tokens,
+#  and the component library's theme is derived from them at start-up.
+#
+#  How to read this file
+#    · A commented-out token is *unset*: it keeps the component library's
+#      standard value. Most of the interface is unset on purpose — the default
+#      look is the standard look.
+#    · Lengths under [layout] are in rem. 1 rem is the base font size
+#      (`typography.ui_size`, 16 px unless set), so the interface scales as one.
+#    · Colours are written #rrggbb or #rrggbbaa.
+#
+#  How to change it
+#    · For the product: edit this file.
+#    · For one machine: put any subset of it in `<config dir>/theme.toml`.
+#      That file is layered over this one, key by key.
+#
+#  Reference: docs/reference/design-tokens.md (generated from this file).
+# ══════════════════════════════════════════════════════════════════════════════
+
+name = "Nocterm Default"
+
+
+# ── Typography ────────────────────────────────────────────────────────────────
+
+[typography]
+# ui_font   = "Inter"            # unset: the platform's interface font
+# ui_size   = 16.0               # px · the base size, 1 rem
+# mono_font = "JetBrains Mono"   # unset: the platform's monospace font
+# mono_size = 13.0               # px · terminal text
+terminal_line_height = 1.3       # × the terminal font size
+
+
+# ── Shape ─────────────────────────────────────────────────────────────────────
+
+[shape]
+# radius    = 6                  # px · controls
+# radius_lg = 8                  # px · dialogs, popovers, notifications
+# shadow    = true               # elevation shadows on controls
+
+
+# ── Layout (rem) ──────────────────────────────────────────────────────────────
+
+[layout]
+sidebar_width     = 17.0         # initial width of the left sidebar
+sidebar_min_width = 12.0         # the sidebar cannot be dragged narrower …
+sidebar_max_width = 32.0         # … or wider than this
+tab_max_width     = 14.0         # a session tab ellipsizes past this width
+terminal_padding  = 0.5          # space between the terminal grid and its pane
+picker_width      = 22.0         # the "new tab" picker
+dialog_width      = 30.0         # the connection editor
+local_terminal_height = 15.0     # initial height of the bottom local shell
+settings_width    = 45.0         # the settings form and its footer
+
+
+# ── Light palette ─────────────────────────────────────────────────────────────
+
+# Interface colours, in the component theme's own vocabulary
+# (`background`, `primary.background`, `sidebar.background`, `title_bar.border`, …).
+# Empty: the standard light theme.
+[light.ui]
+
+[light.terminal]
+# background = "#ffffff"         # unset: the interface background
+# foreground = "#1f2328"         # unset: the interface foreground
+# cursor     = "#1f2328"         # unset: the terminal foreground
+# selection  = "#0969da40"       # unset: the interface selection colour
+
+black          = "#000000"
+red            = "#cd3131"
+green          = "#107c10"
+yellow         = "#949800"
+blue           = "#0451a5"
+magenta        = "#bc05bc"
+cyan           = "#0598bc"
+white          = "#555555"
+
+bright_black   = "#666666"
+bright_red     = "#cd3131"
+bright_green   = "#14ce14"
+bright_yellow  = "#b5ba00"
+bright_blue    = "#0451a5"
+bright_magenta = "#bc05bc"
+bright_cyan    = "#0598bc"
+bright_white   = "#a5a5a5"
+
+
+# ── Dark palette ──────────────────────────────────────────────────────────────
+
+# Empty: the standard dark theme.
+[dark.ui]
+
+[dark.terminal]
+# background = "#0a0a0a"
+# foreground = "#e5e5e5"
+# cursor     = "#e5e5e5"
+# selection  = "#3b8eea40"
+
+black          = "#000000"
+red            = "#cd3131"
+green          = "#0dbc79"
+yellow         = "#e5e510"
+blue           = "#2472c8"
+magenta        = "#bc3fbc"
+cyan           = "#11a8cd"
+white          = "#e5e5e5"
+
+bright_black   = "#666666"
+bright_red     = "#f14c4c"
+bright_green   = "#23d18b"
+bright_yellow  = "#f5f543"
+bright_blue    = "#3b8eea"
+bright_magenta = "#d670d6"
+bright_cyan    = "#29b8db"
+bright_white   = "#ffffff"
