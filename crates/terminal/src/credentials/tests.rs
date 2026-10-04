@@ -21,6 +21,8 @@ struct Setup {
 
 /// A terminal for a saved server whose password is in a locked vault.
 fn setup(cx: &mut TestAppContext) -> Setup {
+    // The vault worker is a real thread; let its completions wake the test scheduler.
+    cx.executor().allow_parking();
     let directory = tempfile::tempdir().unwrap();
     let service = Arc::new(
         VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),

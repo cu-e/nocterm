@@ -31,6 +31,8 @@ fn setup_with_device(
     Entity<VaultView>,
     Arc<VaultService>,
 ) {
+    // The vault worker is a real thread; let its completions wake the test scheduler.
+    cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(

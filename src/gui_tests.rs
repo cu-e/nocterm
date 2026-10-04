@@ -67,6 +67,10 @@ fn fixture_with_vault(
     Entity<TerminalView>,
     Arc<MockTransport>,
 ) {
+    if vault_ready {
+        // The vault worker is a real thread; let its completions wake the test scheduler.
+        cx.executor().allow_parking();
+    }
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal) = cx.update(|cx| {
         gpui_kit::init(cx);

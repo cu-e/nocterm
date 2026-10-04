@@ -1190,6 +1190,8 @@ mod credential_tests {
     fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
         cx: &mut TestAppContext,
     ) {
+        // The vault worker is a real thread; let its completions wake the test scheduler.
+        cx.executor().allow_parking();
         let directory = tempfile::tempdir().unwrap();
         let service = Arc::new(
             VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
@@ -1320,6 +1322,8 @@ mod credential_tests {
 
     #[gpui_kit::test]
     fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAppContext) {
+        // The vault worker is a real thread; let its completions wake the test scheduler.
+        cx.executor().allow_parking();
         let directory = tempfile::tempdir().unwrap();
         let service = Arc::new(
             VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
