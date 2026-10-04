@@ -59,6 +59,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `files` | local/remote Explorer and transfer UI |
 | `local` | local PTY and shell integration |
 | `transfers` | bounded upload/download service |
+| `monitor` | host resource collection, parsing and history |
+| `monitor-ui` | status bar monitor, details popup and settings page |
 | `vault` | encrypted credential storage |
 | `vault-ui` | vault settings and authentication bridge |
 | `device-unlock` | native authenticated vault key release |

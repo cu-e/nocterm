@@ -21,6 +21,7 @@ nocterm-files.workspace = true
 nocterm-keymap.workspace = true
 nocterm-keymap-ui.workspace = true
 nocterm-local.workspace = true
+nocterm-monitor-ui.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-settings-ui.workspace = true
@@ -135,6 +136,8 @@ nocterm-files = { path = "crates/files" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
 nocterm-local = { path = "crates/local" }
+nocterm-monitor = { path = "crates/monitor" }
+nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
 nocterm-settings-ui = { path = "crates/settings-ui" }

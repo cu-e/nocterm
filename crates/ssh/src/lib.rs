@@ -1,4 +1,5 @@
-//! SSH transport: opens [`Session`]s over SSH and browses the host over SFTP.
+//! SSH transport: opens [`Session`]s over SSH, browses the host over SFTP and
+//! runs programs on it beside the shell.
 //!
 //! This is the only crate that knows the SSH protocol exists. It implements
 //! [`Transport`] from `nocterm-session`, and everything it has to say to the
@@ -9,6 +10,7 @@
 
 mod auth;
 mod connection;
+mod exec;
 mod file;
 mod host_keys;
 mod proxy;
@@ -63,13 +65,16 @@ impl SshTransport {
 impl Transport for SshTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         let (fs, fs_requests) = sftp::channel();
+        let (exec, exec_requests) = exec::channel();
         let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));
+        let session = session.with_exec(Arc::new(exec));
         if let Some(runtime) = &self.runtime {
             runtime.spawn(connection::run(
                 self.config.clone(),
                 request,
                 driver,
                 fs_requests,
+                exec_requests,
             ));
         }
         session

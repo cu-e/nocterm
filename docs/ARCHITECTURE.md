@@ -154,6 +154,21 @@ short/growing sources, but same-size concurrent content mutation is not detected
 Each directory listing remains a Vec even though file streams and discovery queues
 are bounded. Readers/writers belong to the SFTP session and close on disconnect.
 
+`nocterm-session` also defines `HostExec`, a contract for running one program
+on a host with its standard output streamed back; the SSH adapter runs it on an
+exec channel of the live connection and `nocterm-local` as a child process.
+`nocterm-monitor` builds one long-running collection script per watch (POSIX
+`sh` reading `/proc` and `/sys` on Linux, PowerShell with CIM on Windows),
+splits its output into frames, parses them into raw counters and turns
+successive readings into loads, rates and bounded histories. It knows neither
+GPUI nor the workspace. `nocterm-monitor-ui` follows the active session (a
+session with exec is remote; anything else is this computer when allowed),
+keeps a sampler per recently seen host and runs exactly one script: the status
+bar's metrics at the slow interval while the details are closed, and the union
+with the details' metrics at the fast interval while they are open. It adds a
+leading footer view through the workspace and supplies its Settings page as a
+`SettingsPageSpec`.
+
 `nocterm-vault` owns a versioned authenticated encrypted envelope and a bounded
 worker; `nocterm-vault-ui` exposes create/unlock/lock/rotation, auto-lock and a
 credential provider contract. Profiles store opaque IDs. Authentication asks this

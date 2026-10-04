@@ -72,11 +72,11 @@ fn panel_fixture(
             .update(cx, |_, window, cx| {
                 let item = cx.new(|cx| SessionItem {
                     focus: cx.focus_handle(),
-                    session: SessionContext {
-                        target: nocterm_session::Target::parse("test@host", None).unwrap(),
-                        fs: Some(fs),
-                        connected: true,
-                    },
+                    session: SessionContext::new(
+                        nocterm_session::Target::parse("test@host", None).unwrap(),
+                        Some(fs),
+                        true,
+                    ),
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.add_item(item.clone(), window, cx)

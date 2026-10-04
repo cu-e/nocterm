@@ -53,11 +53,9 @@ impl Item for Probe {
         "Original".into()
     }
     fn session(&self, _: &App) -> Option<crate::SessionContext> {
-        self.target.clone().map(|target| crate::SessionContext {
-            target,
-            connected: self.connected,
-            fs: self.fs.clone(),
-        })
+        self.target
+            .clone()
+            .map(|target| crate::SessionContext::new(target, self.fs.clone(), self.connected))
     }
     fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.closes.set(self.closes.get() + 1);

@@ -221,11 +221,9 @@ impl Terminal {
 
     /// The session, as the workspace shows it to panels.
     pub fn session_context(&self) -> SessionContext {
-        SessionContext {
-            target: self.spec.target.clone(),
-            fs: self.fs.clone(),
-            connected: self.is_connected(),
-        }
+        let (target, session) = (self.spec.target.clone(), self.session.as_ref());
+        SessionContext::new(target, self.fs.clone(), self.is_connected())
+            .with_exec(session.and_then(Session::exec))
     }
 
     // ── Session ──────────────────────────────────────────────────────────────

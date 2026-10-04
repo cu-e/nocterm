@@ -38,6 +38,8 @@ pub struct Settings {
     pub vault: VaultSettings,
     /// AI agents and what they may do.
     pub ai: crate::AiSettings,
+    /// The active host's resources in the status bar.
+    pub monitor: crate::MonitorSettings,
 }
 
 /// How the interface looks.
@@ -278,6 +280,7 @@ impl Settings {
         }
         self.vault.auto_lock_minutes = self.vault.auto_lock_minutes.clamp(1, 1440);
         self.ai.sanitize();
+        self.monitor.sanitize();
         self
     }
 }

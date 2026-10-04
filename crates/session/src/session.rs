@@ -16,7 +16,7 @@ use std::{
 
 use futures::channel::oneshot;
 
-use crate::{Auth, RemoteFs, Secret, ShellLaunch, Target};
+use crate::{Auth, HostExec, RemoteFs, Secret, ShellLaunch, Target};
 
 /// Events a transport may queue before it has to wait for the owner.
 ///
@@ -222,6 +222,7 @@ pub struct Session {
     closing: async_channel::Sender<()>,
     events: async_channel::Receiver<Event>,
     fs: Option<Arc<dyn RemoteFs>>,
+    exec: Option<Arc<dyn HostExec>>,
 }
 
 impl Session {
@@ -281,6 +282,17 @@ impl Session {
     /// The remote file system, when the transport has one.
     pub fn fs(&self) -> Option<Arc<dyn RemoteFs>> {
         self.fs.clone()
+    }
+
+    /// Runs programs on the session's host, when the transport can.
+    pub fn exec(&self) -> Option<Arc<dyn HostExec>> {
+        self.exec.clone()
+    }
+
+    /// The same session, able to run programs on its host.
+    pub fn with_exec(mut self, exec: Arc<dyn HostExec>) -> Self {
+        self.exec = Some(exec);
+        self
     }
 
     fn send(&self, command: Command) {
@@ -362,6 +374,7 @@ pub fn channel(fs: Option<Arc<dyn RemoteFs>>) -> (Session, SessionDriver) {
             closing: close_sender,
             events: event_receiver,
             fs,
+            exec: None,
         },
         SessionDriver {
             commands: command_receiver,

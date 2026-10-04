@@ -4924,6 +4924,7 @@ dependencies = [
  "nocterm-keymap",
  "nocterm-keymap-ui",
  "nocterm-local",
+ "nocterm-monitor-ui",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-settings-ui",
@@ -5121,6 +5122,29 @@ dependencies = [
  "nocterm-session",
  "portable-pty",
  "tempfile",
+]
+
+[[package]]
+name = "nocterm-monitor"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "futures",
+ "nocterm-session",
+ "nocterm-settings",
+]
+
+[[package]]
+name = "nocterm-monitor-ui"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "nocterm-monitor",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-ui",
+ "nocterm-workspace",
 ]
 
 [[package]]

@@ -5,6 +5,7 @@
 //! A setting left unset falls back to the matching token.
 
 mod ai;
+mod monitor;
 mod schema;
 mod session_options;
 pub use session_options::{
@@ -13,6 +14,10 @@ pub use session_options::{
 mod store;
 
 pub use ai::{AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode};
+pub use monitor::{
+    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorMetric,
+    MonitorSettings,
+};
 pub use schema::{
     Appearance, AppearanceMode, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape,
     FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, Settings, ShellSettings,

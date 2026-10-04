@@ -4,6 +4,7 @@ use gpui_kit::{App, AppContext as _, BorrowAppContext as _, Context, Entity, Glo
 use nocterm_settings::{Settings, SettingsFile};
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -68,6 +69,9 @@ struct Pending {
 struct Writer {
     pending: VecDeque<Pending>,
     task: Option<Task<()>>,
+    /// Cloned into every disk write; a count above one means a write is in
+    /// flight. Shutdown polls it because the app cannot be read while quitting.
+    saving: Arc<()>,
     closing: bool,
     #[cfg(test)]
     test_writer: Option<
@@ -85,21 +89,27 @@ pub(crate) fn init(cx: &mut App) {
     let writer = cx.new(|_| Writer {
         pending: VecDeque::new(),
         task: None,
+        saving: Arc::new(()),
         closing: false,
         #[cfg(test)]
         test_writer: None,
     });
     cx.set_global(SettingsWriter(writer.clone()));
+    // The app stays borrowed while quit futures run, so only the disk write
+    // already in flight can finish; queued changes are reported as lost.
     cx.on_app_quit(move |cx| {
-        writer.update(cx, |writer, _| writer.closing = true);
-        let writer = writer.clone();
-        let app = cx.to_async();
+        let (saving, queued) = writer.update(cx, |writer, _| {
+            writer.closing = true;
+            (writer.saving.clone(), writer.pending.len())
+        });
         let executor = cx.background_executor().clone();
         async move {
+            if queued > 0 {
+                tracing::warn!(queued, "settings changes queued at shutdown were not saved");
+            }
             let deadline = Instant::now() + Duration::from_millis(180);
-            loop {
-                let busy = writer.read_with(&app, |writer, _| writer.task.is_some());
-                if !busy { break; }
+            // One reference is the writer's, one is ours; the rest are writes.
+            while Arc::strong_count(&saving) > 2 {
                 if Instant::now() >= deadline {
                     tracing::warn!("timed out saving settings during shutdown; pending changes may not be saved");
                     break;
@@ -222,9 +232,10 @@ impl Writer {
                         let test_writer = writer.test_writer.clone();
                         #[cfg(not(test))]
                         let test_writer = ();
-                        Some((pending.done, settings, candidate, test_writer))
+                        let saving = writer.saving.clone();
+                        Some((pending.done, settings, candidate, test_writer, saving))
                     });
-                    let Ok(Some((done, settings, candidate, _test_writer))) = next else {
+                    let Ok(Some((done, settings, candidate, _test_writer, saving))) = next else {
                         break;
                     };
                     let result = match candidate {
@@ -235,6 +246,7 @@ impl Writer {
                             let result = cx
                                 .background_executor()
                                 .spawn(async move {
+                                    let _saving = saving;
                                     #[cfg(test)]
                                     if let Some(test_writer) = _test_writer {
                                         return test_writer(value).await;

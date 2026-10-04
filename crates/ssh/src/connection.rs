@@ -20,6 +20,7 @@ use tokio::time::timeout;
 
 use crate::{
     SshConfig, auth,
+    exec::{self, ExecRequests},
     host_keys::{HostKeys, Verdict, same_kind},
     sftp::{self, FsRequests},
 };
@@ -90,8 +91,9 @@ pub(crate) async fn run(
     request: ConnectRequest,
     driver: SessionDriver,
     fs_requests: FsRequests,
+    exec_requests: ExecRequests,
 ) {
-    let reason = session(&config, &request, &driver, fs_requests).await;
+    let reason = session(&config, &request, &driver, fs_requests, exec_requests).await;
     tracing::debug!(target = %request.target, ?reason, "session closed");
     driver.emit(Event::Closed(reason)).await;
 }
@@ -101,6 +103,7 @@ async fn session(
     request: &ConnectRequest,
     driver: &SessionDriver,
     fs_requests: FsRequests,
+    exec_requests: ExecRequests,
 ) -> CloseReason {
     let observed = Arc::new(Mutex::new(Observed::default()));
     let mut size = request.size;
@@ -142,16 +145,25 @@ async fn session(
 
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let mut files = tokio::spawn(sftp::serve(handle.clone(), fs_requests, stopped));
+    let (stop_programs, programs_stopped) = tokio::sync::oneshot::channel();
+    let mut programs = tokio::spawn(exec::serve(handle.clone(), exec_requests, programs_stopped));
     let reason = tokio::select! {
         () = driver.closed() => CloseReason::ClosedByUser,
         reason = run_shell(shell, driver, &observed) => reason,
     };
     let _ = shutdown.send(());
+    let _ = stop_programs.send(());
     if tokio::time::timeout(Duration::from_secs(3), &mut files)
         .await
         .is_err()
     {
         files.abort();
+    }
+    if tokio::time::timeout(Duration::from_secs(1), &mut programs)
+        .await
+        .is_err()
+    {
+        programs.abort();
     }
 
     // Fails only if the connection is already gone.
@@ -389,7 +401,7 @@ fn remote_command(launch: &nocterm_session::ShellLaunch) -> Option<String> {
 }
 
 /// Waits for the host's answer to the request just made on a channel.
-async fn confirmed(channel: &mut Channel<Msg>) -> Result<(), russh::Error> {
+pub(crate) async fn confirmed(channel: &mut Channel<Msg>) -> Result<(), russh::Error> {
     loop {
         match channel.wait().await {
             Some(ChannelMsg::Success) => return Ok(()),

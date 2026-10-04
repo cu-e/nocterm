@@ -19,6 +19,10 @@ use nocterm_session::{
 };
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
+mod exec;
+
+pub use exec::LocalExec;
+
 /// A local shell factory, configured when a new terminal is opened.
 #[derive(Clone, Debug)]
 pub struct LocalTransport(pub ShellLaunch);

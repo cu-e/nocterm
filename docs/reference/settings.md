@@ -26,6 +26,13 @@
 | `logging.auto_start` | "boolean" | `false` | Automatically record remote output after a successful connection. Never records authentication or input directly. |
 | `logging.directory` | ["string","null"] | `null` | Output directory. Unset uses the application's state/logs directory. |
 | `logging.max_file_mib` | "integer"; 1–1024 | `10` | Stop recording at this size instead of filling the disk. |
+| `monitor.detail_interval_secs` | "integer"; 1–60 | `2` | Seconds between updates while the details are open. |
+| `monitor.details` | "array" | `["cpu","cores","memory","swap","load","uptime","temperature","disks","network","disk_io"]` | What the details show. |
+| `monitor.enabled` | "boolean" | `true` | Show the active host's resources in the status bar. |
+| `monitor.history_points` | "integer"; 10–600 | `90` | Samples the graphs in the details keep. |
+| `monitor.interval_secs` | "integer"; 1–3600 | `30` | Seconds between updates while the details are closed. Only what the status bar shows is collected then. |
+| `monitor.local` | "boolean" | `true` | Watch this computer while no remote session is active. |
+| `monitor.status_bar` | "array" | `["cpu","memory"]` | What the status bar shows, in this order. |
 | `ssh.connect_timeout_secs` | "integer"; 1–600 | `15` | Seconds to wait for a host to answer before giving up. |
 | `ssh.keepalive_interval_secs` | "integer"; 0–3600 | `30` | Seconds between keep-alive probes on an idle connection. 0 turns them off. |
 | `ssh.launch.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |

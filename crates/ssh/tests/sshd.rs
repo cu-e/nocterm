@@ -24,6 +24,9 @@ mod download;
 #[path = "cases/proxy.rs"]
 mod proxy;
 
+#[path = "cases/exec.rs"]
+mod exec;
+
 use nocterm_session::{
     Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, PtySize, Secret,
     SecretRequest, Session, SessionError, Target, Transport,

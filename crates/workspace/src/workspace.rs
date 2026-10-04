@@ -129,7 +129,7 @@ pub struct Workspace {
     new_tab_menu_open: bool,
     session_opener: Option<SessionOpener>,
     actions: Vec<ActionRegistration>,
-    status_views: Vec<AnyView>,
+    status_views: Vec<(chrome::StatusSide, AnyView)>,
     /// The active session as last announced, to announce only changes.
     announced_session: Option<SessionContext>,
     menu_builder: Option<MenuBuilder>,
@@ -1224,12 +1224,6 @@ impl Workspace {
             Some(opener) => opener(self, spec, window, cx),
             None => tracing::warn!("no session opener is installed"),
         }
-    }
-
-    /// A feature-owned compact status view, visible even while the sidebar is hidden.
-    pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.status_views.push(view.into());
-        cx.notify();
     }
 
     // ── Actions ──────────────────────────────────────────────────────────────
