@@ -19,7 +19,7 @@ separately on the destination. There is no cloud synchronization of device keys.
 | --- | --- | --- |
 | macOS | Security.framework Data Protection Keychain, `biometryCurrentSet` | Touch ID enrollment and a signed application able to access the protected keychain. The item is available only while unlocked, is device-local and does not synchronize. Changing enrolled fingers invalidates access. |
 | Windows | Windows Hello RSA credential signs a registration-specific challenge; HKDF-SHA256 derives the key for authenticated XChaCha20-Poly1305 wrapping | Windows Hello enrollment. Windows chooses fingerprint, face or PIN; this API cannot require fingerprint exclusively. Removing the Hello credential invalidates access. |
-| Linux | Root-owned Nocterm broker verifies the user's enrolled finger with root-owned fprintd before releasing a session key | System service installed by the Linux packages. After each Nocterm start or broker restart, the first password unlock re-registers the key. Keys are memory-only, connection-bound and expire after eight hours. |
+| Linux | Root-owned Nocterm broker verifies the user's enrolled finger with root-owned fprintd before releasing a session key | System service installed by the Linux packages. After each computer or broker restart, the first password unlock re-registers the key. Keys are memory-only, bound to the user, survive Nocterm restarts and expire after eight idle hours. |
 
 macOS capability detection uses the small safe `tid-rs` LocalAuthentication bridge;
 its preflight result only controls availability. A narrow local bridge also owns
@@ -62,10 +62,11 @@ devices and enrolled fingers without initiating a scan, and D-Bus-activates the
 broker when it is not running. If hardware, enrollment or broker is missing,
 password unlock still works.
 
-Turn on Fingerprint once. Broker keys are memory-only, so after Nocterm or the
-broker restarts, the next master-password unlock re-registers the key
-automatically; fingerprint unlock then works until Nocterm exits. Turn off
-removes the registration.
+Turn on Fingerprint once; the setting stays on until you turn it off. Broker
+keys are memory-only, so after the computer or the broker restarts, the next
+master-password unlock re-registers the key automatically. Restarting Nocterm
+keeps it: fingerprint unlock works right away. Turn off removes the
+registration.
 
 To uninstall a package, remove it with the package manager. For a manual
 installation, stop and disable `nocterm-vault-broker.service`, remove
@@ -93,9 +94,10 @@ prompt cancellation still requires native macOS hardware verification.
 The portable authenticated envelope also rejects a wrong native key. Native
 registration is cleaned up if companion-file persistence fails.
 
-Linux registrations bind the bus-authenticated UID, initiating unique connection,
-vault binding and random token. Another connection under the same UID cannot read,
-cancel or delete them. fprintd's unique owner must belong to root; only its own
+Linux registrations bind the bus-authenticated UID, vault binding and random
+token, so Nocterm finds them again after a restart. Another UID cannot read,
+cancel or delete them, and a process of the same user still needs the enrolled
+finger to release a key. Enrolling again replaces the key for that vault. fprintd's unique owner must belong to root; only its own
 `verify-match` completed signal releases a key. Failed matches, reader contention,
 disconnect, timeout and cancellation refuse release. Keys are zeroized on drop,
 and the broker limits total and per-user registrations and its systemd resources.

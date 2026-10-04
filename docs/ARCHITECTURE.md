@@ -12,7 +12,7 @@ regression evidence and residual constraints.
 binding and cancellation rules. The composition root injects
 `nocterm-device-unlock`; native adapters remain outside the vault and its UI.
 An optional `nocterm-vault-broker` Linux system service enforces fingerprint
-verification for connection-bound memory-only keys. See [device unlock](DEVICE_UNLOCK.md)
+verification for user-bound memory-only keys. See [device unlock](DEVICE_UNLOCK.md)
 for the platform boundaries and explicit installation.
 
 `nocterm-core` provides paths and atomic, comment-preserving TOML persistence.
