@@ -219,6 +219,8 @@ impl Broker {
                 return Err(denied("Authentication is already in progress"));
             }
             entry.busy = true;
+            // A disconnecting caller cancels only its own authentication.
+            entry.owner = owner.clone();
             entry.cancel = Arc::new(AtomicBool::new(false));
             entry.cancel.clone()
         };
@@ -502,7 +504,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn private_bus_enforces_owner_and_actual_verification_before_key_release() {
+    async fn private_bus_requires_actual_verification_before_key_release() {
         let bus = Bus::new();
         let service = connect(&bus).await;
         let fake = connect(&bus).await;
@@ -541,22 +543,21 @@ mod tests {
         let client = connect(&bus).await;
         let other = connect(&bus).await;
         let owner = Proxy::new(&client, NAME, PATH, NAME).await.unwrap();
-        let adversary = Proxy::new(&other, NAME, PATH, NAME).await.unwrap();
+        let restarted = Proxy::new(&other, NAME, PATH, NAME).await.unwrap();
         let binding = "a".repeat(64);
         let key = [42u8; 32];
         let token: String = owner
             .call("Enroll", &(binding.as_str(), key.as_slice()))
             .await
             .unwrap();
-        let attempt: Result<Vec<u8>, _> = adversary
-            .call("Release", &(binding.as_str(), token.as_str()))
-            .await;
-        assert!(attempt.is_err());
+        // A restarted Nocterm (another connection of the same user) still
+        // finds the key, but only fingerprint verification releases it.
+        let registered: bool = restarted
+            .call("Registered", &(binding.as_str(), token.as_str()))
+            .await
+            .unwrap();
+        assert!(registered);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let attempt: Result<(), _> = adversary
-            .call("Remove", &(binding.as_str(), token.as_str()))
-            .await;
-        assert!(attempt.is_err());
         let actual: Vec<u8> = owner
             .call("Release", &(binding.as_str(), token.as_str()))
             .await
