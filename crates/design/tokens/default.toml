@@ -102,11 +102,12 @@ bright_white   = "#a5a5a5"
 
 # ── Dark palette ──────────────────────────────────────────────────────────────
 
-# Empty: the standard dark theme.
+# Standard dark theme with a lighter active tab.
 [dark.ui]
+"tab.active.background" = "#272727"
 
 [dark.terminal]
-# background = "#0a0a0a"
+background = "#181818"
 # foreground = "#e5e5e5"
 # cursor     = "#e5e5e5"
 # selection  = "#3b8eea40"

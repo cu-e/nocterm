@@ -6,7 +6,7 @@
 
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
-| `dark.terminal.background` | ["string","null"] | `null` | Terminal background. Unset: the interface background. |
+| `dark.terminal.background` | ["string","null"] | `"#181818"` | Terminal background. Unset: the interface background. |
 | `dark.terminal.black` | "string" | `"#000000"` | ANSI colour 0. |
 | `dark.terminal.blue` | "string" | `"#2472c8"` | ANSI colour 4. |
 | `dark.terminal.bright_black` | "string" | `"#666666"` | ANSI colour 8. |
@@ -26,7 +26,7 @@
 | `dark.terminal.selection` | ["string","null"] | `null` | Selection highlight. Unset: the interface selection colour. |
 | `dark.terminal.white` | "string" | `"#e5e5e5"` | ANSI colour 7. |
 | `dark.terminal.yellow` | "string" | `"#e5e510"` | ANSI colour 3. |
-| `dark.ui` | "object" | `{}` |  |
+| `dark.ui` | "object" | `{"tab.active.background":"#272727"}` |  |
 | `layout.agent_panel_max_width` | "number" | `64.0` | Maximum AI panel width, in rem. |
 | `layout.agent_panel_min_width` | "number" | `18.0` | Minimum AI panel width, in rem. |
 | `layout.agent_panel_width` | "number" | `26.0` | Initial width of the AI panel, in rem. |

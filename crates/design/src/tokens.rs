@@ -515,7 +515,7 @@ mod tests {
         let tokens = DesignTokens::builtin();
 
         assert_eq!(tokens.name, "Nocterm Default");
-        assert!(tokens.light.ui.is_empty() && tokens.dark.ui.is_empty());
+        assert!(tokens.light.ui.is_empty());
         assert_eq!(tokens.typography.ui_font, None);
     }
 
@@ -572,6 +572,7 @@ mod tests {
                 "background",
                 "link.hover",
                 "primary.background",
+                "tab.active.background",
                 "tab.active.foreground"
             ]
         );
