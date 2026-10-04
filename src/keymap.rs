@@ -1,98 +1,25 @@
 //! Key bindings, read from data rather than written in code.
 //!
 //! The defaults live in `assets/keymap.toml`, so a binding changes without
-//! touching a view, and a user keymap can later be layered on the same
-//! format.
+//! touching a view; `nocterm-keymap` layers the user's `keymap.toml` over
+//! them.
 
-use std::{collections::BTreeMap, env, rc::Rc};
+use std::path::PathBuf;
 
-use gpui_kit::{App, DummyKeyboardMapper, KeyBinding, KeyBindingContextPredicate};
-use serde::Deserialize;
+use gpui_kit::App;
 
 /// The default key bindings.
 const DEFAULT_KEYMAP: &str = include_str!("../assets/keymap.toml");
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Keymap {
-    #[serde(default, rename = "section")]
-    sections: Vec<Section>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Section {
-    /// The key context predicate; none binds everywhere.
-    context: Option<String>,
-    /// The platforms the section applies to; empty means all.
-    #[serde(default)]
-    os: Vec<String>,
-    /// Keystrokes to action names.
-    bindings: BTreeMap<String, String>,
-}
-
-impl Section {
-    fn applies_here(&self) -> bool {
-        self.os.is_empty() || self.os.iter().any(|os| os == env::consts::OS)
-    }
-}
-
-/// Binds the default keymap. Entries that do not resolve are logged and
-/// skipped: one stale binding must not cost the others.
-pub(crate) fn load(cx: &mut App) {
-    let keymap: Keymap = match toml::from_str(DEFAULT_KEYMAP) {
-        Ok(keymap) => keymap,
-        Err(error) => {
-            tracing::error!(%error, "the default keymap is malformed");
-            return;
-        }
-    };
-
-    let mut bindings = Vec::new();
-    for section in keymap
-        .sections
-        .iter()
-        .filter(|section| section.applies_here())
-    {
-        let context = match section
-            .context
-            .as_deref()
-            .map(KeyBindingContextPredicate::parse)
-        {
-            None => None,
-            Some(Ok(predicate)) => Some(Rc::new(predicate)),
-            Some(Err(error)) => {
-                tracing::error!(context = ?section.context, %error, "invalid key context");
-                continue;
-            }
-        };
-        for (keystrokes, action) in &section.bindings {
-            let action = match cx.build_action(action, None) {
-                Ok(action) => action,
-                Err(error) => {
-                    tracing::error!(%keystrokes, %action, %error, "unknown action in keymap");
-                    continue;
-                }
-            };
-            match KeyBinding::load(
-                keystrokes,
-                action,
-                context.clone(),
-                false,
-                None,
-                &DummyKeyboardMapper,
-            ) {
-                Ok(binding) => bindings.push(binding),
-                Err(error) => tracing::error!(%keystrokes, %error, "invalid keystroke in keymap"),
-            }
-        }
-    }
-    cx.bind_keys(bindings);
+/// Binds the default keymap and the user's changes from `user_file`.
+pub(crate) fn load(user_file: Option<PathBuf>, cx: &mut App) {
+    nocterm_keymap::Keymap::init(DEFAULT_KEYMAP, user_file, cx);
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::{Keystroke, TestAppContext};
+    use gpui_kit::{KeyBindingContextPredicate, Keystroke, TestAppContext};
+    use nocterm_keymap::KeymapFile as Keymap;
 
     use super::*;
 

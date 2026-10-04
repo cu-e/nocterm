@@ -15,13 +15,16 @@ os = ["linux", "windows"]
 
 [section.bindings]
 "ctrl-shift-t" = "workspace::NewTab"
+"ctrl-shift-p" = "workspace::ToggleCommandPalette"
 "ctrl-shift-w" = "workspace::CloseTab"
 "ctrl-tab" = "workspace::NextTab"
 "ctrl-shift-tab" = "workspace::PreviousTab"
 "ctrl-pagedown" = "workspace::NextTab"
 "ctrl-pageup" = "workspace::PreviousTab"
 "ctrl-shift-b" = "workspace::ToggleSidebar"
-"ctrl-shift-e" = "workspace::NextPanel"
+"ctrl-shift-e" = "files::ToggleExplorer"
+"ctrl-shift-c" = "connections::ToggleServers"
+"ctrl-e" = "workspace::SwapSides"
 "ctrl-," = "workspace::OpenSettings"
 "ctrl-shift-q" = "workspace::Quit"
 "ctrl-shift-n" = "connections::NewConnection"
@@ -35,7 +38,8 @@ os = ["linux", "windows"]
 "ctrl-alt-pageup" = "workspace::PreviousPane"
 "ctrl-shift-f2" = "workspace::RenameTab"
 "ctrl-`" = "workspace::ToggleLocalTerminal"
-"ctrl-alt-i" = "workspace::ToggleRightPanel"
+"ctrl-j" = "workspace::ToggleLocalTerminal"
+"ctrl-alt-b" = "workspace::ToggleRightPanel"
 "ctrl-alt-n" = "workspace::NewWindow"
 "ctrl-alt-w" = "workspace::CloseWindow"
 "ctrl-shift-f" = "workspace::Find"
@@ -49,13 +53,16 @@ os = ["macos"]
 
 [section.bindings]
 "cmd-t" = "workspace::NewTab"
+"cmd-shift-p" = "workspace::ToggleCommandPalette"
 "cmd-w" = "workspace::CloseTab"
 "ctrl-tab" = "workspace::NextTab"
 "ctrl-shift-tab" = "workspace::PreviousTab"
 "cmd-shift-]" = "workspace::NextTab"
 "cmd-shift-[" = "workspace::PreviousTab"
 "cmd-b" = "workspace::ToggleSidebar"
-"cmd-shift-e" = "workspace::NextPanel"
+"cmd-shift-e" = "files::ToggleExplorer"
+"cmd-shift-c" = "connections::ToggleServers"
+"cmd-e" = "workspace::SwapSides"
 "cmd-," = "workspace::OpenSettings"
 "cmd-q" = "workspace::Quit"
 "cmd-n" = "connections::NewConnection"
@@ -69,7 +76,8 @@ os = ["macos"]
 "cmd-alt-pageup" = "workspace::PreviousPane"
 "cmd-shift-f2" = "workspace::RenameTab"
 "cmd-`" = "workspace::ToggleLocalTerminal"
-"cmd-alt-i" = "workspace::ToggleRightPanel"
+"cmd-j" = "workspace::ToggleLocalTerminal"
+"cmd-alt-b" = "workspace::ToggleRightPanel"
 "cmd-shift-n" = "workspace::NewWindow"
 "cmd-shift-w" = "workspace::CloseWindow"
 "cmd-f" = "workspace::Find"
@@ -112,9 +120,11 @@ context = "AgentPanel"
 os = ["linux", "windows"]
 [section.bindings]
 "ctrl-alt-m" = "agent::ToggleModelPicker"
+"ctrl-n" = "agent::NewThreadWithLastAgent"
 
 [[section]]
 context = "AgentPanel"
 os = ["macos"]
 [section.bindings]
 "cmd-alt-m" = "agent::ToggleModelPicker"
+"cmd-n" = "agent::NewThreadWithLastAgent"

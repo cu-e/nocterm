@@ -9,6 +9,9 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
+- Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
+  growing file into child modules by responsibility instead of adding to it. Never raise an
+  entry in `xtask/oversized-files.toml`.
 
 ## Pipeline
 
@@ -47,6 +50,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `terminal` | terminal model and view |
 | `connections` | profiles, recents and connection UI |
 | `settings-ui` | settings tab |
+| `keymap` | default and user key bindings |
+| `keymap-ui` | keymap settings page |
 | `ai` | agent registry, thread model, context and tool protocol |
 | `acp` | ACP client and local MCP bridge adapter |
 | `agent` | agent panel, threads and composer |

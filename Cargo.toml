@@ -18,6 +18,8 @@ nocterm-connections.workspace = true
 nocterm-core.workspace = true
 nocterm-design.workspace = true
 nocterm-files.workspace = true
+nocterm-keymap.workspace = true
+nocterm-keymap-ui.workspace = true
 nocterm-local.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
@@ -29,6 +31,7 @@ nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 
 anyhow.workspace = true
+futures.workspace = true
 gpui-kit.workspace = true
 serde.workspace = true
 toml.workspace = true
@@ -41,7 +44,6 @@ workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true
-futures.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
@@ -69,6 +71,8 @@ nocterm-connections = { path = "crates/connections" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
+nocterm-keymap = { path = "crates/keymap" }
+nocterm-keymap-ui = { path = "crates/keymap-ui" }
 nocterm-local = { path = "crates/local" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
@@ -83,7 +87,7 @@ nocterm-vault = { path = "crates/vault" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
 
 agent-client-protocol = "=2.2.0"
-agent-client-protocol-schema = "=1.9.1"
+agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }
 base64 = "0.22"
 async-io = "2"
 async-process = "2"
@@ -106,6 +110,8 @@ gpui-kit = "0.7"
 parking_lot = "0.12"
 portable-pty = "0.9"
 regex = "1"
+# Zed's reqwest fork, already in the tree through GPUI.
+reqwest = { package = "gpui-pre-reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 regex-syntax = "0.8"
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3"
