@@ -248,14 +248,16 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
 
-        cx.on_action(move |_: &nocterm_workspace::UnlockVault, _| {
-            counter.set(counter.get() + 1)
-        });
+        cx.on_action(move |_: &nocterm_workspace::UnlockVault, _| counter.set(counter.get() + 1));
         window.click(("vault-unlock", 0usize), cx);
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(unlocks.get(), 1, "the button asks to open the unlock dialog");
+    assert_eq!(
+        unlocks.get(),
+        1,
+        "the button asks to open the unlock dialog"
+    );
     // Unlocking answers the session's prompt with the saved secret.
     directory.sign_in.vault_locked.set(false);
     cx.executor().advance_clock(Duration::from_secs(1));
