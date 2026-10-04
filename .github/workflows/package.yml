@@ -1,8 +1,10 @@
 name: Package
 
 # Builds installers: Windows (Inno Setup), Linux .deb, .rpm and AppImage.
-# Runs manually, or from release.yml to attach installers to a release.
+# Runs on master pushes, manually, or from release.yml for release attachments.
 on:
+  push:
+    branches: [master]
   workflow_dispatch:
   workflow_call:
     inputs:

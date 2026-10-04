@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
   push:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # PRs are squash-merged, so the title becomes the commit on main
+      # PRs are squash-merged, so the title becomes the commit on master
       # and is what release-please reads.
       - name: Lint PR title
         env:
