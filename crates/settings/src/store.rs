@@ -63,6 +63,29 @@ mod tests {
     use crate::CursorShape;
 
     #[test]
+    fn theme_names_round_trip_prune_and_sanitize() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(directory.path().join("settings.toml"));
+        assert_eq!(Settings::default().appearance.light_theme, None);
+        assert_eq!(Settings::default().appearance.dark_theme, None);
+        file.save(&Settings::default()).unwrap();
+        assert_eq!(fs::read_to_string(file.path()).unwrap(), "");
+        let mut settings = Settings::default();
+        settings.appearance.light_theme = Some("My Light".into());
+        settings.appearance.dark_theme = Some("My Dark".into());
+        file.save(&settings).unwrap();
+        assert_eq!(file.load().unwrap(), settings);
+        settings.appearance.light_theme = Some("  ".into());
+        settings.appearance.dark_theme = Some(" My Dark ".into());
+        let settings = settings.sanitized();
+        assert_eq!(settings.appearance.light_theme, None);
+        assert_eq!(settings.appearance.dark_theme.as_deref(), Some("My Dark"));
+        assert!(toml::from_str::<Settings>("[appearance]\nunknown_theme = 'X'\n").is_err());
+        file.save(&Settings::default()).unwrap();
+        assert_eq!(fs::read_to_string(file.path()).unwrap(), "");
+    }
+
+    #[test]
     fn missing_file_loads_the_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let file = SettingsFile::new(directory.path().join("settings.toml"));

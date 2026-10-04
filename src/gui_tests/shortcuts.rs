@@ -118,3 +118,6 @@ fn close_shortcut_from_connected_terminal_closes_tab(cx: &mut TestAppContext) {
         0
     );
 }
+
+#[path = "themes.rs"]
+mod themes;

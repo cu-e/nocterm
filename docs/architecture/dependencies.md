@@ -6,7 +6,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
@@ -20,11 +20,12 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session adapter. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: their schema and their file. |
-| `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
+| `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-settings`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
 | `nocterm-ssh` | adapter | `nocterm-session` | SSH and SFTP transport, implemented with russh. |
 | `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
+| `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
-| `nocterm-ui` | ui | `nocterm-design`, `nocterm-settings` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
+| `nocterm-ui` | ui | `nocterm-design`, `nocterm-settings`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential vault and bounded worker service. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
@@ -50,6 +51,7 @@ graph TD
     nocterm --> nocterm_settings_ui
     nocterm --> nocterm_ssh
     nocterm --> nocterm_terminal
+    nocterm --> nocterm_themes
     nocterm --> nocterm_ui
     nocterm --> nocterm_vault_ui
     nocterm --> nocterm_workspace
@@ -83,6 +85,7 @@ graph TD
     nocterm_settings --> nocterm_core
     nocterm_settings_ui --> nocterm_ai
     nocterm_settings_ui --> nocterm_settings
+    nocterm_settings_ui --> nocterm_themes
     nocterm_settings_ui --> nocterm_ui
     nocterm_settings_ui --> nocterm_workspace
     nocterm_ssh --> nocterm_session
@@ -92,9 +95,11 @@ graph TD
     nocterm_terminal --> nocterm_vault
     nocterm_terminal --> nocterm_vt
     nocterm_terminal --> nocterm_workspace
+    nocterm_themes --> nocterm_design
     nocterm_transfers --> nocterm_session
     nocterm_ui --> nocterm_design
     nocterm_ui --> nocterm_settings
+    nocterm_ui --> nocterm_themes
     nocterm_vault --> nocterm_session
     nocterm_vault_ui --> nocterm_session
     nocterm_vault_ui --> nocterm_settings

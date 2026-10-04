@@ -46,6 +46,12 @@ pub struct Settings {
 pub struct Appearance {
     /// Which palette to use: follow the operating system, or always light or dark.
     pub mode: AppearanceMode,
+    /// Imported light theme name. Unset uses Nocterm Default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub light_theme: Option<String>,
+    /// Imported dark theme name. Unset uses Nocterm Default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dark_theme: Option<String>,
     /// Find out which country each saved server is in and show its flag. Sends
     /// the server's public IP address (never its name) to a GeoIP service on
     /// connecting; private addresses are never sent. A country set on the
@@ -57,6 +63,8 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: AppearanceMode::default(),
+            light_theme: None,
+            dark_theme: None,
             detect_server_country: true,
         }
     }
@@ -227,6 +235,15 @@ impl Settings {
     /// A hand-edited file may hold anything; the rest of the application only
     /// ever sees settings it can act on.
     pub fn sanitized(mut self) -> Self {
+        for name in [
+            &mut self.appearance.light_theme,
+            &mut self.appearance.dark_theme,
+        ] {
+            *name = name
+                .take()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty());
+        }
         let terminal = &mut self.terminal;
         terminal.font_family = terminal
             .font_family

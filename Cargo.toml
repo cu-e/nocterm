@@ -26,6 +26,7 @@ nocterm-settings.workspace = true
 nocterm-settings-ui.workspace = true
 nocterm-ssh.workspace = true
 nocterm-terminal.workspace = true
+nocterm-themes.workspace = true
 nocterm-vault-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -80,6 +81,7 @@ nocterm-settings-ui = { path = "crates/settings-ui" }
 nocterm-ssh = { path = "crates/ssh" }
 nocterm-terminal = { path = "crates/terminal" }
 nocterm-transfers = { path = "crates/transfers" }
+nocterm-themes = { path = "crates/themes" }
 nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
 nocterm-workspace = { path = "crates/workspace" }
@@ -118,6 +120,9 @@ russh-sftp = "3"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_json_lenient = "0.2.4"
+tar = "0.4"
+flate2 = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util", "fs"] }

@@ -51,6 +51,13 @@ fn main() -> anyhow::Result<()> {
     let paths = Paths::discover()?;
     let tokens = load_tokens(&paths);
     let settings = load_settings(&paths);
+    let theme_dirs = nocterm_themes::ThemeDirs {
+        user: paths.user_themes_dir(),
+        installed: paths.installed_themes_dir(),
+    };
+    let catalog = nocterm_themes::ThemeCatalog::load(&theme_dirs);
+    let registry =
+        Arc::new(nocterm_themes::ZedRegistry::new().context("creating the theme registry client")?);
     let transport = SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
 
     gpui_kit::application()
@@ -58,6 +65,8 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             nocterm_ui::init(tokens, settings, cx);
+            nocterm_ui::init_themes(theme_dirs, catalog, cx);
+            nocterm_settings_ui::init_theme_registry(registry, cx);
             nocterm_ui::LayoutMemory::init(Some(paths.state_dir().join("layout.json")), cx);
             nocterm_terminal::init(Arc::new(transport), cx);
             nocterm_terminal::init_recording(paths.state_dir().join("logs"), cx);

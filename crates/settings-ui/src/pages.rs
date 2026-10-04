@@ -13,8 +13,8 @@ use gpui_kit::{
     rems,
 };
 use nocterm_settings::{
-    AppearanceMode, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE,
-    KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, SessionOptions, Settings, ShellSettings,
+    CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE,
+    LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, SessionOptions, Settings, ShellSettings,
 };
 use nocterm_ui::{ActiveSettings as _, SessionOptionsEditor, form};
 
@@ -200,7 +200,7 @@ pub(crate) fn render(
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     let sections = match page {
-        Page::Appearance => appearance(cx),
+        Page::Appearance => crate::appearance::render(view, cx),
         Page::Terminal => terminal(view, cx),
         Page::LocalShell => local_shell(view, cx),
         Page::Ssh => ssh(view, cx),
@@ -231,7 +231,7 @@ pub(crate) fn toggle(
 }
 
 /// Mutually exclusive choices shown side by side.
-fn choices<T: Copy + PartialEq + 'static>(
+pub(crate) fn choices<T: Copy + PartialEq + 'static>(
     id: &'static str,
     current: T,
     options: &[(&'static str, T)],
@@ -296,48 +296,6 @@ fn short_row(
             .into_any_element(),
         None => row,
     }
-}
-
-fn appearance(cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let settings = cx.settings().clone();
-    vec![
-        form::section(
-            "Theme",
-            [form::row(
-                "Color scheme",
-                "Follow the system, or always use light or dark.",
-                choices(
-                    "appearance",
-                    settings.appearance.mode,
-                    &[
-                        ("System", AppearanceMode::System),
-                        ("Light", AppearanceMode::Light),
-                        ("Dark", AppearanceMode::Dark),
-                    ],
-                    |s, mode| s.appearance.mode = mode,
-                    cx,
-                ),
-                cx,
-            )],
-            cx,
-        ),
-        form::section(
-            "Servers",
-            [form::row(
-                "Show server countries",
-                "Look up the public IP address of each server on connecting and show its flag. Private addresses and host names are never sent. A country chosen on the connection is always shown.",
-                toggle(
-                    "detect-server-country",
-                    settings.appearance.detect_server_country,
-                    false,
-                    |s, on| s.appearance.detect_server_country = on,
-                    cx,
-                ),
-                cx,
-            )],
-            cx,
-        ),
-    ]
 }
 
 fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {

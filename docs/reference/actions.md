@@ -28,6 +28,8 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `test::Library` |  |  |
 | `test::Second` |  |  |
 | `workspace::About` | Show application information. |  |
+| `workspace::ChangeColorScheme` | Choose the system, light, or dark color scheme for the theme. |  |
+| `workspace::ChangeTheme` | Choose a color theme for the current light or dark appearance. |  |
 | `workspace::ClearSelection` | Clear the terminal selection. |  |
 | `workspace::CloseAllTabs` | Close all central tabs, retaining the local terminal. |  |
 | `workspace::CloseLocalTerminal` | Close the bottom local terminal and end its process. |  |

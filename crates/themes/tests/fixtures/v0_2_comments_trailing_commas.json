@@ -1,0 +1,3 @@
+// Comment
+{"$schema":"https://zed.dev/schema/themes/v0.2.0.json", /* block */
+"name":"Lenient", "themes":[{"name":"Light","appearance":"light","style":{"background":"#fff",},},],}

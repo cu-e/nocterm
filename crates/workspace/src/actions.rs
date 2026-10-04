@@ -33,6 +33,10 @@ gpui_kit::actions!(
         NextPanel,
         /// Open the settings.
         OpenSettings,
+        /// Choose a color theme for the current light or dark appearance.
+        ChangeTheme,
+        /// Choose the system, light, or dark color scheme for the theme.
+        ChangeColorScheme,
         /// Open the keymap: every command and its shortcuts.
         OpenKeymap,
         /// Move the active tab one position to the left in its pane.

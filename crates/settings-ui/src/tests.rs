@@ -11,7 +11,7 @@ use std::{
     rc::Rc,
 };
 
-fn init(cx: &mut App) {
+pub(super) fn init(cx: &mut App) {
     gpui_kit::init(cx);
     nocterm_ui::init(
         nocterm_ui::DesignTokens::builtin(),
@@ -20,7 +20,7 @@ fn init(cx: &mut App) {
     );
 }
 
-fn open(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
+pub(super) fn open(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
     cx.update(|cx| {
         init(cx);
         let (handle, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {

@@ -18,6 +18,7 @@ mod settings;
 pub use session_options::SessionOptionsEditor;
 mod terminal_style;
 mod theme;
+mod themes;
 
 pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
@@ -27,6 +28,7 @@ pub use layout::LayoutMemory;
 pub use settings::{ActiveSettings, SettingsStore, edit_settings, save_settings, update_settings};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
+pub use themes::{ActiveThemes, Themes, init_themes, reload_themes};
 
 pub use nocterm_design::{Color, DesignTokens};
 

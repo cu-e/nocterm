@@ -4,6 +4,8 @@
 //! on Enter and when the field loses focus. There is no draft and no Apply.
 
 mod ai;
+mod appearance;
+pub use appearance::init_theme_registry;
 mod field;
 mod pages;
 
@@ -77,6 +79,7 @@ pub fn register(workspace: &mut Workspace) {
 }
 /// Installs Settings and feature-owned pages supplied by the application.
 pub fn register_with_pages(workspace: &mut Workspace, pages: Vec<SettingsPageSpec>) {
+    appearance::commands::register(workspace);
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
@@ -120,6 +123,7 @@ pub struct SettingsView {
     /// Text settings by key, such as `terminal.font_size`.
     fields: BTreeMap<SharedString, Field>,
     ai: ai::AiPage,
+    appearance: appearance::AppearancePage,
     session_options: gpui_kit::Entity<nocterm_ui::SessionOptionsEditor>,
     session_options_error: Option<SharedString>,
     session_options_save: Option<gpui_kit::Task<()>>,
@@ -145,12 +149,14 @@ impl SettingsView {
         let options = cx.observe_in(&session_options, window, |this, _, window, cx| {
             this.schedule_session_options(window, cx);
         });
+        let appearance = appearance::AppearancePage::new(window, cx);
         let mut this = Self {
             selected_page: 0,
             pages: pages.into_iter().map(|spec| (spec, None)).collect(),
             focus: cx.focus_handle(),
             fields: BTreeMap::new(),
             ai: ai::AiPage::default(),
+            appearance,
             session_options,
             session_options_error: None,
             session_options_save: None,
@@ -276,6 +282,7 @@ impl SettingsView {
             field.sync(window, cx);
         }
         ai::sync(self, window, cx);
+        self.appearance.sync(window, cx);
         cx.notify();
     }
 

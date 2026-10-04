@@ -29,6 +29,17 @@ crates do not know the workspace or GPUI. `nocterm-local` adapts portable-pty to
 the same session events and launch contract. Integration supplies bounded OSC 7
 cwd and prompt markers without parsing rendered prompt text.
 
+`nocterm-themes` is a GUI-independent domain crate. It parses original Zed JSON,
+loads user files and installed extension manifests, maps palettes, and provides a
+bounded registry client and archive installer. The installer accepts only direct
+regular `themes/*.json` files and publishes a validated pack through a staged
+rename. `nocterm-ui` resolves light/dark selections from SettingsStore and the
+catalogue into effective Design tokens, retaining the base tokens for Nocterm
+Default. Imported component palettes start from empty configuration so the
+component fallback chain derives unmapped colors. Settings UI injects its registry
+client and runs explicit search/install/remove work on the background executor;
+startup loads the local catalogue without network requests.
+
 Input and output channels are bounded. An independent broadcast close signal
 interrupts blocked SSH I/O and local PTY writes/output delivery. Unix local PTY
 reads/writes are nonblocking and independently cancellable, including when a

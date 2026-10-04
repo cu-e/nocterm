@@ -111,6 +111,16 @@ impl Paths {
         self.config_dir.join("theme.toml")
     }
 
+    /// Zed theme files supplied by the user.
+    pub fn user_themes_dir(&self) -> PathBuf {
+        self.config_dir.join("themes")
+    }
+
+    /// Theme extensions managed by nocterm.
+    pub fn installed_themes_dir(&self) -> PathBuf {
+        self.state_dir.join("themes")
+    }
+
     /// Saved connection profiles.
     pub fn connections_file(&self) -> PathBuf {
         self.config_dir.join("connections.toml")
@@ -247,6 +257,14 @@ mod tests {
             Path::new("/tmp/nocterm-test/state/recent.toml")
         );
         assert_eq!(paths.openssh_dir(), None);
+        assert_eq!(
+            paths.user_themes_dir(),
+            Path::new("/tmp/nocterm-test/config/themes")
+        );
+        assert_eq!(
+            paths.installed_themes_dir(),
+            Path::new("/tmp/nocterm-test/state/themes")
+        );
     }
 
     #[test]

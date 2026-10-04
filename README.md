@@ -157,6 +157,17 @@ Files use the operating system's configuration/state directories (see
 [paths](crates/core/src/paths.rs)). `settings.toml` stores user choices;
 `theme.toml` overrides the built-in [design tokens](crates/design/tokens/default.toml).
 Unset design values retain the standard GPUI Kit component appearance.
+Settings → Appearance lets you choose separate light and dark color themes.
+Install, update and uninstall themes from Zed's extension registry there, or put
+original Zed theme JSON files in `<config>/themes/` and press Reload. Managed
+extensions live in `<state>/themes/<extension-id>/`. Search queries go to zed.dev;
+network requests happen only when you search, browse or install. Selections apply
+immediately to the interface and every open terminal. The command palette also
+offers **Change Theme** for the current appearance and **Change Color Scheme**
+for System, Light or Dark; searching “theme” finds both. Zed icon themes, syntax
+colors and transparency are not imported. When an imported theme is selected,
+`theme.toml` color overrides apply only to Nocterm Default; its typography, shape
+and layout overrides always apply.
 `connections.toml` stores profiles, `recent.toml` stores recent targets and
 `known_hosts` stores accepted keys. In the state directory, `servers.toml` keeps
 detected systems and countries, `flags/` the downloaded flags, `agents.toml`

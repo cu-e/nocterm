@@ -41,6 +41,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `deps` | dependency updates  |
 | `core` | paths and persistence |
 | `design` | design tokens and themes |
+| `themes` | Zed theme import, catalogue and installation |
 | `settings` | settings schema and storage |
 | `session` | transport and remote filesystem contracts |
 | `ssh` | SSH and SFTP adapter |

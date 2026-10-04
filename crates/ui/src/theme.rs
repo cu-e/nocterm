@@ -13,7 +13,7 @@ use nocterm_design::{Color, DesignTokens};
 use nocterm_settings::AppearanceMode;
 use serde_json::Value;
 
-use crate::{ActiveDesign, ActiveSettings};
+use crate::{ActiveDesign, ActiveSettings, Design};
 
 /// Rebuilds the component theme from the design tokens and the user's
 /// appearance setting, and repaints every window.
@@ -35,8 +35,18 @@ pub fn apply_theme(cx: &mut App) {
     };
 
     let registry = ThemeRegistry::global(cx);
-    let light = Rc::new(theme_config(registry.default_light_theme(), &tokens, false));
-    let dark_config = Rc::new(theme_config(registry.default_dark_theme(), &tokens, true));
+    let light = Rc::new(theme_config(
+        registry.default_light_theme(),
+        &tokens,
+        false,
+        cx.global::<Design>().is_imported(false),
+    ));
+    let dark_config = Rc::new(theme_config(
+        registry.default_dark_theme(),
+        &tokens,
+        true,
+        cx.global::<Design>().is_imported(true),
+    ));
 
     Theme::update(cx, |theme| {
         theme.light_theme = light;
@@ -52,7 +62,12 @@ pub fn apply_theme(cx: &mut App) {
 }
 
 /// The standard theme `base` with the tokens layered over it.
-fn theme_config(base: &ThemeConfig, tokens: &DesignTokens, dark: bool) -> ThemeConfig {
+fn theme_config(
+    base: &ThemeConfig,
+    tokens: &DesignTokens,
+    dark: bool,
+    imported: bool,
+) -> ThemeConfig {
     let mut config = base.clone();
     config.name = format!("{} {}", tokens.name, if dark { "Dark" } else { "Light" }).into();
 
@@ -81,6 +96,9 @@ fn theme_config(base: &ThemeConfig, tokens: &DesignTokens, dark: bool) -> ThemeC
         config.shadow = Some(shadow);
     }
 
+    if imported {
+        config.colors = ThemeConfigColors::default();
+    }
     config.colors = overlay_colors(&config.colors, tokens.palette(dark).ui.iter());
     config
 }
@@ -150,11 +168,36 @@ mod tests {
         )
         .unwrap();
 
-        let config = theme_config(&ThemeConfig::default(), &tokens, true);
+        let config = theme_config(&ThemeConfig::default(), &tokens, true, false);
 
         assert_eq!(config.colors.background.as_deref(), Some("#101214"));
         assert_eq!(config.colors.primary.as_deref(), Some("#3366ffcc"));
         assert_eq!(config.name.as_ref(), "Nocterm Default Dark");
+    }
+
+    #[test]
+    fn imported_appearance_starts_with_empty_colors_only() {
+        let mut base = ThemeConfig::default();
+        base.colors.accordion = Some("#123456".into());
+        let tokens = DesignTokens::builtin();
+        assert_eq!(
+            theme_config(&base, &tokens, true, false)
+                .colors
+                .accordion
+                .as_deref(),
+            Some("#123456")
+        );
+        assert_eq!(
+            theme_config(&base, &tokens, true, true).colors.accordion,
+            None
+        );
+        assert_eq!(
+            theme_config(&base, &tokens, false, false)
+                .colors
+                .accordion
+                .as_deref(),
+            Some("#123456")
+        );
     }
 
     #[test]
@@ -165,7 +208,7 @@ mod tests {
             ..ThemeConfig::default()
         };
 
-        let config = theme_config(&base, &DesignTokens::builtin(), false);
+        let config = theme_config(&base, &DesignTokens::builtin(), false, false);
 
         assert_eq!(config.radius, Some(6));
         assert_eq!(config.font_size, Some(16.0));
