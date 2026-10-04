@@ -7,6 +7,9 @@ use std::{
 #[serde(default, deny_unknown_fields)]
 pub struct AgentStateFile {
     pub favorites: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
+    /// The agent the last new chat was started with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_agent: Option<String>,
 }
 impl AgentStateFile {
     pub fn contains(&self, agent: &str, option: &str, value: &str) -> bool {

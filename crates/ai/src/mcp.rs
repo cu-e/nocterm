@@ -53,7 +53,8 @@ impl McpSession {
             "ping" => McpStep::Reply(json!({"jsonrpc":"2.0","id":id,"result":{}})),
             _ if !self.initialized => error(id, -32002, "Initialize first"),
             "tools/list" => McpStep::Reply(json!({"jsonrpc":"2.0","id":id,"result":{"tools":[
-    {"name":"list_terminals","description":"List terminals attached to this chat","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+    {"name":"list_terminals","description":"List terminals attached to this chat, and attached servers that have no session yet (offline_servers). These are the only servers you can reach: nocterm holds their credentials, so never connect on your own with ssh. When the list is empty, tell the user to attach a terminal or server to the chat","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+    {"name":"open_terminal","description":"Connect to an attached offline server in the background, without disturbing the user; returns its terminal_id once connected. If it fails, tell the user in one short sentence why and stop","inputSchema":schemars::schema_for!(OpenTerminal)},
     {"name":"read_terminal","description":"Read bounded output of an attached terminal","inputSchema":schemars::schema_for!(ReadTerminal)},
     {"name":"send_input","description":"Send text to an attached terminal with user approval","inputSchema":schemars::schema_for!(SendInput)},
     {"name":"run_command","description":"Run a command with approval; output pause does not prove command completion","inputSchema":schemars::schema_for!(RunCommand)}]}})),
@@ -70,6 +71,9 @@ impl McpSession {
                         .map_err(|_| ()),
                     Some("run_command") => serde_json::from_value(args)
                         .map(TerminalCall::RunCommand)
+                        .map_err(|_| ()),
+                    Some("open_terminal") => serde_json::from_value(args)
+                        .map(TerminalCall::OpenTerminal)
                         .map_err(|_| ()),
                     _ => Err(()),
                 };

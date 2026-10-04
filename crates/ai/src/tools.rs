@@ -27,31 +27,53 @@ pub struct RunCommand {
     pub timeout_ms: Option<u64>,
     pub idle_ms: Option<u64>,
 }
+/// Connects to an attached offline server without opening a tab.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenTerminal {
+    /// An `offline_servers` entry of `list_terminals`.
+    pub server_id: String,
+}
 #[derive(Clone, Debug)]
 pub enum TerminalCall {
     ListTerminals,
     ReadTerminal(ReadTerminal),
     SendInput(SendInput),
     RunCommand(RunCommand),
+    OpenTerminal(OpenTerminal),
 }
 impl TerminalCall {
     pub fn terminal_id(&self) -> Option<&str> {
         match self {
-            Self::ListTerminals => None,
+            Self::ListTerminals | Self::OpenTerminal(_) => None,
             Self::ReadTerminal(v) => Some(&v.terminal_id),
             Self::SendInput(v) => Some(&v.terminal_id),
             Self::RunCommand(v) => Some(&v.terminal_id),
         }
     }
+    pub fn server_id(&self) -> Option<&str> {
+        match self {
+            Self::OpenTerminal(v) => Some(&v.server_id),
+            _ => None,
+        }
+    }
+    /// What an approval is granted for: a terminal, or a server to open.
+    pub fn target(&self) -> Option<&str> {
+        self.terminal_id().or_else(|| self.server_id())
+    }
+    /// Typing, running and connecting change something; reading does not.
     pub fn writes(&self) -> bool {
-        matches!(self, Self::SendInput(_) | Self::RunCommand(_))
+        matches!(
+            self,
+            Self::SendInput(_) | Self::RunCommand(_) | Self::OpenTerminal(_)
+        )
     }
     pub fn validate(&self) -> Result<(), String> {
         if self
-            .terminal_id()
+            .target()
             .is_some_and(|id| id.is_empty() || id.len() > 128)
         {
-            return Err("Invalid terminal id".into());
+            return Err("Invalid terminal or server id".into());
         }
         match self {
             Self::ReadTerminal(v) if v.lines.is_some_and(|n| n == 0 || n > MAX_READ_LINES) => {

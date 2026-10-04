@@ -5,6 +5,10 @@ use std::{path::PathBuf, sync::Arc};
 pub struct ConnectRequest {
     pub launch: AgentLaunch,
     pub working_directory: PathBuf,
+    /// The host can open an interactive authentication command in a dedicated PTY.
+    pub terminal_auth: bool,
+    /// Run the agent isolated under this policy; `None` runs it directly.
+    pub sandbox: Option<crate::sandbox::SandboxPolicy>,
 }
 pub trait AgentConnector: Send + Sync + 'static {
     fn connect(
@@ -29,6 +33,20 @@ pub trait AgentCommands: Send + Sync {
         &self,
         request: acp::NewSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>>;
+    /// Reopens a session the agent held before, with `session/resume` or
+    /// `session/load`, whichever the agent offers, or opens a copy of it with
+    /// `session/fork` when `request.fork` is set. Agents offering none of
+    /// these answer with an error, and callers start a new session instead.
+    fn restore_session(
+        &self,
+        _request: RestoreSessionRequest,
+    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        Box::pin(async {
+            Err(AgentError::Io(
+                "The agent cannot reopen earlier chats.".into(),
+            ))
+        })
+    }
     fn prompt(
         &self,
         request: acp::PromptRequest,
@@ -46,6 +64,15 @@ pub trait AgentCommands: Send + Sync {
     -> BoxFuture<'static, Result<(), AgentError>>;
     fn close_session(&self, session: acp::SessionId);
     fn shutdown(&self);
+}
+/// A session to reopen.
+#[derive(Clone, Debug)]
+pub struct RestoreSessionRequest {
+    pub session_id: acp::SessionId,
+    pub cwd: PathBuf,
+    pub mcp_servers: Vec<acp::McpServer>,
+    /// Open a new session that starts with this one's history instead.
+    pub fork: bool,
 }
 pub enum AgentEvent {
     Session(acp::SessionNotification),

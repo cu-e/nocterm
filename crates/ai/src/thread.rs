@@ -1,5 +1,7 @@
 use crate::acp;
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Entry {
     User(Vec<acp::ContentBlock>),
     Agent(String),
@@ -10,11 +12,16 @@ pub enum Entry {
 #[derive(Clone, Debug, Default)]
 pub struct ThreadState {
     pub entries: Vec<Entry>,
+    /// When each entry began, in seconds since the Unix epoch; 0 where it
+    /// is not known (chats saved before times were kept).
+    pub times: Vec<u64>,
     pub plan: Option<acp::Plan>,
     pub modes: Option<acp::SessionModeState>,
     pub current_mode: Option<acp::SessionModeId>,
     pub config_options: Vec<acp::SessionConfigOption>,
     pub usage: Option<acp::UsageUpdate>,
+    /// The session's token totals as of the last finished turn.
+    pub tokens: Option<acp::Usage>,
     pub commands: Vec<acp::AvailableCommand>,
     pub title: Option<String>,
 }
@@ -27,7 +34,21 @@ pub enum ThreadChange {
 }
 impl ThreadState {
     pub fn push_user(&mut self, content: Vec<acp::ContentBlock>) {
-        self.entries.push(Entry::User(content));
+        self.push(Entry::User(content));
+    }
+    fn push(&mut self, entry: Entry) {
+        self.times.resize(self.entries.len(), 0);
+        self.entries.push(entry);
+        self.times.push(crate::history::now());
+    }
+    /// When entry `index` began, if known.
+    pub fn time(&self, index: usize) -> Option<u64> {
+        self.times.get(index).copied().filter(|time| *time > 0)
+    }
+    /// Keeps the first `len` entries.
+    pub fn truncate(&mut self, len: usize) {
+        self.entries.truncate(len);
+        self.times.truncate(len);
     }
     pub fn apply(&mut self, update: acp::SessionUpdate) -> ThreadChange {
         match update {
@@ -48,7 +69,7 @@ impl ThreadState {
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::ToolCall(call) => {
-                self.entries.push(Entry::Tool(call));
+                self.push(Entry::Tool(call));
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
@@ -124,15 +145,28 @@ impl ThreadState {
                 (Some(Entry::Agent(value)), false) | (Some(Entry::Thought(value)), true) => {
                     value.push_str(&text.text)
                 }
-                _ => self.entries.push(if thought {
+                _ => self.push(if thought {
                     Entry::Thought(text.text)
                 } else {
                     Entry::Agent(text.text)
                 }),
             }
         } else {
-            self.entries.push(Entry::Content(content));
+            self.push(Entry::Content(content));
         }
+    }
+    /// Whether the chat's title or any message mentions `query`, ignoring
+    /// case. `query` must be lowercase.
+    pub fn mentions(&self, query: &str) -> bool {
+        let found = |text: &str| text.to_lowercase().contains(query);
+        self.title.as_deref().is_some_and(found)
+            || self.entries.iter().any(|entry| match entry {
+                Entry::User(blocks) => blocks.iter().any(
+                    |block| matches!(block, acp::ContentBlock::Text(text) if found(&text.text)),
+                ),
+                Entry::Agent(text) => found(text),
+                _ => false,
+            })
     }
     pub fn config(
         &self,

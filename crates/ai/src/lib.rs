@@ -5,14 +5,17 @@ pub mod connection;
 pub mod context;
 pub mod env;
 pub mod favorites;
+pub mod history;
 pub mod images;
 pub mod mcp;
 pub mod redact;
 pub mod registry;
+pub mod sandbox;
 #[cfg(feature = "test-support")]
 pub mod testing;
 pub mod thread;
 pub mod tools;
+pub mod usage;
 pub use connection::*;
 pub use registry::{AgentLaunch, AgentRegistry};
 pub use tools::*;

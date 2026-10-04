@@ -23,7 +23,7 @@ impl ApprovalGrants {
         self.write.clear();
     }
     pub fn requires_approval(&self, call: &TerminalCall, settings: &ApprovalSettings) -> bool {
-        let Some(id) = call.terminal_id() else {
+        let Some(id) = call.target() else {
             return false;
         };
         if call.writes() {
