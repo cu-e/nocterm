@@ -6,7 +6,7 @@ use nocterm_session::{
     Auth, CloseReason, CredentialId, Event, Prompt, Reply, Secret, SecretRequest, Target,
 };
 use nocterm_ui::SettingsStore;
-use nocterm_vault::{CredentialBinding, VaultService};
+use nocterm_vault::{CredentialBinding, VaultError, VaultService};
 use nocterm_workspace::SessionSpec;
 use std::{sync::Arc, time::Duration};
 
@@ -82,20 +82,33 @@ fn ask_password(
             terminal.handle_event(Event::Prompt(Prompt::Secret { request, reply }), cx)
         })
     });
-    cx.run_until_parked();
+    drain(setup, cx);
     answer
 }
 
-fn wait(cx: &mut TestAppContext) {
+fn drain(setup: &Setup, cx: &mut TestAppContext) {
+    loop {
+        // Finish queued vault work before polling futures on the test scheduler.
+        match block_on(setup.service.list()) {
+            Ok(_) | Err(VaultError::Locked) => {}
+            Err(error) => panic!("vault worker barrier failed: {error}"),
+        }
+        if !cx.executor().tick() {
+            break;
+        }
+    }
+}
+
+fn wait(setup: &Setup, cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
+    drain(setup, cx);
 }
 
 #[gpui_kit::test]
 fn unlocking_the_vault_answers_the_waiting_prompt_with_the_saved_secret(cx: &mut TestAppContext) {
     let setup = setup(cx);
     let mut answer = ask_password(&setup, cx);
-    wait(cx);
+    wait(&setup, cx);
     assert!(
         answer.try_recv().unwrap().is_none(),
         "a locked vault cannot answer"
@@ -110,10 +123,7 @@ fn unlocking_the_vault_answers_the_waiting_prompt_with_the_saved_secret(cx: &mut
     assert!(cx.update(|cx| setup.terminal.read(cx).awaiting_vault()));
 
     block_on(setup.service.unlock(Secret::new(MASTER))).unwrap();
-    wait(cx);
-    // The lookup runs on the vault's worker.
-    block_on(setup.service.list()).unwrap();
-    cx.run_until_parked();
+    wait(&setup, cx);
     let secret = answer
         .now_or_never()
         .expect("the prompt was answered after unlocking")
@@ -138,9 +148,7 @@ fn a_prompt_that_ended_is_not_answered_after_unlocking(cx: &mut TestAppContext) 
         })
     });
     block_on(setup.service.unlock(Secret::new(MASTER))).unwrap();
-    wait(cx);
-    block_on(setup.service.list()).unwrap();
-    cx.run_until_parked();
+    wait(&setup, cx);
     assert!(
         !matches!(answer.try_recv(), Ok(Some(Some(_)))),
         "a closed session never receives the secret"

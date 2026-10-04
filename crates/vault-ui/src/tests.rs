@@ -7,7 +7,9 @@ use gpui_kit::{
 use nocterm_session::Secret;
 use nocterm_settings::Settings;
 use nocterm_ui::SettingsStore;
-use nocterm_vault::{DeviceAvailability, DeviceCapability, DeviceUnlockProvider, VaultService};
+use nocterm_vault::{
+    DeviceAvailability, DeviceCapability, DeviceUnlockProvider, VaultError, VaultService,
+};
 use nocterm_workspace::SettingsPage;
 use std::{path::PathBuf, sync::Arc};
 fn setup(
@@ -43,6 +45,19 @@ fn setup_with_device(
         .unwrap();
         (handle, view, service)
     })
+}
+
+fn drain(service: &VaultService, cx: &mut TestAppContext) {
+    loop {
+        // Finish queued vault work before polling futures on the test scheduler.
+        match block_on(service.list()) {
+            Ok(_) | Err(VaultError::Locked) => {}
+            Err(error) => panic!("vault worker barrier failed: {error}"),
+        }
+        if !cx.executor().tick() {
+            break;
+        }
+    }
 }
 
 struct MissingBroker;
@@ -91,7 +106,7 @@ fn missing_broker_disables_native_buttons_and_preserves_password_fallback(cx: &m
         Some(Arc::new(MissingBroker)),
     );
     block_on(service.probe_device_unlock()).unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
             view.read(cx).device.as_ref().unwrap().availability,
@@ -113,7 +128,7 @@ fn missing_broker_disables_native_buttons_and_preserves_password_fallback(cx: &m
     })
     .unwrap();
     block_on(service.list()).unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     cx.update_window(handle, |_, window, cx| {
         assert!(service.is_unlocked());
         window.render_frame(cx);
@@ -147,7 +162,7 @@ fn refresh_and_delete_buttons_update_credentials_saved_by_another_feature(cx: &m
     })
     .unwrap();
     block_on(service.list()).unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(view.read(cx).records.len(), 1);
         window.render_frame(cx);
@@ -156,7 +171,7 @@ fn refresh_and_delete_buttons_update_credentials_saved_by_another_feature(cx: &m
     .unwrap();
     let records = block_on(service.list()).unwrap();
     assert!(records.is_empty());
-    cx.run_until_parked();
+    drain(&service, cx);
     assert!(cx.update(|cx| view.read(cx).records.is_empty()));
 }
 
@@ -208,7 +223,7 @@ fn embedded_form_checks_confirmation_and_clears_fields_before_async_create(
         window.render_frame(cx);
     })
     .unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     let view = cx
         .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -234,7 +249,7 @@ fn embedded_form_checks_confirmation_and_clears_fields_before_async_create(
         })
         .unwrap();
     block_on(service.list()).unwrap(); // Worker barrier, never used in production UI.
-    cx.run_until_parked();
+    drain(&service, cx);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
             assert!(service.is_unlocked());
@@ -251,7 +266,7 @@ fn embedded_form_checks_confirmation_and_clears_fields_before_async_create(
     })
     .unwrap();
     let _ = block_on(service.list());
-    cx.run_until_parked();
+    drain(&service, cx);
     assert!(cx.update(|cx| {
         view.read(cx)
             .message
@@ -365,7 +380,7 @@ fn unlock_dialog_offers_and_accepts_an_enabled_fingerprint(cx: &mut TestAppConte
     });
     // The prompt probes the device, then starts device unlock by itself.
     block_on(service.probe_device_unlock()).unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     assert!(service.is_unlocked());
     cx.update(|cx| assert_eq!(prompt.read(cx).device.as_deref(), Some("Fingerprint")));
     // The fingerprint button beside the password starts it again.
@@ -377,7 +392,7 @@ fn unlock_dialog_offers_and_accepts_an_enabled_fingerprint(cx: &mut TestAppConte
     })
     .unwrap();
     block_on(service.probe_device_unlock()).unwrap();
-    cx.run_until_parked();
+    drain(&service, cx);
     assert!(service.is_unlocked());
     cx.update(|cx| assert!(!prompt.read(cx).scanning && prompt.read(cx).error.is_none()));
 }
