@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 pub use gpui_kit::assets::IconName;
-use gpui_kit::{AssetSource, Result, SharedString};
+use gpui_kit::{AssetSource, Result, SharedString, Styled as _};
 
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
@@ -31,6 +31,10 @@ gpui_kit::assets::icon_assets!(
         ArrowDown,
         // The AI agent panel.
         Bot,
+        Terminal,
+        SquareTerminal,
+        Palette,
+        Lock,
         Sparkles,
         Maximize2,
         Minimize2,
@@ -49,6 +53,13 @@ gpui_kit::assets::icon_assets!(
         LoaderCircle,
         Layers,
         Send,
+        // The keymap page.
+        Keyboard,
+        RotateCcw,
+        // Chat history actions.
+        Pin,
+        PinOff,
+        GitFork,
     ]
 );
 
@@ -57,8 +68,40 @@ gpui_kit::assets::icon_assets!(
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Assets;
 
+/// Brand marks of the built-in agents, drawn in one colour like every icon.
+const AGENT_ICONS: &[(&str, &[u8])] = &[
+    (
+        "icons/agents/claude.svg",
+        include_bytes!("../assets/agents/claude.svg"),
+    ),
+    (
+        "icons/agents/codex.svg",
+        include_bytes!("../assets/agents/codex.svg"),
+    ),
+    (
+        "icons/agents/hermes.svg",
+        include_bytes!("../assets/agents/hermes.svg"),
+    ),
+];
+
+/// The icon of agent `id`: its brand mark and colour when nocterm knows
+/// the agent, a generic bot otherwise.
+pub fn agent_icon(id: &str) -> gpui_kit::component::Icon {
+    use gpui_kit::component::Icon;
+    let mark = |path: &'static str| Icon::empty().path(path);
+    match id {
+        "claude" => mark("icons/agents/claude.svg").text_color(gpui_kit::rgb(0xd97757)),
+        "codex" => mark("icons/agents/codex.svg"),
+        "hermes" => mark("icons/agents/hermes.svg"),
+        _ => Icon::new(IconName::Bot),
+    }
+}
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if let Some((_, data)) = AGENT_ICONS.iter().find(|(name, _)| *name == path) {
+            return Ok(Some(Cow::Borrowed(data)));
+        }
         match ExtraIcons.load(path)? {
             Some(data) => Ok(Some(data)),
             None => gpui_kit::assets::Assets.load(path),
@@ -66,7 +109,13 @@ impl AssetSource for Assets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths = ExtraIcons.list(path)?;
+        let mut paths: Vec<SharedString> = AGENT_ICONS
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| name.starts_with(path))
+            .map(Into::into)
+            .collect();
+        paths.extend(ExtraIcons.list(path)?);
         paths.extend(gpui_kit::assets::Assets.list(path)?);
         Ok(paths)
     }

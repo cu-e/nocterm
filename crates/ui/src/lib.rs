@@ -9,7 +9,9 @@
 mod ai;
 mod design;
 mod drag_preview;
+pub mod form;
 mod icons;
+mod layout;
 pub mod notice;
 mod session_options;
 mod settings;
@@ -20,8 +22,9 @@ mod theme;
 pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::DragPreview;
-pub use icons::{Assets, IconName};
-pub use settings::{ActiveSettings, SettingsStore, save_settings, update_settings};
+pub use icons::{Assets, IconName, agent_icon};
+pub use layout::LayoutMemory;
+pub use settings::{ActiveSettings, SettingsStore, edit_settings, save_settings, update_settings};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
 

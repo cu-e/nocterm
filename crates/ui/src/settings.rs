@@ -50,9 +50,19 @@ impl ActiveSettings for App {
         &self.global::<SettingsStore>().settings
     }
 }
+type Patch = Box<dyn FnOnce(&mut Settings)>;
+
+/// What a queued job writes: a complete draft checked against the revision it
+/// was based on, or an edit applied to whatever is current when it runs.
+enum Change {
+    Draft {
+        expected: u64,
+        settings: Box<Settings>,
+    },
+    Edit(Patch),
+}
 struct Pending {
-    expected: u64,
-    settings: Settings,
+    change: Change,
     done: oneshot::Sender<Result<u64, String>>,
 }
 struct Writer {
@@ -105,7 +115,27 @@ pub(crate) fn init(cx: &mut App) {
 pub fn save_settings(cx: &mut App, expected: u64, settings: Settings) -> Task<Result<u64, String>> {
     let settings = settings.sanitized();
     let writer = cx.global::<SettingsWriter>().0.clone();
-    writer.update(cx, |writer, cx| writer.enqueue(expected, settings, cx))
+    writer.update(cx, |writer, cx| {
+        writer.push(
+            Change::Draft {
+                expected,
+                settings: Box::new(settings),
+            },
+            cx,
+        )
+    })
+}
+
+/// Applies `edit` to the settings current when the write runs, so edits made
+/// in quick succession (autosave) never conflict with one another.
+pub fn edit_settings(
+    cx: &mut App,
+    edit: impl FnOnce(&mut Settings) + 'static,
+) -> Task<Result<u64, String>> {
+    let writer = cx.global::<SettingsWriter>().0.clone();
+    writer.update(cx, |writer, cx| {
+        writer.push(Change::Edit(Box::new(edit)), cx)
+    })
 }
 
 /// Edits the latest published settings using its current revision.
@@ -126,22 +156,28 @@ fn publish(settings: Settings, cx: &mut App) -> u64 {
     })
 }
 impl Writer {
-    fn enqueue(
-        &mut self,
-        expected: u64,
-        settings: Settings,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<u64, String>> {
+    fn push(&mut self, change: Change, cx: &mut Context<Self>) -> Task<Result<u64, String>> {
         if self.closing {
             return Task::ready(Err(
                 "Settings are closing. New changes cannot be saved.".into()
             ));
         }
         let store = cx.global::<SettingsStore>();
-        if expected != store.revision {
+        if let Change::Draft { expected, .. } = &change
+            && *expected != store.revision
+        {
             return Task::ready(Err(CONFLICT.into()));
         }
         if store.file.is_none() {
+            let settings = match change {
+                Change::Draft { settings, .. } => *settings,
+                Change::Edit(edit) => {
+                    let mut settings = store.settings.clone();
+                    edit(&mut settings);
+                    settings.sanitized()
+                }
+            };
+            let store = cx.global::<SettingsStore>();
             return Task::ready(Ok(if settings == store.settings {
                 store.revision
             } else {
@@ -154,11 +190,7 @@ impl Writer {
             ));
         }
         let (done, receive) = oneshot::channel();
-        self.pending.push_back(Pending {
-            expected,
-            settings,
-            done,
-        });
+        self.pending.push_back(Pending { change, done });
         if self.task.is_none() {
             self.task = Some(cx.spawn(async move |writer, cx| {
                 loop {
@@ -168,29 +200,38 @@ impl Writer {
                             return None;
                         };
                         let store = cx.global::<SettingsStore>();
-                        let candidate = if pending.expected != store.revision {
-                            Err(CONFLICT.to_owned())
-                        } else {
-                            Ok((
-                                store.file.clone(),
-                                pending.settings == store.settings,
-                                store.revision,
-                            ))
+                        let (settings, candidate) = match pending.change {
+                            Change::Draft { expected, settings } if expected != store.revision => {
+                                (*settings, Err(CONFLICT.to_owned()))
+                            }
+                            Change::Draft { settings, .. } => (*settings, Ok(())),
+                            Change::Edit(edit) => {
+                                let mut settings = store.settings.clone();
+                                edit(&mut settings);
+                                (settings.sanitized(), Ok(()))
+                            }
                         };
+                        let candidate = candidate.map(|()| {
+                            (
+                                store.file.clone(),
+                                settings == store.settings,
+                                store.revision,
+                            )
+                        });
                         #[cfg(test)]
                         let test_writer = writer.test_writer.clone();
                         #[cfg(not(test))]
                         let test_writer = ();
-                        Some((pending, candidate, test_writer))
+                        Some((pending.done, settings, candidate, test_writer))
                     });
-                    let Ok(Some((pending, candidate, _test_writer))) = next else {
+                    let Ok(Some((done, settings, candidate, _test_writer))) = next else {
                         break;
                     };
                     let result = match candidate {
                         Err(error) => Err(error),
                         Ok((_, true, revision)) => Ok(revision),
                         Ok((file, false, _)) => {
-                            let value = pending.settings.clone();
+                            let value = settings.clone();
                             let result = cx
                                 .background_executor()
                                 .spawn(async move {
@@ -205,12 +246,12 @@ impl Writer {
                                 })
                                 .await;
                             match result {
-                                Ok(()) => Ok(cx.update(|cx| publish(pending.settings, cx))),
+                                Ok(()) => Ok(cx.update(|cx| publish(settings, cx))),
                                 Err(error) => Err(error),
                             }
                         }
                     };
-                    let _ = pending.done.send(result);
+                    let _ = done.send(result);
                 }
             }));
         }
@@ -361,6 +402,21 @@ mod tests {
             assert_eq!(cx.settings().terminal.font_size, None);
             assert!(cx.settings().terminal.copy_on_select);
         });
+    }
+    #[gpui_kit::test]
+    async fn queued_edits_apply_to_the_latest_settings_without_conflicts(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(directory.path().join("settings.toml"));
+        install(SettingsStore::new(Settings::default(), file.clone()), cx);
+        let first =
+            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.font_size = Some(18.)));
+        let second =
+            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.copy_on_select = true));
+        assert_eq!(first.await.unwrap(), 1);
+        assert_eq!(second.await.unwrap(), 2);
+        let saved = file.load().unwrap();
+        assert_eq!(saved.terminal.font_size, Some(18.));
+        assert!(saved.terminal.copy_on_select);
     }
     #[gpui_kit::test]
     fn accepted_save_survives_dropped_caller_and_reaches_disk(cx: &mut TestAppContext) {

@@ -1,13 +1,65 @@
-//! Window-side operational notices using gpui-kit's native notification list.
+//! Window-side operational notices, shown as one line in the window's footer
+//! ([`NoticeBar`]) that opens into the list of every notice.
+//!
+//! A notice with an action stays on the line until the user acts on it or
+//! dismisses it. Others leave the line after a few seconds and stay in the
+//! list until dismissed. Repeating a `key` replaces the earlier notice.
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc, time::Duration};
 
-use gpui_kit::{
-    Anchor, App, SharedString, Window,
-    component::{WindowExt as _, button::Button, notification::Notification},
-};
+use gpui_kit::{App, Global, SharedString, Window, WindowId};
 
-struct NoticeKey;
+mod bar;
+
+pub use bar::NoticeBar;
+
+/// How long a notice without an action stays on the footer line.
+const TRANSIENT: Duration = Duration::from_secs(8);
+/// Notices kept per window; the oldest go first.
+const LIMIT: usize = 50;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+type Action = Rc<dyn Fn(&mut Window, &mut App)>;
+
+#[derive(Clone)]
+struct Notice {
+    id: u64,
+    key: &'static str,
+    level: Level,
+    title: SharedString,
+    message: SharedString,
+    action: Option<(&'static str, Action)>,
+    /// Shown on the footer line.
+    live: bool,
+}
+
+#[derive(Default)]
+struct WindowNotices {
+    /// Oldest first.
+    notices: Vec<Notice>,
+    expanded: bool,
+}
+
+#[derive(Default)]
+struct Notices {
+    windows: HashMap<WindowId, WindowNotices>,
+    next: u64,
+}
+impl Global for Notices {}
+
+fn notices<'a>(window: &Window, cx: &'a mut App) -> &'a mut WindowNotices {
+    cx.default_global::<Notices>()
+        .windows
+        .entry(window.window_handle().window_id())
+        .or_default()
+}
 
 fn bounded(message: impl Into<SharedString>) -> SharedString {
     let message: SharedString = message.into();
@@ -20,13 +72,116 @@ fn bounded(message: impl Into<SharedString>) -> SharedString {
     }
 }
 
-fn post(window: &mut Window, cx: &mut App, notification: Notification, key: &'static str) {
-    window.push_notification(
-        notification
-            .id1::<NoticeKey>(key)
-            .placement(Anchor::RightCenter),
-        cx,
-    );
+fn post(
+    window: &mut Window,
+    cx: &mut App,
+    level: Level,
+    key: &'static str,
+    title: &'static str,
+    message: impl Into<SharedString>,
+    action: Option<(&'static str, Action)>,
+) {
+    let id = {
+        let store = cx.default_global::<Notices>();
+        store.next += 1;
+        store.next
+    };
+    let transient = action.is_none();
+    let list = notices(window, cx);
+    list.notices.retain(|notice| notice.key != key);
+    list.notices.push(Notice {
+        id,
+        key,
+        level,
+        title: title.into(),
+        message: bounded(message),
+        action,
+        live: true,
+    });
+    if list.notices.len() > LIMIT {
+        list.notices.remove(0);
+    }
+    window.refresh();
+    if transient {
+        window
+            .spawn(cx, async move |cx| {
+                cx.background_executor().timer(TRANSIENT).await;
+                let _ = cx.update(|window, cx| {
+                    if let Some(notice) = notices(window, cx)
+                        .notices
+                        .iter_mut()
+                        .find(|notice| notice.id == id)
+                    {
+                        notice.live = false;
+                        window.refresh();
+                    }
+                });
+            })
+            .detach();
+    }
+}
+
+fn dismiss(window: &mut Window, cx: &mut App, id: u64) {
+    let list = notices(window, cx);
+    list.notices.retain(|notice| notice.id != id);
+    if list.notices.is_empty() {
+        list.expanded = false;
+    }
+    window.refresh();
+}
+
+/// Runs the action of notice `id` and dismisses it.
+fn act(window: &mut Window, cx: &mut App, id: u64) {
+    let action = notices(window, cx)
+        .notices
+        .iter()
+        .find(|notice| notice.id == id)
+        .and_then(|notice| notice.action.clone());
+    dismiss(window, cx, id);
+    if let Some((_, action)) = action {
+        action(window, cx);
+    }
+}
+
+fn set_expanded(window: &mut Window, cx: &mut App, expanded: bool) {
+    let list = notices(window, cx);
+    list.expanded = expanded && !list.notices.is_empty();
+    window.refresh();
+}
+
+/// Removes one keyed operational notice without affecting unrelated notices.
+pub fn remove(window: &mut Window, cx: &mut App, key: &'static str) {
+    notices(window, cx)
+        .notices
+        .retain(|notice| notice.key != key);
+    window.refresh();
+}
+
+/// Removes every notice of the window.
+pub fn clear(window: &mut Window, cx: &mut App) {
+    let list = notices(window, cx);
+    list.notices.clear();
+    list.expanded = false;
+    window.refresh();
+}
+
+/// How many notices the window keeps, on the footer line or not.
+pub fn count(window: &Window, cx: &mut App) -> usize {
+    notices(window, cx).notices.len()
+}
+
+/// Runs the action of the notice with `key`, as its button does. Returns
+/// whether there was one.
+pub fn run_action(window: &mut Window, cx: &mut App, key: &'static str) -> bool {
+    let id = notices(window, cx)
+        .notices
+        .iter()
+        .find(|notice| notice.key == key && notice.action.is_some())
+        .map(|notice| notice.id);
+    if let Some(id) = id {
+        act(window, cx, id);
+    }
+    id.is_some()
 }
 
 pub fn error(
@@ -36,12 +191,7 @@ pub fn error(
     title: &'static str,
     message: impl Into<SharedString>,
 ) {
-    post(
-        window,
-        cx,
-        Notification::error(bounded(message)).title(title),
-        key,
-    );
+    post(window, cx, Level::Error, key, title, message, None);
 }
 
 pub fn warning(
@@ -51,12 +201,7 @@ pub fn warning(
     title: &'static str,
     message: impl Into<SharedString>,
 ) {
-    post(
-        window,
-        cx,
-        Notification::warning(bounded(message)).title(title),
-        key,
-    );
+    post(window, cx, Level::Warning, key, title, message, None);
 }
 
 pub fn success(
@@ -66,12 +211,7 @@ pub fn success(
     title: &'static str,
     message: impl Into<SharedString>,
 ) {
-    post(
-        window,
-        cx,
-        Notification::success(bounded(message)).title(title),
-        key,
-    );
+    post(window, cx, Level::Success, key, title, message, None);
 }
 
 pub fn info(
@@ -81,12 +221,7 @@ pub fn info(
     title: &'static str,
     message: impl Into<SharedString>,
 ) {
-    post(
-        window,
-        cx,
-        Notification::info(bounded(message)).title(title),
-        key,
-    );
+    post(window, cx, Level::Info, key, title, message, None);
 }
 
 /// An actionable error stays visible until the user chooses the recovery or
@@ -100,14 +235,15 @@ pub fn error_action(
     action_label: &'static str,
     action: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    post_action(
+    let action: Action = Rc::new(action);
+    post(
         window,
         cx,
-        Notification::error(bounded(message)),
+        Level::Error,
         key,
         title,
-        action_label,
-        action,
+        message,
+        Some((action_label, action)),
     );
 }
 
@@ -120,113 +256,17 @@ pub fn warning_action(
     action_label: &'static str,
     action: impl Fn(&mut Window, &mut App) + 'static,
 ) {
-    post_action(
+    let action: Action = Rc::new(action);
+    post(
         window,
         cx,
-        Notification::warning(bounded(message)),
+        Level::Warning,
         key,
         title,
-        action_label,
-        action,
+        message,
+        Some((action_label, action)),
     );
 }
 
-fn post_action(
-    window: &mut Window,
-    cx: &mut App,
-    notification: Notification,
-    key: &'static str,
-    title: &'static str,
-    action_label: &'static str,
-    action: impl Fn(&mut Window, &mut App) + 'static,
-) {
-    let action = Rc::new(action);
-    let notification = notification.title(title).action(move |_, _, cx| {
-        let action = action.clone();
-        Button::new("notice-action")
-            .label(action_label)
-            .on_click(cx.listener(move |notice, _, window, cx| {
-                action(window, cx);
-                notice.dismiss(window, cx);
-            }))
-    });
-    post(window, cx, notification, key);
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui_kit::{
-        Context, TestAppContext, WindowOptions, div, prelude::*, test::TestWindowExt as _,
-    };
-    use std::{cell::Cell, rc::Rc};
-
-    struct Probe;
-    impl gpui_kit::Render for Probe {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
-            div().size_full()
-        }
-    }
-
-    #[gpui_kit::test]
-    fn stable_key_replaces_notice_and_recovery_action_runs(cx: &mut TestAppContext) {
-        let handle = cx.update(|cx| {
-            gpui_kit::init(cx);
-            crate::init(
-                crate::DesignTokens::builtin(),
-                crate::SettingsStore::in_memory(nocterm_settings::Settings::default()),
-                cx,
-            );
-            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Probe))
-                .unwrap()
-                .0
-        });
-        let recovered = Rc::new(Cell::new(false));
-        cx.update_window(handle, |_, window, cx| {
-            window.activate_window();
-            success(window, cx, "same-operation", "Done", "First result");
-            warning(window, cx, "same-operation", "Changed", "Second result");
-            assert_eq!(window.notifications(cx).len(), 1);
-            let recovered = recovered.clone();
-            error_action(
-                window,
-                cx,
-                "same-operation",
-                "Needs attention",
-                "Third result",
-                "Retry",
-                move |_, _| recovered.set(true),
-            );
-            assert_eq!(window.notifications(cx).len(), 1);
-            window.render_frame(cx);
-        })
-        .unwrap();
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(500));
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let action = window.find("notice-action");
-            assert!(
-                action.visible() && action.bounds().size.width > gpui_kit::px(0.),
-                "{action:?}"
-            );
-            assert!(
-                action.bounds().origin.y >= gpui_kit::px(0.),
-                "action is off-screen: {action:?}"
-            );
-            window.click("notice-action", cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        assert!(recovered.get());
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(500));
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            assert!(window.notifications(cx).is_empty());
-        })
-        .unwrap();
-    }
-}
+mod tests;
