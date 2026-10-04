@@ -326,7 +326,6 @@ impl nocterm_workspace::LocalTerminal for CwdShell {
 
 #[gpui_kit::test]
 fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mut TestAppContext) {
-    use gpui_kit::component::WindowExt as _;
     use gpui_kit::test::TestWindowExt as _;
     let directory = tempfile::tempdir().unwrap();
     let first = directory.path().join("first");
@@ -378,7 +377,7 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
-            window.notifications(cx).len(),
+            nocterm_ui::notice::count(window, cx),
             1,
             "busy shell is an operational notice"
         );
@@ -1127,7 +1126,7 @@ fn custom_remote_adapter_cannot_deliver_an_unbounded_explorer_listing() {
 fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navigate(
     cx: &mut TestAppContext,
 ) {
-    use gpui_kit::{component::WindowExt as _, test::TestWindowExt as _};
+    use {gpui_kit::test::TestWindowExt as _, nocterm_ui::notice};
     let source = tempfile::tempdir().unwrap();
     let current = tempfile::tempdir().unwrap();
     let (handle, _, _, panel) = panel_fixture(cx, Arc::new(PendingFs::default()));
@@ -1146,7 +1145,7 @@ fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navig
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            window.notifications(cx).len(),
+            nocterm_ui::notice::count(window, cx),
             1,
             "hidden Panel still publishes warning"
         );
@@ -1161,7 +1160,7 @@ fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navig
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
-            window.notifications(cx).len(),
+            nocterm_ui::notice::count(window, cx),
             1,
             "same scan emits one warning"
         );
@@ -1173,7 +1172,7 @@ fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navig
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("notice-action", cx);
+        assert!(notice::run_action(window, cx, "files-partial-statistics"));
     })
     .unwrap();
     cx.run_until_parked();
@@ -1191,14 +1190,14 @@ fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navig
 fn local_listing_failure_posts_deduplicated_retry_for_the_requested_directory(
     cx: &mut TestAppContext,
 ) {
-    use gpui_kit::{component::WindowExt as _, test::TestWindowExt as _};
+    use {gpui_kit::test::TestWindowExt as _, nocterm_ui::notice};
     let directory = tempfile::tempdir().unwrap();
     let requested = directory.path().join("missing");
     let (handle, _, _, panel) = panel_fixture(cx, Arc::new(PendingFs::default()));
     panel.update(cx, |panel, cx| panel.load_local(requested.clone(), cx));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(window.notifications(cx).len(), 1);
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
         window.render_frame(cx);
     })
     .unwrap();
@@ -1206,7 +1205,7 @@ fn local_listing_failure_posts_deduplicated_retry_for_the_requested_directory(
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
-            window.notifications(cx).len(),
+            nocterm_ui::notice::count(window, cx),
             1,
             "same operation replaces its notice"
         );
@@ -1217,7 +1216,7 @@ fn local_listing_failure_posts_deduplicated_retry_for_the_requested_directory(
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("notice-action", cx);
+        assert!(notice::run_action(window, cx, "files-local-list"));
     })
     .unwrap();
     cx.run_until_parked();

@@ -3,6 +3,7 @@ mod dialogs;
 mod local;
 mod local_operations;
 mod operations;
+mod registration;
 mod remote;
 #[cfg(test)]
 mod tests;
@@ -42,32 +43,7 @@ use std::{
     time::Duration,
 };
 
-gpui_kit::actions!(
-    files,
-    [
-        /// Open transfers and their progress, errors and cancellation controls.
-        ShowTransfers,
-    ]
-);
-
-pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-    transfers::init(cx);
-    let active = workspace.active_session(cx);
-    let handle = cx.entity();
-    let panel = cx.new(|cx| FilesPanel::new(handle, active, window, cx));
-    workspace.add_panel(panel, cx);
-    let status = cx.new(|cx| transfers::TransferStatus::new(window, cx));
-    workspace.add_status_view(status, cx);
-    workspace.register_action(|workspace, _: &ShowTransfers, window, cx| {
-        if let Some(view) = workspace.find_item::<transfers::TransfersView>() {
-            workspace.activate_item_by_id(view.entity_id(), window, cx);
-        } else {
-            let handle = cx.entity().downgrade();
-            let view = cx.new(|cx| transfers::TransfersView::new(handle, cx));
-            workspace.add_item(view, window, cx);
-        }
-    });
-}
+pub use registration::{ShowTransfers, ToggleExplorer, register};
 
 #[derive(Clone)]
 struct LocalPaths(Vec<PathBuf>);
