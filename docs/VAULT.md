@@ -12,14 +12,18 @@ without changing this portable format. Platform capabilities and requirements ar
 shown in Settings → Vault; password fallback is always retained.
 
 Open Settings → Vault, or Credential Vault in the `+` menu (which selects the same
-Settings page). Create requires confirmation; unlock,
+Settings page). To only unlock it, run "Workspace: Unlock Vault" from the command
+palette (Ctrl+Shift+P) or choose Unlock vault… in a sign-in prompt: a small dialog
+asks for the master password, and a vault that does not exist yet opens the
+Settings page to create it. "Workspace: Lock Vault" locks it. Create requires confirmation; unlock,
 explicit lock, automatic lock, credential deletion and changing the master password
-are supported. Default auto-lock is configured in Settings. Activity is vault
+are supported, on the Vault page's Overview, Credentials and Security tabs.
+Auto-lock and the startup prompt are on its Options tab. Activity is vault
 operations, not arbitrary keyboard activity. Profiles/recents store opaque IDs;
 credential labels, bindings and secrets live inside the encrypted payload.
-Leaving the Vault page or closing Settings clears its password fields and undo
-history without locking the service. Lock is explicit or automatic; other draft
-settings survive page changes. Refresh reloads credential labels saved by other
+Switching tabs, leaving the Vault page or closing Settings clears its password
+fields and undo history without locking the service. Lock is explicit or
+automatic. Refresh reloads credential labels saved by other
 features since the page was opened.
 
 Remember is an explicit authentication choice. Only successful SSH authentication
