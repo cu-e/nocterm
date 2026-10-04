@@ -85,7 +85,15 @@ fn fixture_with_vault(
             cx,
         );
         if vault_ready {
-            nocterm_vault_ui::init(vault_path, cx).unwrap();
+            let service = nocterm_vault_ui::init(vault_path, cx).unwrap();
+            // Creates the vault with a master password and leaves it locked.
+            cx.set_global(FixtureVault(Box::new(move || {
+                futures::executor::block_on(
+                    service.create(nocterm_session::Secret::new("long master password")),
+                )
+                .unwrap();
+                service.lock();
+            })));
         }
         nocterm_terminal::init(transport.clone(), cx);
         nocterm_connections::init(None, cx);
@@ -444,6 +452,25 @@ fn tab_keys_reach_shell_without_moving_focus(cx: &mut TestAppContext) {
         }
     }
     assert_eq!(inputs, [b"\t".to_vec(), b"\x1b[Z".to_vec()]);
+}
+
+struct FixtureVault(Box<dyn Fn()>);
+impl gpui_kit::Global for FixtureVault {}
+
+#[gpui_kit::test]
+fn unlock_action_opens_the_unlock_dialog_for_a_locked_vault(cx: &mut TestAppContext) {
+    let (handle, _, _, _) = fixture_with_vault(cx, true);
+    cx.update(|cx| (cx.global::<FixtureVault>().0)());
+    cx.update_window(handle, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::UnlockVault), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("vault-unlock-prompt").visible());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

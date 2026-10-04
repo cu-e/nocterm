@@ -239,16 +239,23 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
+    let unlocks = Rc::new(Cell::new(0));
+    let counter = unlocks.clone();
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(thread.read(cx).sign_ins.len(), 1);
         assert!(thread.read(cx).sign_ins[0].vault);
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
-        // Opens the unlock dialog; nothing handles it in this test.
+
+        cx.on_action(move |_: &nocterm_workspace::UnlockVault, _| {
+            counter.set(counter.get() + 1)
+        });
         window.click(("vault-unlock", 0usize), cx);
     })
     .unwrap();
+    cx.run_until_parked();
+    assert_eq!(unlocks.get(), 1, "the button asks to open the unlock dialog");
     // Unlocking answers the session's prompt with the saved secret.
     directory.sign_in.vault_locked.set(false);
     cx.executor().advance_clock(Duration::from_secs(1));
