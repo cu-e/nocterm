@@ -67,13 +67,11 @@ impl Linux {
 }
 async fn trusted(connection: &Connection, name: &str) -> Result<(), E> {
     let dbus = DBusProxy::new(connection).await.map_err(platform)?;
-    if name == FPRINT {
-        // fprintd exits while idle. D-Bus activation lists capabilities without
-        // requesting authentication, then its authenticated owner is checked.
-        let _ = dbus
-            .start_service_by_name(WellKnownName::try_from(name).map_err(platform)?, 0)
-            .await;
-    }
+    // fprintd exits while idle and packaged brokers start on demand. D-Bus
+    // activation needs no authentication; the owner is checked below.
+    let _ = dbus
+        .start_service_by_name(WellKnownName::try_from(name).map_err(platform)?, 0)
+        .await;
     let owner = dbus
         .get_name_owner(BusName::try_from(name).map_err(platform)?)
         .await
@@ -86,6 +84,18 @@ async fn trusted(connection: &Connection, name: &str) -> Result<(), E> {
         return Err(E::Unavailable);
     }
     Ok(())
+}
+fn broker_missing() -> String {
+    let install = match std::env::var("APPIMAGE") {
+        Ok(appimage) => format!("Run \"{appimage}\" --install-vault-broker once"),
+        Err(_) => "Install Nocterm from the .deb or .rpm package, or run \
+                   scripts/install-vault-broker.sh as administrator"
+            .into(),
+    };
+    format!(
+        "Fingerprint reader detected, but the Nocterm vault broker is not installed. \
+         {install}. The master password always works."
+    )
 }
 fn token_string(token: &[u8]) -> Result<&str, E> {
     let token = std::str::from_utf8(token).map_err(|_| E::Invalidated)?;
@@ -132,7 +142,7 @@ impl DeviceUnlockProvider for Linux {
                     return Ok((A::NotEnrolled, "Register a fingerprint in your operating system settings.".into()));
                 }
                 if trusted(&client.connection, BROKER).await.is_err() {
-                    return Ok((A::BrokerMissing, "Fingerprint reader detected. Install the Nocterm vault broker using scripts/install-vault-broker.sh; see docs/DEVICE_UNLOCK.md. The master password always works.".into()));
+                    return Ok((A::BrokerMissing, broker_missing()));
                 }
                 Ok((A::Available, "Unlock once with the master password after starting Nocterm. Fingerprint unlock then works until you exit.".into()))
             })
