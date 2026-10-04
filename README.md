@@ -81,9 +81,19 @@ Escape cancels); renaming to an existing folder name merges the two. Hovering a
 folder header shows expand/collapse and delete buttons. Deleting a folder asks
 whether to delete its connections or ungroup them; saved vault credentials and
 open sessions are kept.
+Saved servers show their operating system's icon in its usual colour, detected
+over SFTP on connect from `/etc/os-release` and a few platform markers
+(Proxmox, TrueNAS, macOS, the BSDs, Windows and others). A server whose system is
+unknown keeps the plain server icon. A flag after the name shows the server's
+country. Its public IP address is located once through `api.country.is`; private
+and reserved addresses and host names are never sent. Flags come from
+`flagcdn.com` and are cached in memory and on disk. Settings › Appearance › Detect server countries turns the
+lookup off. The editor lets you choose the icon and its colour, or set a
+two-letter country code; empty fields mean automatic.
 The connection editor groups fields into Connection, Authentication, Session and
-Launch sections. Switching sections keeps the draft; descriptions accept multiple
-lines. Operation notices appear at the side of the window with recovery actions.
+Launch pages, laid out like Settings: titled sections of labelled rows on the
+terminal's background. Switching pages keeps the draft; descriptions accept
+multiple lines. Operation notices appear at the side of the window with recovery actions.
 
 Explorer shows the active remote directory above a persistent local browser.
 Its compact rows use the `typography.explorer_size` design token. Right-click a
@@ -104,8 +114,8 @@ Retry retains its server and destination even after switching tabs or directorie
 Replace requires the server's atomic POSIX rename extension. Network loss can
 leave an owned `.nocterm-*.part` file when the server cannot be reached for cleanup.
 
-Toggle the local terminal with its bottom button or `Ctrl+backtick`
-(`Cmd+backtick` on macOS). Hiding keeps it running; Close local terminal ends it.
+Toggle the local terminal with its bottom button, `Ctrl+J` or `Ctrl+backtick`
+(`Cmd+J`, `Cmd+backtick` on macOS). Hiding keeps it running; Close local terminal ends it.
 The local Explorer footer shows immediate file/folder counts and recursive logical
 bytes, excluding symlinks and special files. Its two arrow buttons synchronize
 Explorer → local shell and local shell → Explorer. Changing the shell directory
@@ -114,8 +124,9 @@ or an active command report the limitation. Remote paths are never sent to this
 local shell.
 
 Settings are opened through Session → Preferences → Settings or `Ctrl+,` (`Cmd+,` on macOS). Switch
-between Appearance, Terminal, Local shell, SSH and Vault tabs. Edit the form and
-Apply; switching sections preserves the draft. Appearance, terminal font, cursor,
+between Appearance, Terminal, Local shell, SSH, AI agents, Keymap and Vault pages. Changes
+save themselves: switches at once, text when you pause typing, press Enter or leave
+the field; invalid text stays in its field with an explanation and is not saved. Appearance, terminal font, cursor,
 scrollback and optional line
 gutters update in open terminals. Line numbers identify logical lines through
 wrapping/reflow; timestamps use UTC and the local host's first observation of
@@ -147,9 +158,34 @@ Files use the operating system's configuration/state directories (see
 `theme.toml` overrides the built-in [design tokens](crates/design/tokens/default.toml).
 Unset design values retain the standard GPUI Kit component appearance.
 `connections.toml` stores profiles, `recent.toml` stores recent targets and
-`known_hosts` stores accepted keys. `vault.bin` stores encrypted credentials and
+`known_hosts` stores accepted keys. In the state directory, `servers.toml` keeps
+detected systems and countries, `flags/` the downloaded flags, `agents.toml`
+model favorites and the last agent used, `agent-chats/` saved AI chats and
+`layout.json` the widths of resizable columns and which side the sidebar is on.
+`keymap.toml` in the configuration directory holds your key binding changes. `vault.bin` stores encrypted credentials and
 uses a sibling `.lock` file for concurrent-writer protection; profiles contain
 only opaque credential IDs. Existing OpenSSH known hosts are also read.
+
+Every command is also available from the command palette: Ctrl+Shift+P
+(Cmd+Shift+P on macOS) searches the commands available where focus is and runs
+the chosen one.
+
+The window has the sidebar (Servers, Explorer) on one side of the tabs and the
+AI panel on the other; both resize by dragging their edge and keep their width.
+`Ctrl+Shift+C` shows Servers and `Ctrl+Shift+E` the Explorer; pressing it again,
+or clicking the shown panel's button in the footer, hides the sidebar.
+`Ctrl+Alt+B` shows or hides the AI panel and `Ctrl+E` swaps the two sides (`Cmd`
+instead of `Ctrl` on macOS). In a focused terminal `Ctrl+Shift+C` copies, and the
+terminal no longer receives `Ctrl+E` and `Ctrl+J`; rebind them in Settings →
+Keymap if the shell needs them.
+
+Settings → Keymap lists every command with its shortcuts and description. Search
+matches words in any of them and shortcuts in any modifier order; Find by keys
+shows what a pressed shortcut runs. Click a shortcut and press new keys to
+rebind it, `+` adds another, `×` removes one and the reset button restores a
+command's defaults. Changes apply at once and are kept in `keymap.toml` in the
+configuration directory, which lists only what differs from the defaults
+(`"none"` unbinds a default).
 
 Reference documentation is generated from the Rust schemas, action declarations,
 keymap and Cargo manifests:
@@ -203,15 +239,22 @@ See [the patch notes](vendor/alacritty_terminal/NOCTERM.md) before updating it.
 The right AI panel supports ACP agents Claude, Codex, Hermes and custom
 executables, with terminal/connection/group context, capability-driven model
 and effort controls, model favorites and image input. Open it from the footer
-or Window → AI Agents (Ctrl+Alt+I / Cmd+Alt+I). AI Settings is available from
+or Window → AI Agents (Ctrl+Alt+B / Cmd+Alt+B). AI Settings is available from
 Session → Preferences and the normal Settings shortcut. Disabling AI closes
 chats and stops its processes; nothing launches before a chat is created.
 
 The built-in Claude/Codex commands use pinned npm ACP adapters and need Node.js
 and npm (`npx`); Claude requires Node.js 22 or later. Hermes uses `hermes acp`.
 Desktop PATH can differ from your shell; absolute executable overrides are
-available in AI Settings. Chat history is in memory, and model favorites persist
-in `agents.toml`.
+available in AI Settings. Model favorites persist in `agents.toml`.
+
+Chats are saved in `agent-chats/` and reopen their agent session after a
+restart when the agent supports resuming. The history can be searched, and each
+chat can be renamed, forked or pinned. Stop cancels only the current reply; the
+chat goes on in the same session. The ring by the send button opens a Context
+Usage card with the context window, session tokens and, for Claude and Codex,
+the 5-hour and weekly plan limits. The attach menu lists saved servers under
+their folders.
 
 Local agents are not sandboxed and may read your user files. Nocterm excludes
 SSH/vault credential fields from context; terminal-output filtering cannot

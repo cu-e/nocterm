@@ -67,22 +67,33 @@ matching connected contexts also support transfer retry while a utility tab is a
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. `nocterm-connections` owns persisted profiles and recents,
-the grouped sidebar, profile editor and quick-connect menu. Editor sections retain
+the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
+global keeps what was detected about servers (system over SFTP, country through
+GeoIP for public addresses) in the state directory's `servers.toml`, apart from
+`connections.toml`. Flags are cached in memory and under `flags/`. Icons and flags
+reach other features only as images in `ConnectionSummary`. Editor sections retain
 one draft, with a scrollable active form, multiline description and fixed footer;
 typed validation selects the section containing the invalid field. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. Group rename, ungroup and
 delete are single queued mutations; removed profiles unlink their recents and
 vault credentials are left untouched. `nocterm-settings-ui`
-contributes a single settings Item with native page tabs; it validates a draft,
-saves it, and publishes changes through SettingsStore only after a successful
-write. Persistent writes run through bounded ordered background queues;
-settings drafts carry a revision and profile drafts carry the original snapshot,
-so another window cannot silently lose its saved changes. Recent snapshots
+contributes a single settings Item with a page list. Every control saves itself:
+switches and choices at once, text when typing pauses, on Enter and on blur.
+Invalid text stays in its field with the error and is never written. Each save is
+an edit queued with `edit_settings` and applied to the settings current when the
+write runs, so quick successive edits and other windows never conflict; changes
+are published through SettingsStore only after a successful write, and fields not
+being edited follow changes made elsewhere. Persistent writes run through bounded
+ordered background queues; whole-draft saves (`save_settings`) still carry a
+revision and profile drafts carry the original snapshot, so another window cannot
+silently lose its saved changes. Pages share `nocterm_ui::form` sections and rows
+on the terminal's background. Recent snapshots
 coalesce separately from connection opening. Native quit draining is bounded
 best effort within GPUI's shutdown deadline. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition
-root inject the lazy Vault page without feature-to-feature dependencies. Page
-deactivation/closure clears transient secrets. `nocterm-files`
+root inject the lazy Vault page without feature-to-feature dependencies; the
+Vault page has Overview, Credentials, Security and Options tabs, and switching
+tabs, deactivation and closure clear typed master passwords. `nocterm-files`
 contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
 half uses home/listing requests; the local half owns navigation, selection and a
 cancellable background logical-size scan. Request tasks are dropped when
@@ -173,6 +184,46 @@ overrides. Safe reconnect retires the previous session, event pump, prompts and
 remote filesystem before starting a new epoch. The application window factory
 reuses global services rather than initializing another vault or transfer queue.
 
+The command palette (`workspace::command_palette`, Ctrl+Shift+P, Cmd+Shift+P on
+macOS) lists no commands of its own. When it opens it asks GPUI for the actions
+available where focus is — the focused view's, its ancestors' and application
+handlers — keeps nocterm's namespaces (`workspace`, `terminal`, `connections`,
+`files`, `agent`, `vault`), names them from the action (`workspace::OpenSettings`
+→ "Workspace: Open Settings"), searches their `actions!` documentation as well
+and shows the shortcut. The chosen action is dispatched from the view that had
+focus, exactly as its shortcut would be, so a feature makes a command available
+in the palette by declaring and handling an action, nothing more.
+
+Widths the user drags resizable columns to, and layout choices, are kept by
+`nocterm_ui::LayoutMemory`, a global keyed by name and saved to `layout.json` in
+the state directory. The workspace body lays out only its visible columns —
+sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
+the left — with one resize state per arrangement, and remembers widths per
+column rather than per position: a hidden column kept in the resizable group
+would hold its stale width and stop its neighbours from growing. The side panel
+learns its side through `RightPanel::set_docked_left`; the agent panel puts its
+history column on the outer side and remembers that column's width. A side
+panel that opens a column of its own asks the workspace to widen it with
+`RightPanelEvent::Widen`. Sidebar panels are shown and hidden by their feature's
+action (`files::ToggleExplorer`, `connections::ToggleServers`) through
+`Workspace::toggle_panel_of`, so the workspace binds no feature's panel.
+
+Key bindings are data. `nocterm-keymap` (UI layer) owns the keymap format, the
+merge of the application's defaults (`assets/keymap.toml`) with the user's
+`keymap.toml`, which lists only differences (`"none"` unbinds), and installs the
+merge in GPUI. Its bindings carry a metadata mark, so a change replaces exactly
+them without a restart and leaves the component library's own bindings alone.
+It also names actions for people (`humanize`) and decides which are user
+commands (`offered`), for the command palette and the keymap page alike.
+`nocterm-keymap-ui` is the Keymap settings page, a guest page like the vault's:
+a searchable table that records new shortcuts through a keystroke interceptor
+(so even bound keys are captured) and edits only through `nocterm-keymap`.
+
+The vault feature handles `workspace::UnlockVault` and `workspace::LockVault`
+application-wide, so the palette and a terminal's sign-in prompt can unlock the
+vault in a small dialog without opening Settings and without depending on the
+vault feature.
+
 Add a new Item for another kind of tab, a Panel for another sidebar section or a
 registered action for a command. Observe the terminal model or session contract
 for integrations. Add another Transport implementation to support another kind
@@ -187,12 +238,29 @@ chat UI. App injects the adapter. Workspace exposes allowlisted `TerminalAccess`
 and `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.
+`ConnectionDirectory` methods take the workspace as a weak handle and are called
+outside workspace updates, because opening a connection updates the workspace.
+
+Workspace also keeps sessions without a tab. `open_background_session` asks an
+installed background opener (Terminal's) for an Item it holds outside the dock;
+such sessions appear in `terminals()` marked `background`, can be moved into a
+tab with `show_background_session`, and end with `close_background_session`. The
+agent opens them for attached saved servers that have no session; a chat closes
+those it opened when it closes or no longer attaches the server.
 
 AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
 permissions, tool registrations, processes and panel visibility across windows.
-History is in memory; favorites have a separate state file. See
-[AI agents](AI_AGENTS.md) for protocol, limits and privacy boundaries. Local
-agent processes are not sandboxed.
+Chats are saved one file each in a private state directory and reopened through
+ACP session resume/load; fork uses `session/fork`. All three are sent only when
+advertised. Favorites have a separate state file. Usage limits come from Claude's
+`usage_update` metadata and Codex's own session logs, read through an injected
+directory. See
+[AI agents](AI_AGENTS.md) for protocol, limits and privacy boundaries. On Linux,
+agent processes can run isolated under bubblewrap: `nocterm_ai::sandbox` derives
+the mount policy (read-only root, writable workspace and agent state, hidden
+credential stores and nocterm's own directories, separate PID namespace), the
+ACP adapter applies it and fails closed when bubblewrap is missing. A changed
+isolation setting restarts running agents.
 
 ## Generated documentation
 

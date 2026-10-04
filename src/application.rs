@@ -22,6 +22,7 @@ impl Global for ApplicationState {}
 
 pub(crate) fn register(paths: Paths, vault_ready: bool, cx: &mut App) {
     cx.set_global(ApplicationState { paths, vault_ready });
+    nocterm_workspace::command_palette::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &NewWindow, cx| {
         let vault_ready = cx.global::<ApplicationState>().vault_ready;

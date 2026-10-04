@@ -12,7 +12,10 @@ use nocterm_session::{
     SessionDriver, Transport,
 };
 use nocterm_terminal::{TerminalView, open_session};
+use nocterm_ui::ActiveSettings as _;
 use nocterm_workspace::{SessionSpec, Workspace};
+
+mod shortcuts;
 
 #[derive(Default)]
 struct MockTransport {
@@ -88,14 +91,19 @@ fn fixture_with_vault(
         nocterm_connections::init(None, cx);
         nocterm_agent::init(
             nocterm_agent::AgentServices {
+                terminal_auth: None,
+                private_dirs: Vec::new(),
+                shared_dirs: Vec::new(),
                 connector: Arc::new(nocterm_acp::AcpConnector),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
                 state_file: paths.state_dir().join("agents.toml"),
+                chats_dir: paths.state_dir().join("agent-chats"),
+                codex_home: None,
                 workdir: paths.state_dir().join("agent-workspace"),
             },
             cx,
         );
-        crate::keymap::load(cx);
+        crate::keymap::load(None, cx);
         super::application::register(paths, vault_ready, cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -107,6 +115,10 @@ fn fixture_with_vault(
                     nocterm_files::register(&mut workspace, window, cx);
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
+                    if vault_ready && cx.settings().vault.prompt_on_startup {
+                        let pages = vec![nocterm_vault_ui::settings_page()];
+                        nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
+                    }
                     workspace
                 })
             })
@@ -476,6 +488,77 @@ fn vault_action_opens_the_vault_page_in_the_single_settings_item(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
+    let transport = Arc::new(MockTransport::default());
+    let (handle, workspace, _) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        let directory = tempfile::tempdir().unwrap();
+        let mut settings = nocterm_settings::Settings::default();
+        settings.vault.prompt_on_startup = true;
+        let vault_path = directory.path().join("vault.bin");
+        let paths = nocterm_core::Paths::rooted_at(directory.path());
+        cx.set_global(FixtureDirectory {
+            _directory: directory,
+        });
+        nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            nocterm_ui::SettingsStore::in_memory(settings),
+            cx,
+        );
+        nocterm_vault_ui::init(vault_path, cx).unwrap();
+        nocterm_terminal::init(transport.clone(), cx);
+        nocterm_connections::init(None, cx);
+        nocterm_agent::init(
+            nocterm_agent::AgentServices {
+                terminal_auth: None,
+                private_dirs: Vec::new(),
+                shared_dirs: Vec::new(),
+                connector: Arc::new(nocterm_acp::AcpConnector),
+                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+                state_file: paths.state_dir().join("agents.toml"),
+                chats_dir: paths.state_dir().join("agent-chats"),
+                codex_home: None,
+                workdir: paths.state_dir().join("agent-workspace"),
+            },
+            cx,
+        );
+        crate::keymap::load(None, cx);
+        super::application::register(paths, true, cx);
+        let (window, workspace) =
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace = Workspace::new(window, cx);
+                    workspace.set_session_opener(open_session);
+                    nocterm_connections::register(&mut workspace, window, cx);
+                    super::register_settings(&mut workspace, true);
+                    nocterm_files::register(&mut workspace, window, cx);
+                    nocterm_agent::register(&mut workspace, window, cx);
+                    workspace.set_menu_builder(super::app_menus::build, window, cx);
+                    if cx.settings().vault.prompt_on_startup {
+                        let pages = vec![nocterm_vault_ui::settings_page()];
+                        nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
+                    }
+                    workspace
+                })
+            })
+            .unwrap();
+        (window, workspace, ())
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("vault-submit").visible());
+        assert!(
+            workspace
+                .read(cx)
+                .find_item::<nocterm_settings_ui::SettingsView>()
+                .is_some()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn secret_prompt_keeps_tab_navigation(cx: &mut TestAppContext) {
     let (handle, _, terminal, transport) = fixture(cx);
     let (reply, _answer) = Reply::<Option<Secret>>::channel();
@@ -508,76 +591,6 @@ fn secret_prompt_keeps_tab_navigation(cx: &mut TestAppContext) {
     while let Some(Some(command)) = driver.next_command().now_or_never() {
         assert!(!matches!(command, nocterm_session::Command::Input(_)));
     }
-}
-
-#[gpui_kit::test]
-fn new_tab_shortcut_from_connected_terminal_opens_menu(cx: &mut TestAppContext) {
-    let (handle, _, _, _) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-t"
-            } else {
-                "ctrl-shift-t"
-            },
-            cx,
-        );
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.find("menu-new-connection").visible());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn settings_shortcut_from_connected_terminal_opens_settings(cx: &mut TestAppContext) {
-    let (handle, workspace, _, _) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-,"
-            } else {
-                "ctrl-,"
-            },
-            cx,
-        );
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(workspace.read(cx).items().count(), 2);
-        let settings = workspace
-            .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
-            .unwrap();
-        assert!(settings.read(cx).focus_handle(cx).is_focused(window));
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn close_shortcut_from_connected_terminal_closes_tab(cx: &mut TestAppContext) {
-    let (handle, workspace, _, _) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.press(
-            if cfg!(target_os = "macos") {
-                "cmd-w"
-            } else {
-                "ctrl-shift-w"
-            },
-            cx,
-        );
-    })
-    .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        workspace.read_with(cx, |workspace, _| workspace.items().count()),
-        0
-    );
 }
 
 #[gpui_kit::test]
@@ -834,7 +847,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
                 }
             })
             .collect::<Vec<_>>();
-        let context = context_block(&descriptors);
+        let context = context_block(&descriptors, &[]);
         let list_response = nocterm_ai::mcp::tool_result(
             serde_json::json!(1),
             Ok(serde_json::json!({"context":context})),
@@ -847,6 +860,30 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
                 "Source field leaked: {marker}"
             );
         }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn agent_header_lines_up_with_the_tab_strip(cx: &mut TestAppContext) {
+    let (window, _, terminal, _) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(nocterm_workspace::ToggleRightPanel), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let header = window.find("agent-header").bounds();
+        let tab = window
+            .find(("tab-title", terminal.entity_id().as_u64()))
+            .bounds();
+        assert_eq!(header.size.height, gpui_kit::px(32.));
+        assert!(
+            (header.center().y - tab.center().y).abs() <= gpui_kit::px(1.),
+            "{header:?} {tab:?}"
+        );
     })
     .unwrap();
 }

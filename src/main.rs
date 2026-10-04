@@ -5,6 +5,7 @@
 //! window. It is the only crate that names every other one; nothing else
 //! does any wiring.
 
+mod agent_auth;
 mod agent_bridge;
 mod app_menus;
 mod application;
@@ -24,9 +25,9 @@ use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_settings::{Settings, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
-use nocterm_ui::SettingsStore;
+use nocterm_ui::{ActiveSettings as _, SettingsStore};
 use nocterm_workspace::{
-    DefaultSessionSettings, OpenAiSettings, OpenSSHSettings, OpenVault, Workspace,
+    DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -57,6 +58,7 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             nocterm_ui::init(tokens, settings, cx);
+            nocterm_ui::LayoutMemory::init(Some(paths.state_dir().join("layout.json")), cx);
             nocterm_terminal::init(Arc::new(transport), cx);
             nocterm_terminal::init_recording(paths.state_dir().join("logs"), cx);
             nocterm_terminal::init_local(
@@ -67,9 +69,14 @@ fn main() -> anyhow::Result<()> {
             nocterm_agent::init(
                 nocterm_agent::AgentServices {
                     connector: Arc::new(nocterm_acp::AcpConnector),
+                    terminal_auth: Some(Arc::new(agent_auth::open)),
                     bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
                     state_file: paths.state_dir().join("agents.toml"),
+                    chats_dir: paths.state_dir().join("agent-chats"),
+                    codex_home: nocterm_ai::usage::codex_home(),
                     workdir: paths.state_dir().join("agent-workspace"),
+                    private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
+                    shared_dirs: vec![paths.effective_runtime_dir()],
                 },
                 cx,
             );
@@ -103,7 +110,7 @@ fn main() -> anyhow::Result<()> {
                     false
                 }
             };
-            keymap::load(cx);
+            keymap::load(Some(paths.config_dir().join("keymap.toml")), cx);
 
             application::register(paths.clone(), vault_ready, cx);
             cx.on_window_closed(|cx, _| {
@@ -144,12 +151,17 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
             workspace.set_session_opener(nocterm_terminal::open_session);
+            workspace.set_background_session_opener(nocterm_terminal::open_background_session);
             workspace.set_local_terminal_opener(nocterm_terminal::open_local);
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, window, cx);
             nocterm_agent::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);
+            if vault_ready && cx.settings().vault.prompt_on_startup {
+                let pages = vec![nocterm_vault_ui::settings_page()];
+                nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
+            }
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
@@ -159,52 +171,34 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
 }
 
 fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
-    let pages = if vault_ready {
-        vec![nocterm_vault_ui::settings_page()]
-    } else {
-        Vec::new()
-    };
-    nocterm_settings_ui::register_with_pages(workspace, pages.clone());
-    let defaults = pages.clone();
-    workspace.register_action(move |_, _: &DefaultSessionSettings, window, cx| {
-        let workspace = cx.entity().downgrade();
-        let pages = defaults.clone();
-        window.defer(cx, move |window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                nocterm_settings_ui::open_page(workspace, "ssh", &pages, window, cx);
-            });
-        });
-    });
-    let ai = pages.clone();
-    workspace.register_action(move |_, _: &OpenAiSettings, window, cx| {
-        let workspace = cx.entity().downgrade();
-        let pages = ai.clone();
-        window.defer(cx, move |window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                nocterm_settings_ui::open_page(workspace, "ai", &pages, window, cx);
-            });
-        });
-    });
-    let ssh = pages.clone();
-    workspace.register_action(move |_, _: &OpenSSHSettings, window, cx| {
-        let workspace = cx.entity().downgrade();
-        let pages = ssh.clone();
-        window.defer(cx, move |window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                nocterm_settings_ui::open_page(workspace, "ssh", &pages, window, cx);
-            });
-        });
-    });
+    let mut pages = vec![nocterm_keymap_ui::settings_page()];
     if vault_ready {
-        workspace.register_action(move |_, _: &OpenVault, window, cx| {
+        pages.push(nocterm_vault_ui::settings_page());
+    }
+    nocterm_settings_ui::register_with_pages(workspace, pages.clone());
+    /// Opens Settings at page `id` when `A` runs.
+    fn open_on<A: gpui_kit::Action>(
+        workspace: &mut Workspace,
+        id: &'static str,
+        pages: &[nocterm_workspace::SettingsPageSpec],
+    ) {
+        let pages = pages.to_vec();
+        workspace.register_action(move |_, _: &A, window, cx| {
             let workspace = cx.entity().downgrade();
             let pages = pages.clone();
             window.defer(cx, move |window, cx| {
                 let _ = workspace.update(cx, |workspace, cx| {
-                    nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+                    nocterm_settings_ui::open_page(workspace, id, &pages, window, cx);
                 });
             });
         });
+    }
+    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages);
+    open_on::<OpenAiSettings>(workspace, "ai", &pages);
+    open_on::<OpenSSHSettings>(workspace, "ssh", &pages);
+    open_on::<OpenKeymap>(workspace, "keymap", &pages);
+    if vault_ready {
+        open_on::<OpenVault>(workspace, "vault", &pages);
     }
 }
 
