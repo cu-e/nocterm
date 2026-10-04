@@ -1,5 +1,5 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::{rc::Rc, sync::Arc};
-
 use gpui::{Background, BoxShadow, FontWeight, Hsla, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

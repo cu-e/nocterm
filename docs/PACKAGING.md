@@ -23,7 +23,8 @@ the GUI subsystem, and `build.rs` embeds the icon and version information.
 Build it on Windows:
 
 ```powershell
-cargo build --release -p nocterm
+python3 scripts/generate-license-notices.py --check-inputs
+cargo build --release --locked -p nocterm
 iscc /DAppVersion=0.1.0 packaging\windows\nocterm.iss
 ```
 
@@ -35,6 +36,7 @@ needs no installation step.
 
 ```sh
 cargo install --locked cargo-deb cargo-generate-rpm
+# Requires curl and Python 3 for verified AppImage runtime downloads
 # appimagetool: https://github.com/AppImage/appimagetool/releases
 scripts/package-linux.sh            # all formats into target/packages
 scripts/package-linux.sh deb rpm    # selected formats
@@ -64,3 +66,54 @@ it after administrator authentication (pkexec) when asked explicitly:
 ```
 
 The Vault settings page shows this exact command when the broker is missing.
+
+## License notices
+
+All four installer formats include the application's `LICENSE` and
+`THIRD_PARTY_NOTICES.txt`. The notices preserve third-party license texts and
+copyright notices; they cover the application and the Linux vault broker,
+including dependencies for supported platforms. They do not change the license
+of any dependency or apply Nocterm's PolyForm license to upstream code.
+
+On Windows both files are installed beside `nocterm.exe` (`LICENSE.txt` and
+`THIRD_PARTY_NOTICES.txt`). Linux packages and AppImage place them under
+`usr/share/doc/nocterm/` (inside the AppImage for that format).
+
+Keep these files with redistributed binaries. Changes to `Cargo.lock`, vendored
+forks, native dependencies or bundled assets require a notice review before a
+release. A release Rust toolchain change also requires updating the matching
+standard-library copyright snapshot in `licensing/supplemental/rust/` and
+regenerating the notices; the fast check detects toolchain input changes. Native
+FreeType version changes require reviewing its snapshot and attribution as well.
+See [notice source provenance](../licensing/README.md). Preserve vendored license files and the per-file modification notices
+when updating a fork. Release binary and installer extensions (`.exe`, `.deb`,
+`.rpm`, `.AppImage`, including different letter case) are ignored throughout the
+repository; built artifacts belong in `target/packages` and release attachments.
+
+Regenerate the committed notices after reviewing dependency and asset changes:
+
+```sh
+cargo install --locked --version 0.9.2 --features cli cargo-about
+python3 scripts/generate-license-notices.py
+python3 scripts/generate-license-notices.py --check
+```
+
+Python 3 is required. Local packaging verifies notice inputs with
+`python3 scripts/generate-license-notices.py --check-inputs`, without installing
+cargo-about or compiling the application. The packaging workflow first checks
+that regeneration matches the committed file; a stale or incomplete notice file
+blocks packaging. Direct `cargo deb`, `cargo generate-rpm` or `iscc` invocations
+must also use current notices.
+
+The AppImage launcher is pinned separately in `licensing/appimage-runtime.json`.
+Packaging downloads and checks the launcher and corresponding full source
+archives into `target/packaging/appimage-runtime/`. It ships the launcher,
+libfuse and squashfuse sources, the libfuse patch and build instructions under
+`usr/share/doc/nocterm/appimage-runtime-sources/` inside the AppImage. See
+[launcher license and relinking details](../licensing/supplemental/appimage/README.md).
+The upstream Alpine build inputs float; exact binary reproduction has not been
+verified.
+
+The RPM License tag combines `LicenseRef-PolyForm-Perimeter-1.0.1` with
+`LicenseRef-Nocterm-Third-Party`. The latter references the existing bundled
+component terms in `THIRD_PARTY_NOTICES.txt`; it does not introduce a new license.

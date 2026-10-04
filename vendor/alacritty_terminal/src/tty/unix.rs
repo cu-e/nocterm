@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! TTY related functionality.
 
 use std::ffi::{CStr, CString};

@@ -65,13 +65,14 @@ assets = [
     ["assets/icons/nocterm-256.png", "usr/share/icons/hicolor/256x256/apps/dev.nocterm.Nocterm.png", "644"],
     ["README.md", "usr/share/doc/nocterm/", "644"],
     ["LICENSE", "usr/share/doc/nocterm/", "644"],
+    ["THIRD_PARTY_NOTICES.txt", "usr/share/doc/nocterm/", "644"],
     ["docs/DEVICE_UNLOCK.md", "usr/share/doc/nocterm/", "644"],
 ]
 
 [package.metadata.generate-rpm]
 name = "nocterm"
 summary = "A fast, extensible SSH client"
-license = "LicenseRef-PolyForm-Perimeter-1.0.1"
+license = "LicenseRef-PolyForm-Perimeter-1.0.1 AND LicenseRef-Nocterm-Third-Party"
 post_install_script = "packaging/linux/scripts/postinst"
 pre_uninstall_script = "packaging/linux/scripts/prerm"
 post_uninstall_script = "packaging/linux/scripts/postrm"
@@ -86,6 +87,7 @@ assets = [
     { source = "assets/icons/nocterm-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/dev.nocterm.Nocterm.png", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/nocterm/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/doc/nocterm/LICENSE", mode = "644", doc = true },
+    { source = "THIRD_PARTY_NOTICES.txt", dest = "/usr/share/doc/nocterm/THIRD_PARTY_NOTICES.txt", mode = "644", doc = true },
     { source = "docs/DEVICE_UNLOCK.md", dest = "/usr/share/doc/nocterm/DEVICE_UNLOCK.md", mode = "644", doc = true },
 ]
 

@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use crate::{Icon, Sizable, Size, progress::ProgressCircle, spinner::Spinner};
 use gpui::{App, IntoElement, RenderOnce, Window, prelude::FluentBuilder};
 

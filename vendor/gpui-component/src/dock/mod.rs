@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! The gpui-component appearance for the dock.
 //!
 //! The layout tree, the persisted schema, the drag geometry, the active-panel

@@ -1,0 +1,22 @@
+Original licensing declaration from the published crate archive.
+No standalone primary license file is included in this archive.
+The declared SPDX terms are reproduced separately in THIRD_PARTY_NOTICES.txt.
+
+Cargo.toml (unmodified):
+
+[package]
+name = "leaky-cow"
+version = "0.1.1"
+authors = ["Michael Howell <michael@notriddle.com>"]
+documentation = "https://www.notriddle.com/rustdoc/leaky_cow/"
+readme = "README.md"
+repository = "https://github.com/notriddle/rust-leaky-cow"
+description = "Leak the contents of a Clone-On-Write pointer"
+license = "MIT / Apache-2.0"
+
+[dependencies]
+leak = "0.1.1"
+
+Original source notice: src/lib.rs
+
+// This library is released under the same terms as Rust itself.

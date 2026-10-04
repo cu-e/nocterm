@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::sync::Arc;
 
 use crate::{ActiveTheme, Sizable, Size};

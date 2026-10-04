@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Element, ElementId, Entity, GlobalElementId,
     HighlightStyle, InspectorElementId, IntoElement, LayoutId, Pixels, Refineable as _, RenderOnce,

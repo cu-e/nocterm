@@ -1,5 +1,5 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::rc::Rc;
-
 use crate::ThemeStyled as _;
 use crate::{
     ActiveTheme, Colorize as _, Disableable, Icon, Placement, RoleOverride, Selectable, Sizable,

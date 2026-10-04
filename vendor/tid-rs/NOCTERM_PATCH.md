@@ -1,5 +1,10 @@
 # Local tid-rs 0.1.1 build patch
 
+This vendored fork, including Nocterm's local modifications, is distributed
+under MIT, as declared in its Cargo manifest. The application's
+PolyForm Perimeter license does not apply to this copy. Upstream copyright
+notices and license terms remain in force.
+
 Upstream: <https://github.com/lightsing/tid-rs>, MIT.
 
 Nocterm uses `LAContext::can_evaluate_policy` only for capability detection.

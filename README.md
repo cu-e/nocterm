@@ -39,6 +39,9 @@ terms. Providing others with a competing product based on this code is not
 permitted, even if that product is free of charge.
 
 Third-party dependencies, vendored code and assets retain their own licenses.
+The vendored forks and Nocterm's patches to them use their declared upstream
+licenses. Distributed installers include [third-party notices](THIRD_PARTY_NOTICES.txt);
+see [packaging documentation](docs/PACKAGING.md) for updating them.
 
 ## Install
 

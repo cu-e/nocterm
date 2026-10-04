@@ -1,5 +1,10 @@
 # Nocterm's Alacritty terminal patch
 
+This vendored fork, including Nocterm's local modifications, is distributed
+under Apache-2.0, as declared in its Cargo manifest. The application's
+PolyForm Perimeter license does not apply to this copy. Upstream copyright
+notices and license terms remain in force.
+
 Origin: the crates.io `alacritty_terminal` 0.26.0 source distribution,
 [upstream repository](https://github.com/alacritty/alacritty). Original copyright
 headers and [Apache-2.0 license](LICENSE-APACHE) are retained. The internal unit

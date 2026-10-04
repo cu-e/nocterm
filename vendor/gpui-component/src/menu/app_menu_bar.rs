@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use crate::{
     InteractiveElementExt as _, Selectable, Sizable,
     actions::{Cancel, SelectLeft, SelectRight},

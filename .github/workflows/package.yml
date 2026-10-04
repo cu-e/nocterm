@@ -15,8 +15,34 @@ permissions:
   contents: write
 
 jobs:
+  licenses:
+    name: Check third-party notices
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install notice generator
+        run: cargo install --locked --version 0.9.2 --features cli cargo-about
+      - name: Verify notices
+        run: python3 scripts/generate-license-notices.py --check
+      - name: Reject tracked release artifacts
+        run: |
+          python3 - <<'PYTHON'
+          import subprocess
+          paths = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          artifacts = [p for p in paths if p.lower().endswith((".exe", ".deb", ".rpm", ".appimage"))]
+          if artifacts:
+              raise SystemExit("Release artifacts must not be tracked: " + ", ".join(artifacts))
+          PYTHON
+
   linux:
     name: Linux packages
+    needs: licenses
     # The oldest supported runner keeps the glibc requirement low.
     runs-on: ubuntu-22.04
     steps:
@@ -53,6 +79,7 @@ jobs:
 
   windows:
     name: Windows installer
+    needs: licenses
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -62,6 +89,8 @@ jobs:
         with:
           toolchain: "1.98.0"
       - uses: Swatinem/rust-cache@v2
+      - name: Check notice inputs
+        run: python3 scripts/generate-license-notices.py --check-inputs
       - run: cargo build --release --locked -p nocterm
       - name: Build installer
         shell: pwsh

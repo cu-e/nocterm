@@ -1,0 +1,20 @@
+Original licensing declaration from the published crate archive.
+No standalone primary license file is included in this archive.
+The declared SPDX terms are reproduced separately in THIRD_PARTY_NOTICES.txt.
+
+Cargo.toml (unmodified):
+
+[package]
+name = "malloc_buf"
+version = "0.0.6"
+authors = ["Steven Sheldon"]
+
+description = "Structs for handling malloc'd memory passed to Rust."
+repository = "https://github.com/SSheldon/malloc_buf"
+documentation = "http://ssheldon.github.io/malloc_buf/malloc_buf/"
+license = "MIT"
+
+exclude = [".gitignore"]
+
+[dependencies]
+libc = ">= 0.1, < 0.3"

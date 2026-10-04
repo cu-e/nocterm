@@ -1,5 +1,5 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! Exports the `Term` type which is a high-level API for the Grid.
-
 use std::ops::{Index, IndexMut, Range};
 use std::sync::Arc;
 use std::{cmp, mem, ptr, slice, str};

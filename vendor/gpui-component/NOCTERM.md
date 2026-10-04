@@ -1,5 +1,10 @@
 # Nocterm's GPUI Component menu patch
 
+This vendored fork, including Nocterm's local modifications, is distributed
+under Apache-2.0, as declared in its Cargo manifest. The application's
+PolyForm Perimeter license does not apply to this copy. Upstream copyright
+notices and license terms remain in force.
+
 Origin: the crates.io `gpui-component` 0.7.0 source distribution,
 [upstream GPUI Kit repository](https://github.com/longbridge/gpui-kit),
 commit `0c830f4d257e69fdd17200650533ab4ca9a40cc0`, path `crates/component`.
@@ -21,7 +26,9 @@ module also tests entity retention and preservation of an open snapshot.
 The published crate omits five inputs referenced by its upstream unit tests.
 `tests/upstream` contains the exact icons, Markdown, theme and base-dock source
 from the same pinned upstream commit; test-only include paths point there. No
-upstream assertions are removed. Their original paths are
+upstream assertions are removed. The corresponding modified include paths are in
+`src/icon.rs`, `src/button/button_icon.rs`, `src/dock/mod.rs`,
+`src/text/compat.rs` and `src/theme/schema.rs`. Their original paths are
 `crates/assets/assets/icons/{arrow-up,search}.svg`, `examples/fixtures/test.md`,
 `themes/aurora.json` and `crates/base/src/dock/mod.rs`.
 
