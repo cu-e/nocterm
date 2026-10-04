@@ -659,6 +659,9 @@ mod tests {
             auth: Auth::Password,
             credential: Some(CredentialId::generate().unwrap()),
             launch: Some(Default::default()),
+            icon: None,
+            icon_color: None,
+            country: None,
             group: Some("Work".into()),
         };
         let entity = cx.new(|_| Connections::in_memory());
@@ -716,6 +719,9 @@ mod tests {
             auth: Auth::Password,
             credential: None,
             launch: None,
+            icon: None,
+            icon_color: None,
+            country: None,
             group: None,
         }
     }
@@ -1195,6 +1201,9 @@ mod tests {
             group: None,
             credential: None,
             launch: None,
+            icon: None,
+            icon_color: None,
+            country: None,
             options: nocterm_session::SessionOptions {
                 term: Some("screen-256color".into()),
                 charset: Some(nocterm_session::Charset::Windows1251),

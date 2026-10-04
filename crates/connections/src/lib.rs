@@ -12,8 +12,11 @@
 
 mod directory;
 mod editor;
+mod facts;
+mod geo;
 mod menu;
 mod model;
+pub mod os;
 mod panel;
 pub mod store;
 
@@ -25,6 +28,7 @@ use nocterm_core::Paths;
 use nocterm_workspace::Workspace;
 
 pub use editor::{ConnectionEditor, open_editor};
+pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
 pub use model::{Connections, connect, spec_for_profile};
 pub use panel::ConnectionsPanel;
@@ -34,15 +38,23 @@ gpui_kit::actions!(
     [
         /// Open the form for a new saved connection.
         NewConnection,
+        /// Show the saved servers in the sidebar, or hide the sidebar if it shows them.
+        ToggleServers,
     ]
 );
 
-/// Loads the saved connections. With no `paths`, nothing is read or written.
+/// Loads the saved connections and what is known about their servers. With
+/// no `paths`, nothing is read, written or fetched.
 pub fn init(paths: Option<&Paths>, cx: &mut App) {
     menu::init(cx);
     match paths {
         Some(paths) => Connections::load(paths),
         None => Connections::in_memory(),
+    }
+    .install(cx);
+    match paths {
+        Some(paths) => ServerFacts::load(paths),
+        None => ServerFacts::in_memory(),
     }
     .install(cx);
 }
@@ -57,6 +69,13 @@ pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context
         cx.notify();
     })
     .detach();
+    // Learn about servers as their sessions come up.
+    cx.subscribe(&cx.entity(), |workspace, _, event, cx| {
+        if *event == nocterm_workspace::WorkspaceEvent::ItemsChanged {
+            facts::probe_sessions(workspace, cx);
+        }
+    })
+    .detach();
     let handle = cx.entity().downgrade();
 
     let panel = cx.new(|cx| ConnectionsPanel::new(connections.clone(), handle.clone(), window, cx));
@@ -65,6 +84,9 @@ pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context
     let menu = cx.new(|cx| NewTabMenu::new(connections, handle, window, cx));
     workspace.set_new_tab_menu(menu, cx);
 
+    workspace.register_action(|workspace, _: &ToggleServers, window, cx| {
+        workspace.toggle_panel_of::<ConnectionsPanel>(window, cx);
+    });
     workspace.register_action(|_, _: &NewConnection, window, cx| {
         open_editor(None, cx.entity().downgrade(), window, cx);
     });

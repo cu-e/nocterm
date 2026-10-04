@@ -1,10 +1,10 @@
 //! The sidebar list of saved connections.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, FocusHandle, Focusable, MouseButton, SharedString,
-    Subscription, WeakEntity, Window,
+    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, Hsla, Image, ImageFormat,
+    MouseButton, ObjectFit, SharedString, StyledImage as _, Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
@@ -14,18 +14,41 @@ use gpui_kit::{
         input::{Input, InputEvent, InputState},
         v_flex,
     },
-    div,
+    div, img,
     prelude::*,
 };
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace};
 
 use crate::{
-    Connections,
+    Connections, ServerFacts,
     model::{connect, spec_for_profile},
     open_editor,
+    os::{self, Os},
     store::{Profile, ProfileId},
 };
+
+/// A server's icon: `os` in `color` (its brand colour when none), or the
+/// generic server icon in `color` (`fallback` when none).
+pub(crate) fn server_icon(os: Option<&Os>, color: Option<&str>, fallback: Hsla) -> AnyElement {
+    match os {
+        Some(os) => img(Arc::new(Image::from_bytes(
+            ImageFormat::Svg,
+            os::svg(os, color.unwrap_or(os.color)),
+        )))
+        .size_4()
+        .flex_shrink_0()
+        .into_any_element(),
+        None => Icon::new(IconName::Server)
+            .small()
+            .text_color(
+                color
+                    .and_then(os::rgb)
+                    .map_or(fallback, |rgb| gpui_kit::rgb(rgb).into()),
+            )
+            .into_any_element(),
+    }
+}
 
 /// Shared by every row, so hovering a row reveals only its own buttons.
 const ROW_GROUP: &str = "connection-row";
@@ -137,6 +160,10 @@ impl ConnectionsPanel {
                 }
                 cx.notify();
             }),
+            // Detected systems and countries, and flags as they load.
+            cx.observe(&ServerFacts::global(cx), |_, _, cx| cx.notify()),
+            // Turning country detection on or off shows or hides detected flags.
+            cx.observe_global::<nocterm_ui::SettingsStore>(|_, cx| cx.notify()),
             cx.subscribe_in(&filter, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => cx.notify(),
                 // Enter opens the only match.
@@ -429,6 +456,19 @@ impl ConnectionsPanel {
         let id = profile.id;
         let element_id = SharedString::from(format!("connection-{id}"));
         let name = profile.name.clone();
+        let facts = ServerFacts::global(cx).read(cx);
+        let detected = facts.os(id);
+        let flag = facts
+            .shown_country(profile, cx)
+            .and_then(|code| Some((code.to_uppercase(), facts.flag(code)?)));
+        let icon = server_icon(
+            profile.icon.as_deref().and_then(os::find).or(detected),
+            profile
+                .icon_color
+                .as_deref()
+                .filter(|color| os::is_valid_color(color)),
+            theme.muted_foreground,
+        );
 
         h_flex()
             .id(element_id)
@@ -452,16 +492,42 @@ impl ConnectionsPanel {
                         .into()
                 })
             })
-            .child(
-                Icon::new(IconName::Server)
-                    .small()
-                    .text_color(theme.muted_foreground),
-            )
+            .child(icon)
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(div().text_sm().truncate().child(profile.name.clone()))
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .min_w_0()
+                            .child(div().text_sm().truncate().child(profile.name.clone()))
+                            .when_some(flag, |line, (country, flag)| {
+                                line.child(
+                                    div()
+                                        .id(SharedString::from(format!("connection-flag-{id}")))
+                                        .flex_shrink_0()
+                                        .rounded_xs()
+                                        .overflow_hidden()
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .child(
+                                            img(flag)
+                                                .w(gpui_kit::px(16.))
+                                                .h(gpui_kit::px(11.))
+                                                .object_fit(ObjectFit::Cover),
+                                        )
+                                        .tooltip(move |_, cx| {
+                                            cx.new(|_| {
+                                                gpui_kit::component::tooltip::Tooltip::new(
+                                                    country.clone(),
+                                                )
+                                            })
+                                            .into()
+                                        }),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .text_xs()
@@ -842,6 +908,9 @@ mod tests {
             auth: Default::default(),
             credential: None,
             launch: None,
+            icon: None,
+            icon_color: None,
+            country: None,
         };
         let a = profile("a", "Work");
         let b = profile("b", "Personal");
@@ -1006,6 +1075,9 @@ mod tests {
             auth: Default::default(),
             credential: None,
             launch: None,
+            icon: None,
+            icon_color: None,
+            country: None,
         }
     }
 

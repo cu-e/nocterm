@@ -58,6 +58,17 @@ pub struct Profile {
     pub credential: Option<CredentialId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<ShellLaunch>,
+    /// The sidebar icon, as an operating system id from [`crate::os`]; none
+    /// shows the system detected on connecting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// The icon's colour as `#RRGGBB`; none uses the system's brand colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    /// The flag shown, as a lower-case ISO 3166-1 alpha-2 code; none shows
+    /// the detected country.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
 }
 
 fn is_auto(auth: &Auth) -> bool {
@@ -353,6 +364,9 @@ mod tests {
             group: group.map(str::to_owned),
             credential: None,
             launch: None,
+            icon: None,
+            icon_color: None,
+            country: None,
         }
     }
 
@@ -549,6 +563,21 @@ mod tests {
         let text = toml::to_string(&recents).unwrap();
         assert!(text.contains(&id.to_string()));
         assert_eq!(toml::from_str::<Recents>(&text).unwrap(), recents);
+    }
+
+    #[test]
+    fn icon_choices_round_trip_and_old_files_have_none() {
+        let mut item = profile("Web", "web.local", None);
+        item.icon = Some("ubuntu".into());
+        item.icon_color = Some("#E95420".into());
+        let mut profiles = Profiles::default();
+        profiles.upsert(item);
+        let text = toml::to_string(&profiles).unwrap();
+        assert!(text.contains("icon = \"ubuntu\""), "{text}");
+        assert_eq!(toml::from_str::<Profiles>(&text).unwrap(), profiles);
+
+        let plain = toml::to_string(&profile("Pi", "pi.local", None)).unwrap();
+        assert!(!plain.contains("icon"), "{plain}");
     }
 
     #[test]

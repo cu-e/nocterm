@@ -1,12 +1,13 @@
-use gpui_kit::{App, Context, Window};
+use gpui_kit::{App, EntityId, WeakEntity, Window};
 use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, Workspace};
 
-use crate::{Connections, connect, spec_for_profile};
+use crate::{Connections, ServerFacts, connect, spec_for_profile, store::Profile};
 
 pub(crate) struct Directory;
 
 impl ConnectionDirectory for Directory {
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
+        let facts = ServerFacts::global(cx).read(cx);
         Connections::global(cx)
             .read(cx)
             .profiles()
@@ -17,23 +18,26 @@ impl ConnectionDirectory for Directory {
                 group: profile.group.clone().map(Into::into),
                 description: profile.description.clone().into(),
                 target: profile.target.clone(),
+                icon: facts.icon(profile),
+                flag: facts
+                    .shown_country(profile, cx)
+                    .and_then(|code| facts.flag(code)),
             })
             .collect()
     }
 
-    fn open(&self, id: &str, window: &mut Window, cx: &mut Context<Workspace>) -> bool {
-        let entity = Connections::global(cx);
-        let Some(profile) = entity
-            .read(cx)
-            .profiles()
-            .iter()
-            .find(|profile| profile.id.to_string() == id)
-            .cloned()
-        else {
+    fn open(
+        &self,
+        id: &str,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(profile) = profile(id, cx) else {
             return false;
         };
         connect(
-            &cx.entity().downgrade(),
+            workspace,
             spec_for_profile(&profile),
             Some(profile.id),
             window,
@@ -41,4 +45,29 @@ impl ConnectionDirectory for Directory {
         );
         true
     }
+
+    fn open_background(
+        &self,
+        id: &str,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId> {
+        let spec = spec_for_profile(&profile(id, cx)?);
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_background_session(spec, window, cx)
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+fn profile(id: &str, cx: &App) -> Option<Profile> {
+    Connections::global(cx)
+        .read(cx)
+        .profiles()
+        .iter()
+        .find(|profile| profile.id.to_string() == id)
+        .cloned()
 }
