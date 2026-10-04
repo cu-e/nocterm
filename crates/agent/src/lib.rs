@@ -2,7 +2,7 @@
 mod panel;
 mod runtime;
 mod thread;
-pub use runtime::AgentServices;
+pub use runtime::{AgentServices, TerminalAuthOpener, TerminalAuthRequest};
 
 use gpui_kit::{App, prelude::*};
 
@@ -21,6 +21,8 @@ gpui_kit::actions!(
     agent,
     [
         NewThread,
+        /// Start a new chat with the agent the last chat was started with.
+        NewThreadWithLastAgent,
         ShowHistory,
         StopGeneration,
         ToggleModelPicker,

@@ -1,19 +1,20 @@
 use crate::runtime::Runtime;
-use futures::channel::oneshot;
-use gpui_kit::{App, Context, EntityId, Subscription, WeakEntity};
+use futures::{FutureExt as _, channel::oneshot};
+use gpui_kit::{
+    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, WeakEntity, Window,
+};
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, TerminalCall, acp,
-    approval::ApprovalGrants,
-    context::{ConnectionDescriptor, OpaqueIds, TerminalDescriptor},
-    thread::ThreadState,
+    AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, acp, approval::ApprovalGrants,
+    context::OpaqueIds, thread::ThreadState,
 };
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
-use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest, Workspace};
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use nocterm_ui::ActiveAi as _;
+use nocterm_workspace::Workspace;
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
+mod saved;
+mod tools;
+#[cfg(test)]
+pub(crate) use saved::chat_title;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Attachment {
@@ -25,11 +26,49 @@ pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
     pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
 }
+#[derive(Clone, Debug)]
+pub(crate) struct PromptMetadata {
+    pub model: Option<String>,
+}
+/// An agent session from a saved chat, to reopen on the next connection.
+#[derive(Clone, Debug)]
+pub(crate) struct Restore {
+    pub session: acp::SessionId,
+    pub workdir: PathBuf,
+    /// Open a copy of the session rather than the session itself.
+    pub fork: bool,
+}
+/// What a forked chat starts from.
+pub(crate) struct Fork {
+    chat: nocterm_ai::history::SavedChat,
+    restore: Option<Restore>,
+    attachments: Vec<Attachment>,
+}
 pub(crate) struct AgentThread {
     pub agent_id: String,
+    /// Names the chat's file in the saved history.
+    pub chat_id: String,
+    /// When the chat last changed, in seconds since the Unix epoch.
+    pub updated: u64,
+    /// Restored from history and not yet connected.
+    pub dormant: bool,
+    pub restore: Option<Restore>,
+    /// The name the user gave the chat.
+    pub name: Option<String>,
+    pub pinned: bool,
     pub state: ThreadState,
+    pub last_prompt: Option<PromptMetadata>,
+    /// The model of a saved chat's last prompt.
+    pub last_model: Option<String>,
     pub status: String,
+    pub status_error: bool,
     pub generating: bool,
+    /// The user stopped the last turn. Its late updates are dropped, and the
+    /// next prompt goes on in the same session.
+    pub stopped: bool,
+    pub auth_required: bool,
+    pub authenticating: bool,
+    session_workdir: Option<PathBuf>,
     pub accept_updates: bool,
     pub session: Option<acp::SessionId>,
     pub commands: Option<Arc<dyn AgentCommands>>,
@@ -37,7 +76,12 @@ pub(crate) struct AgentThread {
     pub connection_key: Option<u64>,
     pub registration: Option<BridgeRegistration>,
     pub workspace: WeakEntity<Workspace>,
+    /// The window of the panel showing this chat; background sessions open
+    /// there.
+    pub window: Option<AnyWindowHandle>,
     pub attachments: Vec<Attachment>,
+    /// Sessions this chat opened without a tab; closed with the chat.
+    pub background: Vec<EntityId>,
     pub images: Vec<nocterm_ai::images::PromptImage>,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
@@ -45,6 +89,8 @@ pub(crate) struct AgentThread {
     pub tool_bytes: usize,
     pub epoch: u64,
     ids: OpaqueIds,
+    /// Ids of attached servers without a session, as agents see them.
+    server_ids: OpaqueIds,
     grants: ApprovalGrants,
     _release: Subscription,
 }
@@ -65,12 +111,39 @@ impl AgentThread {
             Runtime::global(cx).update(cx, |runtime, _| {
                 runtime.release(id, this.connection_key, registration)
             });
+            if let Some(window) = this.window {
+                let workspace = this.workspace.clone();
+                let background = std::mem::take(&mut this.background);
+                cx.defer(move |cx| {
+                    for item in background {
+                        let _ = cx.update_window(window, |_, window, cx| {
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.close_background_session(item, window, cx)
+                            });
+                        });
+                    }
+                });
+            }
         });
+        let chat = nocterm_ai::history::SavedChat::new(agent_id.clone());
         Self {
             agent_id,
+            chat_id: chat.id,
+            updated: chat.updated,
+            dormant: false,
+            restore: None,
+            name: None,
+            pinned: false,
             state: Default::default(),
+            last_prompt: None,
+            last_model: None,
             status: "Connecting…".into(),
+            status_error: false,
             generating: false,
+            stopped: false,
+            auth_required: false,
+            authenticating: false,
+            session_workdir: None,
             accept_updates: true,
             session: None,
             commands: None,
@@ -78,7 +151,9 @@ impl AgentThread {
             connection_key: None,
             registration: None,
             workspace,
+            window: None,
             attachments: Vec::new(),
+            background: Vec::new(),
             images: Vec::new(),
             permissions: Vec::new(),
             tools: Vec::new(),
@@ -86,9 +161,22 @@ impl AgentThread {
             tool_bytes: 0,
             epoch: 0,
             ids: Default::default(),
+            server_ids: OpaqueIds::with_prefix("s"),
             grants: Default::default(),
             _release: release,
         }
+    }
+    /// The session is gone: the chat must be restarted to go on.
+    pub(crate) fn ended(&self) -> bool {
+        !self.accept_updates && !self.stopped
+    }
+    /// An empty chat nobody has named: dropped when the user moves on.
+    pub(crate) fn is_draft(&self) -> bool {
+        self.state.entries.is_empty()
+            && self.name.is_none()
+            && !self.generating
+            && self.permissions.is_empty()
+            && self.tools.is_empty()
     }
     pub(crate) fn create_session(
         &mut self,
@@ -111,7 +199,7 @@ impl AgentThread {
                 return;
             }
         };
-        let server = acp::McpServerStdio::new("nocterm", binary)
+        let server = acp::McpServerStdio::new(bridge_server_name(registration.id), binary)
             .args(vec!["agent-bridge".into()])
             .env(vec![
                 acp::EnvVariable::new("NOCTERM_BRIDGE_ENDPOINT", registration.endpoint.clone()),
@@ -120,13 +208,59 @@ impl AgentThread {
         self.commands = Some(commands.clone());
         self.info = Some(info);
         self.status = "Starting chat…".into();
+        self.status_error = false;
+        self.auth_required = false;
+        let restore = self
+            .restore
+            .take()
+            .filter(|restore| restore.workdir.is_absolute());
+        self.session_workdir = Some(
+            restore
+                .as_ref()
+                .map_or_else(|| workdir.clone(), |restore| restore.workdir.clone()),
+        );
         let epoch = self.epoch;
-        let future = cx.background_executor().spawn(commands.new_session(
-            acp::NewSessionRequest::new(workdir).mcp_servers(vec![acp::McpServer::Stdio(server)]),
-        ));
+        let servers = vec![acp::McpServer::Stdio(server)];
+        let session_commands = commands.clone();
+        let pending_restore = restore.clone();
+        let future = cx.background_executor().spawn(async move {
+            // A saved chat reopens its session so the agent remembers it;
+            // failing that, the chat goes on in a new session.
+            if let Some(restore) = &restore {
+                match session_commands
+                    .restore_session(nocterm_ai::RestoreSessionRequest {
+                        session_id: restore.session.clone(),
+                        cwd: restore.workdir.clone(),
+                        mcp_servers: servers.clone(),
+                        fork: restore.fork,
+                    })
+                    .await
+                {
+                    Ok(response) => return (Ok(response), Some(true), workdir),
+                    Err(error @ nocterm_ai::AgentError::AuthRequired(_)) => {
+                        return (Err(error), None, workdir);
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "could not reopen agent session");
+                    }
+                }
+            }
+            let result = session_commands
+                .new_session(acp::NewSessionRequest::new(workdir.clone()).mcp_servers(servers))
+                .await;
+            (result, restore.is_some().then_some(false), workdir)
+        });
         cx.spawn(async move |this, cx| {
-            let result = future.await;
+            let (result, restored, workdir) = future.await;
             let _ = this.update(cx, |this, cx| {
+                if restored == Some(false) {
+                    // The new session lives in the connection's directory.
+                    this.session_workdir = Some(workdir);
+                }
+                if restored.is_none() && result.is_err() {
+                    // Kept for after signing in.
+                    this.restore = pending_restore;
+                }
                 if this.epoch != epoch || !cx.ai_enabled() {
                     if let Ok(response) = result {
                         commands.close_session(response.session_id);
@@ -138,8 +272,16 @@ impl AgentThread {
                         this.state.modes = response.modes;
                         this.state.config_options = response.config_options.unwrap_or_default();
                         this.session = Some(response.session_id);
-                        this.status = "Ready".into();
+                        this.auth_required = false;
+                        this.status = if restored == Some(false) {
+                            "Started a new agent session: the agent does not remember the messages above.".into()
+                        } else {
+                            "Ready".into()
+                        };
                         cx.notify();
+                    }
+                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                        this.require_authentication(&message, cx);
                     }
                     Err(error) => this.fail(&error.to_string(), cx),
                 }
@@ -149,13 +291,129 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn fail(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.finish_pending_tools();
+        if !self.dormant {
+            self.persist(cx);
+        }
         self.epoch += 1;
         self.accept_updates = false;
+        self.stopped = false;
         self.generating = false;
+        self.auth_required = false;
+        self.authenticating = false;
         self.status = nocterm_ai::redact::redact(message);
+        self.status_error = true;
         self.cancel_pending();
+        // A grant belongs to this session; a restarted chat asks again.
+        self.grants.clear();
         self.registration.take();
         cx.notify();
+    }
+    fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.finish_pending_tools();
+        self.auth_required = true;
+        self.authenticating = false;
+        self.generating = false;
+        self.status = nocterm_ai::redact::redact(message);
+        self.status_error = true;
+        self.cancel_pending();
+        cx.notify();
+    }
+    pub(crate) fn authenticate(
+        &mut self,
+        method: acp::AuthMethodId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.ai_enabled() || !self.auth_required || self.authenticating {
+            return;
+        }
+        let Some(commands) = self.commands.clone() else {
+            return;
+        };
+        let Some(method) = self
+            .info
+            .as_ref()
+            .and_then(|info| {
+                info.auth_methods
+                    .iter()
+                    .find(|available| available.id() == &method)
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let auth = match method {
+            acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
+            acp::AuthMethod::Terminal(method) => {
+                let runtime = Runtime::global(cx);
+                let Some(opener) = runtime.read(cx).services.terminal_auth.clone() else {
+                    return;
+                };
+                let Some(request) = self
+                    .connection_key
+                    .and_then(|key| runtime.read(cx).terminal_auth_request(key, &method))
+                else {
+                    return;
+                };
+                let completion = opener(self.workspace.clone(), request, window, cx);
+                async move {
+                    completion
+                        .await
+                        .map_err(|_| nocterm_ai::AgentError::Io("Sign-in cancelled".into()))?
+                        .map_err(nocterm_ai::AgentError::Io)
+                }
+                .boxed()
+            }
+            _ => return,
+        };
+        self.authenticating = true;
+        self.status = "Signing in…".into();
+        self.status_error = false;
+        let epoch = self.epoch;
+        let future = cx.background_executor().spawn(auth);
+        cx.spawn(async move |this, cx| {
+            let result = future.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.epoch != epoch || !cx.ai_enabled() {
+                    return;
+                }
+                this.authenticating = false;
+                match result {
+                    Ok(()) => {
+                        this.auth_required = false;
+                        this.status_error = false;
+                        if this.session.is_some() {
+                            this.status = "Ready".into();
+                            cx.notify();
+                        } else if let (Some(info), Some(workdir)) =
+                            (this.info.clone(), this.session_workdir.clone())
+                        {
+                            this.create_session(commands, info, workdir, cx);
+                        }
+                    }
+                    Err(error) => {
+                        this.status = nocterm_ai::redact::redact(&error.to_string());
+                        this.status_error = true;
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn finish_pending_tools(&mut self) {
+        for entry in &mut self.state.entries {
+            if let nocterm_ai::thread::Entry::Tool(call) = entry
+                && matches!(
+                    call.status,
+                    acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
+                )
+            {
+                call.status = acp::ToolCallStatus::Failed;
+            }
+        }
     }
     fn cancel_pending(&mut self) {
         for permission in self.permissions.drain(..) {
@@ -166,7 +424,6 @@ impl AgentThread {
         for call in self.tools.drain(..) {
             let _ = call.respond.send(Err("Request cancelled.".into()));
         }
-        self.grants.clear();
     }
     pub(crate) fn permission(
         &mut self,
@@ -209,78 +466,8 @@ impl AgentThread {
         let _ = permission.respond.send(outcome);
         cx.notify();
     }
-    pub(crate) fn resolved(
-        &mut self,
-        cx: &App,
-    ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Vec::new();
-        };
-        let workspace = workspace.read(cx);
-        let summaries = workspace
-            .connection_directory()
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default();
-        workspace
-            .terminals(cx)
-            .into_iter()
-            .filter_map(|entry| {
-                let info = entry.access.info(cx)?;
-                let summary = info
-                    .profile
-                    .as_ref()
-                    .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
-                let attached = self.attachments.iter().any(|attachment| match attachment {
-                    Attachment::Terminal(id) => *id == entry.item,
-                    Attachment::Connection(id) => {
-                        summary.is_some_and(|summary| summary.id.as_ref() == id)
-                    }
-                    Attachment::Group(group) => summary.is_some_and(|summary| {
-                        summary
-                            .group
-                            .as_ref()
-                            .is_some_and(|name| name.as_ref() == group)
-                    }),
-                });
-                if !attached {
-                    return None;
-                }
-                let id = self.ids.get(&format!("{:?}", entry.item));
-                let connection = summary
-                    .map(|summary| ConnectionDescriptor {
-                        id: summary.id.to_string(),
-                        name: summary.name.to_string(),
-                        group: summary.group.as_ref().map(ToString::to_string),
-                        description: summary.description.to_string(),
-                        host: summary.target.host.clone(),
-                        port: summary.target.port,
-                        user: summary.target.user.clone(),
-                    })
-                    .or_else(|| {
-                        info.target.map(|target| ConnectionDescriptor {
-                            id: String::new(),
-                            name: entry.title.to_string(),
-                            group: None,
-                            description: String::new(),
-                            host: target.host,
-                            port: target.port,
-                            user: target.user,
-                        })
-                    });
-                let descriptor = TerminalDescriptor {
-                    id: id.clone(),
-                    title: entry.title.to_string(),
-                    local: info.local,
-                    connection,
-                    cwd: info.cwd.map(|path| path.to_string_lossy().into_owned()),
-                    status: format!("{:?}", info.status),
-                };
-                Some((id, entry, descriptor))
-            })
-            .collect()
-    }
     pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() || self.generating || !self.accept_updates {
+        if !cx.ai_enabled() || self.generating || self.auth_required || self.ended() {
             return;
         }
         let (Some(commands), Some(session)) = (self.commands.clone(), self.session.clone()) else {
@@ -289,20 +476,33 @@ impl AgentThread {
         if text.trim().is_empty() && self.images.is_empty() {
             return;
         }
-        let descriptors = self
-            .resolved(cx)
-            .into_iter()
-            .map(|(_, _, descriptor)| descriptor)
-            .collect::<Vec<_>>();
-        let context = nocterm_ai::context::context_block(&descriptors);
+        // A new turn: updates count again.
+        self.stopped = false;
+        self.accept_updates = true;
+        let context = format!(
+            "{}\n{}",
+            nocterm_ai::context::TERMINAL_RULES,
+            self.context(cx)
+        );
         self.context_bytes += context.len();
         let mut visible = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
         visible.extend(self.images.drain(..).map(|image| image.content()));
         self.state.push_user(visible.clone());
+        self.persist(cx);
         let mut content = vec![acp::ContentBlock::Text(acp::TextContent::new(context))];
         content.extend(visible);
+        self.last_prompt = Some(PromptMetadata {
+            model: self
+                .state
+                .config_options
+                .iter()
+                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
+                .map(config_label)
+                .filter(|model| !model.is_empty()),
+        });
         self.generating = true;
         self.status = "Working…".into();
+        self.status_error = false;
         let epoch = self.epoch;
         let future = cx
             .background_executor()
@@ -315,14 +515,34 @@ impl AgentThread {
                 }
                 this.generating = false;
                 this.cancel_pending();
+                this.persist(cx);
                 match result {
                     Ok(response) => {
-                        this.status = if this.accept_updates {
-                            format!("{:?}", response.stop_reason)
+                        if response.usage.is_some() {
+                            this.state.tokens = response.usage;
+                        }
+                        // Agents that keep limits in their own files have
+                        // just written this turn's.
+                        let agent = this.agent_id.clone();
+                        cx.defer(move |cx| {
+                            Runtime::global(cx)
+                                .update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
+                        });
+                        this.status = if this.stopped {
+                            "Stopped".into()
                         } else {
-                            "Stopped. Restart this chat to continue with a fresh agent session."
-                                .into()
+                            format!("{:?}", response.stop_reason)
                         };
+                        cx.notify();
+                    }
+                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                        this.require_authentication(&message, cx);
+                    }
+                    // Some agents answer a cancelled prompt with an error; the
+                    // session itself goes on.
+                    Err(error) if this.stopped => {
+                        tracing::debug!(%error, "stopped prompt ended with an error");
+                        this.status = "Stopped".into();
                         cx.notify();
                     }
                     Err(error) => this.fail(&error.to_string(), cx),
@@ -355,8 +575,14 @@ impl AgentThread {
                     return;
                 }
                 match result {
-                    Ok(options) => this.state.config_options = options,
-                    Err(error) => this.status = nocterm_ai::redact::redact(&error.to_string()),
+                    Ok(options) => {
+                        this.state.config_options = options;
+                        this.status_error = false;
+                    }
+                    Err(error) => {
+                        this.status = nocterm_ai::redact::redact(&error.to_string());
+                        this.status_error = true;
+                    }
                 }
                 cx.notify();
             });
@@ -381,20 +607,34 @@ impl AgentThread {
                     return;
                 }
                 match result {
-                    Ok(()) => this.state.current_mode = Some(id),
-                    Err(error) => this.status = nocterm_ai::redact::redact(&error.to_string()),
+                    Ok(()) => {
+                        this.state.current_mode = Some(id);
+                        this.status_error = false;
+                    }
+                    Err(error) => {
+                        this.status = nocterm_ai::redact::redact(&error.to_string());
+                        this.status_error = true;
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
     }
+    /// Cancels the turn in progress. The session stays open for the next
+    /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
+        self.finish_pending_tools();
+        self.cancel_pending();
+        if !self.generating {
+            cx.notify();
+            return;
+        }
         if let (Some(commands), Some(session)) = (&self.commands, &self.session) {
             commands.cancel(session.clone());
         }
         self.accept_updates = false;
-        self.cancel_pending();
+        self.stopped = true;
         self.status = "Stopping…".into();
         let epoch = self.epoch;
         cx.spawn(async move |this, cx| {
@@ -422,223 +662,47 @@ impl AgentThread {
             self.attachments.remove(index);
             self.grants.clear();
             self.cancel_pending();
+            self.prune_background(cx);
         } else {
             self.attachments.push(attachment);
         }
         cx.notify();
     }
-    pub(crate) fn handle_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
-        if !cx.ai_enabled()
-            || !self.accept_updates
-            || self.registration.as_ref().map(|value| value.id) != Some(call.registration_id)
-        {
-            let _ = call.respond.send(Err("Chat is unavailable.".into()));
-            return;
-        }
-        if let Err(error) = call.call.validate() {
-            let _ = call.respond.send(Err(error));
-            return;
-        }
-        if self
-            .grants
-            .requires_approval(&call.call, &cx.settings().ai.approval)
-        {
-            self.tools.push(call);
-            cx.notify();
-            return;
-        }
-        self.execute_tool(call, cx);
-    }
-    pub(crate) fn approve_tool(
-        &mut self,
-        index: usize,
-        allow: bool,
-        grant: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.tools.len() {
-            return;
-        }
-        let call = self.tools.remove(index);
-        if !allow {
-            let _ = call.respond.send(Err("User denied this request.".into()));
-        } else {
-            let attached = call.call.terminal_id().is_none_or(|id| {
-                self.resolved(cx)
-                    .iter()
-                    .any(|(candidate, _, _)| candidate == id)
-            });
-            if !cx.ai_enabled() || !self.accept_updates || !attached {
-                let _ = call
-                    .respond
-                    .send(Err("Terminal was detached or chat is unavailable.".into()));
-                cx.notify();
-                return;
-            }
-            if grant && let Some(id) = call.call.terminal_id() {
-                self.grants.grant(id, call.call.writes());
-            }
-            self.execute_tool(call, cx);
-        }
-        cx.notify();
-    }
-    fn execute_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
-        // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
-        if !cx.ai_enabled()
-            || !self.accept_updates
-            || self.registration.as_ref().map(|value| value.id) != Some(call.registration_id)
-        {
-            let _ = call.respond.send(Err("Chat is unavailable.".into()));
-            return;
-        }
-        let resolved = self.resolved(cx);
-        if let TerminalCall::ListTerminals = call.call {
-            let descriptors: Vec<_> = resolved
-                .into_iter()
-                .map(|(_, _, descriptor)| descriptor)
-                .collect();
-            let payload = nocterm_ai::context::context_block(&descriptors);
-            let _ = call
-                .respond
-                .send(Ok(serde_json::json!({"context":payload})));
-            return;
-        }
-        let Some((_, entry, _)) = resolved
-            .into_iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
-        else {
-            let _ = call
-                .respond
-                .send(Err("Terminal is not attached or was closed.".into()));
-            return;
-        };
-        match &call.call {
-            TerminalCall::ReadTerminal(request) => {
-                let result = entry
-                    .access
-                    .read(
-                        TextRequest {
-                            max_lines: request.lines.unwrap_or(200),
-                            max_bytes: 64 * 1024,
-                            since_line: request.since,
-                        },
-                        cx,
-                    )
-                    .map(|tail| self.text_payload(tail, cx));
-                let _ = call.respond.send(result);
-            }
-            TerminalCall::SendInput(request) => {
-                let text = format!(
-                    "{}{}",
-                    request.text,
-                    if request.press_enter { "\r" } else { "" }
-                );
-                let result = entry
-                    .access
-                    .send_text(&text, cx)
-                    .map(|()| serde_json::json!({"accepted":true}));
-                let _ = call.respond.send(result);
-            }
-            TerminalCall::RunCommand(request) => {
-                let before = entry.access.read(
-                    TextRequest {
-                        max_lines: 2000,
-                        max_bytes: 64 * 1024,
-                        since_line: None,
-                    },
-                    cx,
-                );
-                let since = match before {
-                    Ok(before) => before.next_line,
-                    Err(error) => {
-                        let _ = call.respond.send(Err(error));
-                        return;
-                    }
-                };
-                if let Err(error) = entry.access.run_command(&request.command, cx) {
-                    let _ = call.respond.send(Err(error));
-                    return;
+}
+
+/// The name of a chat's terminal tools server. Each chat's is unique: agents
+/// such as Hermes keep one server per name for the whole process, so a shared
+/// name would send every chat's calls to the first chat's bridge.
+pub(crate) fn bridge_server_name(registration: u64) -> String {
+    format!("nocterm-{registration}")
+}
+
+pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
+    match &option.kind {
+        acp::SessionConfigKind::Select(select) => {
+            let options = match &select.options {
+                acp::SessionConfigSelectOptions::Ungrouped(values) => {
+                    values.iter().collect::<Vec<_>>()
                 }
-                let epoch = self.epoch;
-                let id = request.terminal_id.clone();
-                let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
-                let idle = Duration::from_millis(request.idle_ms.unwrap_or(1000));
-                cx.spawn(async move |this, cx| {
-                    let started = Instant::now();
-                    let mut changed = started;
-                    let mut generation = None;
-                    let result = loop {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
-                        let step = this.update(cx, |this, cx| {
-                            if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
-                                return Err("Command observation cancelled.".into());
-                            }
-                            let (_, entry, _) = this
-                                .resolved(cx)
-                                .into_iter()
-                                .find(|(value, _, _)| *value == id)
-                                .ok_or("Terminal was detached or closed.")?;
-                            let info = entry.access.info(cx).ok_or("Terminal was closed.")?;
-                            if info.status != TerminalStatus::Connected {
-                                return Err("Terminal is no longer connected.".into());
-                            }
-                            if generation != Some(info.generation) {
-                                generation = Some(info.generation);
-                                changed = Instant::now();
-                            }
-                            let reason = if info.at_prompt == Some(true) {
-                                Some("prompt_returned")
-                            } else if started.elapsed() >= timeout {
-                                Some("timeout")
-                            } else if changed.elapsed() >= idle {
-                                Some("output_idle")
-                            } else {
-                                None
-                            };
-                            if let Some(reason) = reason {
-                                let tail = entry.access.read(
-                                    TextRequest {
-                                        max_lines: 2000,
-                                        max_bytes: 64 * 1024,
-                                        since_line: Some(since),
-                                    },
-                                    cx,
-                                )?;
-                                let mut payload = this.text_payload(tail, cx);
-                                payload["completion"] = serde_json::json!(reason);
-                                payload["exit_status"] = serde_json::Value::Null;
-                                Ok(Some(payload))
-                            } else {
-                                Ok(None)
-                            }
-                        });
-                        match step {
-                            Ok(Ok(Some(result))) => break Ok(result),
-                            Ok(Ok(None)) => {}
-                            Ok(Err(error)) => break Err(error),
-                            Err(_) => break Err("Chat was closed.".into()),
-                        }
-                    };
-                    let _ = call.respond.send(result);
-                })
-                .detach();
-            }
-            TerminalCall::ListTerminals => {}
+                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                    .iter()
+                    .flat_map(|group| group.options.iter())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            options
+                .iter()
+                .find(|value| value.value == select.current_value)
+                .map(|value| value.name.clone())
+                .unwrap_or_else(|| select.current_value.to_string())
         }
-    }
-    fn text_payload(
-        &mut self,
-        tail: nocterm_workspace::TerminalText,
-        cx: &App,
-    ) -> serde_json::Value {
-        let text = if cx.settings().ai.approval.redact_secrets {
-            nocterm_ai::redact::redact(&tail.text)
-        } else {
-            tail.text
-        };
-        self.tool_bytes += text.len();
-        serde_json::json!({"text":text,"first_line":tail.first_line,"next_line":tail.next_line,"cursor_semantics":"inclusive snapshot; replace overlapping lines","truncated":tail.truncated,"alt_screen":tail.alt_screen})
+        acp::SessionConfigKind::Boolean(value) => {
+            if value.current_value {
+                "On".into()
+            } else {
+                "Off".into()
+            }
+        }
+        _ => String::new(),
     }
 }
