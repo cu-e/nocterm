@@ -3,6 +3,16 @@ target/
 **/*.rs.bk
 *.pdb
 
+# Release binaries and installers (any directory and letter case)
+*.[eE][xX][eE]
+*.[dD][eE][bB]
+*.[rR][pP][mM]
+*.[aA][pP][pP][iI][mM][aA][gG][eE]
+
+# Python tooling caches
+__pycache__/
+*.py[cod]
+
 # Coverage & Profiling
 *.profraw
 *.profdata
