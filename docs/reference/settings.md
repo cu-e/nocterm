@@ -7,12 +7,14 @@
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
 | `ai.agents` | "object" | `{}` | Agents by id. An entry named like a built-in agent (`claude`, `codex`, `hermes`) changes it; any other id adds a custom agent. |
-| `ai.approval.redact_secrets` | "boolean" | `true` | Hide private keys and common access tokens in terminal output before an agent reads it. This is best effort; do not attach terminals that show secrets. |
+| `ai.approval.redact_secrets` | "boolean" | `true` | Hide private keys, access tokens, passwords and credentials in URLs in terminal output before an agent reads it. This is best effort; do not attach terminals that show secrets. |
 | `ai.approval.terminal_read` | ["allow","ask"] | `"allow"` | Whether an action runs straight away or waits for the user. |
 | `ai.approval.terminal_write` | ["allow","ask"] | `"ask"` | Whether an action runs straight away or waits for the user. |
 | `ai.default_agent` | ["string","null"] | `null` | Agent id that new threads start with. Unset: ask each time. |
 | `ai.enabled` | "boolean" | `true` | Master switch. Off: the AI panel is hidden and every agent is stopped. |
-| `ai.working_directory` | ["string","null"] | `null` | Folder agents start in. Unset: a private folder in the application's state directory. Local agents are not sandboxed and can read your files. |
+| `ai.sandbox` | "off", "workspace" | `"off"` | How agent processes are isolated from the rest of the system. |
+| `ai.working_directory` | ["string","null"] | `null` | Folder agents start in. Unset: a private folder in the application's state directory. Without isolation, agents can read and change any of your files. |
+| `appearance.detect_server_country` | "boolean" | `true` | Find out which country each saved server is in and show its flag. Sends the server's public IP address (never its name) to a GeoIP service on connecting; private addresses are never sent. A country set on the connection is always shown. |
 | `appearance.mode` | "light", "dark", "system" | `"system"` | Which palette the interface uses. |
 | `local.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |
 | `local.cwd` | ["string","null"] | `null` | Initial directory. Empty means the user's home directory. |
@@ -43,3 +45,4 @@
 | `terminal.show_timestamps` | "boolean" | `false` | Show the timestamp of the first output on each logical line. Show each logical line's first output time in UTC (this machine's clock). |
 | `terminal.term` | "string" | `"xterm-256color"` | Terminal type announced to the remote host (its `TERM` variable). |
 | `vault.auto_lock_minutes` | "integer"; 1–1440 | `15` | Lock after this many minutes without vault use (1–1440). |
+| `vault.prompt_on_startup` | "boolean" | `false` | Prompt for the master password when Nocterm starts. |

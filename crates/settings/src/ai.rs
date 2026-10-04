@@ -11,11 +11,14 @@ use serde::{Deserialize, Serialize};
 pub struct AiSettings {
     /// Master switch. Off: the AI panel is hidden and every agent is stopped.
     pub enabled: bool,
+    /// Whether agent processes run isolated (Linux, bubblewrap). Changing it
+    /// restarts running agents.
+    pub sandbox: SandboxMode,
     /// Agent id that new threads start with. Unset: ask each time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_agent: Option<String>,
     /// Folder agents start in. Unset: a private folder in the application's state directory.
-    /// Local agents are not sandboxed and can read your files.
+    /// Without isolation, agents can read and change any of your files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     /// What an agent may do in the terminals you attach to it.
@@ -29,6 +32,7 @@ impl Default for AiSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            sandbox: SandboxMode::default(),
             default_agent: None,
             working_directory: None,
             approval: ApprovalSettings::default(),
@@ -37,16 +41,32 @@ impl Default for AiSettings {
     }
 }
 
+/// How agent processes are isolated from the rest of the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxMode {
+    /// Agents run directly as the current user.
+    #[default]
+    Off,
+    /// Agents may change only their working directory and their own state and
+    /// caches; SSH/GPG keys, cloud credentials, password stores and nocterm's
+    /// own files are hidden. Linux only, with bubblewrap installed; agents fail
+    /// to start rather than run unisolated.
+    Workspace,
+}
+
 /// Which agent actions in attached terminals need your confirmation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ApprovalSettings {
     /// Reading the output of an attached terminal.
     pub terminal_read: ApprovalPolicy,
-    /// Typing into an attached terminal or running a command in it.
+    /// Typing into an attached terminal, running a command in it, or connecting to an
+    /// attached server in the background.
     pub terminal_write: ApprovalPolicy,
-    /// Hide private keys and common access tokens in terminal output before an agent reads it.
-    /// This is best effort; do not attach terminals that show secrets.
+    /// Hide private keys, access tokens, passwords and credentials in URLs in terminal
+    /// output before an agent reads it. This is best effort; do not attach terminals that
+    /// show secrets.
     pub redact_secrets: bool,
 }
 

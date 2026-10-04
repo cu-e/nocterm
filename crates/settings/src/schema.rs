@@ -41,11 +41,25 @@ pub struct Settings {
 }
 
 /// How the interface looks.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Appearance {
     /// Which palette to use: follow the operating system, or always light or dark.
     pub mode: AppearanceMode,
+    /// Find out which country each saved server is in and show its flag. Sends
+    /// the server's public IP address (never its name) to a GeoIP service on
+    /// connecting; private addresses are never sent. A country set on the
+    /// connection is always shown.
+    pub detect_server_country: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            mode: AppearanceMode::default(),
+            detect_server_country: true,
+        }
+    }
 }
 
 /// Which palette the interface uses.
@@ -195,11 +209,14 @@ pub struct VaultSettings {
     /// Lock after this many minutes without vault use (1–1440).
     #[schemars(extend("minimum" = 1, "maximum" = 1440))]
     pub auto_lock_minutes: u32,
+    /// Prompt for the master password when Nocterm starts.
+    pub prompt_on_startup: bool,
 }
 impl Default for VaultSettings {
     fn default() -> Self {
         Self {
             auto_lock_minutes: 15,
+            prompt_on_startup: false,
         }
     }
 }
