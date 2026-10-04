@@ -81,8 +81,10 @@ jobs:
           log = Path(os.environ["RUNNER_TEMP"]) / "nocterm-workspace-tests.log"
           if log.is_file():
               excerpt = "\n".join(log.read_text(errors="replace").splitlines()[-100:])[-16000:]
-              escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print("::error title=Workspace test failure::" + escaped)
+              for start in range(0, len(excerpt), 3000):
+                  chunk = excerpt[start:start + 3000]
+                  escaped = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print("::error title=Workspace test failure::" + escaped)
           PYTHON
       - run: cargo test --manifest-path vendor/alacritty_terminal/Cargo.toml --lib
       - name: Verify native menu patch
