@@ -79,6 +79,8 @@ pub(crate) struct AgentPanel {
     subscriptions: Vec<Subscription>,
     notify_queued: bool,
     history_tick: Option<Task<()>>,
+    /// Password fields of the sign-in cards, by background session.
+    sign_in_inputs: HashMap<gpui_kit::EntityId, approvals::SignInInput>,
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
@@ -138,6 +140,7 @@ impl AgentPanel {
         let (left_split, left_subscription) = split::split_state(0, cx);
         Self {
             image_cache: HashMap::new(),
+            sign_in_inputs: HashMap::new(),
             focus: cx.focus_handle(),
             workspace,
             threads: Vec::new(),

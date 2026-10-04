@@ -49,6 +49,27 @@ fn binding(request: &SecretRequest) -> Option<CredentialBinding> {
         SecretRequest::Interactive { .. } => None,
     }
 }
+/// What a secret prompt asks for, whether the last answer was wrong, and
+/// whether the answer is hidden while typed.
+pub(crate) fn describe(request: &SecretRequest) -> (String, bool, bool) {
+    match request {
+        SecretRequest::Password { target, retry } => {
+            (format!("Password for {target}"), *retry, true)
+        }
+        SecretRequest::KeyPassphrase { path, retry } => {
+            (format!("Passphrase for {}", path.display()), *retry, true)
+        }
+        SecretRequest::Interactive { prompt, echo } => {
+            let prompt = prompt.trim();
+            let title = if prompt.is_empty() {
+                "The host asks for a response"
+            } else {
+                prompt
+            };
+            (title.to_owned(), false, !echo)
+        }
+    }
+}
 impl Terminal {
     pub(crate) fn clear_credentials(&mut self) {
         self.credentials.epoch = self.credentials.epoch.wrapping_add(1);

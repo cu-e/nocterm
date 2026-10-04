@@ -1,4 +1,5 @@
-//! Allowlisted access to existing terminals. No authentication or launch data.
+//! Allowlisted access to existing terminals. No authentication or launch data
+//! reaches agents; only the user answers a sign-in prompt.
 use std::{path::PathBuf, rc::Rc};
 
 use gpui_kit::{App, EntityId, SharedString};
@@ -27,6 +28,19 @@ pub struct TerminalInfo {
     pub dirty_input: bool,
     pub alt_screen: bool,
     pub generation: u64,
+    /// The secret the session asks for, which the user can type outside the
+    /// terminal. Host key questions stay in the terminal.
+    pub sign_in: Option<SignInPrompt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignInPrompt {
+    /// What is asked, for example "Password for root@example.com".
+    pub label: SharedString,
+    /// The previous answer was wrong.
+    pub retry: bool,
+    /// The answer is hidden while it is typed.
+    pub masked: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,6 +68,9 @@ pub trait TerminalAccess: 'static {
     fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String>;
     /// Adds command-specific busy, dirty-input and alternate-screen guards.
     fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String>;
+    /// Answers [`TerminalInfo::sign_in`] with what the user typed. Never
+    /// exposed to agent tools.
+    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String>;
 }
 
 #[derive(Clone)]
