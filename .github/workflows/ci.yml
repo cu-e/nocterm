@@ -68,7 +68,22 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo build --locked --workspace --all-targets
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace
+      - name: Run workspace tests
+        run: |
+          set -o pipefail
+          cargo test --locked --workspace 2>&1 | tee "$RUNNER_TEMP/nocterm-workspace-tests.log"
+      - name: Report workspace test failures
+        if: failure()
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          log = Path(os.environ["RUNNER_TEMP"]) / "nocterm-workspace-tests.log"
+          if log.is_file():
+              excerpt = "\n".join(log.read_text(errors="replace").splitlines()[-100:])[-16000:]
+              escaped = excerpt.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print("::error title=Workspace test failure::" + escaped)
+          PYTHON
       - run: cargo test --manifest-path vendor/alacritty_terminal/Cargo.toml --lib
       - name: Verify native menu patch
         run: cargo test --manifest-path vendor/gpui-component/Cargo.toml --locked --features test-support --lib menu::app_menu_bar
