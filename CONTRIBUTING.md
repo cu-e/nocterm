@@ -60,6 +60,15 @@ Rules:
 
 Pick the type by what the *user of the software* sees, not by which files changed: a bug fix that only edits a test helper is `test`, a refactor that fixes a crash is `fix`.
 
+## Code size
+
+A Rust source file may have at most 800 lines, tests included. `cargo xtask architecture`
+(run in CI) enforces it. When a file approaches the limit, split it by responsibility into
+child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
+Files that were already longer are listed in `xtask/oversized-files.toml`; they may only
+shrink, and their entry is lowered or removed as they do. Never raise an entry to make a
+check pass.
+
 ## Pull requests
 
 - Title: Conventional Commit, as above.
