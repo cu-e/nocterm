@@ -5,7 +5,7 @@ use gpui_kit::{
     Subscription, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Disableable as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputEvent, InputState},
@@ -16,7 +16,8 @@ use gpui_kit::{
     px,
 };
 use nocterm_session::Secret;
-use nocterm_vault::VaultService;
+use nocterm_ui::IconName;
+use nocterm_vault::{DeviceAvailability, DeviceUnlockError, VaultError, VaultService};
 use nocterm_workspace::{LockVault, OpenVault, UnlockVault};
 use std::sync::Arc;
 
@@ -64,16 +65,26 @@ pub(crate) fn open(window: &mut Window, cx: &mut App) {
     window.focus(&focus, cx);
 }
 
-struct UnlockPrompt {
+pub(crate) struct UnlockPrompt {
     service: Arc<VaultService>,
     password: Entity<InputState>,
     busy: bool,
-    error: Option<SharedString>,
+    pub(crate) error: Option<SharedString>,
+    /// The device unlock label ("Fingerprint") once it is known to be enabled.
+    pub(crate) device: Option<SharedString>,
+    /// A device authentication is waiting on the vault worker.
+    pub(crate) scanning: bool,
+    /// Identifies the latest scan, so a cancelled one cannot report late.
+    scan: u64,
     _subscription: Subscription,
 }
 
 impl UnlockPrompt {
-    fn new(service: Arc<VaultService>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        service: Arc<VaultService>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -84,12 +95,71 @@ impl UnlockPrompt {
                 this.submit(window, cx);
             }
         });
+        let probe = service.probe_device_unlock();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(capability) = probe.await else {
+                return;
+            };
+            if !capability.enabled || capability.availability != DeviceAvailability::Available {
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.device = Some(capability.label.into());
+                this.unlock_with_device(window, cx);
+            });
+        })
+        .detach();
         Self {
             service,
             password,
             busy: false,
             error: None,
+            device: None,
+            scanning: false,
+            scan: 0,
             _subscription: subscription,
+        }
+    }
+
+    /// Starts device authentication; typing the password stays possible and
+    /// cancels it on submit.
+    fn unlock_with_device(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.scanning || self.service.is_unlocked() {
+            return;
+        }
+        self.scanning = true;
+        self.scan += 1;
+        let scan = self.scan;
+        self.error = None;
+        let future = self.service.unlock_with_device();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = future.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !this.scanning || this.scan != scan {
+                    return;
+                }
+                this.scanning = false;
+                match result {
+                    Ok(()) => {
+                        window.close_dialog(cx);
+                        window.refresh();
+                    }
+                    Err(
+                        VaultError::Cancelled | VaultError::Device(DeviceUnlockError::Cancelled),
+                    ) => {}
+                    Err(error) => this.error = Some(error.to_string().into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn cancel_device(&mut self) {
+        if std::mem::take(&mut self.scanning) {
+            // Locking advances the vault epoch, which cancels the native prompt.
+            self.service.lock();
         }
     }
 
@@ -100,6 +170,7 @@ impl UnlockPrompt {
         }
         self.password
             .update(cx, |input, cx| input.set_value("", window, cx));
+        self.cancel_device();
         self.busy = true;
         self.error = None;
         let future = self.service.unlock(Secret::new(typed));
@@ -122,6 +193,13 @@ impl UnlockPrompt {
     }
 }
 
+impl Drop for UnlockPrompt {
+    fn drop(&mut self) {
+        // Closing the dialog must not leave a fingerprint scan running.
+        self.cancel_device();
+    }
+}
+
 impl Focusable for UnlockPrompt {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.password.read(cx).focus_handle(cx)
@@ -141,7 +219,34 @@ impl Render for UnlockPrompt {
                     .text_color(theme.muted_foreground)
                     .child("Saved passwords and keys become available to sign-in prompts."),
             )
-            .child(Input::new(&self.password).mask_toggle())
+            .child(Input::new(&self.password).mask_toggle().when_some(
+                self.device.clone(),
+                |input, label| {
+                    input.suffix(
+                        Button::new("vault-unlock-device")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::FingerprintPattern)
+                            .tooltip(format!("Unlock with {label}"))
+                            .when(self.scanning, |button| button.text_color(theme.primary))
+                            .disabled(self.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.unlock_with_device(window, cx)
+                            })),
+                    )
+                },
+            ))
+            .when(self.scanning, |prompt| {
+                let label = self.device.clone().unwrap_or_default();
+                prompt.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!(
+                            "{label}: touch the sensor, or type the master password."
+                        )),
+                )
+            })
             .when_some(self.error.clone(), |prompt, error| {
                 prompt.child(div().text_xs().text_color(theme.danger).child(error))
             })

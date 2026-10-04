@@ -296,3 +296,86 @@ fn switching_tabs_clears_master_password_drafts(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A device that is enrolled and releases the stored key without a prompt.
+#[derive(Default)]
+struct EnrolledDevice(std::sync::Mutex<Option<nocterm_vault::VaultKey>>);
+impl DeviceUnlockProvider for EnrolledDevice {
+    fn probe(&self) -> Result<DeviceCapability, nocterm_vault::DeviceUnlockError> {
+        Ok(DeviceCapability {
+            availability: DeviceAvailability::Available,
+            label: "Fingerprint".into(),
+            detail: String::new(),
+            enabled: false,
+            session_only: true,
+        })
+    }
+    fn enroll(
+        &self,
+        _: nocterm_vault::VaultBinding,
+        key: nocterm_vault::VaultKey,
+        _: &nocterm_vault::DeviceCancellation,
+    ) -> Result<Vec<u8>, nocterm_vault::DeviceUnlockError> {
+        *self.0.lock().unwrap() = Some(key);
+        Ok(vec![1])
+    }
+    fn release(
+        &self,
+        _: nocterm_vault::VaultBinding,
+        _: &[u8],
+        _: &nocterm_vault::DeviceCancellation,
+    ) -> Result<nocterm_vault::VaultKey, nocterm_vault::DeviceUnlockError> {
+        self.0
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(nocterm_vault::DeviceUnlockError::Invalidated)
+    }
+    fn remove(
+        &self,
+        _: nocterm_vault::VaultBinding,
+        _: &[u8],
+    ) -> Result<(), nocterm_vault::DeviceUnlockError> {
+        *self.0.lock().unwrap() = None;
+        Ok(())
+    }
+    fn registered(&self, _: nocterm_vault::VaultBinding, _: &[u8]) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+}
+
+#[gpui_kit::test]
+fn unlock_dialog_offers_and_accepts_an_enabled_fingerprint(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, _, service) = setup_with_device(
+        cx,
+        directory.path().join("vault"),
+        Some(Arc::new(EnrolledDevice::default())),
+    );
+    block_on(service.create(Secret::new("portable master password"))).unwrap();
+    block_on(service.enable_device_unlock()).unwrap();
+    service.lock();
+    let (handle, prompt) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| crate::unlock::UnlockPrompt::new(service.clone(), window, cx))
+        })
+        .unwrap()
+    });
+    // The prompt probes the device, then starts device unlock by itself.
+    block_on(service.probe_device_unlock()).unwrap();
+    cx.run_until_parked();
+    assert!(service.is_unlocked());
+    cx.update(|cx| assert_eq!(prompt.read(cx).device.as_deref(), Some("Fingerprint")));
+    // The fingerprint button beside the password starts it again.
+    service.lock();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("vault-unlock-device", cx);
+        assert!(prompt.read(cx).scanning);
+    })
+    .unwrap();
+    block_on(service.probe_device_unlock()).unwrap();
+    cx.run_until_parked();
+    assert!(service.is_unlocked());
+    cx.update(|cx| assert!(!prompt.read(cx).scanning && prompt.read(cx).error.is_none()));
+}

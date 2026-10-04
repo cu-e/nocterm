@@ -35,6 +35,7 @@ gpui_kit::assets::icon_assets!(
         SquareTerminal,
         Palette,
         Lock,
+        FingerprintPattern,
         Sparkles,
         Maximize2,
         Minimize2,
