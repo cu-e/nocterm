@@ -69,7 +69,7 @@ pub fn hsla(color: Color) -> Hsla {
     .into()
 }
 
-fn color(hsla: Hsla) -> Color {
+pub(crate) fn color(hsla: Hsla) -> Color {
     let rgba = Rgba::from(hsla);
     let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
     Color {

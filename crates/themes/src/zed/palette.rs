@@ -4,7 +4,9 @@ use nocterm_design::{Color, Palette};
 use std::collections::BTreeMap;
 
 impl ZedTheme {
-    /// Refine missing ANSI colours from nocterm's built-in appearance palette.
+    /// Refine missing ANSI colours from the supplied appearance palette.
+    /// Its background is the opaque interface baseline used for compositing;
+    /// the UI supplies the component default rather than theme.toml colours.
     pub fn palette(&self, base: &Palette) -> Palette {
         let get = |keys: &[&str]| keys.iter().find_map(|key| self.colors.get(*key).copied());
         let player = self.players.first();

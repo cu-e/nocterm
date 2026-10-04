@@ -1,6 +1,6 @@
 //! Catalogue publication and selection resolution, independent of Settings UI.
 use crate::{ActiveSettings, Design, SettingsStore};
-use gpui_kit::{App, BorrowAppContext as _, Global, Task};
+use gpui_kit::{App, BorrowAppContext as _, Global, Task, component::ThemeColor};
 use nocterm_design::DesignTokens;
 use nocterm_themes::{Appearance, ThemeCatalog, ThemeDirs};
 use std::sync::Arc;
@@ -48,7 +48,16 @@ fn resolve(cx: &mut App) {
         };
         let dark = appearance.is_dark();
         if let Some(entry) = themes.catalog.find(name, appearance) {
-            let palette = entry.theme.palette(builtin.palette(dark));
+            let mut fallback = builtin.palette(dark).clone();
+            // Imported component colours refine from ThemeColor, not from the
+            // built-in terminal background or the user's theme.toml overrides.
+            let component = if dark {
+                ThemeColor::dark()
+            } else {
+                ThemeColor::light()
+            };
+            fallback.terminal.background = Some(crate::terminal_style::color(component.background));
+            let palette = entry.theme.palette(&fallback);
             if dark {
                 tokens.dark = palette;
             } else {

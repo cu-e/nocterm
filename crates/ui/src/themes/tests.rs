@@ -112,3 +112,124 @@ async fn a_superseded_reload_cannot_publish_the_previous_catalogue(cx: &mut Test
         );
     });
 }
+
+#[gpui_kit::test]
+async fn sparse_imports_composite_over_the_component_background_without_override_leaks(
+    cx: &mut TestAppContext,
+) {
+    use crate::terminal_style::color;
+    use gpui_kit::component::ThemeColor;
+    use nocterm_design::Color;
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: directory.path().join("user"),
+        installed: directory.path().join("installed"),
+    };
+    std::fs::create_dir(&dirs.user).unwrap();
+    let mut themes = Vec::new();
+    for appearance in ["light", "dark"] {
+        for source in ["sparse", "interface", "terminal"] {
+            let mut style = json!({
+                "terminal.foreground": "#ff000080",
+                "terminal.ansi.red": "#00ff0080"
+            });
+            if source == "interface" {
+                style["editor.background"] = json!("#0000ff80");
+            } else if source == "terminal" {
+                style["terminal.background"] = json!("#0000ff80");
+            }
+            themes.push(json!({
+                "name": format!("{appearance} {source}"),
+                "appearance": appearance,
+                "style": style
+            }));
+        }
+    }
+    std::fs::write(
+        dirs.user.join("sparse.json"),
+        serde_json::to_vec(&json!({"themes": themes})).unwrap(),
+    )
+    .unwrap();
+    let base = DesignTokens::with_overrides(
+        "[light.ui]\nbackground = '#abcdef'\n[dark.ui]\nbackground = '#fedcba'\n\
+         [light.terminal]\nbackground = '#123456'\nblue = '#112233'\n\
+         [dark.terminal]\nbackground = '#654321'\nblue = '#332211'\n",
+    )
+    .unwrap();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        init(base, SettingsStore::in_memory(Settings::default()), cx);
+        init_themes(dirs.clone(), ThemeCatalog::load(&dirs), cx);
+    });
+    for dark in [false, true] {
+        for source in ["sparse", "interface", "terminal"] {
+            let name = format!("{} {source}", if dark { "dark" } else { "light" });
+            cx.update(|cx| {
+                edit_settings(cx, move |s| {
+                    s.appearance.mode = if dark {
+                        AppearanceMode::Dark
+                    } else {
+                        AppearanceMode::Light
+                    };
+                    if dark {
+                        s.appearance.dark_theme = Some(name);
+                    } else {
+                        s.appearance.light_theme = Some(name);
+                    }
+                })
+            })
+            .await
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                let component = if dark {
+                    ThemeColor::dark()
+                } else {
+                    ThemeColor::light()
+                };
+                let default = component.background;
+                let blue: Color = "#0000ff80".parse().unwrap();
+                let background = if source == "sparse" {
+                    color(default)
+                } else {
+                    color(default.blend(hsla(blue)))
+                };
+                let expected_ui = if source == "interface" {
+                    hsla(blue)
+                } else {
+                    default
+                };
+                assert_eq!(
+                    Theme::global(cx).background,
+                    expected_ui,
+                    "{dark}/{source} GUI"
+                );
+                let style = TerminalStyle::current(cx);
+                assert_eq!(style.background, background, "{dark}/{source} terminal");
+                assert_eq!(
+                    style.foreground,
+                    color(hsla(background).blend(hsla("#ff000080".parse().unwrap()))),
+                    "{dark}/{source} foreground"
+                );
+                assert_eq!(
+                    style.ansi[1],
+                    color(hsla(background).blend(hsla("#00ff0080".parse().unwrap()))),
+                    "{dark}/{source} ANSI"
+                );
+                assert_eq!(
+                    style.ansi[4],
+                    DesignTokens::builtin().palette(dark).terminal.blue,
+                    "theme.toml ANSI must not leak"
+                );
+                assert_eq!(style.background.a, 255);
+                assert_eq!(style.foreground.a, 255);
+                assert_eq!(style.ansi[1].a, 255);
+                if source == "sparse" {
+                    assert_eq!(cx.design().palette(dark).terminal.background, None);
+                }
+            });
+        }
+    }
+}
