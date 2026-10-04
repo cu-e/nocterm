@@ -1,0 +1,93 @@
+name: Package
+
+# Builds installers: Windows (Inno Setup), Linux .deb, .rpm and AppImage.
+# Runs manually, or from release.yml to attach installers to a release.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and upload assets to.
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Linux packages
+    # The oldest supported runner keeps the glibc requirement low.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang cmake libssl-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libvulkan-dev dpkg-dev file
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install packaging tools
+        run: |
+          cargo install --locked cargo-deb cargo-generate-rpm
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build packages
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: target/packages/*
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p nocterm
+      - name: Build installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          $version = (Get-Content version.txt -Raw).Trim()
+          iscc "/DAppVersion=$version" packaging\windows\nocterm.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: target/packages/*.exe
+
+  upload:
+    name: Attach to release
+    if: inputs.tag != ''
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" packages/* --clobber --repo "${{ github.repository }}"
