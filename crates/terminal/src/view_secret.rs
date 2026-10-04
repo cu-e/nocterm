@@ -24,23 +24,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let input = self.secret.as_ref()?.input.clone();
-        let (title, retry, masked) = match request {
-            SecretRequest::Password { target, retry } => {
-                (format!("Password for {target}"), *retry, true)
-            }
-            SecretRequest::KeyPassphrase { path, retry } => {
-                (format!("Passphrase for {}", path.display()), *retry, true)
-            }
-            SecretRequest::Interactive { prompt, echo } => {
-                let prompt = prompt.trim();
-                let title = if prompt.is_empty() {
-                    "The host asks for a response"
-                } else {
-                    prompt
-                };
-                (title.to_owned(), false, !echo)
-            }
-        };
+        let (title, retry, masked) = crate::credentials::describe(request);
         let danger = cx.theme().danger;
 
         let rememberable = !matches!(request, SecretRequest::Interactive { .. });

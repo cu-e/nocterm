@@ -1,7 +1,10 @@
 use gpui_kit::{App, WeakEntity};
-use nocterm_workspace::{TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest};
+use nocterm_session::{Prompt, Secret};
+use nocterm_workspace::{
+    SignInPrompt, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
+};
 
-use crate::{Status, Terminal};
+use crate::{Status, Terminal, credentials::describe};
 
 pub(crate) struct Access(pub WeakEntity<Terminal>);
 
@@ -14,7 +17,9 @@ impl TerminalAccess for Access {
             local: terminal.is_local(),
             target: (!terminal.is_local()).then(|| terminal.spec().target.clone()),
             profile: terminal.spec().profile.clone(),
-            status: if terminal.prompt().is_some() {
+            status: if terminal.awaiting_vault() {
+                TerminalStatus::AwaitingVault
+            } else if terminal.prompt().is_some() {
                 TerminalStatus::AwaitingUser
             } else {
                 match terminal.status() {
@@ -28,6 +33,17 @@ impl TerminalAccess for Access {
             dirty_input: terminal.agent_prompt_state().1,
             alt_screen: terminal.emulator().modes().alt_screen,
             generation: terminal.emulator().generation(),
+            sign_in: match terminal.prompt() {
+                Some(Prompt::Secret { request, .. }) => {
+                    let (label, retry, masked) = describe(request);
+                    Some(SignInPrompt {
+                        label: label.into(),
+                        retry,
+                        masked,
+                    })
+                }
+                _ => None,
+            },
         })
     }
 
@@ -60,6 +76,18 @@ impl TerminalAccess for Access {
     fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String> {
         self.0
             .update(cx, |terminal, cx| terminal.agent_send(command, true, cx))
+            .map_err(|_| "Terminal was closed.".to_owned())?
+    }
+
+    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String> {
+        self.0
+            .update(cx, |terminal, cx| {
+                if !matches!(terminal.prompt(), Some(Prompt::Secret { .. })) {
+                    return Err("The session no longer asks to sign in.".to_owned());
+                }
+                terminal.answer_secret_and_remember(Secret::new(answer), false, cx);
+                Ok(())
+            })
             .map_err(|_| "Terminal was closed.".to_owned())?
     }
 }

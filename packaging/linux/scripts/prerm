@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stops the broker before removal; upgrades restart it from postinst.
+set -e
+case "$1" in
+    remove|purge|0)
+        if [ -d /run/systemd/system ]; then
+            systemctl disable --now nocterm-vault-broker.service >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+exit 0

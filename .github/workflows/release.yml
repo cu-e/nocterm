@@ -21,8 +21,9 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Artifact build/publish jobs hang off the release, e.g.:
-  #
-  # publish:
-  #   needs: release-please
-  #   if: needs.release-please.outputs.release_created == 'true'
+  packages:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/package.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}

@@ -5,6 +5,9 @@
 //! window. It is the only crate that names every other one; nothing else
 //! does any wiring.
 
+// Release builds are GUI applications without a console window on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod agent_auth;
 mod agent_bridge;
 mod app_menus;

@@ -39,7 +39,8 @@ pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
 pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
 pub use terminal_access::{
-    TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
+    SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus, TerminalText,
+    TextRequest,
 };
 pub use workspace::{SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
 

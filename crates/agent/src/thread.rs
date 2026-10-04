@@ -22,6 +22,17 @@ pub(crate) enum Attachment {
     Connection(String),
     Group(String),
 }
+/// A background session asks for a secret. The user answers in the chat, or
+/// unlocks the vault when a saved secret answers it; no tab opens.
+#[derive(Clone)]
+pub(crate) struct SignInWait {
+    pub item: EntityId,
+    pub title: gpui_kit::SharedString,
+    pub access: std::rc::Rc<dyn nocterm_workspace::TerminalAccess>,
+    pub prompt: nocterm_workspace::SignInPrompt,
+    /// Unlocking the vault answers the prompt with a saved secret.
+    pub vault: bool,
+}
 pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
     pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
@@ -82,6 +93,8 @@ pub(crate) struct AgentThread {
     pub attachments: Vec<Attachment>,
     /// Sessions this chat opened without a tab; closed with the chat.
     pub background: Vec<EntityId>,
+    /// Background sessions waiting for the user to sign in from the chat.
+    pub sign_ins: Vec<SignInWait>,
     pub images: Vec<nocterm_ai::images::PromptImage>,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
@@ -154,6 +167,7 @@ impl AgentThread {
             window: None,
             attachments: Vec::new(),
             background: Vec::new(),
+            sign_ins: Vec::new(),
             images: Vec::new(),
             permissions: Vec::new(),
             tools: Vec::new(),

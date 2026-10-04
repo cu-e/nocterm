@@ -16,7 +16,7 @@ use nocterm_ai::{
 use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
 use nocterm_workspace::{ConnectionSummary, TerminalEntry, TerminalStatus, TextRequest};
 
-use super::{AgentThread, Attachment};
+use super::{AgentThread, Attachment, SignInWait};
 
 /// How long an agent waits for a background session to connect.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -537,7 +537,8 @@ async fn wait_until_connected(
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
     let mut shown = false;
-    loop {
+    let mut waiting = false;
+    let result = loop {
         cx.background_executor()
             .timer(Duration::from_millis(150))
             .await;
@@ -553,15 +554,54 @@ async fn wait_until_connected(
                 let Some((_, entry, descriptor)) = entry else {
                     return Err("The session was closed before it connected.".into());
                 };
-                let status = entry.access.info(cx).map(|info| info.status);
-                Ok((status, descriptor))
+                let info = entry.access.info(cx);
+                let status = info.as_ref().map(|info| info.status);
+                // A password is asked in the chat; the session stays hidden.
+                let wait = info.and_then(|info| {
+                    let vault = info.status == TerminalStatus::AwaitingVault;
+                    let user = info.status == TerminalStatus::AwaitingUser;
+                    Some(SignInWait {
+                        item,
+                        title: entry.title.clone(),
+                        access: entry.access.clone(),
+                        prompt: info.sign_in.filter(|_| vault || user)?,
+                        vault,
+                    })
+                });
+                let asking = wait.is_some();
+                let current = this.sign_ins.iter().position(|wait| wait.item == item);
+                match (current, wait) {
+                    (Some(index), Some(wait)) => {
+                        let old = &this.sign_ins[index];
+                        if old.prompt != wait.prompt || old.vault != wait.vault {
+                            this.sign_ins[index] = wait;
+                            cx.notify();
+                        }
+                    }
+                    (None, Some(wait)) => {
+                        this.sign_ins.push(wait);
+                        cx.notify();
+                    }
+                    (Some(index), None) => {
+                        this.sign_ins.remove(index);
+                        cx.notify();
+                    }
+                    (None, None) => {}
+                }
+                Ok((status, asking, descriptor))
             })
-            .map_err(|_| "The chat was closed.".to_owned())??;
+            .map_err(|_| "The chat was closed.".to_owned());
+        let step = match step {
+            Ok(Ok(step)) => step,
+            Ok(Err(error)) | Err(error) => break Err(error),
+        };
         match step {
-            (Some(TerminalStatus::Connected), descriptor) => {
-                return Ok(serde_json::json!({ "terminal": descriptor }));
+            (Some(TerminalStatus::Connected), _, descriptor) => {
+                break Ok(serde_json::json!({ "terminal": descriptor }));
             }
-            (Some(TerminalStatus::AwaitingUser), _) if !shown => {
+            (_, true, _) => waiting = true,
+            // A host key question is answered in the session's own tab.
+            (Some(TerminalStatus::AwaitingUser), false, _) if !shown => {
                 shown = true;
                 let workspace = workspace.clone();
                 let _ = cx.update_window(window, |_, window, cx| {
@@ -570,24 +610,31 @@ async fn wait_until_connected(
                     });
                 });
             }
-            (Some(TerminalStatus::Closed) | None, _) => {
-                return Err(unreachable("Could not connect to the server."));
+            (Some(TerminalStatus::Closed) | None, _, _) => {
+                break Err(unreachable("Could not connect to the server."));
             }
             _ => {}
         }
-        let limit = if shown {
+        let limit = if shown || waiting {
             SIGN_IN_TIMEOUT
         } else {
             CONNECT_TIMEOUT
         };
         if started.elapsed() >= limit {
-            return Err(if shown {
+            break Err(if shown {
                 "The server is waiting for the user to sign in; ask them to finish signing in, then call list_terminals.".into()
+            } else if waiting {
+                "The server is waiting for the user to sign in from the chat or unlock the vault; ask them to, then call open_terminal again.".into()
             } else {
                 unreachable("Connecting to the server timed out.")
             });
         }
-    }
+    };
+    let _ = this.update(cx, |this, cx| {
+        this.sign_ins.retain(|wait| wait.item != item);
+        cx.notify();
+    });
+    result
 }
 
 /// A failure to reach a terminal or server, with what the agent should do

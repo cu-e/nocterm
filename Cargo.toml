@@ -42,6 +42,64 @@ tracing-subscriber.workspace = true
 [lints]
 workspace = true
 
+# Linux packages: see docs/PACKAGING.md. Both binaries are built first, then
+# `cargo deb --no-build` and `cargo generate-rpm` assemble them.
+[package.metadata.deb]
+name = "nocterm"
+maintainer = "Nocterm contributors"
+copyright = "Nocterm contributors"
+extended-description = "Nocterm is a fast, extensible SSH client with SFTP, an encrypted credential vault and fingerprint unlock."
+section = "net"
+priority = "optional"
+depends = "$auto, dbus, systemd"
+recommends = "fprintd, openssh-client"
+maintainer-scripts = "packaging/linux/scripts"
+assets = [
+    ["target/release/nocterm", "usr/bin/", "755"],
+    ["target/release/nocterm-vault-broker", "usr/libexec/nocterm/", "755"],
+    ["packaging/linux/nocterm-vault-broker.service", "usr/lib/systemd/system/", "644"],
+    ["packaging/linux/dev.nocterm.VaultBroker1.conf", "usr/share/dbus-1/system.d/", "644"],
+    ["packaging/linux/dev.nocterm.VaultBroker1.service", "usr/share/dbus-1/system-services/", "644"],
+    ["packaging/linux/dev.nocterm.Nocterm.desktop", "usr/share/applications/", "644"],
+    ["assets/icons/nocterm.svg", "usr/share/icons/hicolor/scalable/apps/dev.nocterm.Nocterm.svg", "644"],
+    ["assets/icons/nocterm-256.png", "usr/share/icons/hicolor/256x256/apps/dev.nocterm.Nocterm.png", "644"],
+    ["README.md", "usr/share/doc/nocterm/", "644"],
+    ["LICENSE", "usr/share/doc/nocterm/", "644"],
+    ["docs/DEVICE_UNLOCK.md", "usr/share/doc/nocterm/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "nocterm"
+summary = "A fast, extensible SSH client"
+license = "LicenseRef-PolyForm-Perimeter-1.0.1"
+post_install_script = "packaging/linux/scripts/postinst"
+pre_uninstall_script = "packaging/linux/scripts/prerm"
+post_uninstall_script = "packaging/linux/scripts/postrm"
+assets = [
+    { source = "target/release/nocterm", dest = "/usr/bin/nocterm", mode = "755" },
+    { source = "target/release/nocterm-vault-broker", dest = "/usr/libexec/nocterm/nocterm-vault-broker", mode = "755" },
+    { source = "packaging/linux/nocterm-vault-broker.service", dest = "/usr/lib/systemd/system/nocterm-vault-broker.service", mode = "644" },
+    { source = "packaging/linux/dev.nocterm.VaultBroker1.conf", dest = "/usr/share/dbus-1/system.d/dev.nocterm.VaultBroker1.conf", mode = "644" },
+    { source = "packaging/linux/dev.nocterm.VaultBroker1.service", dest = "/usr/share/dbus-1/system-services/dev.nocterm.VaultBroker1.service", mode = "644" },
+    { source = "packaging/linux/dev.nocterm.Nocterm.desktop", dest = "/usr/share/applications/dev.nocterm.Nocterm.desktop", mode = "644" },
+    { source = "assets/icons/nocterm.svg", dest = "/usr/share/icons/hicolor/scalable/apps/dev.nocterm.Nocterm.svg", mode = "644" },
+    { source = "assets/icons/nocterm-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/dev.nocterm.Nocterm.png", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/nocterm/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/doc/nocterm/LICENSE", mode = "644", doc = true },
+    { source = "docs/DEVICE_UNLOCK.md", dest = "/usr/share/doc/nocterm/DEVICE_UNLOCK.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+dbus = "*"
+systemd = "*"
+
+[package.metadata.generate-rpm.recommends]
+fprintd = "*"
+openssh-clients = "*"
+
+[build-dependencies]
+winresource = "0.1"
+
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true

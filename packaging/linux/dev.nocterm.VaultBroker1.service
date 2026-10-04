@@ -1,0 +1,6 @@
+# D-Bus activation: Nocterm starts the broker on first use through systemd.
+[D-BUS Service]
+Name=dev.nocterm.VaultBroker1
+Exec=/bin/false
+User=root
+SystemdService=nocterm-vault-broker.service

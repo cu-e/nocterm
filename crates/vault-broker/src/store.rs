@@ -1,4 +1,5 @@
-//! No filesystem access: keys disappear with their owner connection or expiry.
+//! No filesystem access: keys belong to a desktop user and survive Nocterm
+//! restarts, but disappear with the broker (reboot) or after their lifetime.
 use std::{
     collections::HashMap,
     sync::{
@@ -17,6 +18,7 @@ pub(crate) struct Owner {
     pub connection: String,
 }
 pub(crate) struct Entry {
+    /// The user and the connection that last enrolled or released the key.
     pub owner: Owner,
     pub binding: String,
     pub key: Zeroizing<[u8; 32]>,
@@ -45,6 +47,14 @@ impl Store {
         if !Self::valid_binding(&binding) {
             return Err("Invalid vault binding".into());
         }
+        // One key per user and vault: re-enrolling replaces the previous one.
+        self.entries.retain(|_, e| {
+            let replaced = e.owner.uid == owner.uid && e.binding == binding;
+            if replaced {
+                e.cancel.store(true, Ordering::SeqCst);
+            }
+            !replaced
+        });
         if self.entries.len() >= MAX_ENTRIES
             || self
                 .entries
@@ -83,7 +93,7 @@ impl Store {
         }
         self.entries
             .get_mut(token)
-            .filter(|e| e.owner == *owner && e.binding == binding)
+            .filter(|e| e.owner.uid == owner.uid && e.binding == binding)
             .ok_or_else(|| "Registration unavailable; unlock with the master password".into())
     }
     pub(crate) fn remove(
@@ -101,15 +111,14 @@ impl Store {
         self.entries.remove(token);
         Ok(())
     }
+    /// A closed client cancels its authentication; the key stays registered
+    /// so the next Nocterm start can unlock with a fingerprint.
     pub(crate) fn disconnected(&mut self, name: &str) {
-        self.entries.retain(|_, e| {
-            if e.owner.connection == name {
-                e.cancel.store(true, Ordering::SeqCst);
-                false
-            } else {
-                true
+        for entry in self.entries.values_mut() {
+            if entry.owner.connection == name {
+                entry.cancel.store(true, Ordering::SeqCst);
             }
-        });
+        }
     }
     pub(crate) fn expire(&mut self) {
         self.entries.retain(|_, e| {
@@ -132,25 +141,42 @@ mod tests {
         }
     }
     #[test]
-    fn another_connection_or_uid_cannot_read_or_delete() {
+    fn another_uid_cannot_read_or_delete_but_a_restart_can_read() {
         let mut store = Store::default();
         let a = owner(1000, ":1.1");
         let id = "a".repeat(64);
         let token = store
             .enroll(a.clone(), id.clone(), Zeroizing::new([42; 32]))
             .unwrap();
-        for b in [owner(1000, ":1.2"), owner(1001, ":1.1")] {
-            assert!(store.entry(&b, &id, &token).is_err());
-            assert!(store.remove(&b, &id, &token).is_err());
-        }
+        let b = owner(1001, ":1.1");
+        assert!(store.entry(&b, &id, &token).is_err());
+        assert!(store.remove(&b, &id, &token).is_err());
+        let restarted = owner(1000, ":1.2");
         assert_eq!(
-            store.entry(&a, &id, &token).unwrap().key.as_ref(),
+            store.entry(&restarted, &id, &token).unwrap().key.as_ref(),
             &[42; 32]
         );
         assert!(store.entry(&a, &"b".repeat(64), &token).is_err());
     }
     #[test]
-    fn disconnect_and_expiry_cancel_requests_and_erase_registration() {
+    fn enrolling_again_replaces_the_key_for_that_vault() {
+        let mut store = Store::default();
+        let a = owner(1000, ":1.1");
+        let id = "a".repeat(64);
+        let first = store
+            .enroll(a.clone(), id.clone(), Zeroizing::new([1; 32]))
+            .unwrap();
+        let second = store
+            .enroll(owner(1000, ":1.2"), id.clone(), Zeroizing::new([2; 32]))
+            .unwrap();
+        assert!(store.entry(&a, &id, &first).is_err());
+        assert_eq!(
+            store.entry(&a, &id, &second).unwrap().key.as_ref(),
+            &[2; 32]
+        );
+    }
+    #[test]
+    fn disconnect_cancels_requests_and_expiry_erases_registration() {
         let mut store = Store::default();
         let a = owner(1000, ":1.1");
         let id = "a".repeat(64);
@@ -160,7 +186,7 @@ mod tests {
         let cancel = store.entry(&a, &id, &token).unwrap().cancel.clone();
         store.disconnected(":1.1");
         assert!(cancel.load(Ordering::SeqCst));
-        assert!(store.entry(&a, &id, &token).is_err());
+        assert!(store.entry(&a, &id, &token).is_ok());
         let token = store
             .enroll(a.clone(), id.clone(), Zeroizing::new([42; 32]))
             .unwrap();
@@ -172,22 +198,29 @@ mod tests {
     fn registration_limits_and_identifiers_are_enforced() {
         let mut store = Store::default();
         let a = owner(1000, ":1.1");
-        let id = "a".repeat(64);
         assert!(
             store
                 .enroll(a.clone(), "../vault".into(), Zeroizing::new([0; 32]))
                 .is_err()
         );
-        for _ in 0..MAX_PER_UID {
+        for vault in 0..MAX_PER_UID {
             store
-                .enroll(a.clone(), id.clone(), Zeroizing::new([0; 32]))
+                .enroll(
+                    a.clone(),
+                    format!("{vault}").repeat(64),
+                    Zeroizing::new([0; 32]),
+                )
                 .unwrap();
         }
-        assert!(store.enroll(a, id, Zeroizing::new([0; 32])).is_err());
+        assert!(
+            store
+                .enroll(a, "f".repeat(64), Zeroizing::new([0; 32]))
+                .is_err()
+        );
     }
 
     #[test]
-    fn total_capacity_recovers_after_expired_and_disconnected_clients() {
+    fn total_capacity_recovers_after_expired_and_replaced_keys() {
         let mut store = Store::default();
         let id = "a".repeat(64);
         let mut oldest = None;
@@ -223,7 +256,12 @@ mod tests {
             .clone();
         store.disconnected(&newcomer.connection);
         assert!(cancel.load(Ordering::SeqCst));
+        assert!(store.entry(&newcomer, &id, &admitted).is_ok());
+        assert!(
+            store
+                .enroll(newcomer.clone(), id.clone(), Zeroizing::new([0; 32]))
+                .is_ok()
+        );
         assert!(store.entry(&newcomer, &id, &admitted).is_err());
-        assert!(store.enroll(newcomer, id, Zeroizing::new([0; 32])).is_ok());
     }
 }

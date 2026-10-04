@@ -1,0 +1,11 @@
+#!/bin/sh
+# Shared by the .deb and .rpm packages: start the fingerprint vault broker.
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    # Load the broker's system-bus policy without restarting the bus.
+    systemctl reload dbus.service 2>/dev/null || systemctl reload dbus-broker.service 2>/dev/null || true
+    systemctl enable nocterm-vault-broker.service >/dev/null 2>&1 || true
+    systemctl restart nocterm-vault-broker.service || true
+fi
+exit 0

@@ -31,6 +31,21 @@ reconnect without changing its saved profile. Default Session Settings opens the
 SSH defaults. New Window shares application services while keeping its own tabs,
 focus and menus; Close Window closes only that window.
 
+## License
+
+Nocterm is source-available under the [PolyForm Perimeter License 1.0.1](LICENSE).
+Use and modifications, including contributions, are permitted subject to its
+terms. Providing others with a competing product based on this code is not
+permitted, even if that product is free of charge.
+
+Third-party dependencies, vendored code and assets retain their own licenses.
+
+## Install
+
+Release pages provide a Windows installer, `.deb` and `.rpm` packages and an
+AppImage. The Linux packages also install and start the fingerprint vault
+broker. See [packaging](docs/PACKAGING.md).
+
 ## Build and run
 
 Install the Rust toolchain specified by `rust-toolchain.toml`. On Debian or
@@ -60,8 +75,8 @@ the authentication prompt; only successful authentication saves a credential.
 Interactive/MFA answers are never saved. See [vault security](docs/VAULT.md).
 
 Settings → Vault also detects optional fingerprint/Touch ID/Windows Hello unlock.
-Linux requires the separately installed root-owned broker; detection and password
-fallback work without it. See [device unlock setup](docs/DEVICE_UNLOCK.md).
+Linux uses a root-owned broker that the `.deb` and `.rpm` packages install;
+detection and password fallback work without it. See [device unlock setup](docs/DEVICE_UNLOCK.md).
 
 Drag a tab to reorder it or onto a pane edge to split horizontally/vertically;
 the dock previews the destination. Double-click its title to set an alias. Enter
@@ -270,12 +285,3 @@ their folders.
 Local agents are not sandboxed and may read your user files. Nocterm excludes
 SSH/vault credential fields from context; terminal-output filtering cannot
 recognize every secret. See [AI setup, tools and privacy](docs/AI_AGENTS.md).
-
-## License
-
-Nocterm is source-available under the [PolyForm Perimeter License 1.0.1](LICENSE).
-Use and modifications, including contributions, are permitted subject to its
-terms. Providing others with a competing product based on this code is not
-permitted, even if that product is free of charge.
-
-Third-party dependencies, vendored code and assets retain their own licenses.

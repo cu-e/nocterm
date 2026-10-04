@@ -146,11 +146,15 @@ An attached server (directly or through its folder) gives the agent every open
 session of that server, whether you opened it or an agent did. A server without
 a session is listed to the agent as an *offline server*; the agent connects to
 it with the `open_terminal` tool, in the background, without opening a tab or
-taking focus. If the connection needs you — a password, a key passphrase or a
-new host key — the session moves into a tab so you can answer, and the agent
-waits up to three minutes. Background sessions a chat opened end when the chat
+taking focus. If the connection needs you, the agent waits up to three
+minutes; only a new host key moves the session into a tab so you can answer. Background sessions a chat opened end when the chat
 closes or no longer attaches the server. Credentials remembered in the vault and
 key or agent authentication let background sessions connect without a prompt.
+A password, passphrase or one-time code is asked in the chat: the session stays
+in the background, you type the answer into the card and the agent continues.
+When the saved credential is in a locked vault, the card also offers **Unlock
+vault**: it opens the unlock dialog (master password or fingerprint) and the
+saved secret then answers the sign-in.
 
 The agent receives explicit terminal descriptors: opaque terminal id, title,
 local/remote status, working directory when known, and selected connection

@@ -172,6 +172,17 @@ impl ToolBridge for Bridge {
 struct Access {
     sent: std::cell::RefCell<Vec<String>>,
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
+    /// Shared by the sessions of a test.
+    sign_in: Rc<SignIn>,
+}
+/// What the sessions of a test ask before they connect.
+#[derive(Default)]
+struct SignIn {
+    /// Their saved secret needs the vault.
+    vault_locked: std::cell::Cell<bool>,
+    /// They ask for a password nothing saved answers.
+    asks: std::cell::Cell<bool>,
+    answers: std::cell::RefCell<Vec<String>>,
 }
 impl TerminalAccess for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
@@ -180,12 +191,25 @@ impl TerminalAccess for Access {
             local: true,
             target: None,
             profile: self.profile.borrow().clone(),
-            status: TerminalStatus::Connected,
+            status: if self.sign_in.vault_locked.get() {
+                TerminalStatus::AwaitingVault
+            } else if self.sign_in.asks.get() {
+                TerminalStatus::AwaitingUser
+            } else {
+                TerminalStatus::Connected
+            },
             cwd: None,
             at_prompt: Some(true),
             dirty_input: false,
             alt_screen: false,
             generation: 1,
+            sign_in: (self.sign_in.vault_locked.get() || self.sign_in.asks.get()).then(|| {
+                nocterm_workspace::SignInPrompt {
+                    label: "Password for user@example.test".into(),
+                    retry: false,
+                    masked: true,
+                }
+            }),
         })
     }
     fn read(&self, _: TextRequest, _: &App) -> Result<TerminalText, String> {
@@ -203,6 +227,12 @@ impl TerminalAccess for Access {
     }
     fn run_command(&self, text: &str, cx: &mut App) -> Result<(), String> {
         self.send_text(text, cx)
+    }
+    fn answer_sign_in(&self, answer: String, _: &mut App) -> Result<(), String> {
+        self.sign_in.answers.borrow_mut().push(answer);
+        self.sign_in.vault_locked.set(false);
+        self.sign_in.asks.set(false);
+        Ok(())
     }
 }
 struct FakeTerminal {
@@ -267,6 +297,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let access = Rc::new(Access {
         sent: Default::default(),
         profile: Default::default(),
+        sign_in: Default::default(),
     });
     let (handle, workspace, panel, terminal) = cx.update(|cx| {
         gpui_kit::init(cx);
