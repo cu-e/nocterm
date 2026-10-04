@@ -151,6 +151,11 @@ new host key — the session moves into a tab so you can answer, and the agent
 waits up to three minutes. Background sessions a chat opened end when the chat
 closes or no longer attaches the server. Credentials remembered in the vault and
 key or agent authentication let background sessions connect without a prompt.
+When the saved credential is in a locked vault, the session stays in the
+background and the chat shows **Unlock vault**: it opens the unlock dialog
+(master password or fingerprint), the saved secret then answers the sign-in and
+the agent continues. **Enter password in terminal** moves the session into a tab
+instead.
 
 The agent receives explicit terminal descriptors: opaque terminal id, title,
 local/remote status, working directory when known, and selected connection

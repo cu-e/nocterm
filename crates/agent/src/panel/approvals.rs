@@ -12,6 +12,8 @@ use gpui_kit::{
     px,
 };
 use nocterm_ai::TerminalCall;
+use nocterm_ui::IconName;
+use nocterm_workspace::UnlockVault;
 
 use super::{AgentPanel, widgets::menu_variant};
 use crate::thread::AgentThread;
@@ -24,7 +26,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let pending = thread.read(cx).permissions.len() + thread.read(cx).tools.len();
+        let pending = thread.read(cx).permissions.len()
+            + thread.read(cx).tools.len()
+            + thread.read(cx).vault_waits.len();
         if pending == 0 {
             return None;
         }
@@ -37,6 +41,9 @@ impl AgentPanel {
             .max_h(window.viewport_size().height * 0.35)
             .overflow_y_scroll()
             .gap_2();
+        for index in 0..thread.read(cx).vault_waits.len() {
+            list = list.child(self.vault_card(thread, index, cx));
+        }
         for index in 0..thread.read(cx).permissions.len() {
             list = list.child(self.permission_card(thread, index, cx));
         }
@@ -56,11 +63,70 @@ impl AgentPanel {
                     div()
                         .text_xs()
                         .text_color(cx.theme().warning)
-                        .child(format!("Waiting for approval · {pending}")),
+                        .child(format!("Waiting for you · {pending}")),
                 )
                 .child(list)
                 .into_any_element(),
         )
+    }
+
+    /// A background session needs a saved secret from the locked vault.
+    /// Unlocking answers its sign-in prompt; the session never becomes a tab
+    /// unless the user chooses to sign in by hand.
+    fn vault_card(
+        &self,
+        thread: &Entity<AgentThread>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (item, title) = thread.read(cx).vault_waits[index].clone();
+        let workspace = thread.read(cx).workspace.clone();
+        card(cx)
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .child("Unlock the vault to sign in"),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{title} uses a password saved in the vault. The agent continues once it is unlocked."
+                    )),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(
+                        Button::new(("vault-unlock", index))
+                            .primary()
+                            .small()
+                            .icon(IconName::Lock)
+                            .label("Unlock vault")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(UnlockVault), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new(("vault-sign-in-manually", index))
+                            .custom(menu_variant(cx))
+                            .small()
+                            .label("Enter password in terminal")
+                            .on_click(move |_, window, cx| {
+                                let _ = workspace.update(cx, |workspace, cx| {
+                                    workspace.show_background_session(item, window, cx)
+                                });
+                            }),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn permission_card(

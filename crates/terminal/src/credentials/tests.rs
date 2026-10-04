@@ -107,6 +107,7 @@ fn unlocking_the_vault_answers_the_waiting_prompt_with_the_saved_secret(cx: &mut
             .credential_message()
             .is_some_and(|message| message.contains("Unlock the credential vault"))
     }));
+    assert!(cx.update(|cx| setup.terminal.read(cx).awaiting_vault()));
 
     block_on(setup.service.unlock(Secret::new(MASTER))).unwrap();
     wait(cx);
@@ -123,6 +124,7 @@ fn unlocking_the_vault_answers_the_waiting_prompt_with_the_saved_secret(cx: &mut
         let terminal = setup.terminal.read(cx);
         assert!(terminal.prompt().is_none());
         assert!(terminal.credential_message().is_none());
+        assert!(!terminal.awaiting_vault());
     });
 }
 

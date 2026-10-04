@@ -5,7 +5,7 @@ use gpui_kit::{
     Subscription, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Icon, WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputEvent, InputState},
@@ -219,23 +219,30 @@ impl Render for UnlockPrompt {
                     .text_color(theme.muted_foreground)
                     .child("Saved passwords and keys become available to sign-in prompts."),
             )
-            .child(Input::new(&self.password).mask_toggle().when_some(
-                self.device.clone(),
-                |input, label| {
-                    input.suffix(
-                        Button::new("vault-unlock-device")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::FingerprintPattern)
-                            .tooltip(format!("Unlock with {label}"))
-                            .when(self.scanning, |button| button.text_color(theme.primary))
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.unlock_with_device(window, cx)
-                            })),
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.password).mask_toggle()),
                     )
-                },
-            ))
+                    .when_some(self.device.clone(), |row, label| {
+                        row.child(
+                            Button::new("vault-unlock-device")
+                                .outline()
+                                .icon(Icon::new(IconName::FingerprintPattern).size_5())
+                                .tooltip(format!("Unlock with {label}"))
+                                .when(self.scanning, |button| {
+                                    button.text_color(theme.primary).border_color(theme.primary)
+                                })
+                                .disabled(self.busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.unlock_with_device(window, cx)
+                                })),
+                        )
+                    }),
+            )
             .when(self.scanning, |prompt| {
                 let label = self.device.clone().unwrap_or_default();
                 prompt.child(

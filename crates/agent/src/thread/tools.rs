@@ -537,7 +537,8 @@ async fn wait_until_connected(
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
     let mut shown = false;
-    loop {
+    let mut waiting_vault = false;
+    let result = loop {
         cx.background_executor()
             .timer(Duration::from_millis(150))
             .await;
@@ -554,13 +555,28 @@ async fn wait_until_connected(
                     return Err("The session was closed before it connected.".into());
                 };
                 let status = entry.access.info(cx).map(|info| info.status);
+                // A locked vault is unlocked from the chat; the session stays hidden.
+                let vault = status == Some(TerminalStatus::AwaitingVault);
+                if vault != this.vault_waits.iter().any(|(id, _)| *id == item) {
+                    if vault {
+                        this.vault_waits.push((item, entry.title.clone()));
+                    } else {
+                        this.vault_waits.retain(|(id, _)| *id != item);
+                    }
+                    cx.notify();
+                }
                 Ok((status, descriptor))
             })
-            .map_err(|_| "The chat was closed.".to_owned())??;
+            .map_err(|_| "The chat was closed.".to_owned());
+        let step = match step {
+            Ok(Ok(step)) => step,
+            Ok(Err(error)) | Err(error) => break Err(error),
+        };
         match step {
             (Some(TerminalStatus::Connected), descriptor) => {
-                return Ok(serde_json::json!({ "terminal": descriptor }));
+                break Ok(serde_json::json!({ "terminal": descriptor }));
             }
+            (Some(TerminalStatus::AwaitingVault), _) => waiting_vault = true,
             (Some(TerminalStatus::AwaitingUser), _) if !shown => {
                 shown = true;
                 let workspace = workspace.clone();
@@ -571,23 +587,30 @@ async fn wait_until_connected(
                 });
             }
             (Some(TerminalStatus::Closed) | None, _) => {
-                return Err(unreachable("Could not connect to the server."));
+                break Err(unreachable("Could not connect to the server."));
             }
             _ => {}
         }
-        let limit = if shown {
+        let limit = if shown || waiting_vault {
             SIGN_IN_TIMEOUT
         } else {
             CONNECT_TIMEOUT
         };
         if started.elapsed() >= limit {
-            return Err(if shown {
+            break Err(if shown {
                 "The server is waiting for the user to sign in; ask them to finish signing in, then call list_terminals.".into()
+            } else if waiting_vault {
+                "The server is waiting for the user to unlock the vault; ask them to unlock it, then call open_terminal again.".into()
             } else {
                 unreachable("Connecting to the server timed out.")
             });
         }
-    }
+    };
+    let _ = this.update(cx, |this, cx| {
+        this.vault_waits.retain(|(id, _)| *id != item);
+        cx.notify();
+    });
+    result
 }
 
 /// A failure to reach a terminal or server, with what the agent should do

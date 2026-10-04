@@ -35,6 +35,8 @@ pub(crate) struct CredentialState {
     candidate: Option<(CredentialBinding, Secret)>,
     lookup: Option<Task<()>>,
     pub message: Option<String>,
+    /// The prompt has a saved secret and waits for the vault to unlock.
+    awaiting_vault: bool,
 }
 fn binding(request: &SecretRequest) -> Option<CredentialBinding> {
     match request {
@@ -52,10 +54,15 @@ impl Terminal {
         self.credentials.epoch = self.credentials.epoch.wrapping_add(1);
         self.credentials.candidate = None;
         self.credentials.lookup = None;
+        self.credentials.awaiting_vault = false;
     }
     pub fn vault_unlocked(&self, cx: &App) -> bool {
         cx.try_global::<ActiveCredentials>()
             .is_some_and(|provider| provider.service.is_unlocked())
+    }
+    /// Whether unlocking the vault would answer the current prompt.
+    pub fn awaiting_vault(&self) -> bool {
+        self.credentials.awaiting_vault && self.prompt().is_some()
     }
     pub fn credential_message(&self) -> Option<&str> {
         self.credentials.message.as_deref()
@@ -67,6 +74,7 @@ impl Terminal {
     pub(crate) fn retrieve_credential(&mut self, cx: &mut Context<Self>) {
         self.credentials.epoch = self.credentials.epoch.wrapping_add(1);
         self.credentials.lookup = None;
+        self.credentials.awaiting_vault = false;
         self.credentials.message = None;
         let Some(Prompt::Secret { request, .. }) = self.prompt() else {
             return;
@@ -95,6 +103,7 @@ impl Terminal {
             self.credentials.message = Some(
                 "Unlock the credential vault to use the saved secret, or enter it here.".into(),
             );
+            self.credentials.awaiting_vault = true;
             let service = provider.service.clone();
             self.wait_for_unlock(service, cx);
             return;
@@ -130,6 +139,7 @@ impl Terminal {
                 }
                 let _ = this.update(cx, |this, cx| {
                     if epoch == this.credentials.epoch && this.prompt().is_some() {
+                        this.credentials.awaiting_vault = false;
                         this.retrieve_credential(cx);
                         cx.emit(TerminalEvent::Changed);
                     }

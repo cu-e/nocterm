@@ -172,6 +172,8 @@ impl ToolBridge for Bridge {
 struct Access {
     sent: std::cell::RefCell<Vec<String>>,
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
+    /// Shared by the sessions of a test: their saved secret needs the vault.
+    vault_locked: Rc<std::cell::Cell<bool>>,
 }
 impl TerminalAccess for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
@@ -180,7 +182,11 @@ impl TerminalAccess for Access {
             local: true,
             target: None,
             profile: self.profile.borrow().clone(),
-            status: TerminalStatus::Connected,
+            status: if self.vault_locked.get() {
+                TerminalStatus::AwaitingVault
+            } else {
+                TerminalStatus::Connected
+            },
             cwd: None,
             at_prompt: Some(true),
             dirty_input: false,
@@ -267,6 +273,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let access = Rc::new(Access {
         sent: Default::default(),
         profile: Default::default(),
+        vault_locked: Default::default(),
     });
     let (handle, workspace, panel, terminal) = cx.update(|cx| {
         gpui_kit::init(cx);

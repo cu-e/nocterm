@@ -8,6 +8,9 @@ use nocterm_session::Target;
 pub enum TerminalStatus {
     Connecting,
     AwaitingUser,
+    /// Waiting for a saved credential: unlocking the vault answers the
+    /// prompt without anyone typing into the terminal.
+    AwaitingVault,
     Connected,
     Closed,
 }

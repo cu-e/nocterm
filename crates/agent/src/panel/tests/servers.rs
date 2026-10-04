@@ -28,12 +28,14 @@ struct OpeningDirectory {
     servers: Vec<nocterm_workspace::ConnectionSummary>,
     opened: Cell<usize>,
     background: RefCell<Vec<gpui_kit::EntityId>>,
+    vault_locked: Rc<Cell<bool>>,
 }
 impl OpeningDirectory {
-    fn terminal(id: &str, cx: &mut Context<Workspace>) -> Entity<FakeTerminal> {
+    fn terminal(&self, id: &str, cx: &mut Context<Workspace>) -> Entity<FakeTerminal> {
         let access = Rc::new(Access {
             sent: Default::default(),
             profile: RefCell::new(Some(id.to_owned().into())),
+            vault_locked: self.vault_locked.clone(),
         });
         cx.new(|cx| FakeTerminal {
             access,
@@ -55,7 +57,7 @@ impl nocterm_workspace::ConnectionDirectory for OpeningDirectory {
         self.opened.set(self.opened.get() + 1);
         workspace
             .update(cx, |workspace, cx| {
-                let item = Self::terminal(id, cx);
+                let item = self.terminal(id, cx);
                 workspace.add_item(item, window, cx)
             })
             .is_ok()
@@ -69,7 +71,7 @@ impl nocterm_workspace::ConnectionDirectory for OpeningDirectory {
     ) -> Option<gpui_kit::EntityId> {
         let item = workspace
             .update(cx, |workspace, cx| {
-                let item = Self::terminal(id, cx);
+                let item = self.terminal(id, cx);
                 workspace.add_background_item(item, window, cx)
             })
             .ok()?;
@@ -83,6 +85,7 @@ fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
         servers: vec![summary("web", Some("prod")), summary("db", Some("prod"))],
         opened: Cell::new(0),
         background: RefCell::new(Vec::new()),
+        vault_locked: Default::default(),
     });
     cx.update(|cx| {
         f.workspace.update(cx, |workspace, _| {
@@ -200,5 +203,59 @@ fn a_background_session_can_be_shown_in_a_tab(cx: &mut TestAppContext) {
         let workspace = f.workspace.read(cx);
         assert!(!workspace.is_background(item));
         assert!(workspace.items().any(|open| open.item_id() == item));
+    });
+}
+
+#[gpui_kit::test]
+fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let directory = install(&f, cx);
+    directory.vault_locked.set(true);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let server = cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Group("prod".into()), cx);
+            thread.offline_servers(cx)[0].0.server_id.clone()
+        })
+    });
+    let (respond, mut response) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            let registration = thread.registration.as_ref().unwrap().id;
+            thread.handle_tool(
+                BridgeCall {
+                    registration_id: registration,
+                    call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
+                        server_id: server,
+                    }),
+                    respond,
+                },
+                cx,
+            );
+            thread.approve_tool(0, true, true, cx);
+        })
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(response.try_recv().unwrap().is_none(), "still signing in");
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(thread.read(cx).vault_waits.len(), 1);
+        assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
+        window.render_frame(cx);
+        assert!(window.try_find("agent-approvals").is_some());
+        // Opens the unlock dialog; nothing handles it in this test.
+        window.click(("vault-unlock", 0usize), cx);
+    })
+    .unwrap();
+    // Unlocking answers the session's prompt with the saved secret.
+    directory.vault_locked.set(false);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    let answer = response.try_recv().unwrap().unwrap().unwrap();
+    assert!(answer["terminal"]["id"].is_string());
+    cx.update(|cx| {
+        assert!(thread.read(cx).vault_waits.is_empty());
+        assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }

@@ -82,6 +82,8 @@ pub(crate) struct AgentThread {
     pub attachments: Vec<Attachment>,
     /// Sessions this chat opened without a tab; closed with the chat.
     pub background: Vec<EntityId>,
+    /// Background sessions waiting for the vault to unlock, with their title.
+    pub vault_waits: Vec<(EntityId, gpui_kit::SharedString)>,
     pub images: Vec<nocterm_ai::images::PromptImage>,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
@@ -154,6 +156,7 @@ impl AgentThread {
             window: None,
             attachments: Vec::new(),
             background: Vec::new(),
+            vault_waits: Vec::new(),
             images: Vec::new(),
             permissions: Vec::new(),
             tools: Vec::new(),

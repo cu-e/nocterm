@@ -14,7 +14,9 @@ impl TerminalAccess for Access {
             local: terminal.is_local(),
             target: (!terminal.is_local()).then(|| terminal.spec().target.clone()),
             profile: terminal.spec().profile.clone(),
-            status: if terminal.prompt().is_some() {
+            status: if terminal.awaiting_vault() {
+                TerminalStatus::AwaitingVault
+            } else if terminal.prompt().is_some() {
                 TerminalStatus::AwaitingUser
             } else {
                 match terminal.status() {
