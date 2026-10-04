@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use agent_client_protocol::{Agent, Client, ConnectionTo, Lines};
+use agent_client_protocol::{Agent, Client, ConnectionTo, Lines, UntypedMessage};
 use futures::{
     AsyncReadExt, FutureExt,
     channel::oneshot,
@@ -14,7 +14,7 @@ use nocterm_ai::{
     ConnectRequest, acp,
 };
 
-use crate::{lines, process};
+use crate::{lines, models::Models, process};
 
 /// Runtime-neutral ACP connector. Each live subprocess has one protocol driver.
 #[derive(Clone, Default)]
@@ -62,11 +62,13 @@ impl AgentConnector for AcpConnector {
             let group = spawned.group.clone();
             let command_secrets=spawned.secrets.clone();
             let name = request.launch.name;
+            let terminal_auth = request.terminal_auth;
             std::thread::Builder::new().name("nocterm-acp".into()).spawn(move || {
                 futures::executor::block_on(async move {
-                    let protocol = client_builder(events_tx.clone())
+                    let models = Arc::new(Mutex::new(Models::default()));
+                    let protocol = client_builder_with_models(events_tx.clone(), models.clone())
                         .connect_with(Lines::new(Box::pin(lines::outgoing(stdin)), Box::pin(lines::incoming(stdout))), async move |connection: ConnectionTo<Agent>| {
-                            let capabilities = acp::ClientCapabilities::default().session(acp::ClientSessionCapabilities::default().config_options(acp::SessionConfigOptionsCapabilities::default().boolean(acp::BooleanConfigOptionCapabilities::default())));
+                            let capabilities = acp::ClientCapabilities::default().auth(acp::AuthCapabilities::new().terminal(terminal_auth)).session(acp::ClientSessionCapabilities::default().config_options(acp::SessionConfigOptionsCapabilities::default().boolean(acp::BooleanConfigOptionCapabilities::default())));
                             let initialize = connection.send_request(acp::InitializeRequest::new(agent_client_protocol::schema::ProtocolVersion::V1).client_capabilities(capabilities).client_info(acp::Implementation::new("nocterm", "0"))).block_task();
                             let response = match select(Box::pin(initialize), Box::pin(async_io::Timer::after(Duration::from_secs(60)))).await {
                                 Either::Left((response, _)) => response.map_err(|error|map_error_with(error,&command_secrets)),
@@ -77,7 +79,9 @@ impl AgentConnector for AcpConnector {
                                     let implementation = response.agent_info;
                                     let info = AgentInfo {name:implementation.as_ref().map_or(name, |v| v.name.clone()), version:implementation.map_or_else(String::new, |v| v.version), capabilities:response.agent_capabilities, auth_methods:response.auth_methods};
                                     let close_supported=info.capabilities.session_capabilities.close.is_some();
-                                    let commands = Arc::new(Commands {connection:connection.clone(), stop:stop_tx, group,secrets:command_secrets,close_supported});
+                                    let restore = if info.capabilities.session_capabilities.resume.is_some() { Restore::Resume } else if info.capabilities.load_session { Restore::Load } else { Restore::Unsupported };
+                                    let fork_supported=info.capabilities.session_capabilities.fork.is_some();
+                                    let commands = Arc::new(Commands {connection:connection.clone(), stop:stop_tx, group,secrets:command_secrets,close_supported,restore,fork_supported,models});
                                     if ready_tx.send(Ok(AgentConnection {info, commands, events:events_rx})).is_err() { return Ok(()); }
                                     let _ = select(Box::pin(stop_rx.recv()), Box::pin(connection.incoming_closed())).await;
                                     Ok(())
@@ -118,12 +122,23 @@ impl AgentConnector for AcpConnector {
     }
 }
 
+/// How the agent reopens earlier sessions, if it can.
+#[derive(Clone, Copy)]
+enum Restore {
+    Resume,
+    Load,
+    Unsupported,
+}
+
 struct Commands {
     connection: ConnectionTo<Agent>,
     stop: async_channel::Sender<()>,
     group: Arc<process::ProcessGroup>,
     secrets: Arc<Vec<String>>,
     close_supported: bool,
+    restore: Restore,
+    fork_supported: bool,
+    models: Arc<Mutex<Models>>,
 }
 impl AgentCommands for Commands {
     fn new_session(
@@ -132,12 +147,85 @@ impl AgentCommands for Commands {
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
+        let models = self.models.clone();
         async move {
-            connection
-                .send_request(request)
+            let message = UntypedMessage::new("session/new", request)
+                .map_err(|error| map_error_with(error, &secrets))?;
+            let raw = connection
+                .send_request(message)
                 .block_task()
                 .await
-                .map_err(|error| map_error_with(error, &secrets))
+                .map_err(|error| map_error_with(error, &secrets))?;
+            models
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .session(raw)
+        }
+        .boxed()
+    }
+    fn restore_session(
+        &self,
+        request: nocterm_ai::RestoreSessionRequest,
+    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        let connection = self.connection.clone();
+        let secrets = self.secrets.clone();
+        let models = self.models.clone();
+        let restore = self.restore;
+        let fork_supported = self.fork_supported;
+        async move {
+            let session_id = request.session_id.clone();
+            if request.fork {
+                if !fork_supported {
+                    return Err(AgentError::Io("The agent cannot fork chats.".into()));
+                }
+                let message = UntypedMessage::new(
+                    "session/fork",
+                    acp::ForkSessionRequest::new(request.session_id, request.cwd)
+                        .mcp_servers(request.mcp_servers),
+                )
+                .map_err(|error| map_error_with(error, &secrets))?;
+                let raw = connection
+                    .send_request(message)
+                    .block_task()
+                    .await
+                    .map_err(|error| map_error_with(error, &secrets))?;
+                return models
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .session(raw);
+            }
+            // Resuming skips the replay of history the panel already shows.
+            let message = match restore {
+                Restore::Resume => UntypedMessage::new(
+                    "session/resume",
+                    acp::ResumeSessionRequest::new(request.session_id, request.cwd)
+                        .mcp_servers(request.mcp_servers),
+                ),
+                Restore::Load => UntypedMessage::new(
+                    "session/load",
+                    acp::LoadSessionRequest::new(request.session_id, request.cwd)
+                        .mcp_servers(request.mcp_servers),
+                ),
+                Restore::Unsupported => {
+                    return Err(AgentError::Io(
+                        "The agent cannot reopen earlier chats.".into(),
+                    ));
+                }
+            }
+            .map_err(|error| map_error_with(error, &secrets))?;
+            let mut raw = connection
+                .send_request(message)
+                .block_task()
+                .await
+                .map_err(|error| map_error_with(error, &secrets))?;
+            // Restored sessions keep their id; the answer does not repeat it.
+            if let Some(object) = raw.as_object_mut() {
+                object.insert("sessionId".into(), serde_json::json!(session_id.0));
+            }
+            models
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .session(raw)
         }
         .boxed()
     }
@@ -183,13 +271,39 @@ impl AgentCommands for Commands {
     ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
+        let models = self.models.clone();
         async move {
-            connection
+            let selection = models
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .selection(&request)?;
+            if let Some(model) = selection {
+                let message = UntypedMessage::new(
+                    "session/set_model",
+                    serde_json::json!({"sessionId":request.session_id,"modelId":model}),
+                )
+                .map_err(|error| map_error_with(error, &secrets))?;
+                connection
+                    .send_request(message)
+                    .block_task()
+                    .await
+                    .map_err(|error| map_error_with(error, &secrets))?;
+                return Ok(models
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .selected(&request));
+            }
+            let session = request.session_id.clone();
+            let options = connection
                 .send_request(request)
                 .block_task()
                 .await
                 .map(|r| r.config_options)
-                .map_err(|error| map_error_with(error, &secrets))
+                .map_err(|error| map_error_with(error, &secrets))?;
+            Ok(models
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(&session, options))
         }
         .boxed()
     }
@@ -210,6 +324,10 @@ impl AgentCommands for Commands {
         .boxed()
     }
     fn close_session(&self, session: acp::SessionId) {
+        self.models
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&session);
         queue_close_session(self.connection.clone(), self.close_supported, session);
     }
     fn shutdown(&self) {
@@ -277,8 +395,16 @@ fn map_error(error: acp::Error) -> AgentError {
     map_error_with(error, &[])
 }
 
+#[cfg(test)]
 fn client_builder(
     events_tx: async_channel::Sender<AgentEvent>,
+) -> agent_client_protocol::Builder<Client, impl agent_client_protocol::HandleDispatchFrom<Agent>> {
+    client_builder_with_models(events_tx, Arc::new(Mutex::new(Models::default())))
+}
+
+fn client_builder_with_models(
+    events_tx: async_channel::Sender<AgentEvent>,
+    models: Arc<Mutex<Models>>,
 ) -> agent_client_protocol::Builder<Client, impl agent_client_protocol::HandleDispatchFrom<Agent>> {
     let notification_tx = events_tx.clone();
     let permission_tx = events_tx;
@@ -286,7 +412,14 @@ fn client_builder(
         .builder()
         .name("nocterm")
         .on_receive_notification(
-            async move |notification: acp::SessionNotification, _| {
+            async move |mut notification: acp::SessionNotification, _| {
+                if let acp::SessionUpdate::ConfigOptionUpdate(update) = &mut notification.update {
+                    update.config_options =
+                        models.lock().unwrap_or_else(|e| e.into_inner()).retain(
+                            &notification.session_id,
+                            std::mem::take(&mut update.config_options),
+                        );
+                }
                 notification_tx
                     .try_send(AgentEvent::Session(notification))
                     .map_err(|_| acp::Error::internal_error().data("Agent event queue overflow"))
@@ -324,326 +457,4 @@ fn client_builder(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use agent_client_protocol::{Channel, schema::ProtocolVersion};
-    use serde_json::json;
-
-    #[test]
-    fn sdk_channel_initializes_streams_permissions_and_config() {
-        futures::executor::block_on(async {
-            let (client_transport, agent_transport) = Channel::duplex();
-            let (events_tx, events) = async_channel::bounded(256);
-            let agent=Agent.builder()
-                .on_receive_request(async |request:acp::InitializeRequest,responder,_| {
-                    assert!(!request.client_capabilities.terminal);
-                    assert!(!request.client_capabilities.fs.read_text_file);
-                    assert!(!request.client_capabilities.fs.write_text_file);
-                    responder.respond(acp::InitializeResponse::new(ProtocolVersion::V1))
-                },agent_client_protocol::on_receive_request!())
-                .on_receive_request(async |request:acp::NewSessionRequest,responder,_| {
-                    assert!(request.cwd.is_absolute());
-                    assert_eq!(request.mcp_servers.len(),1);
-                    let serialized=serde_json::to_value(request.mcp_servers).unwrap();
-                    assert_eq!(serialized[0]["name"],"nocterm");
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("s1")))
-                },agent_client_protocol::on_receive_request!())
-                .on_receive_request(async |request:acp::PromptRequest,responder,connection| {
-                    connection.clone().spawn(async move {
-                    let notification:acp::SessionNotification=serde_json::from_value(json!({"sessionId":request.session_id,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"streamed"}}})).unwrap();
-                    connection.send_notification(notification)?;
-                    let permission:acp::RequestPermissionRequest=serde_json::from_value(json!({"sessionId":"s1","toolCall":{"toolCallId":"tool1","title":"test","status":"pending"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]})).unwrap();
-                    let outcome=connection.send_request(permission).block_task().await?;
-                    assert!(matches!(outcome.outcome,acp::RequestPermissionOutcome::Cancelled));
-                    responder.respond(acp::PromptResponse::new(acp::StopReason::EndTurn))
-
-                    })?;
-                    Ok(())
-                },agent_client_protocol::on_receive_request!())
-                .on_receive_request(async |_:acp::SetSessionModeRequest,responder,_|responder.respond(acp::SetSessionModeResponse::default()),agent_client_protocol::on_receive_request!())
-                .on_receive_request(async |_:acp::SetSessionConfigOptionRequest,responder,_|responder.respond(acp::SetSessionConfigOptionResponse::new(Vec::new())),agent_client_protocol::on_receive_request!())
-                .on_receive_request(async |_:acp::AuthenticateRequest,responder,_|responder.respond(acp::AuthenticateResponse::default()),agent_client_protocol::on_receive_request!())
-                .connect_to(agent_transport);
-            let client=client_builder(events_tx).connect_with(client_transport,async |connection:ConnectionTo<Agent>| {
-                connection.send_request(acp::InitializeRequest::new(ProtocolVersion::V1)).block_task().await?;
-                let server:acp::McpServer=serde_json::from_value(json!({"name":"nocterm","command":"/test/nocterm","args":["agent-bridge"],"env":[{"name":"NOCTERM_BRIDGE_ENDPOINT","value":"test"},{"name":"NOCTERM_BRIDGE_TOKEN","value":"test"}]})).unwrap();
-                let session=connection.send_request(acp::NewSessionRequest::new(std::env::temp_dir()).mcp_servers(vec![server])).block_task().await?;
-                connection.send_request(acp::SetSessionModeRequest::new(session.session_id.clone(),acp::SessionModeId::new("mode"))).block_task().await?;
-                connection.send_request(acp::SetSessionConfigOptionRequest::new(session.session_id.clone(),acp::SessionConfigId::new("model"),acp::SessionConfigValueId::new("test"))).block_task().await?;
-                connection.send_request(acp::AuthenticateRequest::new(acp::AuthMethodId::new("oauth"))).block_task().await?;
-                connection.send_request(acp::PromptRequest::new(session.session_id,vec![acp::ContentBlock::Text(acp::TextContent::new("test"))])).block_task().await?;
-                Ok(())
-            });
-            let foreground = async {
-                let mut streamed = false;
-                loop {
-                    match events
-                        .recv()
-                        .await
-                        .map_err(|_| acp::Error::internal_error())?
-                    {
-                        AgentEvent::Session(notification) => {
-                            assert!(matches!(
-                                notification.update,
-                                acp::SessionUpdate::AgentMessageChunk(_)
-                            ));
-                            streamed = true;
-                        }
-                        AgentEvent::Permission { respond, .. } => {
-                            assert!(streamed);
-                            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
-                            return Ok::<_, acp::Error>(());
-                        }
-                        _ => panic!("Unexpected event"),
-                    }
-                }
-            };
-            let run = async {
-                match select(
-                    Box::pin(futures::future::try_join(client, foreground)),
-                    Box::pin(agent),
-                )
-                .await
-                {
-                    Either::Left((result, _)) => result.map(|_| ()),
-                    Either::Right((result, _)) => result,
-                }
-            };
-            match select(
-                Box::pin(run),
-                Box::pin(async_io::Timer::after(Duration::from_secs(5))),
-            )
-            .await
-            {
-                Either::Left((result, _)) => result.unwrap(),
-                Either::Right(_) => panic!("SDK roundtrip timed out"),
-            }
-        });
-    }
-    #[test]
-    fn remote_error_payloads_are_sanitized() {
-        let error = acp::Error::auth_required().data(json!({"password":"marker"}));
-        assert!(matches!(map_error(error), AgentError::AuthRequired(_)));
-        let error = map_error(acp::Error::internal_error().data("marker"));
-        let AgentError::Rpc(error) = error else {
-            panic!("Wrong error variant")
-        };
-        assert!(error.data.is_none());
-        let secret = "custom-auth-marker".to_owned();
-        let error=map_error_with(acp::Error::internal_error().data(json!({"message":"Session limit reached; custom-auth-marker", "unrelated":"do not expose"})),&[secret]);
-        let AgentError::Rpc(error) = error else {
-            panic!("Wrong error variant")
-        };
-        assert!(error.message.contains("Session limit reached"));
-        assert!(!error.message.contains("custom-auth-marker"));
-        assert!(!error.message.contains("do not expose"));
-        assert!(error.data.is_none());
-    }
-    #[cfg(unix)]
-    #[test]
-    fn oversized_subprocess_line_fails_initialization_and_stops_processes() {
-        futures::executor::block_on(async {
-            let directory = tempfile::tempdir().unwrap();
-            let launch = nocterm_ai::AgentLaunch {
-                id: "oversized".into(),
-                name: "oversized".into(),
-                command: "/bin/sh".into(),
-                args: vec![
-                    "-c".into(),
-                    "head -c 16777217 /dev/zero | tr '\\000' x; printf '\\n'; sleep 60".into(),
-                ],
-                env: Default::default(),
-                inherit_env: Vec::new(),
-            };
-            let result = AcpConnector.connect(ConnectRequest {
-                launch,
-                working_directory: directory.path().to_owned(),
-            });
-            match select(
-                result,
-                Box::pin(async_io::Timer::after(Duration::from_secs(5))),
-            )
-            .await
-            {
-                Either::Left((result, _)) => assert!(result.is_err()),
-                Either::Right(_) => {
-                    panic!("Oversized protocol line did not terminate initialization")
-                }
-            }
-        });
-    }
-    #[test]
-    fn sdk_cancel_remains_dispatchable_during_generation() {
-        futures::executor::block_on(async {
-            let (client_transport, agent_transport) = Channel::duplex();
-            let (events_tx, events) = async_channel::bounded(256);
-            let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
-            let agent = Agent
-                .builder()
-                .on_receive_request(
-                    async move |request: acp::PromptRequest, responder, connection| {
-                        let cancelled = cancel_rx.clone();
-                        connection.clone().spawn(async move {
-                            connection.send_notification(acp::SessionNotification::new(
-                                request.session_id,
-                                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                                    acp::ContentBlock::Text(acp::TextContent::new("started")),
-                                )),
-                            ))?;
-                            cancelled
-                                .recv()
-                                .await
-                                .map_err(|_| acp::Error::internal_error())?;
-                            responder.respond(acp::PromptResponse::new(acp::StopReason::Cancelled))
-                        })?;
-                        Ok(())
-                    },
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_notification(
-                    async move |notification: acp::CancelNotification, _| {
-                        assert_eq!(notification.session_id.to_string(), "s1");
-                        cancel_tx
-                            .try_send(())
-                            .map_err(|_| acp::Error::internal_error())
-                    },
-                    agent_client_protocol::on_receive_notification!(),
-                )
-                .connect_to(agent_transport);
-            let client = client_builder(events_tx).connect_with(
-                client_transport,
-                async move |connection: ConnectionTo<Agent>| {
-                    let prompt = connection
-                        .send_request(acp::PromptRequest::new(
-                            acp::SessionId::new("s1"),
-                            vec![acp::ContentBlock::Text(acp::TextContent::new("test"))],
-                        ))
-                        .block_task();
-                    let cancel = async {
-                        assert!(matches!(
-                            events.recv().await.unwrap(),
-                            AgentEvent::Session(_)
-                        ));
-                        connection.send_notification(acp::CancelNotification::new(
-                            acp::SessionId::new("s1"),
-                        ))
-                    };
-                    let (response, _) = futures::future::try_join(prompt, cancel).await?;
-                    assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
-                    Ok(())
-                },
-            );
-            let run = async {
-                match select(Box::pin(client), Box::pin(agent)).await {
-                    Either::Left((result, _)) => result,
-                    Either::Right((result, _)) => result,
-                }
-            };
-            match select(
-                Box::pin(run),
-                Box::pin(async_io::Timer::after(Duration::from_secs(5))),
-            )
-            .await
-            {
-                Either::Left((result, _)) => result.unwrap(),
-                Either::Right(_) => panic!("Cancellation stalled the ACP connection"),
-            }
-        });
-    }
-    #[test]
-    fn closes_sessions_only_when_agent_advertises_support() {
-        for advertised in [false, true] {
-            futures::executor::block_on(async {
-                let (client_transport, agent_transport) = Channel::duplex();
-                let (events_tx, _) = async_channel::bounded(256);
-                let (closed_tx, closed_rx) = async_channel::bounded(1);
-                let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                let received = count.clone();
-                let agent = Agent
-                    .builder()
-                    .on_receive_request(
-                        async move |_: acp::InitializeRequest, responder, _| {
-                            let capabilities: acp::AgentCapabilities =
-                                serde_json::from_value(if advertised {
-                                    json!({"sessionCapabilities":{"close":{}}})
-                                } else {
-                                    json!({})
-                                })
-                                .unwrap();
-                            responder.respond(
-                                acp::InitializeResponse::new(ProtocolVersion::V1)
-                                    .agent_capabilities(capabilities),
-                            )
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async move |request: acp::CloseSessionRequest, responder, _| {
-                            assert_eq!(request.session_id.to_string(), "s1");
-                            received.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            closed_tx
-                                .try_send(())
-                                .map_err(|_| acp::Error::internal_error())?;
-                            responder.respond(acp::CloseSessionResponse::new())
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async |_: acp::SetSessionModeRequest, responder, _| {
-                            responder.respond(acp::SetSessionModeResponse::default())
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .connect_to(agent_transport);
-                let client = client_builder(events_tx).connect_with(
-                    client_transport,
-                    async move |connection: ConnectionTo<Agent>| {
-                        let info = connection
-                            .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
-                            .block_task()
-                            .await?;
-                        queue_close_session(
-                            connection.clone(),
-                            info.agent_capabilities.session_capabilities.close.is_some(),
-                            acp::SessionId::new("s1"),
-                        );
-                        if advertised {
-                            closed_rx
-                                .recv()
-                                .await
-                                .map_err(|_| acp::Error::internal_error())?;
-                        }
-                        // A subsequent roundtrip also proves the close task did not shut down the shared connection.
-                        connection
-                            .send_request(acp::SetSessionModeRequest::new(
-                                acp::SessionId::new("s2"),
-                                acp::SessionModeId::new("mode"),
-                            ))
-                            .block_task()
-                            .await?;
-                        assert_eq!(
-                            count.load(std::sync::atomic::Ordering::SeqCst),
-                            usize::from(advertised)
-                        );
-                        Ok(())
-                    },
-                );
-                let run = async {
-                    match select(Box::pin(client), Box::pin(agent)).await {
-                        Either::Left((result, _)) => result,
-                        Either::Right((result, _)) => result,
-                    }
-                };
-                match select(
-                    Box::pin(run),
-                    Box::pin(async_io::Timer::after(Duration::from_secs(5))),
-                )
-                .await
-                {
-                    Either::Left((result, _)) => result.unwrap(),
-                    Either::Right(_) => panic!("Close-session dispatch timed out"),
-                }
-            });
-        }
-    }
-}
+mod tests;

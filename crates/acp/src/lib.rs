@@ -2,6 +2,7 @@
 mod bridge;
 mod client;
 mod lines;
+mod models;
 mod process;
 mod relay;
 

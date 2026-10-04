@@ -22,6 +22,8 @@ fn real_agent_initialize_and_session() {
         let directory = tempfile::tempdir().unwrap();
         let connection = AcpConnector
             .connect(ConnectRequest {
+                terminal_auth: false,
+                sandbox: None,
                 launch,
                 working_directory: directory.path().to_owned(),
             })

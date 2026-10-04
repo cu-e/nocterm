@@ -71,10 +71,46 @@ pub(crate) fn spawn(request: &ConnectRequest) -> Result<Spawned, AgentError> {
     secret_values.sort_by_key(|value| std::cmp::Reverse(value.len()));
     secret_values.dedup();
     let secrets = Arc::new(secret_values);
-    let executable = resolve(&request.launch.command, &env, &request.working_directory).ok_or_else(|| AgentError::Io(nocterm_ai::redact::redact(&format!("Cannot find agent command '{}'. Configure an absolute executable path; inherited PATH is {}", request.launch.command, env.get("PATH").map_or("<unset>", String::as_str)))))?;
+    let executable = resolve(&request.launch.command, &env, &request.working_directory)
+        .ok_or_else(|| {
+            AgentError::Io(nocterm_ai::redact::redact(&format!(
+                "Cannot find agent command '{}'. Configure an absolute executable path; inherited PATH is {}",
+                request.launch.command,
+                env.get("PATH").map_or("<unset>", String::as_str)
+            )))
+        })?;
+    let (executable, process_args) = match &request.sandbox {
+        None => (executable, request.launch.args.clone()),
+        Some(policy) => {
+            // Fail closed: an agent the user asked to isolate never runs
+            // without isolation.
+            let bwrap = match nocterm_ai::sandbox::availability(&env) {
+                nocterm_ai::sandbox::Availability::Available(bwrap) => bwrap,
+                nocterm_ai::sandbox::Availability::Missing => {
+                    return Err(AgentError::Io(
+                        "Agent isolation is on, but bubblewrap (bwrap) was not found in PATH. Install bubblewrap or turn isolation off in AI settings."
+                            .into(),
+                    ));
+                }
+                nocterm_ai::sandbox::Availability::Unsupported => {
+                    return Err(AgentError::Io(
+                        "Agent isolation is only available on Linux. Turn it off in AI settings."
+                            .into(),
+                    ));
+                }
+            };
+            let args = policy.bubblewrap_args(
+                &request.working_directory,
+                &executable,
+                &request.launch.args,
+                nocterm_ai::sandbox::file_kind,
+            );
+            (bwrap, args)
+        }
+    };
     let mut command = std::process::Command::new(executable);
     command
-        .args(&request.launch.args)
+        .args(&process_args)
         .env_clear()
         .envs(env)
         .current_dir(&request.working_directory)
@@ -174,6 +210,8 @@ mod tests {
     use std::{os::unix::fs::PermissionsExt as _, time::Duration};
     fn request(directory: &Path, command: &str, args: Vec<String>) -> ConnectRequest {
         ConnectRequest {
+            terminal_auth: false,
+            sandbox: None,
             launch: nocterm_ai::AgentLaunch {
                 id: "test".into(),
                 name: "test".into(),
@@ -268,6 +306,44 @@ mod tests {
             "Grandchild kept executing after group shutdown"
         );
     }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn workspace_sandbox_runs_inside_bwrap_if_available() {
+        let env: BTreeMap<String, String> = std::env::vars().collect();
+        if !matches!(
+            nocterm_ai::sandbox::availability(&env),
+            nocterm_ai::sandbox::Availability::Available(_)
+        ) {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut r = request(
+            dir.path(),
+            "/bin/sh",
+            vec!["-c".into(), "echo sandbox-ok".into()],
+        );
+        r.sandbox = Some(nocterm_ai::sandbox::SandboxPolicy::new(
+            dir.path(),
+            None,
+            &[],
+            &[],
+        ));
+        let mut spawned = spawn(&r).expect("Spawn with bwrap");
+        let text = futures::executor::block_on(async {
+            let mut text = String::new();
+            spawned
+                .child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_string(&mut text)
+                .await
+                .unwrap();
+            text
+        });
+        assert_eq!(text.trim(), "sandbox-ok");
+    }
+
     fn running(pid: i32) -> bool {
         #[cfg(target_os = "linux")]
         if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))

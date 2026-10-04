@@ -563,7 +563,7 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(responses.len(), 2);
-        assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 5);
     }
     #[test]
     fn bounds_unauthenticated_connections_and_protocol_lines() {
