@@ -1,5 +1,7 @@
 //! Only user-facing connection metadata crosses this boundary.
-use gpui_kit::{App, Context, SharedString, Window};
+use std::sync::Arc;
+
+use gpui_kit::{App, EntityId, Image, SharedString, WeakEntity, Window};
 use nocterm_session::Target;
 
 use crate::Workspace;
@@ -11,10 +13,32 @@ pub struct ConnectionSummary {
     pub group: Option<SharedString>,
     pub description: SharedString,
     pub target: Target,
+    /// The server's system icon, in its colour; none shows a generic server.
+    pub icon: Option<Arc<Image>>,
+    /// The flag of the server's country, once loaded.
+    pub flag: Option<Arc<Image>>,
 }
 
+/// Called with the application context, never from inside a workspace
+/// update: opening a connection updates the workspace itself.
 pub trait ConnectionDirectory: 'static {
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary>;
-    /// User-triggered opening through the normal authentication UI.
-    fn open(&self, id: &str, window: &mut Window, cx: &mut Context<Workspace>) -> bool;
+    /// Opens a saved connection in a new tab, through the normal
+    /// authentication UI, as if chosen in the sidebar.
+    fn open(
+        &self,
+        id: &str,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
+    /// Opens a saved connection without a tab, for an agent, and returns the
+    /// session's item. Not recorded among recent connections.
+    fn open_background(
+        &self,
+        id: &str,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<EntityId>;
 }

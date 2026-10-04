@@ -1,22 +1,18 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui_kit::{
-    Action, Anchor, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Menu, MouseButton, Pixels, SharedString, Subscription,
-    TestSupportExt as _, Window,
+    Action, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Menu, Pixels, SharedString, Subscription, Window,
     base::GlobalState,
     component::{
-        ActiveTheme as _, Icon, ResizableState, Selectable as _, Sizable as _, StyledExt as _,
-        TitleBar,
+        ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         dock::{
             DockArea, DockEvent, DockPlacement, DockSkin, InsertTarget, PaneRef, PanelId,
             PanelStyle, panel_handle,
         },
-        h_flex, h_resizable,
         menu::AppMenuBar,
-        popover::Popover,
-        resizable_panel, v_flex,
+        v_flex,
     },
     div,
     prelude::*,
@@ -24,6 +20,10 @@ use gpui_kit::{
 };
 use nocterm_session::{Auth, Target};
 use nocterm_ui::{ActiveDesign as _, IconName};
+
+mod background;
+mod chrome;
+mod layout;
 
 use crate::{
     CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
@@ -118,7 +118,7 @@ pub struct Workspace {
     panels: Vec<Box<dyn PanelHandle>>,
     active_panel: usize,
     sidebar_open: bool,
-    body: Entity<ResizableState>,
+    body: layout::Body,
     right_panel: Option<Box<dyn crate::right_panel::RightPanelHandle>>,
     right_panel_open: bool,
     right_panel_attention: bool,
@@ -138,6 +138,9 @@ pub struct Workspace {
     menu_item: Option<EntityId>,
     last_command_item: Option<EntityId>,
     connection_directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+    /// Sessions running without a tab, opened for agents.
+    background: Vec<background::BackgroundItem>,
+    background_opener: Option<background::BackgroundOpener>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -180,7 +183,7 @@ impl Workspace {
             panels: Vec::new(),
             active_panel: 0,
             sidebar_open: true,
-            body: cx.new(|_| ResizableState::default()),
+            body: layout::Body::default(),
             right_panel: None,
             right_panel_open: false,
             right_panel_attention: false,
@@ -199,6 +202,8 @@ impl Workspace {
             menu_item: None,
             last_command_item: None,
             connection_directory: None,
+            background: Vec::new(),
+            background_opener: None,
         };
         macro_rules! item_action {
             ($action:ty, $command:ident) => {
@@ -370,6 +375,7 @@ impl Workspace {
                         .unwrap_or_else(|| open.handle.tab_title(cx)),
                     active: false,
                     bottom: false,
+                    background: false,
                 })
             })
             .collect();
@@ -382,8 +388,10 @@ impl Workspace {
                 title: local.handle.tab_title(cx),
                 active: false,
                 bottom: true,
+                background: false,
             });
         }
+        entries.extend(self.background_entries(cx));
         let active = self
             .last_command_item
             .filter(|id| entries.iter().any(|entry| entry.item == *id))
@@ -1046,13 +1054,27 @@ impl Workspace {
 
     /// Shows the panel showing a `T`, if there is one.
     pub fn activate_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self
-            .panels
-            .iter()
-            .position(|panel| panel.view().downcast::<T>().is_ok())
-        {
+        if let Some(ix) = self.panel_index_of::<T>() {
             self.activate_panel(ix, window, cx);
         }
+    }
+
+    /// Shows the panel showing a `T`, or hides the sidebar when it already
+    /// shows it.
+    pub fn toggle_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.panel_index_of::<T>() {
+            Some(ix) if self.sidebar_open && self.active_panel == ix => {
+                self.toggle_sidebar(window, cx)
+            }
+            Some(ix) => self.activate_panel(ix, window, cx),
+            None => {}
+        }
+    }
+
+    fn panel_index_of<T: Panel>(&self) -> Option<usize> {
+        self.panels
+            .iter()
+            .position(|panel| panel.view().downcast::<T>().is_ok())
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1073,15 +1095,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.right_panel_subscription =
-            Some(
-                cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
-                    crate::RightPanelEvent::ToggleMaximized => {
-                        this.set_right_panel_maximized(!this.right_panel_maximized, cx)
-                    }
-                    crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
-                }),
-            );
+        self.right_panel_subscription = Some(cx.subscribe_in(
+            &panel,
+            window,
+            |this, _, event, window, cx| match event {
+                crate::RightPanelEvent::ToggleMaximized => {
+                    this.set_right_panel_maximized(!this.right_panel_maximized, cx)
+                }
+                crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
+                crate::RightPanelEvent::Widen(delta) => this.widen_right_panel(*delta, window, cx),
+            },
+        ));
+        panel.update(cx, |panel, cx| {
+            panel.set_docked_left(Self::sides_swapped(cx), cx)
+        });
         self.right_panel = Some(Box::new(panel));
         cx.notify();
     }
@@ -1429,166 +1456,6 @@ impl Workspace {
 
     // ── Rendering ────────────────────────────────────────────────────────────
 
-    fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        TitleBar::new().child(
-            h_flex()
-                .size_full()
-                .min_w_0()
-                .gap_1()
-                .pr_2()
-                .child(
-                    Button::new("toggle-sidebar")
-                        .ghost()
-                        .small()
-                        .icon(IconName::PanelLeft)
-                        .tooltip("Toggle Sidebar")
-                        .selected(self.sidebar_open)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx)),
-                        ),
-                )
-                .when_some(self.app_menu_bar.as_ref(), |bar, menu| {
-                    bar.child(
-                        div()
-                            .id("workspace-app-menu")
-                            .track_focus(&self.menu_focus)
-                            .h_full()
-                            .min_w_0()
-                            .capture_any_mouse_down(cx.listener(
-                                |this, event: &gpui_kit::MouseDownEvent, window, cx| {
-                                    if event.button == MouseButton::Left {
-                                        this.prepare_menu(window, cx);
-                                    }
-                                },
-                            ))
-                            .capture_key_down(cx.listener(
-                                |this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                                    match event.keystroke.key.as_str() {
-                                        "enter" | "space" => this.prepare_menu(window, cx),
-                                        _ => {}
-                                    }
-                                },
-                            ))
-                            .child(menu.clone()),
-                    )
-                })
-                .child(div().flex_1())
-                .child(self.render_new_tab_button(cx)),
-        )
-    }
-
-    fn render_new_tab_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let button = Button::new("new-tab")
-            .ghost()
-            .small()
-            .icon(IconName::Plus)
-            .tooltip("New Tab");
-
-        match &self.new_tab_menu {
-            None => button
-                .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx))
-                .into_any_element(),
-            Some(NewTabMenu { view, focus }) => {
-                let menu = view.clone();
-                let workspace = cx.entity().downgrade();
-                Popover::new("new-tab-menu")
-                    .anchor(Anchor::TopRight)
-                    .trigger(button)
-                    .track_focus(focus)
-                    .open(self.new_tab_menu_open)
-                    .on_open_change(move |open, _, cx| {
-                        let _ = workspace.update(cx, |this, cx| this.show_new_tab_menu(*open, cx));
-                    })
-                    .content(move |_, _, _| menu.clone())
-                    .into_any_element()
-            }
-        }
-    }
-
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let panel = self.panels.get(self.active_panel);
-
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .text_color(theme.sidebar_foreground)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .when_some(panel, |sidebar, panel| {
-                sidebar
-                    .child(
-                        div()
-                            .px_3()
-                            .pt_2()
-                            .pb_1()
-                            .text_xs()
-                            .font_semibold()
-                            .text_color(theme.muted_foreground)
-                            .child(panel.title(cx).to_uppercase()),
-                    )
-                    .child(div().flex_1().min_h_0().child(panel.view()))
-            })
-            .when(panel.is_none(), |sidebar| sidebar.child(div().flex_1()))
-    }
-
-    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        div().id("workspace-footer").w_full().flex_shrink_0().child(
-            h_flex()
-                .gap_1()
-                .px_2()
-                .py_1()
-                .border_t_1()
-                .border_color(theme.sidebar_border)
-                .children(self.panels.iter().enumerate().map(|(ix, panel)| {
-                    Button::new(("sidebar-panel", ix))
-                        .ghost()
-                        .small()
-                        .icon(panel.icon(cx))
-                        .tooltip(panel.title(cx))
-                        .selected(self.sidebar_open && ix == self.active_panel)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.activate_panel(ix, window, cx);
-                        }))
-                }))
-                .child(div().flex_1())
-                .children(self.status_views.iter().cloned())
-                .child(
-                    Button::new("toggle-local-terminal")
-                        .ghost()
-                        .small()
-                        .icon(IconName::SquareTerminal)
-                        .tooltip("Local Terminal")
-                        .selected(self.local_terminal_is_visible(cx))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_local_terminal(window, cx)
-                        })),
-                )
-                .when(self.right_panel_is_available(), |footer| {
-                    footer.child(
-                        Button::new("toggle-right-panel")
-                            .ghost()
-                            .small()
-                            .icon(if self.right_panel_attention {
-                                IconName::ShieldCheck
-                            } else {
-                                IconName::PanelRight
-                            })
-                            .tooltip(if self.right_panel_attention {
-                                "AI Agents: permission required"
-                            } else {
-                                "AI Agents"
-                            })
-                            .selected(self.right_panel_open)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_right_panel(window, cx)
-                            })),
-                    )
-                }),
-        )
-    }
-
     fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.items.is_empty() && !self.local_terminal_is_visible(cx) {
             v_flex()
@@ -1623,14 +1490,6 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let layout = &cx.design().layout;
-        let rem_size = window.rem_size();
-        let sidebar_width = rems(layout.sidebar_width).to_pixels(rem_size);
-        let sidebar_range = rems(layout.sidebar_min_width).to_pixels(rem_size)
-            ..rems(layout.sidebar_max_width).to_pixels(rem_size);
-        let agent_width = rems(layout.agent_panel_width).to_pixels(rem_size);
-        let agent_range = rems(layout.agent_panel_min_width).to_pixels(rem_size)
-            ..rems(layout.agent_panel_max_width).to_pixels(rem_size);
         let theme = cx.theme();
 
         let mut root = v_flex()
@@ -1657,6 +1516,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_previous_tab))
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_next_panel))
+            .on_action(cx.listener(|this, _: &crate::SwapSides, _, cx| this.swap_sides(cx)))
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
                     this.toggle_right_panel(window, cx)
@@ -1711,43 +1571,7 @@ impl Render for Workspace {
             root = register(root, cx);
         }
 
-        let body = if self.right_panel_maximized {
-            div()
-                .id("workspace-right-panel")
-                .test_support()
-                .size_full()
-                .when_some(self.right_panel.as_ref(), |body, panel| {
-                    body.child(panel.view())
-                })
-                .into_any_element()
-        } else {
-            h_resizable("workspace-body")
-                .with_state(&self.body)
-                .child(
-                    resizable_panel()
-                        .size(sidebar_width)
-                        .size_range(sidebar_range)
-                        .visible(self.sidebar_open)
-                        .child(self.render_sidebar(cx)),
-                )
-                .child(resizable_panel().child(self.render_content(cx)))
-                .when_some(self.right_panel.as_ref(), |body, panel| {
-                    body.child(
-                        resizable_panel()
-                            .size(agent_width)
-                            .size_range(agent_range)
-                            .visible(self.right_panel_open && self.right_panel_available)
-                            .child(
-                                div()
-                                    .id("workspace-right-panel")
-                                    .test_support()
-                                    .size_full()
-                                    .child(panel.view()),
-                            ),
-                    )
-                })
-                .into_any_element()
-        };
+        let body = self.render_body(window, cx);
         root.child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().child(body))
             .child(self.render_footer(cx))

@@ -60,4 +60,6 @@ pub struct TerminalEntry {
     pub title: SharedString,
     pub active: bool,
     pub bottom: bool,
+    /// Runs without a tab, opened for an agent.
+    pub background: bool,
 }

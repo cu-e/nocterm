@@ -8,11 +8,14 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | --- | --- | --- |
 | `agent::AttachImage` |  |  |
 | `agent::NewThread` |  |  |
+| `agent::NewThreadWithLastAgent` | Start a new chat with the agent the last chat was started with. | `ctrl-n` (linux, windows; AgentPanel); `cmd-n` (macos; AgentPanel) |
 | `agent::ShowHistory` |  |  |
 | `agent::StopGeneration` |  |  |
 | `agent::ToggleModelPicker` |  | `ctrl-alt-m` (linux, windows; AgentPanel); `cmd-alt-m` (macos; AgentPanel) |
 | `connections::NewConnection` | Open the form for a new saved connection. | `ctrl-shift-n` (linux, windows; Workspace); `cmd-n` (macos; Workspace) |
+| `connections::ToggleServers` | Show the saved servers in the sidebar, or hide the sidebar if it shows them. | `ctrl-shift-c` (linux, windows; Workspace); `cmd-shift-c` (macos; Workspace) |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
+| `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |
 | `terminal::Paste` | Paste the clipboard into the terminal. | `ctrl-shift-v` (linux, windows; Terminal); `shift-insert` (linux, windows; Terminal); `cmd-v` (macos; Terminal) |
 | `terminal::Reconnect` | Reconnect this tab using its next-launch options. | `ctrl-shift-r` (linux, windows; Terminal); `cmd-r` (macos; Terminal) |
@@ -21,6 +24,9 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `terminal::ScrollToBottom` | Scroll back to the live screen. | `shift-end` (linux, windows; Terminal); `cmd-end` (macos; Terminal) |
 | `terminal::ScrollToTop` | Scroll to the oldest line of history. | `shift-home` (linux, windows; Terminal); `cmd-home` (macos; Terminal) |
 | `terminal::ToggleRecording` | Start or stop output-only session recording. |  |
+| `test::First` |  |  |
+| `test::Library` |  |  |
+| `test::Second` |  |  |
 | `workspace::About` | Show application information. |  |
 | `workspace::ClearSelection` | Clear the terminal selection. |  |
 | `workspace::CloseAllTabs` | Close all central tabs, retaining the local terminal. |  |
@@ -39,15 +45,17 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::FindNext` | Select the next search match. | `f3` (linux, windows; Workspace); `f3` (macos; Workspace) |
 | `workspace::FindNextSelection` | Search for the current terminal selection. | `ctrl-f3` (linux, windows; Workspace); `cmd-f3` (macos; Workspace) |
 | `workspace::FindPrevious` | Select the previous search match. | `shift-f3` (linux, windows; Workspace); `shift-f3` (macos; Workspace) |
+| `workspace::LockVault` | Lock the credential vault. |  |
 | `workspace::LogsDirectory` | Open the terminal recordings directory. |  |
 | `workspace::MoveTabLeft` | Move the active tab one position to the left in its pane. | `ctrl-alt-left` (linux, windows; Workspace); `cmd-alt-left` (macos; Workspace) |
 | `workspace::MoveTabRight` | Move the active tab one position to the right in its pane. | `ctrl-alt-right` (linux, windows; Workspace); `cmd-alt-right` (macos; Workspace) |
 | `workspace::NewTab` | Open the menu of connections to start a new tab from. | `ctrl-shift-t` (linux, windows; Workspace); `cmd-t` (macos; Workspace) |
 | `workspace::NewWindow` | Open another application window. | `ctrl-alt-n` (linux, windows; Workspace); `cmd-shift-n` (macos; Workspace) |
 | `workspace::NextPane` | Focus the next pane in layout order. | `ctrl-alt-pagedown` (linux, windows; Workspace); `cmd-alt-pagedown` (macos; Workspace) |
-| `workspace::NextPanel` | Show the next sidebar panel, wrapping around. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
+| `workspace::NextPanel` | Show the next sidebar panel, wrapping around. |  |
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
 | `workspace::OpenAiSettings` | Open AI settings. |  |
+| `workspace::OpenKeymap` | Open the keymap: every command and its shortcuts. |  |
 | `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |
 | `workspace::OpenVault` | Open the encrypted credential vault. |  |
@@ -65,7 +73,10 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::SplitUp` | Move the active tab into a new pane above. | `ctrl-alt-shift-up` (linux, windows; Workspace); `cmd-alt-shift-up` (macos; Workspace) |
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
-| `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `cmd-`` (macos; Workspace) |
-| `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-i` (linux, windows; Workspace); `cmd-alt-i` (macos; Workspace) |
+| `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. | `ctrl-e` (linux, windows; Workspace); `cmd-e` (macos; Workspace) |
+| `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
+| `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |
+| `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-b` (linux, windows; Workspace); `cmd-alt-b` (macos; Workspace) |
 | `workspace::ToggleRightPanelMaximized` | Expand or restore the AI panel in the workspace body. |  |
 | `workspace::ToggleSidebar` | Show or hide the sidebar. | `ctrl-shift-b` (linux, windows; Workspace); `cmd-b` (macos; Workspace) |
+| `workspace::UnlockVault` | Unlock the credential vault with its master password. |  |

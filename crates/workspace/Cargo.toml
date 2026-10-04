@@ -12,6 +12,7 @@ layer = "ui"
 [dependencies]
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
+nocterm-keymap.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true

@@ -20,6 +20,7 @@
 //! provides it.
 
 mod actions;
+pub mod command_palette;
 mod connection_directory;
 mod dock_item;
 mod item;

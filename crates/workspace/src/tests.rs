@@ -82,7 +82,7 @@ impl LocalTerminal for Probe {
         Ok(())
     }
 }
-fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
+pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -1119,9 +1119,9 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     .unwrap();
 }
 
-struct RightProbe {
-    focus: FocusHandle,
-    maximized: bool,
+pub(super) struct RightProbe {
+    pub(super) focus: FocusHandle,
+    pub(super) maximized: bool,
 }
 impl EventEmitter<crate::RightPanelEvent> for RightProbe {}
 impl Focusable for RightProbe {

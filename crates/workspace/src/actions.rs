@@ -3,6 +3,8 @@ gpui_kit::actions!(
     [
         /// Open the menu of connections to start a new tab from.
         NewTab,
+        /// Search and run any command.
+        ToggleCommandPalette,
         /// Close the active tab.
         CloseTab,
         /// Close other tabs in the active pane.
@@ -19,6 +21,8 @@ gpui_kit::actions!(
         PreviousTab,
         /// Show or hide the sidebar.
         ToggleSidebar,
+        /// Put the sidebar and the AI panel on each other's side.
+        SwapSides,
         /// Show or hide the AI panel.
         ToggleRightPanel,
         /// Expand or restore the AI panel in the workspace body.
@@ -29,6 +33,8 @@ gpui_kit::actions!(
         NextPanel,
         /// Open the settings.
         OpenSettings,
+        /// Open the keymap: every command and its shortcuts.
+        OpenKeymap,
         /// Move the active tab one position to the left in its pane.
         MoveTabLeft,
         /// Move the active tab one position to the right in its pane.
@@ -53,6 +59,10 @@ gpui_kit::actions!(
         CloseLocalTerminal,
         /// Open the encrypted credential vault.
         OpenVault,
+        /// Unlock the credential vault with its master password.
+        UnlockVault,
+        /// Lock the credential vault.
+        LockVault,
         /// Copy the current terminal selection.
         EditCopy,
         /// Paste the clipboard into the focused terminal.

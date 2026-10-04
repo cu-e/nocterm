@@ -38,6 +38,8 @@ type PageFactory = dyn Fn(&mut Window, &mut App) -> Box<dyn SettingsPageHandle>;
 pub struct SettingsPageSpec {
     pub id: &'static str,
     pub title: SharedString,
+    /// Shown beside the title in the page list.
+    pub icon: nocterm_ui::IconName,
     factory: Rc<PageFactory>,
 }
 impl SettingsPageSpec {
@@ -49,8 +51,13 @@ impl SettingsPageSpec {
         Self {
             id,
             title: title.into(),
+            icon: nocterm_ui::IconName::Wrench,
             factory: Rc::new(move |window, cx| Box::new(factory(window, cx))),
         }
+    }
+    pub fn with_icon(mut self, icon: nocterm_ui::IconName) -> Self {
+        self.icon = icon;
+        self
     }
     pub fn create(&self, window: &mut Window, cx: &mut App) -> Box<dyn SettingsPageHandle> {
         (self.factory)(window, cx)
