@@ -19,7 +19,7 @@ separately on the destination. There is no cloud synchronization of device keys.
 | --- | --- | --- |
 | macOS | Security.framework Data Protection Keychain, `biometryCurrentSet` | Touch ID enrollment and a signed application able to access the protected keychain. The item is available only while unlocked, is device-local and does not synchronize. Changing enrolled fingers invalidates access. |
 | Windows | Windows Hello RSA credential signs a registration-specific challenge; HKDF-SHA256 derives the key for authenticated XChaCha20-Poly1305 wrapping | Windows Hello enrollment. Windows chooses fingerprint, face or PIN; this API cannot require fingerprint exclusively. Removing the Hello credential invalidates access. |
-| Linux | Root-owned Nocterm broker verifies the user's enrolled finger with root-owned fprintd before releasing a session key | Optional system service below. After each Nocterm start or broker restart, enable again after password unlock. Keys are memory-only, connection-bound and expire after eight hours. |
+| Linux | Root-owned Nocterm broker verifies the user's enrolled finger with root-owned fprintd before releasing a session key | System service installed by the Linux packages. After each Nocterm start or broker restart, the first password unlock re-registers the key. Keys are memory-only, connection-bound and expire after eight hours. |
 
 macOS capability detection uses the small safe `tid-rs` LocalAuthentication bridge;
 its preflight result only controls availability. A narrow local bridge also owns
@@ -37,32 +37,43 @@ as the same Windows user. Native Windows GUI prompt placement and macOS signing
 must be checked on those platforms before distribution. Capability detection
 never proves that an authentication scan succeeded.
 
-## Optional Linux installation
+## Linux installation
 
 Linux Secret Service does not promise biometric access control on each read. A
 successful fprintd UI check followed by an ordinary same-user keyring read would
-leave a bypass. Nocterm therefore uses a separately privileged, optional broker.
-The desktop application never installs it or changes PAM/polkit automatically.
+leave a bypass. Nocterm therefore uses a separately privileged broker. The
+desktop application never installs it or changes PAM/polkit by itself.
 
-Build a reviewed release, then explicitly install as administrator:
+The `.deb` and `.rpm` packages install the broker, its system-D-Bus policy, a
+D-Bus activation file and the hardened systemd unit, then start it
+([PACKAGING.md](PACKAGING.md)). The AppImage installs its bundled broker only
+when run with `--install-vault-broker`. From a source build, install explicitly
+as administrator:
 
 ```sh
 cargo build --release -p nocterm-vault-broker
 sudo scripts/install-vault-broker.sh
 ```
 
-The installer installs a root-owned binary, system-D-Bus policy and hardened
-systemd unit, then starts that unit. Install fprintd using your distribution and
-enroll a finger in the operating system settings. The application uses the actual
-system-bus socket and ignores user-controlled system-bus address overrides.
-Passive detection lists supported devices and enrolled fingers without initiating
-a scan. If hardware, enrollment or broker is missing, password unlock still works.
+Install fprintd using your distribution and enroll a finger in the operating
+system settings. The application uses the actual system-bus socket and ignores
+user-controlled system-bus address overrides. Passive detection lists supported
+devices and enrolled fingers without initiating a scan, and D-Bus-activates the
+broker when it is not running. If hardware, enrollment or broker is missing,
+password unlock still works.
 
-To uninstall, stop and disable `nocterm-vault-broker.service`, remove its unit,
+Turn on Fingerprint once. Broker keys are memory-only, so after Nocterm or the
+broker restarts, the next master-password unlock re-registers the key
+automatically; fingerprint unlock then works until Nocterm exits. Turn off
+removes the registration.
+
+To uninstall a package, remove it with the package manager. For a manual
+installation, stop and disable `nocterm-vault-broker.service`, remove
+`/etc/systemd/system/nocterm-vault-broker.service`,
 `/etc/dbus-1/system.d/dev.nocterm.VaultBroker1.conf` and
-`/usr/local/libexec/nocterm-vault-broker`, then reload systemd. Stopping the broker
-immediately erases its in-memory registrations. No persistent broker secret file
-or setuid helper is installed.
+`/usr/local/libexec/nocterm/nocterm-vault-broker`, then reload systemd. Stopping
+the broker immediately erases its in-memory registrations. No persistent broker
+secret file or setuid helper is installed.
 
 ## Security boundaries
 
