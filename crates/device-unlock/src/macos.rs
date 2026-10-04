@@ -50,6 +50,7 @@ impl DeviceUnlockProvider for MacOs {
             }
             .into(),
             enabled: false,
+            armed: false,
             session_only: false,
         })
     }

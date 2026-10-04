@@ -100,7 +100,7 @@ impl UnlockPrompt {
             let Ok(capability) = probe.await else {
                 return;
             };
-            if !capability.enabled || capability.availability != DeviceAvailability::Available {
+            if !capability.armed || capability.availability != DeviceAvailability::Available {
                 return;
             }
             let _ = this.update_in(cx, |this, window, cx| {

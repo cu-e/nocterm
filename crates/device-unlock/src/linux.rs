@@ -144,7 +144,7 @@ impl DeviceUnlockProvider for Linux {
                 if trusted(&client.connection, BROKER).await.is_err() {
                     return Ok((A::BrokerMissing, broker_missing()));
                 }
-                Ok((A::Available, "Unlock once with the master password after starting Nocterm. Fingerprint unlock then works until you exit.".into()))
+                Ok((A::Available, "Unlock once with the master password after the computer starts. Fingerprint unlock then works, also after restarting Nocterm.".into()))
             })
         });
         let (availability, detail) = result.unwrap_or((
@@ -156,6 +156,7 @@ impl DeviceUnlockProvider for Linux {
             label: "Fingerprint".into(),
             detail,
             enabled: false,
+            armed: false,
             session_only: true,
         })
     }

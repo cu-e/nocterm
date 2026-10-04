@@ -67,7 +67,11 @@ pub struct DeviceCapability {
     pub availability: DeviceAvailability,
     pub label: String,
     pub detail: String,
+    /// The user turned device unlock on for this vault.
     pub enabled: bool,
+    /// The device holds the key now. A session-only provider loses it when the
+    /// computer restarts, until the next master password unlock.
+    pub armed: bool,
     pub session_only: bool,
 }
 #[derive(Debug, thiserror::Error)]
@@ -188,13 +192,23 @@ impl Vault {
                 label: "Device unlock".into(),
                 detail: "Device unlock is not configured. Use the master password.".into(),
                 enabled: false,
+                armed: false,
                 session_only: false,
             });
         };
         let mut capability = provider.probe()?;
-        capability.enabled = self.read_registration().ok().is_some_and(|r| {
-            self.binding().ok() == Some(r.binding) && provider.registered(r.binding, &r.token)
-        });
+        let registration = self
+            .read_registration()
+            .ok()
+            .filter(|r| self.binding().ok() == Some(r.binding));
+        capability.enabled = registration.is_some();
+        capability.armed = registration.is_some_and(|r| provider.registered(r.binding, &r.token));
+        if capability.enabled && !capability.armed && capability.session_only {
+            capability.detail = format!(
+                "On. Unlock once with the master password after the computer restarts; {} unlock then works again.",
+                capability.label.to_lowercase()
+            );
+        }
         Ok(capability)
     }
     pub(crate) fn enable_device_unlock(&mut self) -> Result<(), VaultError> {
@@ -254,8 +268,8 @@ impl Vault {
         }
         result
     }
-    /// Session-only providers (the Linux broker) forget keys when Nocterm or the
-    /// broker restarts. A password unlock re-registers a device the user enabled.
+    /// Session-only providers (the Linux broker) forget keys when the broker or the
+    /// computer restarts. A password unlock re-registers a device the user enabled.
     pub(crate) fn rearm_device_unlock(&mut self) {
         let (Some(provider), Ok(registration)) = (self.device.clone(), self.read_registration())
         else {
@@ -362,6 +376,7 @@ mod tests {
                 label: "Test device".into(),
                 detail: String::new(),
                 enabled: false,
+                armed: false,
                 session_only: self.session_only.load(Ordering::SeqCst),
             })
         }
@@ -435,8 +450,13 @@ mod tests {
         // A broker restart forgets every session key.
         *provider.key.lock().unwrap() = None;
         vault.lock();
+        // The user's choice survives; only the key has to be armed again.
+        let capability = vault.probe_device_unlock().unwrap();
+        assert!(capability.enabled && !capability.armed);
         vault.unlock(Secret::new("long master password")).unwrap();
         vault.rearm_device_unlock();
+        let capability = vault.probe_device_unlock().unwrap();
+        assert!(capability.enabled && capability.armed);
         vault.lock();
         vault.unlock_with_device().unwrap();
         assert!(vault.is_unlocked());

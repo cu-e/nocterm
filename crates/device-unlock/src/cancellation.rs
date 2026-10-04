@@ -93,6 +93,7 @@ mod tests {
                 label: "Native test".into(),
                 detail: String::new(),
                 enabled: false,
+                armed: false,
                 session_only: false,
             })
         }

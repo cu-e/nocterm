@@ -79,9 +79,10 @@ impl VaultView {
     fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let unlocked = self.service.is_unlocked();
         let exists = self.service.exists();
-        let device = self.device.clone().filter(|device| {
-            device.enabled && device.availability == DeviceAvailability::Available
-        });
+        let device = self
+            .device
+            .clone()
+            .filter(|device| device.armed && device.availability == DeviceAvailability::Available);
         let (state, detail) = if unlocked {
             (
                 "Unlocked",
@@ -271,7 +272,7 @@ impl VaultView {
                             .disabled(
                                 self.busy
                                     || !unlocked
-                                    || device.enabled
+                                    || device.armed
                                     || device.availability != DeviceAvailability::Available,
                             )
                             .on_click(cx.listener(|this, _, _, cx| {

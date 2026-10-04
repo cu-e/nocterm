@@ -138,6 +138,7 @@ impl DeviceUnlockProvider for Windows {
             }
             .into(),
             enabled: false,
+            armed: false,
             session_only: false,
         })
     }

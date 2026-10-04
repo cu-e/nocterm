@@ -53,6 +53,7 @@ impl DeviceUnlockProvider for MissingBroker {
             label: "Fingerprint".into(),
             detail: "Install the optional broker; password unlock still works.".into(),
             enabled: false,
+            armed: false,
             session_only: true,
         })
     }
@@ -307,6 +308,7 @@ impl DeviceUnlockProvider for EnrolledDevice {
             label: "Fingerprint".into(),
             detail: String::new(),
             enabled: false,
+            armed: false,
             session_only: true,
         })
     }
