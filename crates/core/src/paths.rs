@@ -91,9 +91,14 @@ impl Paths {
     /// A location too long for a Unix socket name falls back to a short
     /// private directory under the system temporary directory.
     pub fn ensure_runtime_dir(&self) -> io::Result<PathBuf> {
-        let directory = short_enough(&self.runtime_dir, fallback_runtime_dir());
+        let directory = self.effective_runtime_dir();
         ensure_private_dir(&directory)?;
         Ok(directory)
+    }
+
+    /// The directory [`Paths::ensure_runtime_dir`] creates, without creating it.
+    pub fn effective_runtime_dir(&self) -> PathBuf {
+        short_enough(&self.runtime_dir, fallback_runtime_dir())
     }
 
     /// User settings.

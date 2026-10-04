@@ -61,6 +61,12 @@ pub fn save<T: Serialize>(path: &Path, value: &T) -> Result<(), PersistError> {
     write_atomic(path, &text).map_err(|source| PersistError::io(path, source))
 }
 
+/// Replaces the contents of `path` with `contents`, atomically and readable
+/// only by the user, for files nocterm owns that are not TOML.
+pub fn save_text(path: &Path, contents: &str) -> Result<(), PersistError> {
+    publish_atomic(path, contents).map_err(|source| PersistError::io(path, source))
+}
+
 /// Writes `value` to `path`, keeping the comments and key order already in
 /// the file.
 ///
