@@ -4,7 +4,10 @@ use gpui_kit::{App, Context, Global, Task};
 use nocterm_session::{CredentialId, Prompt, Secret, SecretRequest};
 use nocterm_vault::{CredentialBinding, VaultService};
 use nocterm_workspace::SessionSpec;
-use std::{rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc, time::Duration};
+
+/// How often a prompt waiting for the vault checks whether it was unlocked.
+const UNLOCK_POLL: Duration = Duration::from_millis(250);
 
 type Saved = Rc<dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>>>;
 pub(crate) struct ActiveCredentials {
@@ -92,6 +95,8 @@ impl Terminal {
             self.credentials.message = Some(
                 "Unlock the credential vault to use the saved secret, or enter it here.".into(),
             );
+            let service = provider.service.clone();
+            self.wait_for_unlock(service, cx);
             return;
         }
         let future = provider.service.get(id, binding);
@@ -111,6 +116,26 @@ impl Terminal {
                     }
                 }
             });
+        }));
+    }
+    /// Answers the prompt with the saved secret as soon as the vault is
+    /// unlocked, whether from the prompt's link, Settings or device unlock.
+    fn wait_for_unlock(&mut self, service: Arc<VaultService>, cx: &mut Context<Self>) {
+        let epoch = self.credentials.epoch;
+        self.credentials.lookup = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(UNLOCK_POLL).await;
+                if !service.is_unlocked() {
+                    continue;
+                }
+                let _ = this.update(cx, |this, cx| {
+                    if epoch == this.credentials.epoch && this.prompt().is_some() {
+                        this.retrieve_credential(cx);
+                        cx.emit(TerminalEvent::Changed);
+                    }
+                });
+                return;
+            }
         }));
     }
     /// Remember is an explicit user choice and never applies to interactive/MFA.
@@ -196,3 +221,6 @@ impl Terminal {
         .detach();
     }
 }
+
+#[cfg(test)]
+mod tests;

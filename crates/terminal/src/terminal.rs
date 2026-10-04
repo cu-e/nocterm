@@ -5,10 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui_kit::{Context, EventEmitter, Subscription, Task};
+use gpui_kit::{Context, EventEmitter, SharedString, Subscription, Task};
 use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize, RemoteFs,
-    Secret, Session, SessionError,
+    Secret, Session, SessionError, Transport,
 };
 use nocterm_settings::{CursorShape, TerminalSettings};
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
@@ -51,6 +51,8 @@ pub struct FindState {
     pub error: Option<String>,
 }
 
+type CommandCompletion = Box<dyn FnOnce(CloseReason, &mut gpui_kit::App)>;
+
 /// A session and the screen it draws on.
 pub struct Terminal {
     codec: crate::codec::TextCodec,
@@ -62,6 +64,8 @@ pub struct Terminal {
     pub(crate) credentials: crate::credentials::CredentialState,
     spec: SessionSpec,
     local: bool,
+    local_transport: Option<Arc<dyn Transport>>,
+    command_completion: Option<CommandCompletion>,
     integration: RefCell<ShellIntegration>,
     shell_program: String,
     session: Option<Session>,
@@ -85,7 +89,7 @@ impl EventEmitter<TerminalEvent> for Terminal {}
 impl Terminal {
     /// A terminal that starts connecting to `spec` at once.
     pub fn new(spec: SessionSpec, cx: &mut Context<Self>) -> Self {
-        Self::new_kind(spec, false, cx)
+        Self::new_kind(spec, false, None, None, cx)
     }
 
     pub fn new_local(cx: &mut Context<Self>) -> Self {
@@ -100,11 +104,38 @@ impl Terminal {
                 credential: None,
             },
             true,
+            None,
+            None,
             cx,
         )
     }
 
-    fn new_kind(spec: SessionSpec, local: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new_local_command(
+        launch: nocterm_session::ShellLaunch,
+        title: SharedString,
+        transport: Arc<dyn Transport>,
+        completion: impl FnOnce(CloseReason, &mut gpui_kit::App) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let spec = SessionSpec {
+            profile: None,
+            options: Default::default(),
+            title,
+            target: nocterm_session::Target::new("local", "localhost", 22),
+            auth: nocterm_session::Auth::Auto,
+            launch: Some(launch),
+            credential: None,
+        };
+        Self::new_kind(spec, true, Some(transport), Some(Box::new(completion)), cx)
+    }
+
+    fn new_kind(
+        spec: SessionSpec,
+        local: bool,
+        local_transport: Option<Arc<dyn Transport>>,
+        command_completion: Option<CommandCompletion>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let options = emulator_options(&cx.settings().terminal);
         let mut this = Self {
             codec: crate::codec::TextCodec::new(cx.settings().terminal.charset),
@@ -116,6 +147,8 @@ impl Terminal {
             credentials: Default::default(),
             spec,
             local,
+            local_transport,
+            command_completion,
             integration: RefCell::default(),
             shell_program: String::new(),
             session: None,
@@ -220,10 +253,16 @@ impl Terminal {
             .logging
             .clone()
             .unwrap_or_else(|| settings.logging.clone());
+        if self.local_transport.is_some() {
+            self.recording_options.auto_start = false;
+        }
         self.text_error = None;
         *self.input_error.borrow_mut() = None;
         let launch = if self.local {
-            shell_launch(&settings.local)
+            self.spec
+                .launch
+                .clone()
+                .unwrap_or_else(|| shell_launch(&settings.local))
         } else {
             self.spec
                 .launch
@@ -237,8 +276,10 @@ impl Terminal {
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
         let transport = if self.local {
-            cx.try_global::<LocalTransportFactory>()
-                .map(|factory| (factory.0)(launch.clone()))
+            self.local_transport.clone().or_else(|| {
+                cx.try_global::<LocalTransportFactory>()
+                    .map(|factory| (factory.0)(launch.clone()))
+            })
         } else {
             cx.try_global::<ActiveTransport>().map(|t| t.0.clone())
         };
@@ -309,6 +350,9 @@ impl Terminal {
 
     /// Replaces a live connection as well as reconnecting a closed one.
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {
+        if self.is_command() {
+            return;
+        }
         self.emulator.advance(b"\r\n");
         self.connect(cx);
         self.refresh_find(cx);
@@ -336,7 +380,7 @@ impl Terminal {
         cx.emit(TerminalEvent::Changed);
     }
 
-    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    pub(crate) fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::Connecting(stage) => self.set_status(Status::Connecting(stage), cx),
             Event::Connected => {
@@ -388,6 +432,11 @@ impl Terminal {
     }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
+        if let Status::Closed(reason) = &status
+            && let Some(completion) = self.command_completion.take()
+        {
+            completion(reason.clone(), cx);
+        }
         if self.status != status {
             self.status = status;
             cx.emit(TerminalEvent::Changed);
@@ -445,7 +494,12 @@ impl Terminal {
         }));
     }
 
-    /// Whether this model owns the independent local shell.
+    /// Whether this terminal runs a one-shot host command.
+    pub fn is_command(&self) -> bool {
+        self.local_transport.is_some()
+    }
+
+    /// Whether this model owns a local PTY.
     pub fn is_local(&self) -> bool {
         self.local
     }
@@ -584,7 +638,7 @@ impl Terminal {
         }
     }
     pub fn start_recording(&mut self, cx: &mut Context<Self>) {
-        if self.is_recording() {
+        if self.local_transport.is_some() || self.is_recording() {
             return;
         }
         if !self.is_connected() {
@@ -962,6 +1016,90 @@ mod local_tests {
             let (session, driver) = nocterm_session::channel(None);
             *self.0.lock().unwrap() = Some(driver);
             session
+        }
+    }
+
+    #[gpui_kit::test]
+    fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+        let result = Rc::new(RefCell::new(Vec::new()));
+        let captured = result.clone();
+        let terminal = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let mut settings = nocterm_settings::Settings::default();
+            settings.logging.auto_start = true;
+            nocterm_ui::init(
+                nocterm_ui::DesignTokens::builtin(),
+                SettingsStore::in_memory(settings),
+                cx,
+            );
+            cx.new(|cx| {
+                Terminal::new_local_command(
+                    nocterm_session::ShellLaunch {
+                        program: Some("test-agent".into()),
+                        args: vec!["--setup".into()],
+                        integration: false,
+                        ..Default::default()
+                    },
+                    "Auth Hermes".into(),
+                    Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
+                    move |reason, _| captured.borrow_mut().push(reason),
+                    cx,
+                )
+            })
+        });
+        cx.update(|cx| {
+            terminal.update(cx, |terminal, cx| {
+                assert_eq!(terminal.spec.title, "Auth Hermes");
+                assert_eq!(terminal.spec.launch.as_ref().unwrap().args, vec!["--setup"]);
+                assert!(!terminal.recording_options.auto_start);
+                terminal.handle_event(Event::Connected, cx);
+                terminal.start_recording(cx);
+                assert!(!terminal.is_recording());
+                terminal.handle_event(Event::Closed(CloseReason::Exited(Some(0))), cx);
+                terminal.disconnect(cx);
+            })
+        });
+        assert_eq!(*result.borrow(), vec![CloseReason::Exited(Some(0))]);
+    }
+
+    #[gpui_kit::test]
+    fn command_completion_reports_cancel_and_drop_cancels_receiver(cx: &mut TestAppContext) {
+        use futures::channel::oneshot;
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            nocterm_ui::init(
+                nocterm_ui::DesignTokens::builtin(),
+                SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+        });
+        for disconnect in [true, false] {
+            let (send, receive) = oneshot::channel();
+            let terminal = cx.update(|cx| {
+                cx.new(|cx| {
+                    Terminal::new_local_command(
+                        nocterm_session::ShellLaunch::default(),
+                        "Auth".into(),
+                        Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
+                        move |reason, _| {
+                            let _ = send.send(reason);
+                        },
+                        cx,
+                    )
+                })
+            });
+            if disconnect {
+                cx.update(|cx| terminal.update(cx, |terminal, cx| terminal.disconnect(cx)));
+                assert_eq!(
+                    receive.now_or_never().unwrap().unwrap(),
+                    CloseReason::ClosedByUser
+                );
+            } else {
+                cx.update(|_| drop(terminal));
+                cx.run_until_parked();
+                assert!(receive.now_or_never().unwrap().is_err());
+            }
         }
     }
 

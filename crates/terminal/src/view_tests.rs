@@ -525,7 +525,6 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
 fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx: &mut TestAppContext,
 ) {
-    use gpui_kit::component::WindowExt as _;
     let (handle, view, _) = fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
@@ -536,7 +535,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
         });
         window.render_frame(cx);
         assert!(
-            window.notifications(cx).is_empty(),
+            nocterm_ui::notice::count(window, cx) == 0,
             "render posted an operational notice"
         );
         view.update(cx, |v, cx| {
@@ -547,9 +546,13 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(window.notifications(cx).len(), 1);
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
         window.render_frame(cx);
-        window.click("notice-action", cx);
+        assert!(nocterm_ui::notice::run_action(
+            window,
+            cx,
+            "terminal-credential"
+        ));
     })
     .unwrap();
     cx.run_until_parked();
@@ -559,7 +562,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.clear_notifications(cx);
+        nocterm_ui::notice::clear(window, cx);
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| t.start_recording(cx))
         });
@@ -567,8 +570,8 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(window.notifications(cx).len(), 1);
-        window.clear_notifications(cx);
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
+        nocterm_ui::notice::clear(window, cx);
         view.update(cx, |v, cx| {
             v.terminal
                 .update(cx, |_, cx| cx.emit(TerminalEvent::Output))
@@ -580,7 +583,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(
-            window.notifications(cx).is_empty(),
+            nocterm_ui::notice::count(window, cx) == 0,
             "unchanged error returned after dismissal"
         );
     })

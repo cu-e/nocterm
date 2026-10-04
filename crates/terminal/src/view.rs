@@ -27,9 +27,7 @@ use nocterm_vt::{
     CellPoint, Frame, KeyPress, Modifiers, MouseEvent, MouseEventKind, Palette, Rgb, Scroll,
     SearchDirection, SelectionKind, encode_focus, encode_key, encode_mouse, encode_paste,
 };
-use nocterm_workspace::{
-    Item, ItemCommand, ItemEvent, OpenVault, SessionContext, SessionSpec, TabState,
-};
+use nocterm_workspace::{Item, ItemCommand, ItemEvent, SessionContext, SessionSpec, TabState};
 
 use crate::{
     Copy, KEY_CONTEXT, Paste, Reconnect, SCREEN_KEY_CONTEXT, ScrollPageDown, ScrollPageUp,
@@ -43,6 +41,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// slow link.
 const MAX_WHEEL_REPORTS: i32 = 10;
 
+#[path = "view_secret.rs"]
+mod secret;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 mod tests;
@@ -96,6 +96,19 @@ impl TerminalView {
 
     pub fn new_local(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal = cx.new(Terminal::new_local);
+        Self::with_terminal(terminal, window, cx)
+    }
+
+    pub fn new_local_command(
+        launch: nocterm_session::ShellLaunch,
+        title: String,
+        transport: std::sync::Arc<dyn nocterm_session::Transport>,
+        completion: impl FnOnce(nocterm_session::CloseReason, &mut gpui_kit::App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal = cx
+            .new(|cx| Terminal::new_local_command(launch, title.into(), transport, completion, cx));
         Self::with_terminal(terminal, window, cx)
     }
 
@@ -869,7 +882,7 @@ impl TerminalView {
         )
     }
 
-    fn card(&self, title: impl Into<SharedString>, cx: &App) -> gpui_kit::Div {
+    pub(super) fn card(&self, title: impl Into<SharedString>, cx: &App) -> gpui_kit::Div {
         let theme = cx.theme();
         v_flex()
             .w(rems(cx.design().layout.dialog_width))
@@ -948,106 +961,6 @@ impl TerminalView {
                     ),
             )
             .into_any_element()
-    }
-
-    fn render_secret(
-        &mut self,
-        request: &SecretRequest,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let input = self.secret.as_ref()?.input.clone();
-        let (title, retry, masked) = match request {
-            SecretRequest::Password { target, retry } => {
-                (format!("Password for {target}"), *retry, true)
-            }
-            SecretRequest::KeyPassphrase { path, retry } => {
-                (format!("Passphrase for {}", path.display()), *retry, true)
-            }
-            SecretRequest::Interactive { prompt, echo } => {
-                let prompt = prompt.trim();
-                let title = if prompt.is_empty() {
-                    "The host asks for a response"
-                } else {
-                    prompt
-                };
-                (title.to_owned(), false, !echo)
-            }
-        };
-        let danger = cx.theme().danger;
-
-        let rememberable = !matches!(request, SecretRequest::Interactive { .. });
-        let unlocked = self.terminal.read(cx).vault_unlocked(cx);
-        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
-        let message = self
-            .terminal
-            .read(cx)
-            .credential_message()
-            .map(str::to_owned);
-        let field = Input::new(&input);
-        let field = if masked { field.mask_toggle() } else { field };
-
-        Some(
-            self.card(title, cx)
-                .when(retry, |card| {
-                    card.child(
-                        div()
-                            .text_sm()
-                            .text_color(danger)
-                            .child("That was not accepted. Try again."),
-                    )
-                })
-                .child(field)
-                .when_some(message, |card, message| {
-                    card.child(div().text_xs().child(message))
-                })
-                .when(rememberable, |card| {
-                    card.child(
-                        Button::new("remember-credential")
-                            .ghost()
-                            .small()
-                            .label("Remember after successful sign in")
-                            .selected(remember)
-                            .disabled(!unlocked)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(field) = &mut this.secret {
-                                    field.remember = !field.remember;
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .when(!unlocked, |card| {
-                        card.child(
-                            Button::new("auth-open-vault")
-                                .ghost()
-                                .small()
-                                .label("Open credential vault")
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(OpenVault), cx)
-                                }),
-                        )
-                    })
-                })
-                .child(
-                    h_flex()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("secret-cancel")
-                                .ghost()
-                                .label("Cancel")
-                                .on_click(cx.listener(|this, _, _, cx| this.cancel_secret(cx))),
-                        )
-                        .child(
-                            Button::new("secret-submit")
-                                .primary()
-                                .label("Continue")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.submit_secret(window, cx)
-                                })),
-                        ),
-                )
-                .into_any_element(),
-        )
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1136,6 +1049,7 @@ impl TerminalView {
                                         .small()
                                         .icon(IconName::Plug)
                                         .label("Reconnect")
+                                        .disabled(self.terminal.read(cx).is_command())
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.reconnect(&Reconnect, window, cx);
                                         })),
@@ -1255,6 +1169,7 @@ impl Render for TerminalView {
         let terminal = self.terminal.read(cx);
         let recording = terminal.recording_status();
         let active = terminal.is_recording();
+        let command = terminal.is_command();
         let connected = terminal.is_connected();
         let path = recording
             .and_then(|recording| recording.path)
@@ -1284,7 +1199,7 @@ impl Render for TerminalView {
                                     } else {
                                         "Record output"
                                     })
-                                    .disabled(!connected)
+                                    .disabled(!connected || command)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.terminal.update(cx, |terminal, cx| {
                                             terminal.toggle_recording(cx)
@@ -1322,15 +1237,15 @@ impl Item for TerminalView {
             ItemCommand::ClearSelection => terminal.emulator().selection_start().is_some(),
             ItemCommand::Paste => terminal.is_connected(),
             ItemCommand::Disconnect => !matches!(terminal.status(), Status::Closed(_)),
-            ItemCommand::StartRecording => terminal.is_connected() && !terminal.is_recording(),
+            ItemCommand::StartRecording => {
+                !terminal.is_command() && terminal.is_connected() && !terminal.is_recording()
+            }
+            ItemCommand::Reconnect => !terminal.is_command(),
             ItemCommand::StopRecording => terminal.is_recording(),
             ItemCommand::FindNext | ItemCommand::FindPrevious => {
                 !terminal.find().query.is_empty() && terminal.find().error.is_none()
             }
-            ItemCommand::SelectAll
-            | ItemCommand::Find
-            | ItemCommand::Reconnect
-            | ItemCommand::SessionSettings => true,
+            ItemCommand::SelectAll | ItemCommand::Find | ItemCommand::SessionSettings => true,
         }
     }
 

@@ -111,6 +111,34 @@ pub fn open_local(workspace: &mut Workspace, window: &mut Window, cx: &mut Conte
     workspace.set_local_terminal(view, window, cx);
 }
 
+/// Opens `spec` without a tab. Install it with
+/// [`Workspace::set_background_session_opener`].
+pub fn open_background_session(
+    workspace: &mut Workspace,
+    spec: SessionSpec,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> gpui_kit::EntityId {
+    let view = cx.new(|cx| TerminalView::new(spec, window, cx));
+    workspace.add_background_item(view, window, cx)
+}
+
+/// Opens a dedicated command tab without replacing the workspace's bottom shell.
+pub fn open_local_command(
+    workspace: &mut Workspace,
+    launch: ShellLaunch,
+    title: String,
+    transport: Arc<dyn Transport>,
+    completion: impl FnOnce(nocterm_session::CloseReason, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let view = cx.new(|cx| {
+        TerminalView::new_local_command(launch, title, transport, completion, window, cx)
+    });
+    workspace.add_item(view, window, cx);
+}
+
 /// Installs the transport terminals open their sessions with.
 pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
     // Root binds Tab to focus traversal before on_key_down runs. Suppress that
