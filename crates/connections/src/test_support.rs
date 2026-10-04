@@ -12,6 +12,8 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
     let opened = Opened::default();
     let calls = opened.clone();
     let (window, workspace) = cx.update(|cx| {
+        // Keep dialog hitboxes stable between rendering and simulated clicks.
+        cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
         crate::init(None, cx);
