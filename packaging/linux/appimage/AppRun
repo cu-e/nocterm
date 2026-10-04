@@ -1,0 +1,20 @@
+#!/bin/sh
+# AppImage entry point. `--install-vault-broker` installs the bundled
+# fingerprint broker system-wide after administrator authentication.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "${1:-}" = "--install-vault-broker" ]; then
+    # Root cannot read a user's FUSE mount, so stage the files first.
+    stage=$(mktemp -d)
+    trap 'rm -rf "$stage"' EXIT
+    cp "$here/usr/libexec/nocterm/nocterm-vault-broker" "$here/usr/share/nocterm/install-vault-broker.sh" "$stage/"
+    cp -r "$here/usr/share/nocterm/packaging" "$stage/packaging"
+    chmod -R a+rX "$stage"
+    if [ "$(id -u)" = 0 ]; then
+        sh "$stage/install-vault-broker.sh" "$stage/nocterm-vault-broker" "$stage/packaging"
+    else
+        pkexec sh "$stage/install-vault-broker.sh" "$stage/nocterm-vault-broker" "$stage/packaging"
+    fi
+    exit
+fi
+exec "$here/usr/bin/nocterm" "$@"

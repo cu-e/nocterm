@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nocterm
+GenericName=SSH Client
+Comment=A fast, extensible SSH client
+Exec=nocterm %U
+Icon=dev.nocterm.Nocterm
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;sftp;terminal;remote;
+StartupWMClass=dev.nocterm.Nocterm
+StartupNotify=true
