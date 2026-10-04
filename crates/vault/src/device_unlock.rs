@@ -254,6 +254,24 @@ impl Vault {
         }
         result
     }
+    /// Session-only providers (the Linux broker) forget keys when Nocterm or the
+    /// broker restarts. A password unlock re-registers a device the user enabled.
+    pub(crate) fn rearm_device_unlock(&mut self) {
+        let (Some(provider), Ok(registration)) = (self.device.clone(), self.read_registration())
+        else {
+            return;
+        };
+        if self.binding().ok() != Some(registration.binding)
+            || provider.registered(registration.binding, &registration.token)
+        {
+            return;
+        }
+        if provider.probe().is_ok_and(|capability| {
+            capability.session_only && capability.availability == DeviceAvailability::Available
+        }) {
+            let _ = self.enable_device_unlock();
+        }
+    }
     pub(crate) fn unlock_with_device(&mut self) -> Result<(), VaultError> {
         self.lock();
         let provider = self.device.clone().ok_or(DeviceUnlockError::Unavailable)?;
@@ -311,13 +329,18 @@ impl Vault {
 mod tests {
     use super::*;
     use nocterm_session::Secret;
-    use std::sync::{Mutex, atomic::AtomicBool};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU8},
+    };
     struct Fake {
         key: Mutex<Option<VaultKey>>,
         cancelled: AtomicBool,
         corrupt: AtomicBool,
         removed: AtomicBool,
         late_cancel: AtomicBool,
+        session_only: AtomicBool,
+        token: AtomicU8,
     }
     impl Fake {
         fn new() -> Self {
@@ -327,6 +350,8 @@ mod tests {
                 corrupt: AtomicBool::new(false),
                 removed: AtomicBool::new(false),
                 late_cancel: AtomicBool::new(false),
+                session_only: AtomicBool::new(false),
+                token: AtomicU8::new(0),
             }
         }
     }
@@ -337,7 +362,7 @@ mod tests {
                 label: "Test device".into(),
                 detail: String::new(),
                 enabled: false,
-                session_only: false,
+                session_only: self.session_only.load(Ordering::SeqCst),
             })
         }
         fn enroll(
@@ -347,7 +372,7 @@ mod tests {
             _cancel: &DeviceCancellation,
         ) -> Result<Vec<u8>, DeviceUnlockError> {
             *self.key.lock().unwrap() = Some(key);
-            Ok(vec![1])
+            Ok(vec![self.token.fetch_add(1, Ordering::SeqCst) + 1])
         }
         fn release(
             &self,
@@ -376,10 +401,15 @@ mod tests {
             }
             Ok(key)
         }
-        fn remove(&self, _binding: VaultBinding, _token: &[u8]) -> Result<(), DeviceUnlockError> {
+        fn remove(&self, _binding: VaultBinding, token: &[u8]) -> Result<(), DeviceUnlockError> {
             self.removed.store(true, Ordering::SeqCst);
-            *self.key.lock().unwrap() = None;
+            if token == [self.token.load(Ordering::SeqCst)] {
+                *self.key.lock().unwrap() = None;
+            }
             Ok(())
+        }
+        fn registered(&self, _binding: VaultBinding, _token: &[u8]) -> bool {
+            self.key.lock().unwrap().is_some()
         }
     }
     fn fixture() -> (tempfile::TempDir, Vault, Arc<Fake>) {
@@ -396,6 +426,20 @@ mod tests {
             format!("{:?}", VaultKey::new([42; 32])),
             "VaultKey([REDACTED])"
         );
+    }
+    #[test]
+    fn password_unlock_rearms_a_session_only_device() {
+        let (_temp, mut vault, provider) = fixture();
+        provider.session_only.store(true, Ordering::SeqCst);
+        vault.enable_device_unlock().unwrap();
+        // A broker restart forgets every session key.
+        *provider.key.lock().unwrap() = None;
+        vault.lock();
+        vault.unlock(Secret::new("long master password")).unwrap();
+        vault.rearm_device_unlock();
+        vault.lock();
+        vault.unlock_with_device().unwrap();
+        assert!(vault.is_unlocked());
     }
     #[test]
     fn late_success_cannot_reopen_after_lock_epoch_changes() {

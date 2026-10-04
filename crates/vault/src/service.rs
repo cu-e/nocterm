@@ -166,7 +166,15 @@ impl VaultService {
         self.request(move |vault| vault.create(password))
     }
     pub fn unlock(&self, password: Secret) -> VaultFuture<()> {
-        self.request(move |vault| vault.unlock(password))
+        let unlock = self.request(move |vault| vault.unlock(password));
+        // Queued behind the unlock so a slow device probe never delays it.
+        drop(self.request(|vault| {
+            if vault.is_unlocked() {
+                vault.rearm_device_unlock();
+            }
+            Ok(())
+        }));
+        unlock
     }
     pub fn probe_device_unlock(&self) -> VaultFuture<DeviceCapability> {
         self.request(|vault| vault.probe_device_unlock())
