@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/cu-e/nocterm/compare/v1.0.0...v1.1.0) (2026-10-05)
+
+
+### Features
+
+* **monitor:** implement host resource monitoring and UI ([16defde](https://github.com/cu-e/nocterm/commit/16defde74d6eda78ec5c196881a4ef4f53b9ca1c))
+* **monitor:** implement host resource monitoring and UI ([16defde](https://github.com/cu-e/nocterm/commit/16defde74d6eda78ec5c196881a4ef4f53b9ca1c))
+* **monitor:** implement host resource monitoring and UI ([cc76b49](https://github.com/cu-e/nocterm/commit/cc76b498987da1b2a8296d2e12154cc5510079c2))
+
+
+### Bug Fixes
+
+* **app:** link the MSVC runtime statically and stop panicking on quit ([f17648b](https://github.com/cu-e/nocterm/commit/f17648bd4a601d0318b4ad1101e10d61fed93ac0))
+
 ## 1.0.0 (2026-10-04)
 
 
