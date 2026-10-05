@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
@@ -9,7 +10,7 @@ use gpui_base::spring;
 use rust_i18n::t;
 use smallvec::SmallVec;
 
-use super::{Tab, TabVariant};
+use super::{Tab, TabVariant, tab::FLOATING_BAR_PADDING};
 use crate::button::{Button, ButtonVariants as _};
 use crate::menu::{DropdownMenu as _, PopupMenuItem};
 use crate::{
@@ -106,6 +107,12 @@ impl TabBar {
         self
     }
 
+    /// Set the Tab variant to Floating, all children will inherit the variant.
+    pub fn floating(mut self) -> Self {
+        self.variant = TabVariant::Floating;
+        self
+    }
+
     /// Set whether to show the menu button when tabs overflow, default is false.
     pub fn menu(mut self, menu: bool) -> Self {
         self.menu = menu;
@@ -190,7 +197,7 @@ impl TabBar {
     ) -> Option<(AnyElement, u64)> {
         let has_indicator = matches!(
             self.variant,
-            TabVariant::Segmented | TabVariant::Pill | TabVariant::Underline
+            TabVariant::Segmented | TabVariant::Pill | TabVariant::Underline | TabVariant::Floating
         );
         let num_tabs = self.children.len();
         let selected_ix = self.selected_index.unwrap_or(usize::MAX);
@@ -264,6 +271,12 @@ impl TabBar {
                         .size_full()
                         .bg(cx.theme().tokens.primary)
                         .rounded(cx.theme().radius_full()),
+                ),
+                TabVariant::Floating => el.flex().items_center().child(
+                    div()
+                        .size_full()
+                        .bg(cx.theme().tokens.secondary)
+                        .rounded(variant.radius(size, cx)),
                 ),
                 TabVariant::Underline => el.child(
                     div()
@@ -376,6 +389,10 @@ impl RenderOnce for TabBar {
                 let padding = Edges::all(px(0.));
                 (cx.theme().transparent.into(), padding, px(4.))
             }
+            TabVariant::Floating => {
+                let padding = Edges::all(FLOATING_BAR_PADDING);
+                (cx.theme().transparent.into(), padding, px(2.))
+            }
             TabVariant::Segmented => {
                 let padding_x = match self.size {
                     Size::XSmall => px(2.),
@@ -405,7 +422,7 @@ impl RenderOnce for TabBar {
 
         let has_indicator = matches!(
             self.variant,
-            TabVariant::Segmented | TabVariant::Pill | TabVariant::Underline
+            TabVariant::Segmented | TabVariant::Pill | TabVariant::Underline | TabVariant::Floating
         );
         let num_tabs = self.children.len();
 

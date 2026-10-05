@@ -144,6 +144,10 @@ pub struct Palette {
     /// not listed keeps the standard theme's value.
     #[serde(default)]
     pub ui: UiColors,
+    /// The window's backdrop behind floating cards: the gaps between them and
+    /// the title and status bars. Unset: a shade darker than `background`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<Color>,
     /// Colours of the terminal grid.
     pub terminal: TerminalColors,
 }

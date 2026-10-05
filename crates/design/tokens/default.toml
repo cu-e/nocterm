@@ -70,6 +70,10 @@ button_padding = 0.5            # default horizontal button padding
 
 # ── Light palette ─────────────────────────────────────────────────────────────
 
+[light]
+# The backdrop behind floating cards (`appearance.layout = "floating"`).
+# canvas = "#ececec"             # unset: a shade darker than the background
+
 # Interface colours, in the component theme's own vocabulary
 # (`background`, `primary.background`, `sidebar.background`, `title_bar.border`, …).
 # Empty: the standard light theme.
@@ -101,6 +105,9 @@ bright_white   = "#a5a5a5"
 
 
 # ── Dark palette ──────────────────────────────────────────────────────────────
+
+[dark]
+# canvas = "#0e0e0e"             # unset: a shade darker than the background
 
 # Standard dark theme with a lighter active tab.
 [dark.ui]

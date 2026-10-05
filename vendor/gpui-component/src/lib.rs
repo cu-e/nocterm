@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use gpui::App;
 use std::ops::Deref;
 use std::sync::LazyLock;
@@ -43,6 +44,7 @@ pub mod description_list;
 pub mod dialog;
 pub mod dock;
 pub mod empty;
+pub mod floating;
 pub mod form;
 pub mod group_box;
 pub mod highlighter;

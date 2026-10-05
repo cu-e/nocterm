@@ -5,8 +5,7 @@ use gpui_kit::{
     Focusable, Menu, Pixels, SharedString, Subscription, Window,
     base::GlobalState,
     component::{
-        ActiveTheme as _, Icon, Sizable as _,
-        button::{Button, ButtonVariants as _},
+        ActiveTheme as _,
         dock::{
             DockArea, DockEvent, DockPlacement, DockSkin, InsertTarget, PaneRef, PanelId,
             PanelStyle, panel_handle,
@@ -19,7 +18,7 @@ use gpui_kit::{
     rems,
 };
 use nocterm_session::{Auth, Target};
-use nocterm_ui::{ActiveDesign as _, IconName};
+use nocterm_ui::ActiveDesign as _;
 
 mod background;
 mod chrome;
@@ -1108,31 +1107,6 @@ impl Workspace {
     }
 
     // ── Rendering ────────────────────────────────────────────────────────────
-
-    fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.items.is_empty() && !self.local_terminal_is_visible(cx) {
-            v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .text_color(cx.theme().muted_foreground)
-                .child(Icon::new(IconName::SquareTerminal).large())
-                .child("No open sessions")
-                .child(
-                    Button::new("empty-new-tab")
-                        .primary()
-                        .label("New Tab")
-                        .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx)),
-                )
-                .into_any_element()
-        } else {
-            div()
-                .size_full()
-                .child(self.dock.clone())
-                .into_any_element()
-        }
-    }
 }
 
 impl Focusable for Workspace {
@@ -1149,7 +1123,7 @@ impl Render for Workspace {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .size_full()
-            .bg(theme.background)
+            .bg(Self::window_background(cx))
             .text_color(theme.foreground)
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_tab))

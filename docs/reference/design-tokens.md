@@ -6,6 +6,7 @@
 
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
+| `dark.canvas` | ["string","null"] | `null` | The window's backdrop behind floating cards: the gaps between them and the title and status bars. Unset: a shade darker than `background`. |
 | `dark.terminal.background` | ["string","null"] | `"#181818"` | Terminal background. Unset: the interface background. |
 | `dark.terminal.black` | "string" | `"#000000"` | ANSI colour 0. |
 | `dark.terminal.blue` | "string" | `"#2472c8"` | ANSI colour 4. |
@@ -45,6 +46,7 @@
 | `layout.sidebar_width` | "number" | `17.0` | Initial width of the left sidebar. |
 | `layout.tab_max_width` | "number" | `14.0` | Width past which a session tab ellipsizes its title. |
 | `layout.terminal_padding` | "number" | `0.5` | Space between the terminal grid and the edge of its pane. |
+| `light.canvas` | ["string","null"] | `null` | The window's backdrop behind floating cards: the gaps between them and the title and status bars. Unset: a shade darker than `background`. |
 | `light.terminal.background` | ["string","null"] | `null` | Terminal background. Unset: the interface background. |
 | `light.terminal.black` | "string" | `"#000000"` | ANSI colour 0. |
 | `light.terminal.blue` | "string" | `"#0451a5"` | ANSI colour 4. |

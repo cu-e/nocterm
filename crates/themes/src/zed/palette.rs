@@ -191,8 +191,15 @@ impl ZedTheme {
             bright_cyan,
             bright_white
         );
+        // Zed's own `background` is the workspace behind its panels and
+        // editors, which is what floating cards sit on. Themes that leave it
+        // equal to the editor have no backdrop of their own; one is derived.
+        let canvas = get(&["background"])
+            .filter(|canvas| get(&["editor.background"]).is_some_and(|editor| editor != *canvas))
+            .map(|canvas| opaque(canvas, interface));
         Palette {
             ui: ui.into_iter().collect(),
+            canvas,
             terminal,
         }
     }

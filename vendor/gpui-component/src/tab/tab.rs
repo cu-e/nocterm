@@ -19,6 +19,10 @@ pub enum TabVariant {
     Pill,
     Segmented,
     Underline,
+    /// Tabs on a floating card: rounded, flat until hovered, the selected one
+    /// a soft fill that slides between tabs. Corners follow the card's radius
+    /// when [`crate::floating::FloatingCards`] is installed.
+    Floating,
 }
 
 impl TabVariant {
@@ -26,18 +30,22 @@ impl TabVariant {
         match size {
             Size::XSmall => match self {
                 TabVariant::Underline => px(26.),
+                TabVariant::Floating => px(20.),
                 _ => px(20.),
             },
             Size::Small => match self {
                 TabVariant::Underline => px(30.),
+                TabVariant::Floating => px(22.),
                 _ => px(24.),
             },
             Size::Large => match self {
                 TabVariant::Underline => px(44.),
+                TabVariant::Floating => px(30.),
                 _ => px(36.),
             },
             _ => match self {
                 TabVariant::Underline => px(36.),
+                TabVariant::Floating => px(24.),
                 _ => px(32.),
             },
         }
@@ -46,21 +54,25 @@ impl TabVariant {
     pub(super) fn inner_height(&self, size: Size) -> Pixels {
         match size {
             Size::XSmall => match self {
+                TabVariant::Floating => px(20.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(18.),
                 TabVariant::Segmented => px(16.),
                 TabVariant::Underline => px(20.),
             },
             Size::Small => match self {
+                TabVariant::Floating => px(22.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(22.),
                 TabVariant::Segmented => px(18.),
                 TabVariant::Underline => px(22.),
             },
             Size::Large => match self {
+                TabVariant::Floating => px(30.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(36.),
                 TabVariant::Segmented => px(28.),
                 TabVariant::Underline => px(32.),
             },
             _ => match self {
+                TabVariant::Floating => px(24.),
                 TabVariant::Tab => px(30.),
                 TabVariant::Outline | TabVariant::Pill => px(26.),
                 TabVariant::Segmented => px(24.),
@@ -151,6 +163,11 @@ impl TabVariant {
                 bg: cx.theme().transparent.into(),
                 ..Default::default()
             },
+            TabVariant::Floating => TabStyle {
+                fg: cx.theme().tab_foreground,
+                bg: cx.theme().transparent.into(),
+                ..Default::default()
+            },
             TabVariant::Segmented => TabStyle {
                 fg: cx.theme().tab_foreground,
                 bg: cx.theme().transparent.into(),
@@ -193,6 +210,11 @@ impl TabVariant {
             TabVariant::Pill => TabStyle {
                 fg: cx.theme().secondary_foreground,
                 bg: cx.theme().tokens.secondary.into(),
+                ..Default::default()
+            },
+            TabVariant::Floating => TabStyle {
+                fg: cx.theme().tab_active_foreground,
+                bg: cx.theme().secondary.opacity(0.5).into(),
                 ..Default::default()
             },
             TabVariant::Segmented => TabStyle {
@@ -242,6 +264,11 @@ impl TabVariant {
             TabVariant::Pill => TabStyle {
                 fg: cx.theme().primary_foreground,
                 bg: cx.theme().tokens.primary.into(),
+                ..Default::default()
+            },
+            TabVariant::Floating => TabStyle {
+                fg: cx.theme().tab_active_foreground,
+                bg: cx.theme().tokens.secondary.into(),
                 ..Default::default()
             },
             TabVariant::Segmented => TabStyle {
@@ -305,6 +332,15 @@ impl TabVariant {
                 },
                 ..Default::default()
             },
+            TabVariant::Floating => TabStyle {
+                fg: cx.theme().muted_foreground,
+                bg: if selected {
+                    cx.theme().secondary.opacity(0.5).into()
+                } else {
+                    cx.theme().transparent.into()
+                },
+                ..Default::default()
+            },
             TabVariant::Segmented => TabStyle {
                 fg: cx.theme().muted_foreground,
                 bg: cx.theme().tokens.tab_bar.into(),
@@ -344,9 +380,14 @@ impl TabVariant {
         }
     }
 
-    fn radius(&self, size: Size, cx: &App) -> Pixels {
+    pub(super) fn radius(&self, size: Size, cx: &App) -> Pixels {
         match self {
             TabVariant::Outline | TabVariant::Pill => cx.theme().radius_full(),
+            // Concentric with the card the bar sits on: the bar's padding and
+            // the card's outline lie between the two curves.
+            TabVariant::Floating => crate::floating::FloatingCards::get(cx)
+                .map(|cards| cards.inner_radius(FLOATING_BAR_PADDING + px(1.), px(4.)))
+                .unwrap_or(cx.theme().radius),
             TabVariant::Segmented => match size {
                 Size::XSmall | Size::Small => cx.theme().radius,
                 Size::Large => cx.theme().radius_lg,
@@ -369,6 +410,10 @@ impl TabVariant {
         }
     }
 }
+
+/// The space a floating tab bar leaves around its tabs. With the default tab
+/// height the bar is 32px, the height of the classic tab bar.
+pub(super) const FLOATING_BAR_PADDING: Pixels = px(4.);
 
 #[allow(dead_code)]
 struct TabStyle {
@@ -534,6 +579,12 @@ impl Tab {
         self
     }
 
+    /// Use Floating variant.
+    pub fn floating(mut self) -> Self {
+        self.variant = TabVariant::Floating;
+        self
+    }
+
     /// Set the left side of the tab
     pub fn prefix(mut self, prefix: impl IntoElement) -> Self {
         self.prefix = Some(prefix.into_any_element());
@@ -682,7 +733,9 @@ impl RenderOnce for Tab {
         let suppress_active_visual =
             self.selected && !self.disabled && self.indicator_active && self.indicator_ready;
         // Pill paints its active state via the outer `bg`.
-        let selected_outer_bg = if suppress_active_visual && self.variant == TabVariant::Pill {
+        let selected_outer_bg = if suppress_active_visual
+            && matches!(self.variant, TabVariant::Pill | TabVariant::Floating)
+        {
             cx.theme().transparent.into()
         } else {
             selected_style.bg
@@ -879,15 +932,25 @@ impl RenderOnce for Tab {
                 )
             })
             .when_some(self.accent, |this, accent| {
-                this.child(
-                    div()
+                this.child(match self.variant {
+                    // A stripe across a rounded tab's top would square off its
+                    // corners; a floating tab is underlined inside its curve.
+                    TabVariant::Floating => div()
+                        .absolute()
+                        .bottom(px(2.))
+                        .left(radius)
+                        .right(radius)
+                        .h(px(2.))
+                        .rounded_full()
+                        .bg(accent),
+                    _ => div()
                         .absolute()
                         .top_0()
                         .left_0()
                         .right_0()
                         .h(px(2.))
                         .bg(accent),
-                )
+                })
             })
             .when_some(self.on_click.clone(), |this, on_click| {
                 this.on_click(move |event, window, cx| on_click(event, window, cx))
@@ -901,12 +964,13 @@ mod tests {
     use crate::tab::TabBar;
     use gpui::{Context, Render, TestAppContext, VisualTestContext};
 
-    const VARIANTS: [TabVariant; 5] = [
+    const VARIANTS: [TabVariant; 6] = [
         TabVariant::Tab,
         TabVariant::Outline,
         TabVariant::Pill,
         TabVariant::Segmented,
         TabVariant::Underline,
+        TabVariant::Floating,
     ];
 
     const LONG_LABEL: &str = "Account Settings & Preferences";

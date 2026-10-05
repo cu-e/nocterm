@@ -58,6 +58,8 @@ pub fn apply_theme(cx: &mut App) {
         ThemeMode::Light
     };
     Theme::change(mode, None, cx);
+    // The cards take their colours from the theme just put in place.
+    crate::floating::apply_floating(cx);
     cx.refresh_windows();
 }
 

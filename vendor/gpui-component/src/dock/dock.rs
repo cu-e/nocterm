@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! The gpui-component appearance for the dock area: the outer frame, the
 //! split frames, and one dock's chrome.
 
@@ -6,7 +7,7 @@ use std::{ops::Deref as _, rc::Rc, sync::Arc};
 use gpui::{
     AnyElement, App, AppContext as _, Axis, Context, Div, Element, Empty, InteractiveElement as _,
     IntoElement, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Render, Stateful, Style,
-    Styled as _, Window, div,
+    Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_base::{
     HandleEdge, ResizeHandleContext,
@@ -21,6 +22,7 @@ use crate::{
     dock::{
         DockSkin, SkinShared, invalid_panel::InvalidPanel, panel_handle, tab_panel::TabGroupSkin,
     },
+    floating::FloatingCards,
     resizable::{render_resize_handle, resize_handle_appearance},
     resize_handle,
 };
@@ -60,9 +62,12 @@ impl DockAreaRenderer for DockSkin {
     fn split_frame(&self, node: NodeId, _: Axis, _: &mut Window, cx: &mut App) -> Stateful<Div> {
         // The size is base's; the background is this skin's, and is the only
         // reason this hook is implemented at all.
+        // Floating cards keep the canvas showing between them.
         div()
             .id(("dock-split-frame", node.as_u64()))
-            .bg(cx.theme().tokens.tab_bar)
+            .when(FloatingCards::get(cx).is_none(), |this| {
+                this.bg(cx.theme().tokens.tab_bar)
+            })
     }
 
     fn render_dock(

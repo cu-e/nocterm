@@ -6,6 +6,7 @@ use gpui_kit::{
     component::{
         Placement, WindowExt as _,
         dock::{DockPlacement, PaneRef},
+        floating::FloatingCards,
     },
     div,
     prelude::*,
@@ -1183,10 +1184,9 @@ fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mu
         assert!(window.try_find("empty-new-tab").is_none());
         assert!(window.try_find("toggle-right-panel").is_some());
         assert!(panel.read(cx).maximized);
-        assert!(
-            (window.find("right-probe").bounds().size.width - window.viewport_size().width).abs()
-                < px(2.)
-        );
+        let inset = FloatingCards::get(cx).map_or(px(0.), |cards| cards.gap * 2. + px(2.));
+        let probe = window.find("right-probe").bounds().size.width;
+        assert!((probe - (window.viewport_size().width - inset)).abs() < px(2.));
         workspace.update(cx, |workspace, cx| {
             workspace.set_right_panel_available(false, window, cx)
         });
