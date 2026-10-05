@@ -84,6 +84,7 @@ jobs:
         with:
           name: linux-packages-${{ inputs.ref || inputs.tag || github.sha }}
           path: target/packages/*
+          if-no-files-found: error
 
   windows:
     name: Windows installer
@@ -113,6 +114,7 @@ jobs:
         with:
           name: windows-installer-${{ inputs.ref || inputs.tag || github.sha }}
           path: target/packages/*.exe
+          if-no-files-found: error
 
   upload:
     name: Attach to release

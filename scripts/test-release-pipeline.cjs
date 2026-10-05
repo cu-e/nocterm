@@ -1,4 +1,5 @@
 // Exercise the real release-please TOML updater against the configured selector.
+// Production action v4.4.1 bundles the release-please 17.3.0 tested in CI.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -37,6 +38,7 @@ const workflow = name => YAML.parse(read(`.github/workflows/${name}.yml`));
 const release = workflow('release');
 const ci = workflow('ci');
 const pkg = workflow('package');
+assert.equal(release.jobs['release-please'].steps[0].uses, 'googleapis/release-please-action@v4.4.1');
 const prepared = '${{ needs.release-please.outputs.prepared_sha }}';
 assert.equal(release.concurrency['cancel-in-progress'], false);
 assert.equal(release.jobs['release-ci'].with.ref, prepared);
@@ -48,6 +50,7 @@ assert.equal(pkg.jobs.upload.steps[0].with.pattern, '*-${{ inputs.tag }}');
 for (const name of ['linux', 'windows']) {
   const artifact = pkg.jobs[name].steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
   assert.match(artifact.with.name, /inputs\.ref \|\| inputs\.tag \|\| github\.sha/);
+  assert.equal(artifact.with['if-no-files-found'], 'error');
 }
 for (const job of Object.values(pkg.jobs)) {
   for (const step of job.steps ?? []) {
