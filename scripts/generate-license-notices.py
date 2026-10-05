@@ -72,7 +72,10 @@ def fast_check(output=None):
     content = (output or OUTPUT).read_text(encoding="utf-8")
     expected = MARKER + fingerprint()
     if expected not in content.splitlines():
-        raise RuntimeError("License inputs changed; regenerate THIRD_PARTY_NOTICES.txt")
+        raise RuntimeError("License inputs changed (dependencies, vendor/ or assets); "
+                           "regenerate with `python3 scripts/generate-license-notices.py` "
+                           "after `cargo install --locked --version " + VERSION
+                           + " --features cli cargo-about`")
     lines = content.splitlines(keepends=True)
     checksums = [line for line in lines if line.startswith(CONTENT_MARKER)]
     payload = "".join(line for line in lines if not line.startswith(CONTENT_MARKER))
