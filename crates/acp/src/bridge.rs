@@ -247,10 +247,12 @@ fn listen(paths: &Paths) -> Result<(Listener, Listening), String> {
     }
 }
 fn close_registration(registration: Registration) {
-    registration.cancel.close();
+    // Disconnect before cancelling: a call woken by the cancel must find its
+    // socket already shut, not slip a reply in ahead of the disconnect.
     for (_, socket) in registration.sockets {
         let _ = socket.shutdown(std::net::Shutdown::Both);
     }
+    registration.cancel.close();
 }
 fn revoke(inner: &Inner, id: u64) {
     let registration = inner
@@ -267,7 +269,13 @@ fn revoke(inner: &Inner, id: u64) {
 pub(crate) fn bounded_line<R: BufRead>(reader: &mut R, limit: usize) -> io::Result<Option<String>> {
     let mut bytes = Vec::new();
     loop {
-        let available = reader.fill_buf()?;
+        // A signal handled elsewhere in the process interrupts a socket read
+        // that has a timeout even under SA_RESTART; the line is still coming.
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if available.is_empty() {
             return if bytes.is_empty() {
                 Ok(None)
@@ -425,6 +433,16 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    /// Reads like `Read::read`, retrying when a signal meant for another
+    /// test (a reaped child, say) interrupts the timed socket read.
+    fn read_uninterrupted(socket: &mut Socket, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            match socket.read(buf) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                result => return result,
+            }
+        }
+    }
     fn authenticated(registration: &BridgeRegistration) -> (Socket, BufReader<Socket>) {
         let mut socket =
             Socket::connect(registration.endpoint.strip_prefix("unix:").unwrap()).unwrap();
@@ -502,7 +520,7 @@ mod tests {
         bad.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         writeln!(bad, "{}", serde_json::json!({"token":"00".repeat(32)})).unwrap();
         let mut bytes = [0u8; 1];
-        assert_eq!(bad.read(&mut bytes).unwrap(), 0);
+        assert_eq!(read_uninterrupted(&mut bad, &mut bytes).unwrap(), 0);
         let mut live = Vec::new();
         for _ in 0..4 {
             let (mut socket, mut reader) = authenticated(&registration);
@@ -577,7 +595,7 @@ mod tests {
             .unwrap();
         oversized.write_all(&[b'x'; 514]).unwrap();
         let mut byte = [0u8; 1];
-        assert!(oversized.read(&mut byte).unwrap_or(0) == 0);
+        assert!(read_uninterrupted(&mut oversized, &mut byte).unwrap_or(0) == 0);
         let (mut socket, mut reader) = authenticated(&registration);
         initialize(&mut socket, &mut reader);
         let mut bytes = vec![b'x'; nocterm_ai::MAX_MCP_LINE + 1];
@@ -596,7 +614,7 @@ mod tests {
         rejected
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        assert_eq!(rejected.read(&mut byte).unwrap(), 0);
+        assert_eq!(read_uninterrupted(&mut rejected, &mut byte).unwrap(), 0);
         drop(connections);
         server.stop();
         for _ in 0..100 {
