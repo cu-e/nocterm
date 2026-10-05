@@ -823,17 +823,29 @@ impl TabGroupRenderer for TabGroupSkin {
             return Empty.into_any_element();
         }
 
-        // The content reaches the card's outline at the bottom, and at the top
-        // too when nothing is drawn above it, so those corners are masked.
-        let mask =
-            FloatingCards::get(cx).map(|cards| cards.corner_mask(!self.draws_tab_bar(group, cx)));
-        div()
+        let content = div()
             .id("tab-content")
             .overflow_y_scroll()
             .overflow_x_hidden()
             .flex_1()
-            .child(panel.cached(StyleRefinement::default().absolute().size_full()))
-            .children(mask)
+            .child(panel.cached(StyleRefinement::default().absolute().size_full()));
+        let Some(cards) = FloatingCards::get(cx) else {
+            return content.into_any_element();
+        };
+        // The content reaches the card's outline at the bottom, and at the top
+        // too when nothing is drawn above it, so those corners are masked. The
+        // mask sits beside the scrolling region, not in it: inside, its reach
+        // past the edge would count as content and let the panel scroll away
+        // from its own corners.
+        div()
+            .id("tab-content-frame")
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .child(content)
+            .child(cards.corner_mask(!self.draws_tab_bar(group, cx)))
             .into_any_element()
     }
 

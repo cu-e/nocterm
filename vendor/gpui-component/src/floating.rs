@@ -103,8 +103,8 @@ impl FloatingCards {
     /// The overlay that rounds a card's corners over its content.
     ///
     /// Place it last, absolutely, in an element whose box is the inside of a
-    /// card's outline and which clips to its bounds (as a card from
-    /// [`Self::card`] does, and as a dock's content region does). With `top`
+    /// card's outline and which clips to its bounds without scrolling (as a
+    /// card from [`Self::card`] does, and as a dock's content region does). With `top`
     /// unset only the bottom corners are masked, for a region that starts
     /// below the top of its card.
     pub fn corner_mask(&self, top: bool) -> AnyElement {
@@ -119,12 +119,15 @@ impl FloatingCards {
         // A region that starts below the card's top pushes the mask's own top
         // corners above it, where the clip removes them.
         let above = if top { px(1.) } else { self.radius + px(2.) };
+        // Clipped to the card's box, so the ring never reaches past the card:
+        // whatever holds the mask measures no extra content because of it.
         div()
             .absolute()
             .top(-above)
             .left(-px(1.))
             .right(-px(1.))
             .bottom(-px(1.))
+            .overflow_hidden()
             .child(
                 div()
                     .absolute()
