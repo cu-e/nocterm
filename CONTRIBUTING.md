@@ -23,12 +23,12 @@ scripts/setup.sh   # enables the commit-msg hook
 
 ## Branching
 
-Trunk-based. `main` is always releasable and is only changed through pull requests.
+Trunk-based. `master` is always releasable and is only changed through pull requests.
 
-- Branch from `main`, name it `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
+- Branch from `master`, name it `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
 - Keep branches short-lived and PRs small — one logical change each.
-- PRs are **squash-merged**. The PR title becomes the commit on `main`, so it must be a valid commit message.
-- No force-pushes to `main`, no merge commits on `main`.
+- PRs are **squash-merged**. The PR title becomes the commit on `master`, so it must be a valid commit message.
+- No force-pushes to `master`, no merge commits on `master`.
 
 ## Commit messages
 
