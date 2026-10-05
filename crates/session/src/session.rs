@@ -154,6 +154,19 @@ pub enum Prompt {
         fingerprint: String,
         reply: Reply<HostKeyDecision>,
     },
+    /// The host presents a different key from an existing trust record.
+    ChangedHostKey {
+        host: String,
+        port: u16,
+        algorithm: String,
+        old_fingerprints: Vec<String>,
+        fingerprint: String,
+        known_hosts: PathBuf,
+        line: usize,
+        /// Why the conflicting records cannot safely be replaced; `None` permits saving.
+        replacement_error: Option<String>,
+        reply: Reply<HostKeyDecision>,
+    },
     /// A secret is needed to sign in.
     Secret {
         request: SecretRequest,
@@ -161,7 +174,7 @@ pub enum Prompt {
     },
 }
 
-/// What to do about a host key that is not on record.
+/// What to do about an unknown or changed host key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostKeyDecision {
     Reject,

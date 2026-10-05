@@ -47,6 +47,8 @@ pub(crate) async fn authenticate(
         driver,
         methods: MethodSet::empty(),
         offered: Vec::new(),
+        rejected_key: false,
+        partial_success: false,
     };
     authenticator.run(config).await
 }
@@ -57,8 +59,10 @@ struct Authenticator<'a> {
     driver: &'a SessionDriver,
     /// The methods the host will still accept.
     methods: MethodSet,
-    /// Public keys the host has already turned down.
+    /// Public keys already offered, including accepted authentication factors.
     offered: Vec<KeyData>,
+    rejected_key: bool,
+    partial_success: bool,
 }
 
 impl<'a> Authenticator<'a> {
@@ -70,6 +74,7 @@ impl<'a> Authenticator<'a> {
             return Ok(());
         }
 
+        let public_key_only = requires_key(&self.methods);
         let signed_in = match &self.request.auth {
             Auth::Auto => self.try_agent(config).await? || self.try_default_keys(config).await?,
             Auth::Key { path } => self.try_key_file(path, true).await?,
@@ -79,6 +84,27 @@ impl<'a> Authenticator<'a> {
             return Ok(());
         }
 
+        if self.partial_success {
+            let remaining = if requires_key(&self.methods) {
+                "An additional authorized SSH key is required; use Automatic authentication with both authorized keys loaded into your SSH agent."
+            } else {
+                "Ask the server's administrator which additional authentication factor is required."
+            };
+            return Err(SessionError::Other(format!(
+                "{}@{} accepted an authentication factor, but sign-in is incomplete. {remaining}",
+                self.user(),
+                self.request.target.host
+            )));
+        }
+        if let Some(message) =
+            key_required_message(public_key_only, &self.request.auth, self.rejected_key)
+        {
+            return Err(SessionError::Other(format!(
+                "{}@{} {message}",
+                self.user(),
+                self.request.target.host
+            )));
+        }
         Err(SessionError::AuthenticationFailed {
             user: self.user().to_owned(),
             host: self.request.target.host.clone(),
@@ -107,8 +133,10 @@ impl<'a> Authenticator<'a> {
         match result.map_err(lost)? {
             AuthResult::Success => Ok(true),
             AuthResult::Failure {
-                remaining_methods, ..
+                remaining_methods,
+                partial_success,
             } => {
+                self.partial_success |= partial_success;
                 self.methods = remaining_methods;
                 Ok(false)
             }
@@ -165,8 +193,13 @@ impl<'a> Authenticator<'a> {
             {
                 Ok(AuthResult::Success) => return Ok(true),
                 Ok(AuthResult::Failure {
-                    remaining_methods, ..
-                }) => self.methods = remaining_methods,
+                    remaining_methods,
+                    partial_success,
+                }) => {
+                    self.partial_success |= partial_success;
+                    self.rejected_key |= !partial_success;
+                    self.methods = remaining_methods;
+                }
                 // The agent may refuse to sign (a locked or removed key).
                 Err(error) => tracing::debug!(%error, "the SSH agent could not sign"),
             }
@@ -226,6 +259,13 @@ impl<'a> Authenticator<'a> {
         self.offered.push(public);
         let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
         let result = self.handle.authenticate_publickey(self.user(), key).await;
+        self.rejected_key |= matches!(
+            &result,
+            Ok(AuthResult::Failure {
+                partial_success: false,
+                ..
+            })
+        );
         self.succeeded(result)
     }
 
@@ -343,6 +383,37 @@ impl<'a> Authenticator<'a> {
     }
 }
 
+fn requires_key(methods: &MethodSet) -> bool {
+    methods.contains(&MethodKind::PublicKey)
+        && !methods.contains(&MethodKind::Password)
+        && !methods.contains(&MethodKind::KeyboardInteractive)
+}
+
+/// Use the initial advertisement: methods left after an attempt can be the
+/// next step of multi-factor authentication, rather than a server policy.
+fn key_required_message(
+    public_key_only: bool,
+    auth: &Auth,
+    rejected_key: bool,
+) -> Option<&'static str> {
+    if !public_key_only {
+        return None;
+    }
+    if matches!(auth, Auth::Password) {
+        Some(
+            "does not allow password sign-in. Set Authentication to Key file and select a Private key.",
+        )
+    } else if rejected_key {
+        Some(
+            "did not accept the offered SSH key. Check the selected private key and this account's authorized_keys on the server; password sign-in is unavailable.",
+        )
+    } else {
+        Some(
+            "requires an SSH key and does not allow password sign-in. Set Authentication to Key file and select a Private key, or load an authorized key into your SSH agent.",
+        )
+    }
+}
+
 /// Decoding runs a deliberately slow key derivation for encrypted keys, so
 /// it stays off the threads that serve the network.
 async fn decode(
@@ -379,6 +450,41 @@ fn lost(error: russh::Error) -> SessionError {
 #[cfg(test)]
 mod material_tests {
     use super::*;
+    #[test]
+    fn initial_password_or_interactive_support_does_not_claim_keys_are_required() {
+        for typed in [MethodKind::Password, MethodKind::KeyboardInteractive] {
+            let initial = MethodSet::from([MethodKind::PublicKey, typed].as_slice());
+            let required = requires_key(&initial);
+            let remaining = MethodSet::from([MethodKind::PublicKey].as_slice());
+            assert!(requires_key(&remaining));
+            assert!(key_required_message(required, &Auth::Auto, true).is_none());
+        }
+    }
+    #[test]
+    fn key_requirement_uses_initial_policy_and_actual_rejections() {
+        assert!(key_required_message(false, &Auth::Password, true).is_none());
+        assert!(key_required_message(false, &Auth::Auto, true).is_none());
+        assert!(
+            key_required_message(true, &Auth::Auto, false)
+                .unwrap()
+                .contains("requires an SSH key")
+        );
+        assert!(
+            !key_required_message(true, &Auth::Auto, false)
+                .unwrap()
+                .contains("did not accept")
+        );
+        assert!(
+            key_required_message(true, &Auth::Auto, true)
+                .unwrap()
+                .contains("authorized_keys")
+        );
+        assert!(
+            key_required_message(true, &Auth::Password, false)
+                .unwrap()
+                .contains("Authentication to Key file")
+        );
+    }
     #[tokio::test]
     async fn private_and_public_material_limits_are_enforced_before_decode() {
         let directory = tempfile::tempdir().unwrap();

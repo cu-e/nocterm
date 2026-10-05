@@ -78,6 +78,21 @@ limitation. SFTP v3 operations cannot pin remote filesystem identity across
 separate path requests. Upstream SFTP rejects wire packets over 256 KiB before allocation. Parsing
 inside that packet cap precedes our aggregate listing budgets. Host certificate authority records are not treated as
 ordinary trusted host keys; SSH host-certificate validation is not implemented.
+Unknown and changed host keys require explicit confirmation before authentication.
+Changed keys can be accepted for one connection without writing trust records.
+Permanent replacement is limited to ordinary records for one exact host/port
+(or a matching hashed host) entirely in the application trust store. Conflicts
+in external SSH trust files, shared aliases and wildcard records require manual
+repair; the prompt explains why saving is unavailable. Replacement revalidates
+all loaded trust files after the prompt, serializes application mutations and
+atomically publishes the new key while preserving unrelated bytes and file modes.
+Revoked keys and malformed trust stores still fail closed. Publication is the
+save success boundary; directory synchronization afterwards is best effort.
+Authentication errors use the server's initial advertised methods to explain
+when passwords are unavailable and an SSH private key is needed. Rejected keys
+are distinguished from missing or unusable keys; password prompts remain gated
+by the server's current advertised methods.
+
 
 ## Dependency evidence and remaining advisory
 

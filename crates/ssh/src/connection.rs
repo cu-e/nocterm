@@ -21,7 +21,7 @@ use tokio::time::timeout;
 use crate::{
     SshConfig, auth,
     exec::{self, ExecRequests},
-    host_keys::{HostKeys, Verdict, same_kind},
+    host_keys::{HostKeys, RememberError, Verdict, same_kind},
     sftp::{self, FsRequests},
 };
 
@@ -51,8 +51,8 @@ impl client::Handler for Client {
 
     /// Records what is known about the host's key.
     ///
-    /// Only a *changed* key ends the handshake here. An unknown one is put to
-    /// the user afterwards, before any credential leaves this machine: asking
+    /// Revoked keys end the handshake here. Unknown and changed keys are put
+    /// to the user afterwards, before any credential leaves this machine: asking
     /// from inside the handshake would stall it for as long as they think.
     async fn check_server_key(
         &mut self,
@@ -64,7 +64,7 @@ impl client::Handler for Client {
         };
 
         let verdict = self.host_keys.check(&self.host, self.port, key);
-        let acceptable = !matches!(verdict, Verdict::Changed { .. } | Verdict::Revoked { .. });
+        let acceptable = !matches!(verdict, Verdict::Revoked { .. });
         lock(&self.observed).host_key = Some((key.clone(), verdict));
         Ok(acceptable)
     }
@@ -244,11 +244,6 @@ async fn connect(
         client::connect_stream(Arc::new(ssh), socket, client)
             .await
             .map_err(|error| match lock(observed).host_key.take() {
-                Some((_, Verdict::Changed { known_hosts, line })) => SessionError::HostKeyChanged {
-                    host: host.clone(),
-                    known_hosts,
-                    line,
-                },
                 Some((_, Verdict::Revoked { known_hosts, line })) => {
                     revoked(host, &known_hosts, line)
                 }
@@ -276,25 +271,31 @@ async fn verify_host(
     let rejected = || SessionError::HostKeyRejected { host: host.clone() };
 
     let (key, verdict) = lock(observed).host_key.take().ok_or_else(rejected)?;
-    match verdict {
+    match &verdict {
         Verdict::Known => return Ok(()),
-        Verdict::Changed { known_hosts, line } => {
-            return Err(SessionError::HostKeyChanged {
+        Verdict::Revoked { known_hosts, line } => return Err(revoked(host, known_hosts, *line)),
+        Verdict::Changed { .. } | Verdict::Unknown => {}
+    }
+    let changed = matches!(verdict, Verdict::Changed { .. });
+    let decision = driver
+        .ask(|reply| match verdict {
+            Verdict::Changed { known_hosts, line } => Prompt::ChangedHostKey {
                 host: host.clone(),
+                port: target.port,
+                algorithm: key.algorithm().as_str().to_owned(),
+                old_fingerprints: host_keys.old_fingerprints(host, target.port, &key),
+                fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
                 known_hosts,
                 line,
-            });
-        }
-        Verdict::Revoked { known_hosts, line } => return Err(revoked(host, &known_hosts, line)),
-        Verdict::Unknown => {}
-    }
-
-    let decision = driver
-        .ask(|reply| Prompt::UnknownHostKey {
-            host: host_label(target),
-            algorithm: key.algorithm().as_str().to_owned(),
-            fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-            reply,
+                replacement_error: host_keys.replacement_error(host, target.port, &key),
+                reply,
+            },
+            _ => Prompt::UnknownHostKey {
+                host: host_label(target),
+                algorithm: key.algorithm().as_str().to_owned(),
+                fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+                reply,
+            },
         })
         .await
         .unwrap_or(HostKeyDecision::Reject);
@@ -306,13 +307,31 @@ async fn verify_host(
                 .await;
             Err(rejected())
         }
-        HostKeyDecision::AcceptOnce => Ok(()),
-        HostKeyDecision::AcceptAndRemember => {
-            if let Err(error) = host_keys.remember(host, target.port, &key) {
-                // The user wanted in; a read-only disk should not keep them out.
-                tracing::warn!(%host, %error, "could not record the host key");
-            }
+        HostKeyDecision::AcceptOnce => {
+            host_keys.revalidate().map_err(SessionError::Other)?;
             Ok(())
+        }
+        HostKeyDecision::AcceptAndRemember if changed => {
+            let records = host_keys.clone();
+            let host = host.clone();
+            let port = target.port;
+            tokio::task::spawn_blocking(move || records.replace(&host, port, &key))
+                .await
+                .map_err(|error| {
+                    SessionError::Other(format!("Could not save the new host key: {error}"))
+                })?
+                .map_err(SessionError::Other)
+        }
+        HostKeyDecision::AcceptAndRemember => {
+            match host_keys.remember(host, target.port, &key) {
+                Ok(()) => Ok(()),
+                Err(RememberError::TrustChanged(error)) => Err(SessionError::Other(error)),
+                Err(RememberError::Write(error)) => {
+                    // Preserve unknown-host behavior for ordinary write errors.
+                    tracing::warn!(%host, %error, "could not record the host key");
+                    Ok(())
+                }
+            }
         }
     }
 }
