@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.2.0](https://github.com/cu-e/nocterm/compare/v1.1.0...v1.2.0) (2026-10-05)
+
+
+### Features
+
+* **connections:** reorder saved servers by drag and drop ([73a319b](https://github.com/cu-e/nocterm/commit/73a319b89748b9ac4c3eee2144eabecdd6490b10))
+* **containers-ui:** add containers panel ([64c155e](https://github.com/cu-e/nocterm/commit/64c155eaa0743da471d7bd5e957757e57fc5f6b0))
+* **files:** add an Explorer page to Settings ([7c017d2](https://github.com/cu-e/nocterm/commit/7c017d2aaf25c4227a9b8c50305dae23df2b857f))
+* **files:** count remote folders and skip home and excluded folders ([4adefd9](https://github.com/cu-e/nocterm/commit/4adefd9cbcd41af3eb55a96e9baa32e6ae7296c6))
+* **files:** open files with the chosen programs and in the file manager ([fc37d16](https://github.com/cu-e/nocterm/commit/fc37d16e70253bc0a6f29d38aa7aec30709a60f4))
+* **files:** show transfer progress in Explorer and refresh when done ([afdec19](https://github.com/cu-e/nocterm/commit/afdec192259efec59cd0822547d2f9f214cb0486))
+* **settings:** add explorer indexing and file opener settings ([a87481e](https://github.com/cu-e/nocterm/commit/a87481eb159a303d58ed4dafbc62ca6169eefeab))
+* **workspace:** open a program on a connected host in a new tab ([5b72304](https://github.com/cu-e/nocterm/commit/5b72304c49213e0eb9305217a96b2407934bf6f9))
+
+
+### Bug Fixes
+
+* **connections:** keep a server in place when dropped on its own row ([3fc1835](https://github.com/cu-e/nocterm/commit/3fc183527a4defc36d76809b4e07ddc867d3c858))
+* **files:** keep folder statistics and transfer refreshes consistent ([a9e13ff](https://github.com/cu-e/nocterm/commit/a9e13ffc2db9ba6ee1e888b85cfcc6b34588933e))
+* **files:** name the folder that could not be listed ([b8160eb](https://github.com/cu-e/nocterm/commit/b8160eb453cdcf178d429656be47d080dee4245b))
+* **local:** report the zsh working directory without a stray %25 ([0b51d2a](https://github.com/cu-e/nocterm/commit/0b51d2a7942b3e8dc24a6d753ca13f28420f8d09))
+* **settings:** stop excluding common folder names from folder sizes ([929120a](https://github.com/cu-e/nocterm/commit/929120ac65787ccdbebd880b1ade014e229d1c99))
+* **ssh:** make connection recovery actionable ([c3e585c](https://github.com/cu-e/nocterm/commit/c3e585c50e7f4c79dcf4c81ed7bd08602e79c994))
+* **vault-ui:** submit the unlock password on Enter instead of closing ([b1bb434](https://github.com/cu-e/nocterm/commit/b1bb4346c2e630d7f4b8527095b6a53bc964cbec))
+* **workspace:** open host programs from the active tab's sign-in ([243748a](https://github.com/cu-e/nocterm/commit/243748a23aee3c55d8b12caf8519cee4ab187e40))
+
+
+### Documentation
+
+* align release guidance with master ([2672496](https://github.com/cu-e/nocterm/commit/26724962dfe2f735db8804d12f9a0347c5b07d95))
+
 ## [1.1.0](https://github.com/cu-e/nocterm/compare/v1.0.0...v1.1.0) (2026-10-05)
 
 
