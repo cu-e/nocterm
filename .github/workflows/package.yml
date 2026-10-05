@@ -26,6 +26,7 @@ jobs:
   licenses:
     name: Check third-party notices
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
@@ -53,6 +54,7 @@ jobs:
     needs: licenses
     # The oldest supported runner keeps the glibc requirement low.
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -90,6 +92,7 @@ jobs:
     name: Windows installer
     needs: licenses
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -121,6 +124,7 @@ jobs:
     if: inputs.tag != ''
     needs: [linux, windows]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@v4
         with:
