@@ -1,9 +1,4 @@
-use std::{
-    collections::VecDeque,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 use futures::channel::oneshot;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task, WeakEntity, Window};
@@ -13,7 +8,10 @@ use nocterm_workspace::{SessionSpec, Workspace};
 
 use crate::store::{Profile, ProfileId, Profiles, Recent, Recents};
 
+mod files;
 mod shutdown;
+
+use files::{load_profiles, load_recents, now, write_profiles};
 
 const MAX_PENDING_WRITES: usize = 32;
 const MAX_PROFILE_BYTES: usize = 64 * 1024;
@@ -37,6 +35,7 @@ enum Mutation {
     Move {
         id: ProfileId,
         group: Option<String>,
+        before: Option<ProfileId>,
     },
     Delete(ProfileId),
     RenameGroup {
@@ -188,7 +187,17 @@ impl Connections {
         group: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
-        self.enqueue(Mutation::Move { id, group }, cx)
+        self.place_profile(id, group, None, cx)
+    }
+    /// Files a connection under `group`, just before `before` (else last).
+    pub fn place_profile(
+        &mut self,
+        id: ProfileId,
+        group: Option<String>,
+        before: Option<ProfileId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), String>> {
+        self.enqueue(Mutation::Move { id, group, before }, cx)
     }
     pub fn delete_profile(
         &mut self,
@@ -255,13 +264,8 @@ impl Connections {
                 }
                 profiles.upsert(*profile.clone());
             }
-            Mutation::Move { id, group } => {
-                let mut profile = profiles
-                    .get(*id)
-                    .cloned()
-                    .ok_or("Connection no longer exists")?;
-                profile.group = group.clone();
-                profiles.upsert(profile);
+            Mutation::Move { id, group, before } => {
+                profiles.place(*id, group.clone(), *before)?;
             }
             Mutation::Delete(id) => {
                 profiles.remove(*id);
@@ -581,38 +585,6 @@ pub fn connect(
         connections.record_use(&spec, profile, cx);
     });
     let _ = workspace.update(cx, |workspace, cx| workspace.open_session(spec, window, cx));
-}
-
-fn write_profiles(path: Option<PathBuf>, profiles: &Profiles) -> Result<(), String> {
-    path.map_or(Ok(()), |path| {
-        persist::save_preserving(&path, profiles).map_err(|error| error.to_string())
-    })
-}
-
-fn load_profiles(path: &Path) -> (Profiles, Option<String>) {
-    match persist::load::<Profiles>(path) {
-        Ok(profiles) => (profiles.unwrap_or_default(), None),
-        Err(error) => {
-            tracing::error!(%error, "could not read saved connections");
-            (Profiles::default(), Some(error.to_string()))
-        }
-    }
-}
-
-fn load_recents(path: &Path) -> Recents {
-    persist::load(path)
-        .unwrap_or_else(|error| {
-            // Only bookkeeping: start afresh.
-            tracing::warn!(%error, "could not read recent connections");
-            None
-        })
-        .unwrap_or_default()
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 #[cfg(test)]
