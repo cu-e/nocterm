@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/cu-e/nocterm/compare/v1.2.0...v1.3.0) (2026-10-05)
+
+
+### Features
+
+* **agent:** improve ACP commands, queued prompts and chat continuity ([02c34a2](https://github.com/cu-e/nocterm/commit/02c34a2166bfce75ed3b4e90d4087bf948639fc3))
+* **agent:** improve ACP commands, queued prompts and chat continuity ([1fb4b00](https://github.com/cu-e/nocterm/commit/1fb4b004751c22c11e9361273c7236c264cacfb3))
+
+
+### Performance
+
+* batch terminal output events and cache idle workspace panels ([6d5c4cd](https://github.com/cu-e/nocterm/commit/6d5c4cd79fceee00a69129d8c09f796c46dda1f3))
+* batch terminal output events and cache idle workspace panels ([a090ec0](https://github.com/cu-e/nocterm/commit/a090ec0aeab50e38a8d8812730d4f5fc7dd7ba7f))
+
 ## [1.2.0](https://github.com/cu-e/nocterm/compare/v1.1.0...v1.2.0) (2026-10-05)
 
 
