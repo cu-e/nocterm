@@ -154,6 +154,19 @@ pub enum Prompt {
         fingerprint: String,
         reply: Reply<HostKeyDecision>,
     },
+    /// The host presents a different key from an existing trust record.
+    ChangedHostKey {
+        host: String,
+        port: u16,
+        algorithm: String,
+        old_fingerprints: Vec<String>,
+        fingerprint: String,
+        known_hosts: PathBuf,
+        line: usize,
+        /// Why the conflicting records cannot safely be replaced; `None` permits saving.
+        replacement_error: Option<String>,
+        reply: Reply<HostKeyDecision>,
+    },
     /// A secret is needed to sign in.
     Secret {
         request: SecretRequest,
@@ -161,7 +174,7 @@ pub enum Prompt {
     },
 }
 
-/// What to do about a host key that is not on record.
+/// What to do about an unknown or changed host key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostKeyDecision {
     Reject,
@@ -293,6 +306,22 @@ impl Session {
     pub fn with_exec(mut self, exec: Arc<dyn HostExec>) -> Self {
         self.exec = Some(exec);
         self
+    }
+
+    /// The same session, browsing `fs` as its host's file system.
+    pub fn with_fs(mut self, fs: Option<Arc<dyn RemoteFs>>) -> Self {
+        self.fs = fs;
+        self
+    }
+
+    /// A session that has already ended with `error`.
+    pub fn failed(error: SessionError) -> Self {
+        let (session, driver) = channel(None);
+        // The backlog is empty, so the one event always fits.
+        let _ = driver
+            .events
+            .try_send(Event::Closed(CloseReason::Failed(error)));
+        session
     }
 
     fn send(&self, command: Command) {

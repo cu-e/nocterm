@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::{rc::Rc, time::Duration};
 
 use crate::animation::{Lerp, ease_in_out_cubic};
@@ -415,6 +416,7 @@ pub struct Tab {
     /// restarts in sync with the indicator slide.
     pub(super) indicator_epoch: u64,
     pub(super) max_width: Option<Pixels>,
+    accent: Option<Hsla>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -468,6 +470,7 @@ impl Default for Tab {
             variant: TabVariant::default(),
             size: Size::default(),
             max_width: None,
+            accent: None,
             on_click: None,
         }
     }
@@ -540,6 +543,13 @@ impl Tab {
     /// Set the right side of the tab
     pub fn suffix(mut self, suffix: impl IntoElement) -> Self {
         self.suffix = Some(suffix.into_any_element());
+        self
+    }
+
+    /// Mark the tab with a stripe of `color` along its top edge, such as the
+    /// color of a group of tabs it belongs to.
+    pub fn accent(mut self, color: Hsla) -> Self {
+        self.accent = Some(color);
         self
     }
 
@@ -866,6 +876,17 @@ impl RenderOnce for Tab {
                     div()
                         .when_some(max_width, |this, _| this.flex_shrink_0())
                         .child(suffix),
+                )
+            })
+            .when_some(self.accent, |this, accent| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(2.))
+                        .bg(accent),
                 )
             })
             .when_some(self.on_click.clone(), |this, on_click| {

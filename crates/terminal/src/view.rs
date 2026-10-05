@@ -41,6 +41,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// slow link.
 const MAX_WHEEL_REPORTS: i32 = 10;
 
+mod host_key;
 #[path = "view_secret.rs"]
 mod secret;
 #[cfg(test)]
@@ -112,7 +113,7 @@ impl TerminalView {
         Self::with_terminal(terminal, window, cx)
     }
 
-    fn with_terminal(
+    pub(crate) fn with_terminal(
         terminal: Entity<Terminal>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -862,6 +863,32 @@ impl TerminalView {
                     (host.clone(), algorithm.clone(), fingerprint.clone());
                 self.render_host_key(host, algorithm, fingerprint, cx)
             }
+            Prompt::ChangedHostKey {
+                host,
+                port,
+                algorithm,
+                old_fingerprints,
+                fingerprint,
+                known_hosts,
+                line,
+                replacement_error,
+                ..
+            } => {
+                let details = host_key::ChangedKey {
+                    host: if *port == 22 {
+                        host.clone()
+                    } else {
+                        format!("[{host}]:{port}")
+                    },
+                    algorithm: algorithm.clone(),
+                    old_fingerprints: old_fingerprints.clone(),
+                    fingerprint: fingerprint.clone(),
+                    known_hosts: known_hosts.clone(),
+                    line: *line,
+                    replacement_error: replacement_error.clone(),
+                };
+                self.render_changed_host_key(details, cx)
+            }
             Prompt::Secret { request, .. } => {
                 let request = request.clone();
                 self.render_secret(&request, cx)?
@@ -896,71 +923,6 @@ impl TerminalView {
             .text_color(theme.popover_foreground)
             .shadow_lg()
             .child(div().font_semibold().child(title.into()))
-    }
-
-    fn render_host_key(
-        &mut self,
-        host: String,
-        algorithm: String,
-        fingerprint: String,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-        self.card("Unknown host key", cx)
-            .child(div().text_sm().child(format!(
-                "This is the first connection to {host}. Check that the fingerprint \
-                         below is the one the host's administrator gives you."
-            )))
-            .child(
-                v_flex()
-                    .gap_1()
-                    .p_2()
-                    .rounded(theme.radius)
-                    .bg(theme.muted)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(algorithm),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_family(theme.mono_font_family.clone())
-                            .child(fingerprint),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        Button::new("host-key-reject")
-                            .ghost()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.answer_host_key(HostKeyDecision::Reject, window, cx);
-                            })),
-                    )
-                    .child(Button::new("host-key-once").label("Connect Once").on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.answer_host_key(HostKeyDecision::AcceptOnce, window, cx);
-                        }),
-                    ))
-                    .child(
-                        Button::new("host-key-remember")
-                            .primary()
-                            .label("Trust and Connect")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.answer_host_key(
-                                    HostKeyDecision::AcceptAndRemember,
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
-            .into_any_element()
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

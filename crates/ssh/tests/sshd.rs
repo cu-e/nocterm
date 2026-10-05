@@ -27,6 +27,9 @@ mod proxy;
 #[path = "cases/exec.rs"]
 mod exec;
 
+#[path = "cases/host_keys.rs"]
+mod host_keys;
+
 use nocterm_session::{
     Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, PtySize, Secret,
     SecretRequest, Session, SessionError, Target, Transport,
@@ -239,6 +242,7 @@ async fn closed(session: &Session, mut answer: impl FnMut(Prompt)) -> CloseReaso
 fn accept(prompt: Prompt) {
     match prompt {
         Prompt::UnknownHostKey { reply, .. } => reply.send(HostKeyDecision::AcceptOnce),
+        Prompt::ChangedHostKey { .. } => panic!("unexpected changed host key"),
         Prompt::Secret { request, .. } => panic!("unexpected question: {request:?}"),
     }
 }
@@ -263,46 +267,6 @@ async fn output_containing(session: &Session, needle: &str) -> String {
             _ => {}
         }
     }
-}
-
-#[tokio::test]
-async fn a_new_host_is_confirmed_once_and_remembered() {
-    let Some(sshd) = Sshd::start() else { return };
-    let transport = sshd.transport("plain");
-
-    let session = transport.open(sshd.request());
-    let mut asked = 0;
-    connect(&session, |prompt| match prompt {
-        Prompt::UnknownHostKey {
-            host,
-            algorithm,
-            fingerprint,
-            reply,
-        } => {
-            asked += 1;
-            assert_eq!(host, sshd.host_label());
-            assert_eq!(algorithm, "ssh-ed25519");
-            assert_eq!(fingerprint, sshd.host_fingerprint());
-            reply.send(HostKeyDecision::AcceptAndRemember);
-        }
-        other => panic!("unexpected prompt: {other:?}"),
-    })
-    .await;
-    assert_eq!(asked, 1);
-
-    // The shell is live: `$((40+2))` is only ever 42 after it ran remotely.
-    session.input("printf 'nocterm-%s\\n' $((40+2))\r");
-    output_containing(&session, "nocterm-42").await;
-    session.input("exit 3\r");
-    assert_eq!(
-        closed(&session, no_prompts).await,
-        CloseReason::Exited(Some(3))
-    );
-
-    let again = transport.open(sshd.request());
-    connect(&again, no_prompts).await;
-    again.close();
-    assert_eq!(closed(&again, no_prompts).await, CloseReason::ClosedByUser);
 }
 
 #[tokio::test]
@@ -356,88 +320,6 @@ async fn the_remote_file_system_is_browsable() {
 }
 
 #[tokio::test]
-async fn a_changed_host_key_is_refused() {
-    let Some(sshd) = Sshd::start() else { return };
-    keygen(&sshd.root().join("impostor"), "");
-    let impostor = fs::read_to_string(sshd.root().join("impostor.pub")).unwrap();
-    fs::write(
-        sshd.root().join("known_hosts"),
-        format!("# recorded long ago\n{} {impostor}", sshd.host_label()),
-    )
-    .unwrap();
-
-    let transport = sshd.transport("plain");
-    let session = transport.open(sshd.request());
-
-    assert_eq!(
-        closed(&session, no_prompts).await,
-        CloseReason::Failed(SessionError::HostKeyChanged {
-            host: "127.0.0.1".into(),
-            known_hosts: sshd.root().join("known_hosts"),
-            line: 2,
-        })
-    );
-}
-
-#[tokio::test]
-async fn revoked_host_key_cannot_be_accepted_or_reach_authentication() {
-    let Some(sshd) = Sshd::start() else { return };
-    let key = fs::read_to_string(sshd.root().join("host_key.pub")).unwrap();
-    fs::write(
-        sshd.root().join("known_hosts"),
-        format!(
-            "{} {key}\n@revoked {} {key}",
-            sshd.host_label(),
-            sshd.host_label()
-        ),
-    )
-    .unwrap();
-    let transport = sshd.transport("plain");
-    let session = transport.open(sshd.request());
-    let reason = closed(&session, no_prompts).await;
-    assert!(
-        matches!(reason, CloseReason::Failed(SessionError::Other(message)) if message.contains("revoked"))
-    );
-}
-
-#[tokio::test]
-async fn malformed_host_trust_store_never_becomes_an_unknown_host_prompt() {
-    let Some(sshd) = Sshd::start() else { return };
-    fs::write(
-        sshd.root().join("known_hosts"),
-        format!("{} ssh-ed25519 invalid-key", sshd.host_label()),
-    )
-    .unwrap();
-    let transport = sshd.transport("plain");
-    let session = transport.open(sshd.request());
-    let reason = closed(&session, no_prompts).await;
-    assert!(
-        matches!(reason, CloseReason::Failed(SessionError::Other(message)) if message.contains("cannot verify host keys"))
-    );
-}
-
-#[tokio::test]
-async fn rejecting_the_host_key_ends_the_session() {
-    let Some(sshd) = Sshd::start() else { return };
-
-    let transport = sshd.transport("plain");
-    let session = transport.open(sshd.request());
-    let reason = closed(&session, |prompt| match prompt {
-        Prompt::UnknownHostKey { reply, .. } => reply.send(HostKeyDecision::Reject),
-        other => panic!("unexpected prompt: {other:?}"),
-    })
-    .await;
-
-    assert_eq!(
-        reason,
-        CloseReason::Failed(SessionError::HostKeyRejected {
-            host: "127.0.0.1".into()
-        })
-    );
-    assert!(!sshd.root().join("known_hosts").exists());
-}
-
-#[tokio::test]
 async fn an_encrypted_key_is_unlocked_with_its_passphrase() {
     let Some(sshd) = Sshd::start() else { return };
 
@@ -471,10 +353,10 @@ async fn without_a_usable_key_sign_in_fails() {
 
     assert_eq!(
         closed(&session, accept).await,
-        CloseReason::Failed(SessionError::AuthenticationFailed {
-            user: current_user(),
-            host: "127.0.0.1".into(),
-        })
+        CloseReason::Failed(SessionError::Other(format!(
+            "{}@127.0.0.1 requires an SSH key and does not allow password sign-in. Set Authentication to Key file and select a Private key, or load an authorized key into your SSH agent.",
+            current_user()
+        )))
     );
 }
 

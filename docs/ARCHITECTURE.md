@@ -169,6 +169,29 @@ with the details' metrics at the fast interval while they are open. It adds a
 leading footer view through the workspace and supplies its Settings page as a
 `SettingsPageSpec`.
 
+Features that run programs on the active host share the workspace's `host`
+module: `Host::resolve` picks the session's own connection when it can run
+programs and this computer otherwise, and `follow_active_session` reports tab
+switches and reconnects. `nocterm-containers` (domain) speaks the Docker and
+Podman command lines over `HostExec` — detection (exit 127 or
+`ExecError::NotFound` means not installed), listings parsed from either JSON
+dialect, the event stream and actions — and knows nothing of GPUI.
+`nocterm-containers-ui` lists the active host's containers in a sidebar panel
+whose switcher shows the running count, re-listing whenever the engine reports
+a change. A container's log and a shell inside it are `ProgramSpec`s opened
+through `Workspace::open_program`; the terminal runs them with
+`ProgramTransport` over `HostExec::terminal`, so no feature opens a
+connection of its own and the tab follows as the same host.
+
+Tabs can be grouped. Groups are workspace state the dock knows nothing of:
+`tab_groups` holds membership and colors, and after every layout change
+`TabGroups::gather` finds the member the user moved and brings the rest of its
+group beside it in their previous order, so dragging any member drags the
+group, and a tab dropped among a group is moved out of it. Each tab's group
+color reaches the tab bar through the vendored `Panel::tab_accent`. A program
+opened from a session on the same host joins that session's group; splitting a
+tab off takes it out of its group, and a group left with one tab ends.
+
 `nocterm-vault` owns a versioned authenticated encrypted envelope and a bounded
 worker; `nocterm-vault-ui` exposes create/unlock/lock/rotation, auto-lock and a
 credential provider contract. Profiles store opaque IDs. Authentication asks this
@@ -231,7 +254,8 @@ learns its side through `RightPanel::set_docked_left`; the agent panel puts its
 history column on the outer side and remembers that column's width. A side
 panel that opens a column of its own asks the workspace to widen it with
 `RightPanelEvent::Widen`. Sidebar panels are shown and hidden by their feature's
-action (`files::ToggleExplorer`, `connections::ToggleServers`) through
+action (`files::ToggleExplorer`, `connections::ToggleServers`,
+`containers::ToggleContainers`) through
 `Workspace::toggle_panel_of`, so the workspace binds no feature's panel.
 
 Key bindings are data. `nocterm-keymap` (UI layer) owns the keymap format, the

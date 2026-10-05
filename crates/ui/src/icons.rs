@@ -64,6 +64,12 @@ gpui_kit::assets::icon_assets!(
         // The host monitor.
         Activity,
         Thermometer,
+        // The containers panel.
+        Container,
+        Boxes,
+        Image,
+        Square,
+        ScrollText,
     ]
 );
 

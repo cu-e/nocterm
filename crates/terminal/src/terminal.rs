@@ -7,8 +7,8 @@ use std::{
 
 use gpui_kit::{Context, EventEmitter, SharedString, Subscription, Task};
 use nocterm_session::{
-    CloseReason, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize, RemoteFs,
-    Secret, Session, SessionError, Transport,
+    CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
+    SessionError, Transport,
 };
 use nocterm_settings::{CursorShape, TerminalSettings};
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
@@ -16,7 +16,7 @@ use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
 };
-use nocterm_workspace::{SessionContext, SessionSpec};
+use nocterm_workspace::SessionSpec;
 
 use crate::{ActiveTransport, LocalTransportFactory, integration::ShellIntegration};
 
@@ -219,13 +219,6 @@ impl Terminal {
         self.status == Status::Connected
     }
 
-    /// The session, as the workspace shows it to panels.
-    pub fn session_context(&self) -> SessionContext {
-        let (target, session) = (self.spec.target.clone(), self.session.as_ref());
-        SessionContext::new(target, self.fs.clone(), self.is_connected())
-            .with_exec(session.and_then(Session::exec))
-    }
-
     // ── Session ──────────────────────────────────────────────────────────────
 
     /// Opens a new session, replacing the current one.
@@ -273,13 +266,12 @@ impl Terminal {
             });
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
-        let transport = if self.local {
-            self.local_transport.clone().or_else(|| {
-                cx.try_global::<LocalTransportFactory>()
-                    .map(|factory| (factory.0)(launch.clone()))
-            })
-        } else {
-            cx.try_global::<ActiveTransport>().map(|t| t.0.clone())
+        let transport = match &self.local_transport {
+            Some(transport) => Some(transport.clone()),
+            None if self.local => cx
+                .try_global::<LocalTransportFactory>()
+                .map(|factory| (factory.0)(launch.clone())),
+            None => cx.try_global::<ActiveTransport>().map(|t| t.0.clone()),
         };
         let Some(transport) = transport else {
             self.set_status(
@@ -939,29 +931,6 @@ impl Terminal {
     pub fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
         self.update_emulator(cx, |emulator| emulator.scroll(scroll));
     }
-
-    // ── Prompts ──────────────────────────────────────────────────────────────
-
-    /// Answers a pending host key question.
-    pub fn answer_host_key(&mut self, decision: HostKeyDecision, cx: &mut Context<Self>) {
-        match self.prompt.take() {
-            Some(Prompt::UnknownHostKey { reply, .. }) => reply.send(decision),
-            other => self.prompt = other,
-        }
-        cx.emit(TerminalEvent::Changed);
-    }
-
-    /// Answers a pending request for a secret; `None` declines it.
-    pub fn answer_secret(&mut self, secret: Option<Secret>, cx: &mut Context<Self>) {
-        if secret.is_none() {
-            self.cancel_credential_candidate();
-        }
-        match self.prompt.take() {
-            Some(Prompt::Secret { reply, .. }) => reply.send(secret),
-            other => self.prompt = other,
-        }
-        cx.emit(TerminalEvent::Changed);
-    }
 }
 
 impl Drop for Terminal {
@@ -1171,6 +1140,8 @@ mod local_tests {
     }
 }
 
+mod program;
+
 #[cfg(test)]
 mod credential_tests;
 
@@ -1311,3 +1282,5 @@ mod recording_tests {
         );
     }
 }
+
+mod prompts;

@@ -6,11 +6,13 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
 | `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
+| `nocterm-containers` | domain | `nocterm-session` | Containers on a host: listing, actions, logs and shells through the docker or podman CLI. |
+| `nocterm-containers-ui` | feature | `nocterm-containers`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's containers in the sidebar, with their logs and shells in tabs. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
 | `nocterm-device-unlock` | adapter | `nocterm-session`, `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
@@ -41,6 +43,7 @@ graph TD
     nocterm --> nocterm_agent
     nocterm --> nocterm_ai
     nocterm --> nocterm_connections
+    nocterm --> nocterm_containers_ui
     nocterm --> nocterm_core
     nocterm --> nocterm_design
     nocterm --> nocterm_device_unlock
@@ -72,6 +75,12 @@ graph TD
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_ui
     nocterm_connections --> nocterm_workspace
+    nocterm_containers --> nocterm_session
+    nocterm_containers_ui --> nocterm_containers
+    nocterm_containers_ui --> nocterm_session
+    nocterm_containers_ui --> nocterm_settings
+    nocterm_containers_ui --> nocterm_ui
+    nocterm_containers_ui --> nocterm_workspace
     nocterm_device_unlock --> nocterm_session
     nocterm_device_unlock --> nocterm_vault
     nocterm_files --> nocterm_session

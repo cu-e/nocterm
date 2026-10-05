@@ -4908,7 +4908,7 @@ dependencies = [
 
 [[package]]
 name = "nocterm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -4917,6 +4917,7 @@ dependencies = [
  "nocterm-agent",
  "nocterm-ai",
  "nocterm-connections",
+ "nocterm-containers-ui",
  "nocterm-core",
  "nocterm-design",
  "nocterm-device-unlock",
@@ -5020,6 +5021,28 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "nocterm-containers"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-session",
+ "serde_json",
+]
+
+[[package]]
+name = "nocterm-containers-ui"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "nocterm-containers",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-ui",
+ "nocterm-workspace",
 ]
 
 [[package]]

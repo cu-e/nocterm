@@ -6,7 +6,10 @@ use russh::keys::{
     ssh_key::known_hosts::{Entry, HostPatterns, Marker},
 };
 use sha1::Sha1;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Mutex};
+
+mod replacement;
+static MUTATIONS: Mutex<()> = Mutex::new(());
 
 const MAX_STORE: usize = 4 * 1024 * 1024;
 const MAX_LINE: usize = 64 * 1024;
@@ -18,6 +21,12 @@ pub(crate) enum Verdict {
     Unknown,
     Changed { known_hosts: PathBuf, line: usize },
     Revoked { known_hosts: PathBuf, line: usize },
+}
+
+#[derive(Debug)]
+pub(crate) enum RememberError {
+    TrustChanged(String),
+    Write(String),
 }
 
 #[derive(Debug)]
@@ -40,6 +49,8 @@ impl std::fmt::Display for TrustError {
 pub(crate) struct HostKeys {
     writable: PathBuf,
     records: Vec<Recorded>,
+    snapshots: Vec<replacement::Snapshot>,
+    read_only: Vec<PathBuf>,
 }
 #[derive(Clone, Debug)]
 struct Recorded {
@@ -50,10 +61,14 @@ struct Recorded {
 impl HostKeys {
     pub(crate) fn load(writable: PathBuf, read_only: Vec<PathBuf>) -> Result<Self, TrustError> {
         let mut records = Vec::new();
+        let mut snapshots = Vec::new();
         for file in std::iter::once(&writable).chain(read_only.iter()) {
             let bytes = match crate::file::read(file, MAX_STORE) {
                 Ok(bytes) => bytes,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    snapshots.push(replacement::Snapshot::missing(file.clone()));
+                    continue;
+                }
                 Err(error) => {
                     return Err(TrustError {
                         file: file.clone(),
@@ -62,6 +77,15 @@ impl HostKeys {
                     });
                 }
             };
+            snapshots.push(
+                replacement::Snapshot::capture(file, bytes.to_vec()).map_err(|error| {
+                    TrustError {
+                        file: file.clone(),
+                        line: None,
+                        reason: error.to_string(),
+                    }
+                })?,
+            );
             let text = std::str::from_utf8(&bytes).map_err(|error| TrustError {
                 file: file.clone(),
                 line: None,
@@ -102,7 +126,12 @@ impl HostKeys {
                 });
             }
         }
-        Ok(Self { writable, records })
+        Ok(Self {
+            writable,
+            records,
+            snapshots,
+            read_only,
+        })
     }
     pub(crate) fn check(&self, host: &str, port: u16, key: &PublicKey) -> Verdict {
         let recorded: Vec<_> = self.matching(host, port).collect();
@@ -138,8 +167,27 @@ impl HostKeys {
             .map(|record| record.entry.public_key().algorithm())
             .collect()
     }
-    pub(crate) fn remember(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), String> {
-        learn_known_hosts_path(host, port, key, &self.writable).map_err(|error| error.to_string())
+    pub(crate) fn remember(
+        &self,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+    ) -> Result<(), RememberError> {
+        let _guard = MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.revalidate().map_err(RememberError::TrustChanged)?;
+        let current = Self::load(self.writable.clone(), self.read_only.clone())
+            .map_err(|error| RememberError::TrustChanged(error.to_string()))?;
+        match current.check(host, port, key) {
+            Verdict::Known => return Ok(()),
+            Verdict::Changed { .. } | Verdict::Revoked { .. } => {
+                return Err(RememberError::TrustChanged("The host trust records changed; the new key was not appended. Reconnect to review the conflict.".into()));
+            }
+            Verdict::Unknown => {}
+        }
+        learn_known_hosts_path(host, port, key, &self.writable)
+            .map_err(|error| RememberError::Write(error.to_string()))
     }
     fn matching<'a>(&'a self, host: &str, port: u16) -> impl Iterator<Item = &'a Recorded> {
         let label = if port == 22 {
@@ -223,6 +271,22 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn concurrent_unknown_confirmations_do_not_append_a_changed_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = load(dir.path());
+        let second = load(dir.path());
+        first.remember("example.com", 22, &key(KEY_A)).unwrap();
+        assert!(second.remember("example.com", 22, &key(KEY_B)).is_err());
+        assert_eq!(
+            load(dir.path()).check("example.com", 22, &key(KEY_A)),
+            Verdict::Known
+        );
+        assert!(matches!(
+            load(dir.path()).check("example.com", 22, &key(KEY_B)),
+            Verdict::Changed { .. }
+        ));
+    }
+    #[test]
     fn missing_optional_stores_are_unknown_and_remember_round_trips_ports() {
         let dir = tempfile::tempdir().unwrap();
         let hosts = load(dir.path());
@@ -257,9 +321,19 @@ mod tests {
                 line: 3
             }
         );
-        load(dir.path())
-            .remember("example.com", 22, &key(KEY_B))
-            .unwrap();
+        // Existing stores may contain several explicitly trusted keys. A
+        // positive match retains precedence, but remembering cannot append
+        // another key to silently hide a conflict.
+        assert!(
+            load(dir.path())
+                .remember("example.com", 22, &key(KEY_B))
+                .is_err()
+        );
+        fs::write(
+            dir.path().join("known_hosts"),
+            format!("example.com {KEY_B}\n"),
+        )
+        .unwrap();
         assert_eq!(
             load(dir.path()).check("example.com", 22, &key(KEY_B)),
             Verdict::Known

@@ -78,7 +78,7 @@ fn main() -> anyhow::Result<()> {
                 cx,
             );
             nocterm_connections::init(Some(&paths), cx);
-            nocterm_monitor_ui::init(Arc::new(nocterm_local::LocalExec), cx);
+            nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
             nocterm_agent::init(
                 nocterm_agent::AgentServices {
                     connector: Arc::new(nocterm_acp::AcpConnector),
@@ -166,9 +166,12 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             workspace.set_session_opener(nocterm_terminal::open_session);
             workspace.set_background_session_opener(nocterm_terminal::open_background_session);
             workspace.set_local_terminal_opener(nocterm_terminal::open_local);
+            workspace.set_program_opener(nocterm_terminal::open_program);
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, window, cx);
+            // The last panel's switcher sits just before the monitor.
+            nocterm_containers_ui::register(&mut workspace, window, cx);
             nocterm_monitor_ui::register(&mut workspace, window, cx);
             nocterm_agent::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);

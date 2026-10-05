@@ -9,11 +9,15 @@
 pub mod exec;
 pub mod fs;
 mod launch;
+mod program;
 mod secret;
 mod session;
 mod target;
 
-pub use exec::{ExecError, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
+pub use exec::{
+    Collected, ErrorTail, ExecError, ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink,
+    HostExec,
+};
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use secret::Secret;
 pub use session::{
@@ -23,5 +27,6 @@ pub use session::{
 pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
 
 pub use launch::{ShellLaunch, quote_posix, quote_powershell};
+pub use program::{ProgramTransport, TerminalRequest};
 
 pub use nocterm_settings::{Charset, LoggingOptions, ProxyConfig, SessionOptions};

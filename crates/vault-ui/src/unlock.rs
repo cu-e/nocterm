@@ -1,14 +1,13 @@
 //! Unlocking and locking the vault from anywhere: the command palette, or a
 //! sign-in prompt that could use a saved secret.
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Render, SharedString,
-    Subscription, Window,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window,
     base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Icon, WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{Input, InputEvent, InputState},
+        input::{Input, InputState},
         v_flex,
     },
     div,
@@ -57,9 +56,16 @@ pub(crate) fn open(window: &mut Window, cx: &mut App) {
     let prompt = cx.new(|cx| UnlockPrompt::new(service, window, cx));
     let focus = prompt.read(cx).focus_handle(cx);
     window.open_dialog(cx, move |dialog, _, _| {
+        let submit = prompt.clone();
         dialog
             .title("Unlock the vault")
             .w(px(420.))
+            // Enter reaches the dialog as Confirm, which would close it before
+            // the password is submitted. The prompt closes itself once unlocked.
+            .on_ok(move |_, window, cx| {
+                submit.update(cx, |prompt, cx| prompt.submit(window, cx));
+                false
+            })
             .child(prompt.clone())
     });
     window.focus(&focus, cx);
@@ -76,7 +82,6 @@ pub(crate) struct UnlockPrompt {
     pub(crate) scanning: bool,
     /// Identifies the latest scan, so a cancelled one cannot report late.
     scan: u64,
-    _subscription: Subscription,
 }
 
 impl UnlockPrompt {
@@ -89,11 +94,6 @@ impl UnlockPrompt {
             InputState::new(window, cx)
                 .masked(true)
                 .placeholder("Master password")
-        });
-        let subscription = cx.subscribe_in(&password, window, |this, _, event, window, cx| {
-            if matches!(event, InputEvent::PressEnter { .. }) {
-                this.submit(window, cx);
-            }
         });
         let probe = service.probe_device_unlock();
         cx.spawn_in(window, async move |this, cx| {
@@ -117,7 +117,6 @@ impl UnlockPrompt {
             device: None,
             scanning: false,
             scan: 0,
-            _subscription: subscription,
         }
     }
 

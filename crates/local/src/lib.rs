@@ -29,19 +29,7 @@ pub struct LocalTransport(pub ShellLaunch);
 
 impl Transport for LocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
-        let (session, driver) = channel(None);
-        let launch = self.0.clone();
-        thread::spawn(move || {
-            let result = start(launch, false, request, driver.clone());
-            if let Err(error) = result {
-                block_on(
-                    driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                        error,
-                    )))),
-                );
-            }
-        });
-        session
+        open(self.0.clone(), false, request.term, request.size)
     }
 }
 
@@ -51,19 +39,23 @@ impl Transport for LocalTransport {
 pub struct IsolatedLocalTransport(pub ShellLaunch);
 impl Transport for IsolatedLocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
-        let (session, driver) = channel(None);
-        let launch = self.0.clone();
-        thread::spawn(move || {
-            if let Err(error) = start(launch, true, request, driver.clone()) {
-                block_on(
-                    driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                        error,
-                    )))),
-                );
-            }
-        });
-        session
+        open(self.0.clone(), true, request.term, request.size)
     }
+}
+
+/// Starts `launch` on a new PTY, on a thread of its own.
+fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
+    let (session, driver) = channel(None);
+    thread::spawn(move || {
+        if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
+            block_on(
+                driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
+                    error,
+                )))),
+            );
+        }
+    });
+    session
 }
 
 fn size(s: PtySize) -> NativeSize {
@@ -78,12 +70,13 @@ fn size(s: PtySize) -> NativeSize {
 fn start(
     launch: ShellLaunch,
     isolated: bool,
-    request: ConnectRequest,
+    term: String,
+    pty: PtySize,
     driver: nocterm_session::SessionDriver,
 ) -> Result<(), String> {
     launch.validate()?;
     let pair = native_pty_system()
-        .openpty(size(request.size))
+        .openpty(size(pty))
         .map_err(|e| e.to_string())?;
     let program = launch.program.clone().unwrap_or_else(default_shell);
     let mut command = CommandBuilder::new(&program);
@@ -101,7 +94,7 @@ fn start(
     if let Some(cwd) = launch.cwd.clone().or_else(home) {
         command.cwd(cwd);
     }
-    command.env("TERM", request.term);
+    command.env("TERM", term);
     for (key, value) in &launch.env {
         command.env(key, value);
     }

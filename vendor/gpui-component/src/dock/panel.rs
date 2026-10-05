@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! The presentation half of a dockable panel, and the concrete handle that
 //! carries it back across the renderer seam.
 //!
@@ -88,6 +89,12 @@ pub trait Panel: gpui_base::dock::Panel {
         None
     }
 
+    /// A color the tab bar marks this panel's tab with, such as the color of
+    /// a group of tabs it belongs to, or `None` for an unmarked tab.
+    fn tab_accent(&self, cx: &App) -> Option<Hsla> {
+        None
+    }
+
     /// An element pinned to the trailing end of the title bar.
     fn title_suffix(
         &mut self,
@@ -154,6 +161,7 @@ pub trait PanelView: gpui_base::dock::PanelView {
     fn tab_name(&self, cx: &App) -> Option<SharedString>;
     fn title(&self, window: &mut Window, cx: &mut App) -> AnyElement;
     fn title_style(&self, cx: &App) -> Option<TitleStyle>;
+    fn tab_accent(&self, cx: &App) -> Option<Hsla>;
     fn title_suffix(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement>;
     fn toolbar_buttons(&self, window: &mut Window, cx: &mut App) -> Option<Vec<Button>>;
     fn dropdown_menu(&self, menu: PopupMenu, window: &mut Window, cx: &mut App) -> PopupMenu;
@@ -173,6 +181,10 @@ impl<T: Panel> PanelView for Entity<T> {
 
     fn title_style(&self, cx: &App) -> Option<TitleStyle> {
         self.read(cx).title_style(cx)
+    }
+
+    fn tab_accent(&self, cx: &App) -> Option<Hsla> {
+        self.read(cx).tab_accent(cx)
     }
 
     fn title_suffix(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {

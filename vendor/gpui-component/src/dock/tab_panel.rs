@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! The gpui-component appearance for a tab group.
 //!
 //! `gpui_base::dock::TabGroup` owns the behavior — membership, the displayed
@@ -496,6 +497,10 @@ impl TabGroupSkin {
                         Tab::new()
                             .ix(ix)
                             .tab_bar_prefix(has_leading)
+                            .when_some(
+                                handle.and_then(|handle| handle.tab_accent(cx)),
+                                |this, accent| this.accent(accent),
+                            )
                             .map(|this| match handle.and_then(|handle| handle.tab_name(cx)) {
                                 Some(tab_name) => this.child(tab_name),
                                 None => this.child(panel_title(panel, window, cx)),

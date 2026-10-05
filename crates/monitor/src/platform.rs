@@ -73,19 +73,11 @@ pub async fn detect(exec: &dyn HostExec) -> Result<Platform, ExecError> {
 
 /// A short program's whole output. A program that cannot start is no answer.
 async fn output(exec: &dyn HostExec, request: ExecRequest) -> Result<String, ExecError> {
-    let mut output = match exec.exec(request).await {
-        Ok(output) => output,
-        Err(ExecError::Failed(_)) => return Ok(String::new()),
-        Err(error) => return Err(error),
-    };
-    let mut collected = Vec::new();
-    while let Some(chunk) = output.next().await {
-        collected.extend(chunk);
-        if collected.len() > MAX_PROBE_OUTPUT {
-            break;
-        }
+    match exec.exec(request).await {
+        Ok(output) => Ok(output.collect(MAX_PROBE_OUTPUT).await.text()),
+        Err(ExecError::Failed(_) | ExecError::NotFound(_)) => Ok(String::new()),
+        Err(error) => Err(error),
     }
-    Ok(String::from_utf8_lossy(&collected).into_owned())
 }
 
 #[cfg(test)]

@@ -5,12 +5,21 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Arc,
     thread,
+    time::Duration,
 };
 
 use futures::{FutureExt, channel::oneshot, executor::block_on, select};
-use nocterm_session::{ExecError, ExecFuture, ExecOutput, ExecRequest, HostExec};
+use nocterm_session::{
+    ErrorTail, ExecError, ExecFuture, ExecOutput, ExecRequest, HostExec, Session, ShellLaunch,
+    TerminalRequest,
+};
 
 const READ_BUFFER: usize = 16 * 1024;
+/// How often a program that closed its output is checked for having exited.
+const EXIT_POLL: Duration = Duration::from_millis(10);
+/// How long standard error may stay open after the program exited, held by
+/// something it left running.
+const ERROR_GRACE: Duration = Duration::from_millis(200);
 
 /// Runs programs on the local computer, without a console window.
 #[derive(Clone, Copy, Debug, Default)]
@@ -20,6 +29,16 @@ impl HostExec for LocalExec {
     fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
         let started = start(request);
         Box::pin(async move { started })
+    }
+
+    fn terminal(&self, request: TerminalRequest) -> Session {
+        let launch = ShellLaunch {
+            program: Some(request.program.program),
+            args: request.program.args,
+            integration: false,
+            ..ShellLaunch::default()
+        };
+        crate::open(launch, false, request.term, request.size)
     }
 }
 
@@ -33,7 +52,7 @@ fn start(request: ExecRequest) -> Result<ExecOutput, ExecError> {
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
@@ -47,10 +66,11 @@ fn start(request: ExecRequest) -> Result<ExecOutput, ExecError> {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| ExecError::Failed(format!("{}: {error}", request.program)))?;
-    let Some(mut stdout) = child.stdout.take() else {
+    let mut child = command.spawn().map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => ExecError::NotFound(request.program.clone()),
+        _ => ExecError::Failed(format!("{}: {error}", request.program)),
+    })?;
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         stop(&mut child);
         return Err(ExecError::Failed("no output pipe".into()));
     };
@@ -80,14 +100,37 @@ fn start(request: ExecRequest) -> Result<ExecOutput, ExecError> {
         }
         drop(finished);
     })?;
+    let (errors_read, errors) = std::sync::mpsc::channel();
+    spawn("nocterm-exec-err", move || {
+        let mut tail = ErrorTail::default();
+        let mut buffer = [0; 1024];
+        while let Ok(read @ 1..) = stderr.read(&mut buffer) {
+            tail.push(&buffer[..read]);
+        }
+        let _ = errors_read.send(tail);
+    })?;
     spawn("nocterm-exec-wait", move || {
-        block_on(async {
+        let drained = block_on(async {
             select! {
-                () = sink.closed().fuse() => {},
-                _ = ended.fuse() => {},
+                () = sink.closed().fuse() => false,
+                _ = ended.fuse() => true,
             }
         });
+        // The output ended; the program normally exits right after.
+        let status = if drained {
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.code().and_then(|c| u32::try_from(c).ok()),
+                    Ok(None) if !sink.is_closed() => thread::sleep(EXIT_POLL),
+                    Ok(None) | Err(_) => break None,
+                }
+            }
+        } else {
+            None
+        };
         stop(&mut child);
+        let tail = errors.recv_timeout(ERROR_GRACE).unwrap_or_default();
+        sink.finish(tail.exit(status));
     })?;
     Ok(output)
 }
@@ -157,10 +200,48 @@ mod tests {
     }
 
     #[test]
+    fn programs_report_their_exit_and_errors() {
+        let request = ExecRequest::new("sh")
+            .arg("-c")
+            .arg("echo out; echo 'no such container' >&2; exit 3");
+        let collected = block_on(block_on(LocalExec.exec(request)).unwrap().collect(1024));
+        assert_eq!(collected.text(), "out\n");
+        assert_eq!(collected.exit.status, Some(3));
+        assert_eq!(collected.exit.error(), "no such container");
+        let fine = block_on(LocalExec.exec(ExecRequest::new("true"))).unwrap();
+        assert!(block_on(fine.exit()).success());
+    }
+
+    #[test]
+    fn programs_run_on_a_terminal_of_their_own() {
+        use nocterm_session::{CloseReason, Event, PtySize};
+        let session = LocalExec.terminal(TerminalRequest {
+            program: ExecRequest::new("sh")
+                .arg("-c")
+                .arg("test -t 1 && echo on-a-tty; exit 4"),
+            term: "xterm-256color".into(),
+            size: PtySize::default(),
+        });
+        let mut output = String::new();
+        let reason = block_on(async {
+            loop {
+                match session.next_event().await {
+                    Some(Event::Output(bytes)) => output.push_str(&String::from_utf8_lossy(&bytes)),
+                    Some(Event::Closed(reason)) => break reason,
+                    Some(_) => {}
+                    None => panic!("the session ended without saying why"),
+                }
+            }
+        });
+        assert!(output.contains("on-a-tty"), "{output:?}");
+        assert_eq!(reason, CloseReason::Exited(Some(4)));
+    }
+
+    #[test]
     fn a_missing_program_is_an_error() {
         let started = Instant::now();
         let error = block_on(LocalExec.exec(ExecRequest::new("/nonexistent/nocterm"))).unwrap_err();
-        assert!(matches!(error, ExecError::Failed(_)));
+        assert_eq!(error, ExecError::NotFound("/nonexistent/nocterm".into()));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
