@@ -56,7 +56,6 @@ impl Default for IndexingSettings {
                 ".cache",
                 ".git",
                 "node_modules",
-                "target",
                 ".cargo",
                 ".rustup",
                 ".npm",
@@ -64,25 +63,14 @@ impl Default for IndexingSettings {
                 ".m2",
                 ".venv",
                 "__pycache__",
-                ".local",
                 ".var",
                 "snap",
-                "proc",
-                "sys",
-                "dev",
             ]
             .map(str::to_owned)
             .to_vec(),
             max_local_entries: 1_000_000,
             max_remote_entries: 20_000,
         }
-    }
-}
-
-impl IndexingSettings {
-    /// Whether counting may enter a folder called `name`.
-    pub fn enters(&self, name: &str) -> bool {
-        !self.excluded.iter().any(|excluded| excluded == name)
     }
 }
 
@@ -148,8 +136,8 @@ pub struct OpenSettings {
     /// editor such as `nano`, `vim` or `nvim`.
     pub remote: Opener,
     /// Programs for particular file types. The first rule naming a file's
-    /// extension wins; a rule's empty program falls back to the defaults
-    /// above.
+    /// extension with a program for that side wins; with none, the defaults
+    /// above are used.
     pub rules: Vec<OpenRule>,
 }
 

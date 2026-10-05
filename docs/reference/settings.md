@@ -18,7 +18,7 @@
 | `appearance.detect_server_country` | "boolean" | `true` | Find out which country each saved server is in and show its flag. Sends the server's public IP address (never its name) to a GeoIP service on connecting; private addresses are never sent. A country set on the connection is always shown. |
 | `appearance.light_theme` | ["string","null"] | `null` | Imported light theme name. Unset uses Nocterm Default. |
 | `appearance.mode` | "light", "dark", "system" | `"system"` | Which palette the interface uses. |
-| `explorer.indexing.excluded` | "array" | `[".cache",".git","node_modules","target",".cargo",".rustup",".npm",".gradle",".m2",".venv","__pycache__",".local",".var","snap","proc","sys","dev"]` | Folders with these names are never entered while counting, wherever they are. The folder being shown is always counted. |
+| `explorer.indexing.excluded` | "array" | `[".cache",".git","node_modules",".cargo",".rustup",".npm",".gradle",".m2",".venv","__pycache__",".var","snap"]` | Folders with these names are never entered while counting, wherever they are. The folder being shown is always counted. |
 | `explorer.indexing.local` | "boolean" | `true` | Count the files and the size of local folders. |
 | `explorer.indexing.max_local_entries` | "integer"; 1000–10000000 | `1000000` | Stop counting a local folder after this many entries. |
 | `explorer.indexing.max_remote_entries` | "integer"; 1000–10000000 | `20000` | Stop counting a remote folder after this many entries. Every folder costs a round trip to the server. |
@@ -29,7 +29,7 @@
 | `explorer.open.local.program` | "string" | `""` | The executable, such as `nvim` or `code`. Empty uses the default. |
 | `explorer.open.remote.args` | "array" | `[]` | Arguments, passed one by one without shell parsing. `{file}` stands for the file; without it the file is added last. |
 | `explorer.open.remote.program` | "string" | `"nano"` | The executable, such as `nvim` or `code`. Empty uses the default. |
-| `explorer.open.rules` | "array" | `[]` | Programs for particular file types. The first rule naming a file's extension wins; a rule's empty program falls back to the defaults above. |
+| `explorer.open.rules` | "array" | `[]` | Programs for particular file types. The first rule naming a file's extension with a program for that side wins; with none, the defaults above are used. |
 | `local.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |
 | `local.cwd` | ["string","null"] | `null` | Initial directory. Empty means the user's home directory. |
 | `local.env` | "object" | `{}` | Additional environment variables; never put passwords here. |
