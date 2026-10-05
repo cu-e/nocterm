@@ -62,15 +62,20 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let connected = |session: Option<crate::SessionContext>| {
-            session.is_some_and(|session| session.connected && session.target == *target)
+        // Published snapshots choose the tab, the active one first; only the
+        // chosen tabs are asked how they were opened.
+        let connected = |open: &&super::OpenItem| {
+            open.session
+                .as_ref()
+                .is_some_and(|session| session.connected && session.target == *target)
         };
         let spec = self
-            .items
-            .iter()
-            .map(|open| &open.handle)
-            .filter(|handle| connected(handle.session(cx)))
-            .find_map(|handle| handle.session_spec(cx))
+            .active_item
+            .and_then(|ix| self.items.get(ix))
+            .into_iter()
+            .chain(self.items.iter())
+            .filter(connected)
+            .find_map(|open| open.handle.session_spec(cx))
             .ok_or_else(|| format!("No connected session to {target} is open."))?;
         let env = spec
             .launch
