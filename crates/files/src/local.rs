@@ -31,7 +31,7 @@ pub(crate) const MAX_DIRECTORY_NAME_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) fn read_directory(path: &Path, cancel: &AtomicBool) -> Result<Vec<LocalEntry>, String> {
     let mut entries = Vec::new();
     let mut name_bytes = 0usize;
-    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(path).map_err(|e| format!("{}: {e}", path.display()))? {
         if cancel.load(Ordering::Acquire) {
             return Err("Directory reading cancelled.".into());
         }
@@ -306,6 +306,13 @@ mod tests {
             progress.clone(),
         );
         assert!(!progress.lock().complete);
+    }
+    #[test]
+    fn a_missing_directory_is_named_in_the_error() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("gone%");
+        let error = read_directory(&missing, &AtomicBool::new(false)).unwrap_err();
+        assert!(error.starts_with(&missing.display().to_string()), "{error}");
     }
     #[test]
     fn directory_read_obeys_cancellation_and_cached_case_order() {
