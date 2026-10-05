@@ -30,22 +30,22 @@ impl TabVariant {
         match size {
             Size::XSmall => match self {
                 TabVariant::Underline => px(26.),
-                TabVariant::Floating => px(22.),
+                TabVariant::Floating => px(20.),
                 _ => px(20.),
             },
             Size::Small => match self {
                 TabVariant::Underline => px(30.),
-                TabVariant::Floating => px(26.),
+                TabVariant::Floating => px(22.),
                 _ => px(24.),
             },
             Size::Large => match self {
                 TabVariant::Underline => px(44.),
-                TabVariant::Floating => px(34.),
+                TabVariant::Floating => px(30.),
                 _ => px(36.),
             },
             _ => match self {
                 TabVariant::Underline => px(36.),
-                TabVariant::Floating => px(28.),
+                TabVariant::Floating => px(24.),
                 _ => px(32.),
             },
         }
@@ -54,25 +54,25 @@ impl TabVariant {
     pub(super) fn inner_height(&self, size: Size) -> Pixels {
         match size {
             Size::XSmall => match self {
-                TabVariant::Floating => px(22.),
+                TabVariant::Floating => px(20.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(18.),
                 TabVariant::Segmented => px(16.),
                 TabVariant::Underline => px(20.),
             },
             Size::Small => match self {
-                TabVariant::Floating => px(26.),
+                TabVariant::Floating => px(22.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(22.),
                 TabVariant::Segmented => px(18.),
                 TabVariant::Underline => px(22.),
             },
             Size::Large => match self {
-                TabVariant::Floating => px(34.),
+                TabVariant::Floating => px(30.),
                 TabVariant::Tab | TabVariant::Outline | TabVariant::Pill => px(36.),
                 TabVariant::Segmented => px(28.),
                 TabVariant::Underline => px(32.),
             },
             _ => match self {
-                TabVariant::Floating => px(28.),
+                TabVariant::Floating => px(24.),
                 TabVariant::Tab => px(30.),
                 TabVariant::Outline | TabVariant::Pill => px(26.),
                 TabVariant::Segmented => px(24.),
@@ -411,7 +411,8 @@ impl TabVariant {
     }
 }
 
-/// The space a floating tab bar leaves around its tabs.
+/// The space a floating tab bar leaves around its tabs. With the default tab
+/// height the bar is 32px, the height of the classic tab bar.
 pub(super) const FLOATING_BAR_PADDING: Pixels = px(4.);
 
 #[allow(dead_code)]

@@ -51,3 +51,16 @@ draws a thin stripe along the tab's top edge. Nocterm marks the tabs of a tab
 group with the group's color this way, without forking tab rendering or drag
 and drop; which tabs form a group stays with the workspace. Remove this patch
 when upstream lets a panel style its own tab.
+
+`src/floating.rs` (added) defines `FloatingCards`, an optional application
+global with the gap, corner radius and colours of a floating layout, and the
+card surface and corner-mask helpers. Nocterm projects its appearance settings
+onto it in `nocterm-ui`; without the global every component keeps its upstream
+edge-to-edge appearance. With it, `src/dock/tab_panel.rs` draws each tab group
+as a card inside half a gap of margin, with a transparent tab bar and a corner
+mask beside (never inside) the scrolling content region; `src/dock/dock.rs`
+leaves split frames unfilled; and `src/resizable.rs` hides the resting
+hairline so the gap is the divider. `src/tab/tab.rs` and `src/tab/tab_bar.rs`
+add `TabVariant::Floating`: rounded tabs, concentric with the card, whose
+selection fill slides between tabs, and whose group accent is an inset
+underline. Remove this patch when upstream offers an equivalent card layout.

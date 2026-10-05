@@ -14,8 +14,11 @@
 | `ai.enabled` | "boolean" | `true` | Master switch. Off: the AI panel is hidden and every agent is stopped. |
 | `ai.sandbox` | "off", "workspace" | `"off"` | How agent processes are isolated from the rest of the system. |
 | `ai.working_directory` | ["string","null"] | `null` | Folder agents start in. Unset: a private folder in the application's state directory. Without isolation, agents can read and change any of your files. |
+| `appearance.card_gap` | "number"; 0.0–24.0 | `4.0` | Space between floating cards and around the window's edge, in pixels. |
+| `appearance.card_radius` | "number"; 0.0–24.0 | `10.0` | Corner radius of floating cards, in pixels. |
 | `appearance.dark_theme` | ["string","null"] | `null` | Imported dark theme name. Unset uses Nocterm Default. |
 | `appearance.detect_server_country` | "boolean" | `true` | Find out which country each saved server is in and show its flag. Sends the server's public IP address (never its name) to a GeoIP service on connecting; private addresses are never sent. A country set on the connection is always shown. |
+| `appearance.layout` | "floating", "classic" | `"floating"` | How the window's regions are framed. |
 | `appearance.light_theme` | ["string","null"] | `null` | Imported light theme name. Unset uses Nocterm Default. |
 | `appearance.mode` | "light", "dark", "system" | `"system"` | Which palette the interface uses. |
 | `explorer.indexing.excluded` | "array" | `[".cache",".git","node_modules",".cargo",".rustup",".npm",".gradle",".m2",".venv","__pycache__",".var","snap"]` | Folders with these names are never entered while counting, wherever they are. The folder being shown is always counted. |
