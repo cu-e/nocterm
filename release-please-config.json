@@ -5,6 +5,14 @@
     ".": {
       "release-type": "simple",
       "package-name": "nocterm",
+      "extra-files": [
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.package.version" },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name==='nocterm')].version"
+        }
+      ],
       "bump-minor-pre-major": true,
       "changelog-sections": [
         { "type": "feat", "section": "Features" },

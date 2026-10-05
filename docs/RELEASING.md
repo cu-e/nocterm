@@ -48,9 +48,10 @@ While on `0.y.z` the public surface is considered unstable. Going to `1.0.0` is 
 | `release-please-config.json`      | release strategy and changelog sections         |
 | `.release-please-manifest.json`   | last released version (managed by the bot)      |
 | `version.txt`                     | current version (managed by the bot)            |
+| `Cargo.toml`, `Cargo.lock`        | `nocterm` package version (managed by the bot)  |
 | `CHANGELOG.md`                    | generated on first release                      |
 
-`release-type` is `simple` (language-agnostic, bumps `version.txt`). Once the stack has a real manifest (`Cargo.toml`, `package.json`, …), switch `release-type` accordingly so that file is bumped too.
+`release-type` is `simple` (bumps `version.txt`); `extra-files` also bumps the root `nocterm` package in `Cargo.toml` and `Cargo.lock`, so `CARGO_PKG_VERSION` and the Windows file version match the release. Internal crates stay at `0.0.0`.
 
 ## One-time GitHub settings
 
