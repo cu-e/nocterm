@@ -8,6 +8,9 @@ use crate::{FilesPanel, transfers};
 gpui_kit::actions!(
     files,
     [
+        /// Open the Explorer's settings: folder sizes and the programs that
+        /// open files.
+        OpenExplorerSettings,
         /// Open transfers and their progress, errors and cancellation controls.
         ShowTransfers,
         /// Show the Explorer in the sidebar, or hide the sidebar if it shows it.

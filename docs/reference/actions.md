@@ -14,6 +14,7 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `agent::ToggleModelPicker` |  | `ctrl-alt-m` (linux, windows; AgentPanel); `cmd-alt-m` (macos; AgentPanel) |
 | `connections::NewConnection` | Open the form for a new saved connection. | `ctrl-shift-n` (linux, windows; Workspace); `cmd-n` (macos; Workspace) |
 | `connections::ToggleServers` | Show the saved servers in the sidebar, or hide the sidebar if it shows them. | `ctrl-shift-c` (linux, windows; Workspace); `cmd-shift-c` (macos; Workspace) |
+| `files::OpenExplorerSettings` | Open the Explorer's settings: folder sizes and the programs that open files. |  |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |

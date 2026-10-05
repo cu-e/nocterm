@@ -9,6 +9,7 @@ mod operations;
 mod registration;
 mod remote;
 mod remote_pane;
+mod settings_page;
 mod statistics;
 #[cfg(test)]
 mod tests;
@@ -38,7 +39,16 @@ use operations::FileTarget;
 use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
-pub use registration::{ShowTransfers, ToggleExplorer, register};
+pub use registration::{OpenExplorerSettings, ShowTransfers, ToggleExplorer, register};
+pub use settings_page::ExplorerPage;
+
+/// Supplies the lazy Explorer page to the application Settings host.
+pub fn settings_page() -> nocterm_workspace::SettingsPageSpec {
+    nocterm_workspace::SettingsPageSpec::new("explorer", "Explorer", |window, cx| {
+        cx.new(|cx| ExplorerPage::new(window, cx))
+    })
+    .with_icon(IconName::FolderTree)
+}
 
 #[derive(Clone)]
 struct LocalPaths(Vec<PathBuf>);
