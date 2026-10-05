@@ -13,8 +13,9 @@ use gpui_kit::{
     rems,
 };
 use nocterm_settings::{
-    CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE,
-    LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, SessionOptions, Settings, ShellSettings,
+    CARD_GAP_RANGE, CARD_RADIUS_RANGE, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape,
+    FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, SessionOptions,
+    Settings, ShellSettings,
 };
 use nocterm_ui::{ActiveSettings as _, SessionOptionsEditor, form};
 
@@ -54,6 +55,26 @@ pub(crate) fn add_fields(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) {
+    view.add_field(
+        "appearance.card_gap",
+        |s| s.appearance.card_gap.to_string(),
+        |s, text| {
+            s.appearance.card_gap = number(text, "Card gap", CARD_GAP_RANGE)?;
+            Ok(())
+        },
+        window,
+        cx,
+    );
+    view.add_field(
+        "appearance.card_radius",
+        |s| s.appearance.card_radius.to_string(),
+        |s, text| {
+            s.appearance.card_radius = number(text, "Card radius", CARD_RADIUS_RANGE)?;
+            Ok(())
+        },
+        window,
+        cx,
+    );
     view.add_field(
         "terminal.font_family",
         |s| s.terminal.font_family.clone().unwrap_or_default(),
@@ -273,7 +294,7 @@ pub(crate) fn text_row(
 }
 
 /// A short text input on the right of its label.
-fn short_row(
+pub(crate) fn short_row(
     view: &SettingsView,
     key: &str,
     label: impl Into<SharedString>,

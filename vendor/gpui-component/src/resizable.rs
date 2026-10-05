@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 //! What this design system paints inside a resize handle.
 //!
 //! Base owns the band, the cursor and the drag; everything here is appearance.
@@ -19,7 +20,7 @@ pub use gpui_base::{
     ResizablePanel, ResizablePanelEvent, ResizablePanelGroup, ResizableState, resizable_panel,
 };
 
-use crate::theme::ActiveTheme as _;
+use crate::{floating::FloatingCards, theme::ActiveTheme as _};
 
 /// How thick the indicator is across the divider it sits on.
 const INDICATOR_THICKNESS: Pixels = px(3.);
@@ -90,7 +91,10 @@ pub(crate) fn render_resize_handle(
         // nothing to give: shrinking it collapses the divider.
         .flex_none()
         .flex()
-        .bg(cx.theme().border)
+        // Between floating cards the gap is the divider; only the pill shows.
+        .when(FloatingCards::get(cx).is_none(), |line| {
+            line.bg(cx.theme().border)
+        })
         // Along the hairline the pill is far shorter than the line, so centring
         // it there is safe. Across the hairline it is thicker than the line and
         // has to overhang, and neither flex alignment can be trusted to centre

@@ -5,6 +5,7 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
+        floating::FloatingCards,
         h_flex,
         input::{InputEvent, InputState, TextareaState},
         v_flex,
@@ -420,7 +421,10 @@ impl Render for AgentPanel {
             .track_focus(&self.focus)
             .size_full()
             .min_w_0()
-            .bg(cx.theme().background)
+            // A floating card brings the panel's fill.
+            .when(FloatingCards::get(cx).is_none(), |body| {
+                body.bg(cx.theme().background)
+            })
             .capture_action(cx.listener(
                 |this, _: &gpui_kit::component::input::MoveUp, window, cx| {
                     this.command_action("up", window, cx);

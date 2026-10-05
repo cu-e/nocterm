@@ -131,6 +131,7 @@ fn mapping_sources_fallbacks_contrast_and_translucency() {
             assert_eq!(ui[key], parse_color(value).unwrap(), "{key}");
         }
     }
+    assert_eq!(palette.canvas, parse_color("#111"));
     assert_eq!(palette.terminal.background, None);
     assert_eq!(palette.terminal.foreground, Some(Color::rgb(128, 128, 128)));
     assert_eq!(palette.terminal.blue, Color::rgb(128, 128, 128));

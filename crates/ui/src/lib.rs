@@ -9,6 +9,7 @@
 mod ai;
 mod design;
 mod drag_preview;
+mod floating;
 pub mod form;
 mod icons;
 mod layout;

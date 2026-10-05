@@ -1,11 +1,17 @@
 //! The window's frame around the tabs: the title bar, the body's columns,
 //! the sidebar and the footer.
+//!
+//! In the floating layout ([`FloatingCards`]) every column is a card on the
+//! canvas, and the title bar and footer sit on the canvas between them. The
+//! dock draws its own tab groups as cards, so the content column only frames
+//! what it shows when no tab is open.
 use gpui_kit::{
-    Action as _, Anchor, AnyElement, AnyView, Context, Entity, MouseButton, StyleRefinement,
-    TestSupportExt as _, Window,
+    Action as _, Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton,
+    StyleRefinement, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
+        ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
+        floating::FloatingCards,
         h_flex, h_resizable,
         popover::Popover,
         resizable_panel, v_flex,
@@ -26,6 +32,14 @@ use crate::NewTab;
 /// otherwise rebuild every panel beside it.
 fn cached(view: AnyView) -> impl IntoElement {
     view.cached(StyleRefinement::default().size_full())
+}
+
+/// `content` as a card when the window floats, otherwise as it is.
+fn tile(cards: Option<FloatingCards>, content: impl IntoElement) -> AnyElement {
+    match cards {
+        Some(cards) => cards.card(content).into_any_element(),
+        None => content.into_any_element(),
+    }
 }
 
 /// Which end of the footer a feature's status view sits at.
@@ -56,21 +70,45 @@ impl Workspace {
             .map(|(_, view)| view.clone())
     }
 
-    /// The sidebar, the tabs and the side panel, in the user's order.
+    /// What the window is painted with behind its regions: the canvas when
+    /// they float, the interface background otherwise.
+    pub(super) fn window_background(cx: &App) -> Hsla {
+        FloatingCards::get(cx).map_or(cx.theme().background, |cards| cards.canvas)
+    }
+
+    /// The body inside the half gap that, with each card's own margin, keeps
+    /// floating cards a full gap from the window's edge.
     pub(super) fn render_body(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let cards = FloatingCards::get(cx);
+        div()
+            .size_full()
+            .when_some(cards, |body, cards| body.p(cards.margin()))
+            .child(self.render_columns(cards, window, cx))
+            .into_any_element()
+    }
+
+    /// The sidebar, the tabs and the side panel, in the user's order.
+    fn render_columns(
+        &mut self,
+        cards: Option<FloatingCards>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if self.right_panel_maximized {
-            return div()
-                .id("workspace-right-panel")
-                .test_support()
-                .size_full()
-                .when_some(self.right_panel.as_ref(), |body, panel| {
-                    body.child(cached(panel.view()))
-                })
-                .into_any_element();
+            return tile(
+                cards,
+                div()
+                    .id("workspace-right-panel")
+                    .test_support()
+                    .size_full()
+                    .when_some(self.right_panel.as_ref(), |body, panel| {
+                        body.child(cached(panel.view()))
+                    }),
+            );
         }
         let widths = BodyWidths::new(window, cx);
         let arrangement = self.arrangement(cx);
@@ -81,12 +119,13 @@ impl Workspace {
                 Column::Sidebar => resizable_panel()
                     .size(widths.sidebar)
                     .size_range(widths.sidebar_range.clone())
-                    .child(self.render_sidebar(arrangement.swapped, cx)),
-                Column::Content => resizable_panel().child(self.render_content(cx)),
+                    .child(tile(cards, self.render_sidebar(arrangement.swapped, cx))),
+                Column::Content => resizable_panel().child(self.render_content(cards, cx)),
                 Column::SidePanel => resizable_panel()
                     .size(widths.right_panel)
                     .size_range(widths.right_panel_range.clone())
-                    .child(
+                    .child(tile(
+                        cards,
                         div()
                             .id("workspace-right-panel")
                             .test_support()
@@ -94,47 +133,79 @@ impl Workspace {
                             .when_some(self.right_panel.as_ref(), |body, panel| {
                                 body.child(cached(panel.view()))
                             }),
-                    ),
+                    )),
             });
         }
         body.into_any_element()
     }
 
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        TitleBar::new().child(
-            h_flex()
+    /// The open tabs, or an invitation to open one.
+    fn render_content(&self, cards: Option<FloatingCards>, cx: &mut Context<Self>) -> AnyElement {
+        if !self.items.is_empty() || self.local_terminal_is_visible(cx) {
+            // The dock frames each of its tab groups itself.
+            return div()
                 .size_full()
-                .min_w_0()
-                .gap_1()
-                .pr_2()
-                .when_some(self.app_menu_bar.as_ref(), |bar, menu| {
-                    bar.child(
-                        div()
-                            .id("workspace-app-menu")
-                            .track_focus(&self.menu_focus)
-                            .h_full()
-                            .min_w_0()
-                            .capture_any_mouse_down(cx.listener(
-                                |this, event: &gpui_kit::MouseDownEvent, window, cx| {
-                                    if event.button == MouseButton::Left {
-                                        this.prepare_menu(window, cx);
-                                    }
-                                },
-                            ))
-                            .capture_key_down(cx.listener(
-                                |this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                                    match event.keystroke.key.as_str() {
-                                        "enter" | "space" => this.prepare_menu(window, cx),
-                                        _ => {}
-                                    }
-                                },
-                            ))
-                            .child(menu.clone()),
-                    )
-                })
-                .child(div().flex_1())
-                .child(self.render_new_tab_button(cx)),
+                .child(self.dock.clone())
+                .into_any_element();
+        }
+        tile(
+            cards,
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(IconName::SquareTerminal).large())
+                .child("No open sessions")
+                .child(
+                    Button::new("empty-new-tab")
+                        .primary()
+                        .label("New Tab")
+                        .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx)),
+                ),
         )
+    }
+
+    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let cards = FloatingCards::get(cx);
+        TitleBar::new()
+            // On the canvas, the title bar is part of the backdrop.
+            .when_some(cards, |bar, cards| bar.bg(cards.canvas).border_b_0())
+            .child(
+                h_flex()
+                    .size_full()
+                    .min_w_0()
+                    .gap_1()
+                    .pr_2()
+                    .when_some(self.app_menu_bar.as_ref(), |bar, menu| {
+                        bar.child(
+                            div()
+                                .id("workspace-app-menu")
+                                .track_focus(&self.menu_focus)
+                                .h_full()
+                                .min_w_0()
+                                .capture_any_mouse_down(cx.listener(
+                                    |this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                        if event.button == MouseButton::Left {
+                                            this.prepare_menu(window, cx);
+                                        }
+                                    },
+                                ))
+                                .capture_key_down(cx.listener(
+                                    |this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                                        match event.keystroke.key.as_str() {
+                                            "enter" | "space" => this.prepare_menu(window, cx),
+                                            _ => {}
+                                        }
+                                    },
+                                ))
+                                .child(menu.clone()),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(self.render_new_tab_button(cx)),
+            )
     }
 
     fn render_new_tab_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -168,19 +239,24 @@ impl Workspace {
     fn render_sidebar(&self, on_right: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let panel = self.panels.get(self.active_panel);
+        let floating = FloatingCards::get(cx).is_some();
 
         v_flex()
             .size_full()
-            .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
-            .map(|sidebar| {
-                if on_right {
-                    sidebar.border_l_1()
-                } else {
-                    sidebar.border_r_1()
-                }
+            // A card brings its own fill and outline.
+            .when(!floating, |sidebar| {
+                sidebar
+                    .bg(theme.sidebar)
+                    .map(|sidebar| {
+                        if on_right {
+                            sidebar.border_l_1()
+                        } else {
+                            sidebar.border_r_1()
+                        }
+                    })
+                    .border_color(theme.sidebar_border)
             })
-            .border_color(theme.sidebar_border)
             .when_some(panel, |sidebar, panel| {
                 sidebar
                     .child(
@@ -200,13 +276,16 @@ impl Workspace {
 
     pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let floating = FloatingCards::get(cx).is_some();
         div().id("workspace-footer").w_full().flex_shrink_0().child(
             h_flex()
                 .gap_1()
                 .px_2()
                 .py_1()
-                .border_t_1()
-                .border_color(theme.sidebar_border)
+                // On the canvas the gap above already separates the footer.
+                .when(!floating, |footer| {
+                    footer.border_t_1().border_color(theme.sidebar_border)
+                })
                 .children(self.panels.iter().enumerate().map(|(ix, panel)| {
                     Button::new(("sidebar-panel", ix))
                         .ghost()

@@ -32,6 +32,7 @@ use crate::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     dock::{ClosePanel, PanelControl, PanelHandle, PanelStyle, SkinShared, ToggleZoom},
+    floating::FloatingCards,
     h_flex,
     menu::DropdownMenu as _,
     tab::{Tab, TabBar},
@@ -268,6 +269,30 @@ impl TabGroupSkin {
         )
     }
 
+    /// The visible tabs, by index into the group's panels.
+    fn visible_tabs(group: &TabGroupContext, cx: &App) -> Vec<usize> {
+        group
+            .panels()
+            .iter()
+            .enumerate()
+            .filter(|(_, panel)| panel.visible(cx))
+            .map(|(ix, _)| ix)
+            .collect()
+    }
+
+    /// Whether this group draws anything above its content: a tab bar, or the
+    /// one-panel title.
+    fn draws_tab_bar(&self, group: &TabGroupContext, cx: &App) -> bool {
+        match Self::visible_tabs(group, cx).as_slice() {
+            [] => false,
+            [ix] if self.shared.panel_style() == PanelStyle::Auto => {
+                // A panel that draws its own chrome declines the title bar.
+                PanelHandle::of(&group.panels()[*ix]).is_none_or(|handle| handle.title_bar(cx))
+            }
+            _ => true,
+        }
+    }
+
     /// The trailing controls: the panel's own buttons, the zoom affordance,
     /// and the ellipsis menu.
     fn render_toolbar(
@@ -445,19 +470,20 @@ impl TabGroupSkin {
         let tabs_count = group.panels().len();
         let active_ix = group.active_ix();
         let displayed = group.active_panel().map(|panel| panel.panel_id(cx));
-        let visible: Vec<usize> = group
-            .panels()
-            .iter()
-            .enumerate()
-            .filter(|(_, panel)| panel.visible(cx))
-            .map(|(ix, _)| ix)
-            .collect();
+        let visible = Self::visible_tabs(group, cx);
         let displayed_ix = displayed.and_then(|displayed| {
             group
                 .panels()
                 .iter()
                 .position(|panel| panel.panel_id(cx) == displayed)
         });
+        let floating = FloatingCards::get(cx).is_some();
+        // A floating bar slides its selection fill between tabs, so it has to
+        // know which of the tabs it lays out is the displayed one.
+        let displayed_position = visible
+            .iter()
+            .position(|ix| Some(*ix) == displayed_ix)
+            .filter(|_| floating && !collapsed);
 
         // Bring a newly displayed tab into view. The group owns selection now,
         // so the skin notices the change rather than being told about it.
@@ -469,19 +495,27 @@ impl TabGroupSkin {
 
         TabBar::new("tab-bar")
             .track_scroll(&self.scroll_handle)
+            // On a card the bar is part of the surface: no fill and no rules,
+            // only rounded tabs.
+            .when(floating, |this| this.floating())
+            .when_some(displayed_position, |this, position| {
+                this.selected_index(position)
+            })
             .when(has_leading, |this| {
                 this.prefix(
                     h_flex()
                         .items_center()
                         .top_0()
-                        // Right -1 for avoid border overlap with the first tab
-                        .right(-px(1.))
-                        .border_r_1()
-                        .border_b_1()
                         .h_full()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().tokens.tab_bar)
                         .px_2()
+                        .when(!floating, |this| {
+                            // Right -1 for avoid border overlap with the first tab
+                            this.right(-px(1.))
+                                .border_r_1()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .bg(cx.theme().tokens.tab_bar)
+                        })
                         .children(left_button)
                         .children(bottom_button),
                 )
@@ -663,13 +697,15 @@ impl TabGroupSkin {
                         .items_center()
                         .top_0()
                         .right_0()
-                        .border_l_1()
-                        .border_b_1()
                         .h_full()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().tokens.tab_bar)
                         .px_2()
                         .gap_1()
+                        .when(!floating, |this| {
+                            this.border_l_1()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .bg(cx.theme().tokens.tab_bar)
+                        })
                         .children(
                             group
                                 .active_panel()
@@ -692,7 +728,25 @@ impl TabGroupRenderer for TabGroupSkin {
         // this. What is left is the background and the two actions.
         div()
             .id("tab-panel")
-            .bg(cx.theme().tokens.background)
+            .map(|this| match FloatingCards::get(cx) {
+                // The group keeps its margin clear and draws its card first,
+                // under the tab bar and content, which sit inside its outline.
+                Some(cards) => {
+                    let margin = cards.margin();
+                    this.p(margin + px(1.)).child(
+                        cards.surface(
+                            div()
+                                .absolute()
+                                .top(margin)
+                                .left(margin)
+                                .right(margin)
+                                .bottom(margin),
+                            cards.surface,
+                        ),
+                    )
+                }
+                None => this.bg(cx.theme().tokens.background),
+            })
             // A collapsed group is a strip of tabs with no content, and the
             // actions act on content. The old dock gated them the same way.
             .when(!group.is_collapsed(), |this| {
@@ -729,7 +783,8 @@ impl TabGroupRenderer for TabGroupSkin {
         _: &mut Window,
         cx: &mut App,
     ) -> Stateful<Div> {
-        let padded = group.panels().len() > 1
+        let padded = FloatingCards::get(cx).is_none()
+            && group.panels().len() > 1
             && group
                 .active_panel()
                 .and_then(PanelHandle::of)
@@ -746,22 +801,11 @@ impl TabGroupRenderer for TabGroupSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let visible: Vec<usize> = group
-            .panels()
-            .iter()
-            .enumerate()
-            .filter(|(_, panel)| panel.visible(cx))
-            .map(|(ix, _)| ix)
-            .collect();
-
-        match visible.as_slice() {
-            [] => Empty.into_any_element(),
+        if !self.draws_tab_bar(group, cx) {
+            return Empty.into_any_element();
+        }
+        match Self::visible_tabs(group, cx).as_slice() {
             [ix] if self.shared.panel_style() == PanelStyle::Auto => {
-                // A panel that draws its own chrome declines the title bar.
-                let panel = &group.panels()[*ix];
-                if PanelHandle::of(panel).is_some_and(|handle| !handle.title_bar(cx)) {
-                    return Empty.into_any_element();
-                }
                 self.render_title(group, *ix, window, cx)
             }
             _ => self.render_tabs(group, window, cx),
@@ -773,18 +817,23 @@ impl TabGroupRenderer for TabGroupSkin {
         panel: AnyView,
         group: &TabGroupContext,
         _: &mut Window,
-        _: &mut App,
+        cx: &mut App,
     ) -> AnyElement {
         if group.is_collapsed() {
             return Empty.into_any_element();
         }
 
+        // The content reaches the card's outline at the bottom, and at the top
+        // too when nothing is drawn above it, so those corners are masked.
+        let mask =
+            FloatingCards::get(cx).map(|cards| cards.corner_mask(!self.draws_tab_bar(group, cx)));
         div()
             .id("tab-content")
             .overflow_y_scroll()
             .overflow_x_hidden()
             .flex_1()
             .child(panel.cached(StyleRefinement::default().absolute().size_full()))
+            .children(mask)
             .into_any_element()
     }
 

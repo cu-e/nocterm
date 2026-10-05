@@ -19,6 +19,10 @@ pub const SCROLLBACK_RANGE: RangeInclusive<u32> = 0..=1_000_000;
 pub const CONNECT_TIMEOUT_RANGE: RangeInclusive<u32> = 1..=600;
 /// Keep-alive intervals a user may pick, in seconds; zero turns them off.
 pub const KEEPALIVE_RANGE: RangeInclusive<u32> = 0..=3600;
+/// Space between floating cards a user may pick, in pixels.
+pub const CARD_GAP_RANGE: RangeInclusive<f32> = 0.0..=24.0;
+/// Corner radii of floating cards a user may pick, in pixels.
+pub const CARD_RADIUS_RANGE: RangeInclusive<f32> = 0.0..=24.0;
 
 /// Everything a user can configure.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
@@ -61,6 +65,22 @@ pub struct Appearance {
     /// connecting; private addresses are never sent. A country set on the
     /// connection is always shown.
     pub detect_server_country: bool,
+    /// How the window's regions are framed: edge to edge, or as floating
+    /// cards with rounded corners on a darker canvas.
+    pub layout: UiLayout,
+    /// Space between floating cards and around the window's edge, in pixels.
+    #[schemars(extend("minimum" = CARD_GAP_RANGE.start(), "maximum" = CARD_GAP_RANGE.end()))]
+    pub card_gap: f32,
+    /// Corner radius of floating cards, in pixels.
+    #[schemars(extend("minimum" = CARD_RADIUS_RANGE.start(), "maximum" = CARD_RADIUS_RANGE.end()))]
+    pub card_radius: f32,
+}
+
+impl Appearance {
+    /// Default space between floating cards, in pixels.
+    pub const DEFAULT_CARD_GAP: f32 = 4.0;
+    /// Default corner radius of floating cards, in pixels.
+    pub const DEFAULT_CARD_RADIUS: f32 = 10.0;
 }
 
 impl Default for Appearance {
@@ -70,8 +90,22 @@ impl Default for Appearance {
             light_theme: None,
             dark_theme: None,
             detect_server_country: true,
+            layout: UiLayout::default(),
+            card_gap: Self::DEFAULT_CARD_GAP,
+            card_radius: Self::DEFAULT_CARD_RADIUS,
         }
     }
+}
+
+/// How the window's regions are framed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLayout {
+    /// Sidebar, tabs and panels as rounded cards floating on a darker canvas.
+    #[default]
+    Floating,
+    /// Regions edge to edge, divided by hairlines.
+    Classic,
 }
 
 /// Which palette the interface uses.
@@ -248,6 +282,11 @@ impl Settings {
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty());
         }
+        let appearance = &mut self.appearance;
+        appearance.card_gap =
+            clamp(appearance.card_gap, CARD_GAP_RANGE).unwrap_or(Appearance::DEFAULT_CARD_GAP);
+        appearance.card_radius = clamp(appearance.card_radius, CARD_RADIUS_RANGE)
+            .unwrap_or(Appearance::DEFAULT_CARD_RADIUS);
         let terminal = &mut self.terminal;
         terminal.font_family = terminal
             .font_family
@@ -326,14 +365,26 @@ mod tests {
         settings.terminal.font_family = Some("   ".to_owned());
         settings.terminal.term = " ".to_owned();
         settings.ssh.connect_timeout_secs = 0;
+        settings.appearance.card_gap = 100.0;
+        settings.appearance.card_radius = f32::NAN;
 
         let settings = settings.sanitized();
+
+        assert_eq!(settings.appearance.card_gap, 24.0);
+        assert_eq!(settings.appearance.card_radius, 10.0);
 
         assert_eq!(settings.terminal.font_size, Some(72.0));
         assert_eq!(settings.terminal.line_height, None);
         assert_eq!(settings.terminal.font_family, None);
         assert_eq!(settings.terminal.term, "xterm-256color");
         assert_eq!(settings.ssh.connect_timeout_secs, 1);
+    }
+
+    #[test]
+    fn layout_is_floating_unless_classic_is_chosen() {
+        assert_eq!(Settings::default().appearance.layout, UiLayout::Floating);
+        let settings: Settings = toml::from_str("[appearance]\nlayout = \"classic\"\n").unwrap();
+        assert_eq!(settings.appearance.layout, UiLayout::Classic);
     }
 
     #[test]

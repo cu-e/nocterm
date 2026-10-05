@@ -9,7 +9,7 @@ use gpui_kit::{
     },
     prelude::*,
 };
-use nocterm_settings::AppearanceMode;
+use nocterm_settings::{AppearanceMode, Settings, UiLayout};
 use nocterm_themes::{Appearance, ThemeRegistry};
 use nocterm_ui::{ActiveSettings as _, ActiveThemes as _, Themes, form};
 use std::{
@@ -153,6 +153,42 @@ fn choices(appearance: Appearance, cx: &App) -> Vec<String> {
         )
         .collect()
 }
+/// How the window's regions are framed.
+fn layout(view: &SettingsView, settings: &Settings, cx: &mut Context<SettingsView>) -> AnyElement {
+    let mut rows = vec![form::row(
+        "Window layout",
+        "Floating draws the sidebar, tabs and panels as rounded cards on a darker canvas.",
+        pages::choices(
+            "ui-layout",
+            settings.appearance.layout,
+            &[
+                ("Floating", UiLayout::Floating),
+                ("Classic", UiLayout::Classic),
+            ],
+            |s, layout| s.appearance.layout = layout,
+            cx,
+        ),
+        cx,
+    )];
+    if settings.appearance.layout == UiLayout::Floating {
+        rows.push(pages::short_row(
+            view,
+            "appearance.card_gap",
+            "Card gap",
+            "Space between cards and around the window, 0–24 pixels.",
+            cx,
+        ));
+        rows.push(pages::short_row(
+            view,
+            "appearance.card_radius",
+            "Card radius",
+            "Corner radius of cards, 0–24 pixels.",
+            cx,
+        ));
+    }
+    form::section("Layout", rows, cx)
+}
+
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
     let settings = cx.settings().clone();
     let mut sections = vec![form::section(
@@ -191,6 +227,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
         ],
         cx,
     )];
+    sections.push(layout(view, &settings, cx));
     sections.push(installed::render(view, cx));
     sections.push(form::section(
         "Get themes from Zed",

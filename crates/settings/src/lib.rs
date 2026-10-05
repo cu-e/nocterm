@@ -24,8 +24,9 @@ pub use monitor::{
     MonitorSettings,
 };
 pub use schema::{
-    Appearance, AppearanceMode, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape,
-    FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, Settings, ShellSettings,
-    SshSettings, TerminalSettings, VaultSettings,
+    Appearance, AppearanceMode, CARD_GAP_RANGE, CARD_RADIUS_RANGE, CONNECT_TIMEOUT_RANGE,
+    ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE,
+    SCROLLBACK_RANGE, Settings, ShellSettings, SshSettings, TerminalSettings, UiLayout,
+    VaultSettings,
 };
 pub use store::SettingsFile;
