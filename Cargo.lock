@@ -5080,6 +5080,7 @@ dependencies = [
  "gpui-kit",
  "nix 0.28.0",
  "nocterm-session",
+ "nocterm-settings",
  "nocterm-transfers",
  "nocterm-ui",
  "nocterm-workspace",

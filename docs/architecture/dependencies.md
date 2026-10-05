@@ -14,7 +14,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
 | `nocterm-device-unlock` | adapter | `nocterm-session`, `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
-| `nocterm-files` | feature | `nocterm-session`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
+| `nocterm-files` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Keymap settings page: search, rebind and reset key bindings. |
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session and program adapter. |
@@ -75,6 +75,7 @@ graph TD
     nocterm_device_unlock --> nocterm_session
     nocterm_device_unlock --> nocterm_vault
     nocterm_files --> nocterm_session
+    nocterm_files --> nocterm_settings
     nocterm_files --> nocterm_transfers
     nocterm_files --> nocterm_ui
     nocterm_files --> nocterm_workspace

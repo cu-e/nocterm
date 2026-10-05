@@ -13,14 +13,23 @@ impl FilesPanel {
         cx.notify();
         let window = self.window;
         let retry_directory = directory.clone();
+        let home_requested = directory.is_none();
+        self.remote_counter.stop();
         self.remote_task = Some(cx.spawn(async move |this, cx| {
+            let listing_fs = fs.clone();
             let result = cx
                 .background_executor()
-                .spawn(async move { listing(fs, directory).await })
+                .spawn(async move { listing(listing_fs, directory).await })
                 .await;
             let error = this
                 .update(cx, |this, cx| {
                     if this.browser.finish(generation, result) {
+                        if this.browser.error.is_none() {
+                            if home_requested {
+                                this.browser.home = this.browser.path.clone();
+                            }
+                            this.count_remote(fs, cx);
+                        }
                         cx.notify();
                         this.browser.error.as_ref().map(ToString::to_string)
                     } else {
@@ -50,6 +59,27 @@ impl FilesPanel {
                 });
             }
         }));
+    }
+
+    /// Counts the shown remote folder, as the indexing settings allow.
+    fn count_remote(&mut self, fs: Arc<dyn RemoteFs>, cx: &mut Context<Self>) {
+        let Some(directory) = self.browser.path.clone() else {
+            return;
+        };
+        let indexing = indexing(cx);
+        let skip = statistics::remote_skip(&directory, self.browser.home.as_deref(), &indexing);
+        if let Some(skip) = skip {
+            let kinds = self.browser.entries.iter().map(|entry| entry.kind);
+            self.remote_counter.set(statistics::shallow(kinds, skip));
+            return;
+        }
+        let (cancel, progress) = self.remote_counter.restart();
+        let policy = statistics::Policy::remote(&indexing);
+        cx.background_executor()
+            .spawn(statistics::scan_remote(
+                fs, directory, policy, cancel, progress,
+            ))
+            .detach();
     }
 
     pub(super) fn remote_file_target(&self, index: usize) -> Option<FileTarget> {
@@ -365,6 +395,15 @@ impl FilesPanel {
                 .flex_1()
                 .min_h_0(),
             )
+            .when(self.browser.path.is_some() && enabled, |p| {
+                p.child(
+                    div()
+                        .id("remote-statistics")
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(statistics::summary(&self.remote_counter.shown)),
+                )
+            })
             .child(
                 h_flex()
                     .gap_1()

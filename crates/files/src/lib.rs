@@ -7,6 +7,7 @@ mod operations;
 mod registration;
 mod remote;
 mod remote_pane;
+mod statistics;
 #[cfg(test)]
 mod tests;
 mod transfers;
@@ -32,18 +33,8 @@ use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
 use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
 use nocterm_workspace::{Panel, SessionContext, Workspace, WorkspaceEvent};
 use operations::FileTarget;
-use parking_lot::Mutex;
 use remote::{Browser, listing};
-use std::{
-    collections::BTreeSet,
-    path::PathBuf,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 pub use registration::{ShowTransfers, ToggleExplorer, register};
 
@@ -55,6 +46,7 @@ struct RemotePaths {
     target: nocterm_session::Target,
     fs: Arc<dyn RemoteFs>,
 }
+#[derive(Default)]
 struct LocalBrowser {
     generation: u64,
     path: Option<PathBuf>,
@@ -64,26 +56,7 @@ struct LocalBrowser {
     anchor: Option<usize>,
     loading: bool,
     error: Option<String>,
-    progress: Arc<Mutex<local::Statistics>>,
-    statistics: local::Statistics,
-    cancel: Arc<AtomicBool>,
-}
-impl Default for LocalBrowser {
-    fn default() -> Self {
-        Self {
-            generation: 0,
-            path: None,
-            requested: None,
-            entries: Vec::new(),
-            selected: BTreeSet::new(),
-            anchor: None,
-            loading: false,
-            error: None,
-            progress: Arc::default(),
-            statistics: Default::default(),
-            cancel: Arc::new(AtomicBool::new(false)),
-        }
-    }
+    counter: statistics::Counter,
 }
 pub struct FilesPanel {
     focus: FocusHandle,
@@ -93,6 +66,7 @@ pub struct FilesPanel {
     remote_selected: BTreeSet<usize>,
     remote_anchor: Option<usize>,
     local: LocalBrowser,
+    remote_counter: statistics::Counter,
     workspace: WeakEntity<Workspace>,
     divider: Entity<ResizableState>,
     collisions: CollisionPolicy,
@@ -131,6 +105,49 @@ impl FilesPanel {
             });
         })
     }
+    /// Shows the walks' latest counts and reports a partial local count once.
+    fn poll_statistics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.remote_counter.poll() {
+            cx.notify();
+        }
+        if !self.local.counter.poll() {
+            return;
+        }
+        cx.notify();
+        let statistics = &self.local.counter.shown;
+        if !statistics.complete || statistics.inaccessible == 0 || self.statistics_reported {
+            return;
+        }
+        self.statistics_reported = true;
+        let Some(path) = self.local.path.clone() else {
+            return;
+        };
+        let message = statistics.errors.first().cloned().unwrap_or_else(|| {
+            format!(
+                "{} paths could not be scanned; folder size is partial.",
+                statistics.inaccessible
+            )
+        });
+        let generation = self.local.generation;
+        let panel = cx.entity().downgrade();
+        nocterm_ui::notice::warning_action(
+            window,
+            cx,
+            "files-partial-statistics",
+            "Folder size is partial",
+            message,
+            "Recalculate",
+            move |_, cx| {
+                let _ = panel.update(cx, |this, cx| {
+                    if this.local.generation == generation
+                        && this.local.path.as_ref() == Some(&path)
+                    {
+                        this.load_local(path.clone(), cx);
+                    }
+                });
+            },
+        );
+    }
     fn new(
         workspace: Entity<Workspace>,
         session: Option<SessionContext>,
@@ -155,28 +172,7 @@ impl FilesPanel {
                     .timer(Duration::from_millis(150))
                     .await;
                 if this
-                    .update_in(cx, |this, window, cx| {
-                        let statistics = this.local.progress.lock().clone();
-                        if statistics != this.local.statistics {
-                            if statistics.complete && statistics.inaccessible > 0 && !this.statistics_reported {
-                                this.statistics_reported = true;
-                                if let Some(path) = this.local.path.clone() {
-                                    let message = statistics.errors.first().cloned().unwrap_or_else(|| format!("{} paths could not be scanned; folder size is partial.", statistics.inaccessible));
-                                    let generation = this.local.generation;
-                                    let panel = cx.entity().downgrade();
-                                    nocterm_ui::notice::warning_action(window, cx, "files-partial-statistics", "Folder size is partial", message, "Recalculate", move |_, cx| {
-                                        let _ = panel.update(cx, |this, cx| {
-                                            if this.local.generation == generation && this.local.path.as_ref() == Some(&path) {
-                                                this.load_local(path.clone(), cx);
-                                            }
-                                        });
-                                    });
-                                }
-                            }
-                            this.local.statistics = statistics;
-                            cx.notify();
-                        }
-                    })
+                    .update_in(cx, |this, window, cx| this.poll_statistics(window, cx))
                     .is_err()
                 {
                     break;
@@ -191,6 +187,7 @@ impl FilesPanel {
             remote_selected: BTreeSet::new(),
             remote_anchor: None,
             local: LocalBrowser::default(),
+            remote_counter: statistics::Counter::default(),
             workspace: workspace.downgrade(),
             divider: cx.new(|_| ResizableState::default()),
             collisions: CollisionPolicy::Skip,
@@ -215,6 +212,7 @@ impl FilesPanel {
         self.remote_selected.clear();
         self.remote_anchor = None;
         self.remote_task = None;
+        self.remote_counter.set(Default::default());
         if self.filesystem().is_some() {
             self.load(None, cx);
         }
@@ -313,9 +311,12 @@ impl FilesPanel {
         cx.notify();
     }
 }
-impl Drop for FilesPanel {
-    fn drop(&mut self) {
-        self.local.cancel.store(true, Ordering::Release);
+/// The user's indexing settings; the defaults where none are installed.
+fn indexing(cx: &App) -> nocterm_settings::IndexingSettings {
+    if cx.has_global::<nocterm_ui::SettingsStore>() {
+        cx.settings().explorer.indexing.clone()
+    } else {
+        Default::default()
     }
 }
 impl Focusable for FilesPanel {

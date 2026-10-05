@@ -3,18 +3,14 @@ use super::*;
 
 impl FilesPanel {
     pub(super) fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
-        self.local.cancel.store(true, Ordering::Release);
-        self.local.cancel = Arc::new(AtomicBool::new(false));
+        let (cancel, progress) = self.local.counter.restart();
         self.local.generation = self.local.generation.wrapping_add(1);
         let generation = self.local.generation;
         self.local.loading = true;
         self.local.error = None;
         self.local.requested = Some(directory.clone());
-        let cancel = self.local.cancel.clone();
-        let progress = Arc::new(Mutex::new(local::Statistics::default()));
-        self.local.progress = progress.clone();
-        self.local.statistics = Default::default();
         self.statistics_reported = false;
+        let indexing = indexing(cx);
         cx.notify();
         let window = self.window;
         self.local_task = Some(cx.spawn(async move |this, cx| {
@@ -30,8 +26,17 @@ impl FilesPanel {
                         return None;
                     }
                     this.local.loading = false;
+                    let mut walk = false;
                     match result {
                         Ok(entries) => {
+                            let home = local::home();
+                            match statistics::local_skip(&directory, home.as_deref(), &indexing) {
+                                Some(skip) => this.local.counter.set(statistics::shallow(
+                                    entries.iter().map(|entry| entry.kind),
+                                    skip,
+                                )),
+                                None => walk = true,
+                            }
                             this.local.path = Some(directory.clone());
                             this.local.entries = entries;
                             this.local.selected.clear();
@@ -40,19 +45,21 @@ impl FilesPanel {
                         Err(error) => this.local.error = Some(error),
                     }
                     cx.notify();
-                    Some(this.local.error.clone())
+                    Some(this.local.error.clone().ok_or(walk))
                 })
                 .ok()
                 .flatten();
             match outcome {
-                Some(None) => {
+                Some(Err(true)) => {
+                    let policy = statistics::Policy::local(&indexing);
                     cx.background_executor()
                         .spawn(async move {
-                            local::scan(directory, cancel, progress);
+                            local::scan(directory, &policy, cancel, progress);
                         })
                         .await;
                 }
-                Some(Some(error)) => {
+                Some(Err(false)) => {}
+                Some(Ok(error)) => {
                     let panel = this.clone();
                     let _ = window.update(cx, |_, window, cx| {
                         nocterm_ui::notice::error_action(
@@ -227,19 +234,7 @@ impl FilesPanel {
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).local_terminal_cwd(cx));
-        let s = &self.local.statistics;
-        let information = format!(
-            "{} files · {} folders · {}{}{}",
-            s.files,
-            s.directories,
-            local::bytes(s.bytes),
-            if s.complete { "" } else { " · calculating…" },
-            if s.inaccessible > 0 {
-                " · incomplete"
-            } else {
-                ""
-            }
-        );
+        let information = statistics::summary(&self.local.counter.shown);
         v_flex()
             .id("local-browser")
             .size_full()

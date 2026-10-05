@@ -11,6 +11,7 @@ layer = "feature"
 
 [dependencies]
 nocterm-session.workspace = true
+nocterm-settings.workspace = true
 nocterm-transfers.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
