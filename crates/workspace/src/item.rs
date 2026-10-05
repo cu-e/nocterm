@@ -4,7 +4,7 @@ use gpui_kit::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Window,
 };
-use nocterm_session::{RemoteFs, Target};
+use nocterm_session::{HostExec, RemoteFs, Target};
 use nocterm_ui::IconName;
 
 /// Feature commands shared by menus, shortcuts and future command palettes.
@@ -90,21 +90,43 @@ pub struct SessionContext {
     pub target: Target,
     /// The host's file system, when the transport offers one.
     pub fs: Option<Arc<dyn RemoteFs>>,
+    /// Runs programs on the host, when the transport can.
+    pub exec: Option<Arc<dyn HostExec>>,
     /// Whether the session is up. A disconnected session keeps its context,
     /// so views can show what they showed before, greyed out.
     pub connected: bool,
 }
 
 impl SessionContext {
+    pub fn new(target: Target, fs: Option<Arc<dyn RemoteFs>>, connected: bool) -> Self {
+        Self {
+            target,
+            fs,
+            exec: None,
+            connected,
+        }
+    }
+
+    /// The same context, with the host's program runner.
+    pub fn with_exec(mut self, exec: Option<Arc<dyn HostExec>>) -> Self {
+        self.exec = exec;
+        self
+    }
+
     /// Whether two contexts are the same session in the same state.
     pub fn same_as(&self, other: &Self) -> bool {
         self.target == other.target
             && self.connected == other.connected
-            && match (&self.fs, &other.fs) {
-                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-                (None, None) => true,
-                _ => false,
-            }
+            && same_handle(&self.fs, &other.fs)
+            && same_handle(&self.exec, &other.exec)
+    }
+}
+
+fn same_handle<T: ?Sized>(left: &Option<Arc<T>>, right: &Option<Arc<T>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+        (None, None) => true,
+        _ => false,
     }
 }
 

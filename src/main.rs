@@ -78,6 +78,7 @@ fn main() -> anyhow::Result<()> {
                 cx,
             );
             nocterm_connections::init(Some(&paths), cx);
+            nocterm_monitor_ui::init(Arc::new(nocterm_local::LocalExec), cx);
             nocterm_agent::init(
                 nocterm_agent::AgentServices {
                     connector: Arc::new(nocterm_acp::AcpConnector),
@@ -168,6 +169,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, window, cx);
+            nocterm_monitor_ui::register(&mut workspace, window, cx);
             nocterm_agent::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);
             if vault_ready && cx.settings().vault.prompt_on_startup {
@@ -183,7 +185,10 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
 }
 
 fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
-    let mut pages = vec![nocterm_keymap_ui::settings_page()];
+    let mut pages = vec![
+        nocterm_keymap_ui::settings_page(),
+        nocterm_monitor_ui::settings_page(),
+    ];
     if vault_ready {
         pages.push(nocterm_vault_ui::settings_page());
     }
@@ -209,6 +214,7 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
     open_on::<OpenAiSettings>(workspace, "ai", &pages);
     open_on::<OpenSSHSettings>(workspace, "ssh", &pages);
     open_on::<OpenKeymap>(workspace, "keymap", &pages);
+    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages);
     if vault_ready {
         open_on::<OpenVault>(workspace, "vault", &pages);
     }

@@ -61,6 +61,9 @@ gpui_kit::assets::icon_assets!(
         Pin,
         PinOff,
         GitFork,
+        // The host monitor.
+        Activity,
+        Thermometer,
     ]
 );
 

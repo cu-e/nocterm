@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-local"
-description = "Portable local PTY session adapter."
+description = "Portable local PTY session and program adapter."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true

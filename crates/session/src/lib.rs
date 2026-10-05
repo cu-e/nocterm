@@ -6,12 +6,14 @@
 //! crate depends on one: the UI works the same over SSH, a local shell or a
 //! scripted fake in a test.
 
+pub mod exec;
 pub mod fs;
 mod launch;
 mod secret;
 mod session;
 mod target;
 
+pub use exec::{ExecError, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use secret::Secret;
 pub use session::{

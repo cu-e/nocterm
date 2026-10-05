@@ -16,6 +16,7 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `connections::ToggleServers` | Show the saved servers in the sidebar, or hide the sidebar if it shows them. | `ctrl-shift-c` (linux, windows; Workspace); `cmd-shift-c` (macos; Workspace) |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
+| `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |
 | `terminal::Paste` | Paste the clipboard into the terminal. | `ctrl-shift-v` (linux, windows; Terminal); `shift-insert` (linux, windows; Terminal); `cmd-v` (macos; Terminal) |
 | `terminal::Reconnect` | Reconnect this tab using its next-launch options. | `ctrl-shift-r` (linux, windows; Terminal); `cmd-r` (macos; Terminal) |

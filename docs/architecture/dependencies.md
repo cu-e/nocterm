@@ -6,7 +6,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
@@ -17,7 +17,9 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-files` | feature | `nocterm-session`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Keymap settings page: search, rebind and reset key bindings. |
-| `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session adapter. |
+| `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session and program adapter. |
+| `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
+| `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: their schema and their file. |
 | `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-settings`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
@@ -46,6 +48,7 @@ graph TD
     nocterm --> nocterm_keymap
     nocterm --> nocterm_keymap_ui
     nocterm --> nocterm_local
+    nocterm --> nocterm_monitor_ui
     nocterm --> nocterm_session
     nocterm --> nocterm_settings
     nocterm --> nocterm_settings_ui
@@ -81,6 +84,13 @@ graph TD
     nocterm_keymap_ui --> nocterm_ui
     nocterm_keymap_ui --> nocterm_workspace
     nocterm_local --> nocterm_session
+    nocterm_monitor --> nocterm_session
+    nocterm_monitor --> nocterm_settings
+    nocterm_monitor_ui --> nocterm_monitor
+    nocterm_monitor_ui --> nocterm_session
+    nocterm_monitor_ui --> nocterm_settings
+    nocterm_monitor_ui --> nocterm_ui
+    nocterm_monitor_ui --> nocterm_workspace
     nocterm_session --> nocterm_settings
     nocterm_settings --> nocterm_core
     nocterm_settings_ui --> nocterm_ai

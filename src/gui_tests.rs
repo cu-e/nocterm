@@ -126,6 +126,7 @@ fn fixture_with_vault(
                     nocterm_connections::register(&mut workspace, window, cx);
                     super::register_settings(&mut workspace, vault_ready);
                     nocterm_files::register(&mut workspace, window, cx);
+                    nocterm_monitor_ui::register(&mut workspace, window, cx);
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
                     if vault_ready && cx.settings().vault.prompt_on_startup {

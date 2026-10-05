@@ -1,7 +1,7 @@
 //! The window's frame around the tabs: the title bar, the body's columns,
 //! the sidebar and the footer.
 use gpui_kit::{
-    Action as _, Anchor, AnyElement, Context, MouseButton, TestSupportExt as _, Window,
+    Action as _, Anchor, AnyElement, Context, Entity, MouseButton, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
@@ -20,7 +20,34 @@ use super::{
 };
 use crate::NewTab;
 
+/// Which end of the footer a feature's status view sits at.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum StatusSide {
+    Leading,
+    Trailing,
+}
+
 impl Workspace {
+    /// A feature-owned compact status view, visible even while the sidebar is hidden.
+    pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
+        self.status_views.push((StatusSide::Trailing, view.into()));
+        cx.notify();
+    }
+
+    /// A feature-owned status view at the start of the footer, after the
+    /// sidebar's panel buttons: room for what describes the active host.
+    pub fn add_leading_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
+        self.status_views.push((StatusSide::Leading, view.into()));
+        cx.notify();
+    }
+
+    fn status_views(&self, side: StatusSide) -> impl Iterator<Item = gpui_kit::AnyView> + '_ {
+        self.status_views
+            .iter()
+            .filter(move |(at, _)| *at == side)
+            .map(|(_, view)| view.clone())
+    }
+
     /// The sidebar, the tabs and the side panel, in the user's order.
     pub(super) fn render_body(
         &mut self,
@@ -188,9 +215,10 @@ impl Workspace {
                             }
                         }))
                 }))
+                .children(self.status_views(StatusSide::Leading))
                 .child(div().flex_1())
                 .child(nocterm_ui::notice::NoticeBar::new())
-                .children(self.status_views.iter().cloned())
+                .children(self.status_views(StatusSide::Trailing))
                 .child(
                     Button::new("toggle-local-terminal")
                         .ghost()
