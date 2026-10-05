@@ -131,6 +131,13 @@ impl Profiles {
             .iter()
             .position(|profile| profile.id == id)
             .ok_or("Connection no longer exists")?;
+        if before == Some(id) {
+            // Dropped on its own row: it stays where it is.
+            self.remember_group(self.list[ix].group.clone().as_deref());
+            self.remember_group(group.as_deref());
+            self.list[ix].group = group;
+            return Ok(());
+        }
         let mut profile = self.list.remove(ix);
         self.remember_group(profile.group.as_deref());
         self.remember_group(group.as_deref());
@@ -716,6 +723,16 @@ mod tests {
         assert_eq!(names(&profiles, Some("Work")), ["a", "c"]);
         profiles.place(a.id, Some("Work".into()), None).unwrap();
         assert_eq!(names(&profiles, Some("Work")), ["c", "a"]);
+        profiles.place(b.id, None, Some(b.id)).unwrap();
+        assert_eq!(names(&profiles, Some("Work")), ["c", "a"]);
+        profiles
+            .place(a.id, Some("Work".into()), Some(a.id))
+            .unwrap();
+        assert_eq!(
+            names(&profiles, Some("Work")),
+            ["c", "a"],
+            "dropped on itself"
+        );
         profiles.place(a.id, None, Some(a.id)).unwrap();
         assert_eq!(names(&profiles, None), ["b", "a"]);
         assert!(
