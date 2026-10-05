@@ -5,6 +5,8 @@ use std::sync::Arc;
 pub(crate) struct Browser {
     pub(crate) generation: u64,
     pub(crate) path: Option<String>,
+    /// The session's home directory, once a listing resolved it.
+    pub(crate) home: Option<String>,
     pub(crate) entries: Vec<DirEntry>,
     pub(crate) loading: bool,
     pub(crate) error: Option<FsError>,
@@ -21,6 +23,7 @@ impl Browser {
     pub(crate) fn clear(&mut self) {
         self.begin();
         self.path = None;
+        self.home = None;
         self.entries.clear();
         self.loading = false;
     }

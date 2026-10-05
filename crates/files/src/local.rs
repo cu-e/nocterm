@@ -1,5 +1,7 @@
 //! Local browsing and cancellable logical-byte statistics. No shell parsing.
 
+use crate::statistics::{MAX_SCAN_DEPTH, Policy, record_error};
+pub(crate) use crate::statistics::{Statistics, bytes};
 use nocterm_session::EntryKind;
 use parking_lot::Mutex;
 use std::{
@@ -20,27 +22,16 @@ pub(crate) struct LocalEntry {
     pub symlink: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Statistics {
-    pub files: u64,
-    pub directories: u64,
-    pub bytes: u64,
-    pub complete: bool,
-    pub inaccessible: u64,
-    pub errors: Vec<String>,
-}
 pub(crate) fn home() -> Option<PathBuf> {
     directories::UserDirs::new().map(|d| d.home_dir().to_owned())
 }
 pub(crate) const MAX_DIRECTORY_ENTRIES: usize = 100_000;
 pub(crate) const MAX_DIRECTORY_NAME_BYTES: usize = 8 * 1024 * 1024;
-const MAX_SCAN_DEPTH: usize = 256;
-const MAX_SCAN_ENTRIES: usize = 1_000_000;
 
 pub(crate) fn read_directory(path: &Path, cancel: &AtomicBool) -> Result<Vec<LocalEntry>, String> {
     let mut entries = Vec::new();
     let mut name_bytes = 0usize;
-    for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(path).map_err(|e| format!("{}: {e}", path.display()))? {
         if cancel.load(Ordering::Acquire) {
             return Err("Directory reading cancelled.".into());
         }
@@ -79,18 +70,28 @@ pub(crate) fn read_directory(path: &Path, cancel: &AtomicBool) -> Result<Vec<Loc
     });
     Ok(entries)
 }
-pub(crate) fn scan(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statistics>>) {
+pub(crate) fn scan(
+    path: PathBuf,
+    policy: &Policy,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<Mutex<Statistics>>,
+) {
     #[cfg(unix)]
     {
-        scan_unix(path, cancel, progress);
+        scan_unix(path, policy, cancel, progress);
     }
     #[cfg(not(unix))]
     {
-        scan_portable(path, cancel, progress);
+        scan_portable(path, policy, cancel, progress);
     }
 }
 #[cfg(not(unix))]
-fn scan_portable(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statistics>>) {
+fn scan_portable(
+    path: PathBuf,
+    policy: &Policy,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<Mutex<Statistics>>,
+) {
     let mut result = Statistics::default();
     let mut stack = match fs::read_dir(&path) {
         Ok(dir) => vec![(dir, true)],
@@ -109,12 +110,8 @@ fn scan_portable(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Sta
             return;
         }
         visited += 1;
-        if visited > MAX_SCAN_ENTRIES {
-            record_error(
-                &mut result,
-                "Folder statistics stopped at the 1,000,000 entry limit; the size is partial."
-                    .into(),
-            );
+        if visited > policy.max_entries {
+            record_error(&mut result, policy.limit_message());
             break;
         }
         let immediate = *immediate;
@@ -142,6 +139,14 @@ fn scan_portable(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Sta
                 if immediate {
                     result.directories += 1;
                 }
+                if !entry
+                    .file_name()
+                    .to_str()
+                    .is_none_or(|name| policy.enters(name))
+                {
+                    result.excluded += 1;
+                    continue;
+                }
                 match fs::read_dir(&path) {
                     Ok(dir) if stack.len() < MAX_SCAN_DEPTH => stack.push((dir, false)),
                     Ok(_) => record_error(&mut result, "Folder statistics skipped a subtree deeper than 256 levels; the size is partial.".into()),
@@ -160,7 +165,12 @@ fn scan_portable(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Sta
     *progress.lock() = result;
 }
 #[cfg(unix)]
-fn scan_unix(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statistics>>) {
+fn scan_unix(
+    path: PathBuf,
+    policy: &Policy,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<Mutex<Statistics>>,
+) {
     use super::local_operations::unix::ScanDirectory;
     let mut result = Statistics::default();
     let root = match ScanDirectory::open(&path) {
@@ -185,12 +195,8 @@ fn scan_unix(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statist
             continue;
         };
         visited += 1;
-        if visited > MAX_SCAN_ENTRIES {
-            record_error(
-                &mut result,
-                "Folder statistics stopped at the 1,000,000 entry limit; the size is partial."
-                    .into(),
-            );
+        if visited > policy.max_entries {
+            record_error(&mut result, policy.limit_message());
             break;
         }
         let name = match entry {
@@ -221,6 +227,10 @@ fn scan_unix(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statist
                 if immediate {
                     result.directories += 1;
                 }
+                if !name.to_str().is_none_or(|name| policy.enters(name)) {
+                    result.excluded += 1;
+                    continue;
+                }
                 let child = directory.child(&name);
                 if stack.len() >= MAX_SCAN_DEPTH {
                     record_error(&mut result, "Folder statistics skipped a subtree deeper than 256 levels; the size is partial.".into());
@@ -242,28 +252,30 @@ fn scan_unix(path: PathBuf, cancel: Arc<AtomicBool>, progress: Arc<Mutex<Statist
     *progress.lock() = result;
 }
 
-fn record_error(result: &mut Statistics, error: String) {
-    result.inaccessible += 1;
-    if result.errors.len() < 12 {
-        result.errors.push(error);
-    }
-}
-pub(crate) fn bytes(value: u64) -> String {
-    let (unit, scale) = if value >= 1 << 30 {
-        ("GiB", (1u64 << 30) as f64)
-    } else if value >= 1 << 20 {
-        ("MiB", (1u64 << 20) as f64)
-    } else if value >= 1 << 10 {
-        ("KiB", (1u64 << 10) as f64)
-    } else {
-        return format!("{value} B");
-    };
-    format!("{:.1} {unit}", value as f64 / scale)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn policy() -> Policy {
+        Policy::local(&nocterm_settings::IndexingSettings::default())
+    }
+    #[test]
+    fn excluded_folders_are_counted_but_not_entered() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("node_modules/pkg/big"), [0u8; 4096]).unwrap();
+        fs::write(dir.path().join("src/main.rs"), b"fn main(){}").unwrap();
+        let progress = Arc::new(Mutex::new(Statistics::default()));
+        scan(
+            dir.path().into(),
+            &policy(),
+            Arc::new(AtomicBool::new(false)),
+            progress.clone(),
+        );
+        let s = progress.lock();
+        assert_eq!((s.directories, s.bytes, s.excluded), (2, 11, 1));
+        assert!(s.complete);
+    }
     #[test]
     fn counts_immediate_children_but_sizes_nested_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -275,6 +287,7 @@ mod tests {
         let progress = Arc::new(Mutex::new(Statistics::default()));
         scan(
             dir.path().into(),
+            &policy(),
             Arc::new(AtomicBool::new(false)),
             progress.clone(),
         );
@@ -288,10 +301,18 @@ mod tests {
         let progress = Arc::new(Mutex::new(Statistics::default()));
         scan(
             dir.path().into(),
+            &policy(),
             Arc::new(AtomicBool::new(true)),
             progress.clone(),
         );
         assert!(!progress.lock().complete);
+    }
+    #[test]
+    fn a_missing_directory_is_named_in_the_error() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("gone%");
+        let error = read_directory(&missing, &AtomicBool::new(false)).unwrap_err();
+        assert!(error.starts_with(&missing.display().to_string()), "{error}");
     }
     #[test]
     fn directory_read_obeys_cancellation_and_cached_case_order() {
@@ -325,6 +346,7 @@ mod tests {
         let progress = Arc::new(Mutex::new(Statistics::default()));
         scan(
             root.path().into(),
+            &policy(),
             Arc::new(AtomicBool::new(false)),
             progress.clone(),
         );

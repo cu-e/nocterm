@@ -50,6 +50,12 @@ pub trait Item: Render + Focusable + EventEmitter<ItemEvent> {
         None
     }
 
+    /// How this tab's remote session was opened, so the workspace can open
+    /// another one on the same host, signing in the same way.
+    fn session_spec(&self, _cx: &App) -> Option<crate::SessionSpec> {
+        None
+    }
+
     fn command_enabled(&self, _command: ItemCommand, _cx: &App) -> bool {
         false
     }
@@ -139,6 +145,7 @@ pub trait ItemHandle: 'static {
     fn tab_icon(&self, cx: &App) -> IconName;
     fn tab_state(&self, cx: &App) -> TabState;
     fn session(&self, cx: &App) -> Option<SessionContext>;
+    fn session_spec(&self, cx: &App) -> Option<crate::SessionSpec>;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn close(&self, window: &mut Window, cx: &mut App);
     fn command_enabled(&self, command: ItemCommand, cx: &App) -> bool;
@@ -171,6 +178,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn session(&self, cx: &App) -> Option<SessionContext> {
         self.read(cx).session(cx)
+    }
+
+    fn session_spec(&self, cx: &App) -> Option<crate::SessionSpec> {
+        self.read(cx).session_spec(cx)
     }
 
     fn focus_handle(&self, cx: &App) -> FocusHandle {

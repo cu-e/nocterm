@@ -6,7 +6,8 @@ fi
 [[ -f "${ZDOTDIR:-$HOME}/.zshrc" ]] && source "${ZDOTDIR:-$HOME}/.zshrc"
 autoload -Uz add-zsh-hook
 __nocterm_prompt() {
-  local p="$PWD"; p="${p//%/%25}"; p="${p// /%20}"
+  # Escape %: unescaped, zsh reads a leading % as "match at the end".
+  local p="$PWD"; p="${p//\%/%25}"; p="${p// /%20}"
   printf '\033]7;file://localhost%s\007\033]133;A\007' "$p"
 }
 __nocterm_preexec() { printf '\033]133;C\007'; }

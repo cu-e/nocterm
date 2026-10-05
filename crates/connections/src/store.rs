@@ -117,6 +117,39 @@ impl Profiles {
         }
     }
 
+    /// Files the profile under `group` and places it just before `before`,
+    /// or at the end when `before` is absent, the profile itself or gone.
+    /// The list order is the order the sidebar shows.
+    pub fn place(
+        &mut self,
+        id: ProfileId,
+        group: Option<String>,
+        before: Option<ProfileId>,
+    ) -> Result<(), &'static str> {
+        let ix = self
+            .list
+            .iter()
+            .position(|profile| profile.id == id)
+            .ok_or("Connection no longer exists")?;
+        if before == Some(id) {
+            // Dropped on its own row: it stays where it is.
+            self.remember_group(self.list[ix].group.clone().as_deref());
+            self.remember_group(group.as_deref());
+            self.list[ix].group = group;
+            return Ok(());
+        }
+        let mut profile = self.list.remove(ix);
+        self.remember_group(profile.group.as_deref());
+        self.remember_group(group.as_deref());
+        profile.group = group;
+        let at = before
+            .filter(|before| *before != id)
+            .and_then(|before| self.list.iter().position(|p| p.id == before))
+            .unwrap_or(self.list.len());
+        self.list.insert(at, profile);
+        Ok(())
+    }
+
     pub fn remove(&mut self, id: ProfileId) -> Option<Profile> {
         let ix = self.list.iter().position(|profile| profile.id == id)?;
         let profile = self.list.remove(ix);
@@ -197,7 +230,8 @@ impl Profiles {
         groups
     }
 
-    /// Group and filter once, rather than rescanning every profile for every folder.
+    /// Group and filter once, rather than rescanning every profile for every
+    /// folder. Members keep the user's order, which drag and drop changes.
     pub fn grouped(&self, filter: &str) -> (Vec<&Profile>, Vec<(String, Vec<&Profile>)>) {
         let filter = filter.trim().to_lowercase();
         let mut groups: Vec<_> = self
@@ -221,11 +255,6 @@ impl Profiles {
                 top.push(profile);
             }
         }
-        top.sort_by_cached_key(|profile| (profile.name.to_lowercase(), profile.name.as_str()));
-        for (_, members) in &mut groups {
-            members
-                .sort_by_cached_key(|profile| (profile.name.to_lowercase(), profile.name.as_str()));
-        }
         if !filter.is_empty() {
             groups.retain(|(_, members)| !members.is_empty());
         }
@@ -233,15 +262,12 @@ impl Profiles {
     }
 
     /// The profiles filed under `group` (`None`: at the top level) that match
-    /// `filter`, sorted by name.
+    /// `filter`, in the user's order.
     pub fn in_group<'a>(&'a self, group: Option<&str>, filter: &str) -> Vec<&'a Profile> {
-        let mut profiles: Vec<&Profile> = self
-            .list
+        self.list
             .iter()
             .filter(|profile| profile.group.as_deref() == group && profile.matches(filter))
-            .collect();
-        profiles.sort_by_key(|profile| profile.name.to_lowercase());
-        profiles
+            .collect()
     }
 }
 
@@ -612,7 +638,11 @@ mod tests {
                 .map(|profile| profile.name.clone())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(names(Some("work"), ""), ["api", "web"]);
+        assert_eq!(
+            names(Some("work"), ""),
+            ["web", "api"],
+            "in the user's order"
+        );
         assert_eq!(names(Some("work"), "WEB"), ["web"]);
         assert_eq!(names(None, ""), ["Pi"]);
         assert_eq!(names(None, "example"), Vec::<String>::new());
@@ -669,7 +699,50 @@ mod tests {
         assert_eq!(toml::from_str::<Recents>(&text).unwrap(), recents);
     }
     #[test]
-    fn one_pass_grouped_view_preserves_folders_filters_and_case_order() {
+    fn placing_reorders_within_and_across_folders() {
+        let mut profiles = Profiles::default();
+        let a = profile("a", "a.host", None);
+        let b = profile("b", "b.host", None);
+        let c = profile("c", "c.host", Some("Work"));
+        for p in [&a, &b, &c] {
+            profiles.upsert(p.clone());
+        }
+        let names = |profiles: &Profiles, group: Option<&str>| {
+            profiles
+                .in_group(group, "")
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+        };
+        profiles.place(b.id, None, Some(a.id)).unwrap();
+        assert_eq!(names(&profiles, None), ["b", "a"]);
+        profiles
+            .place(a.id, Some("Work".into()), Some(c.id))
+            .unwrap();
+        assert_eq!(names(&profiles, None), ["b"]);
+        assert_eq!(names(&profiles, Some("Work")), ["a", "c"]);
+        profiles.place(a.id, Some("Work".into()), None).unwrap();
+        assert_eq!(names(&profiles, Some("Work")), ["c", "a"]);
+        profiles.place(b.id, None, Some(b.id)).unwrap();
+        assert_eq!(names(&profiles, Some("Work")), ["c", "a"]);
+        profiles
+            .place(a.id, Some("Work".into()), Some(a.id))
+            .unwrap();
+        assert_eq!(
+            names(&profiles, Some("Work")),
+            ["c", "a"],
+            "dropped on itself"
+        );
+        profiles.place(a.id, None, Some(a.id)).unwrap();
+        assert_eq!(names(&profiles, None), ["b", "a"]);
+        assert!(
+            profiles.has_group("Work"),
+            "an emptied folder is remembered"
+        );
+        assert!(profiles.place(ProfileId::generate(), None, None).is_err());
+    }
+    #[test]
+    fn one_pass_grouped_view_preserves_folders_filters_and_user_order() {
         let mut profiles = Profiles::default();
         let saved = profile("Archived", "old.host", Some("Empty"));
         profiles.upsert(saved.clone());
@@ -696,7 +769,7 @@ mod tests {
                 .iter()
                 .map(|p| p.name.as_str())
                 .collect::<Vec<_>>(),
-            ["Alpha", "beta"]
+            ["beta", "Alpha"]
         );
         let (top, groups) = profiles.grouped(" BUILD ");
         assert!(top.is_empty());

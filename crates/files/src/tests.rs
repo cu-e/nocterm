@@ -1087,6 +1087,8 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
     wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
 }
 
+#[path = "listing_ui_tests.rs"]
+mod listing_ui;
 #[path = "operations_ui_tests.rs"]
 mod operations_ui;
 
@@ -1120,108 +1122,4 @@ fn custom_remote_adapter_cannot_deliver_an_unbounded_explorer_listing() {
                 .contains("Explorer listing limit")
         );
     }
-}
-
-#[gpui_kit::test]
-fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navigate(
-    cx: &mut TestAppContext,
-) {
-    use {gpui_kit::test::TestWindowExt as _, nocterm_ui::notice};
-    let source = tempfile::tempdir().unwrap();
-    let current = tempfile::tempdir().unwrap();
-    let (handle, _, _, panel) = panel_fixture(cx, Arc::new(PendingFs::default()));
-    panel.update(cx, |panel, _| {
-        panel.local.path = Some(source.path().into());
-        panel.local.requested = panel.local.path.clone();
-        *panel.local.progress.lock() = local::Statistics {
-            complete: true,
-            inaccessible: 1,
-            errors: vec!["Permission denied; size is partial.".into()],
-            ..Default::default()
-        };
-    });
-    cx.executor().advance_clock(Duration::from_millis(200));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(
-            nocterm_ui::notice::count(window, cx),
-            1,
-            "hidden Panel still publishes warning"
-        );
-        assert!(
-            window.try_find("local-browser").is_none(),
-            "Explorer is not rendered in fixture"
-        );
-    })
-    .unwrap();
-    panel.update(cx, |panel, _| panel.local.progress.lock().inaccessible = 2);
-    cx.executor().advance_clock(Duration::from_millis(200));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(
-            nocterm_ui::notice::count(window, cx),
-            1,
-            "same scan emits one warning"
-        );
-        panel.update(cx, |panel, cx| panel.load_local(current.path().into(), cx));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(notice::run_action(window, cx, "files-partial-statistics"));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.requested.as_deref(), Some(current.path()));
-        assert_eq!(
-            panel.local.path.as_deref(),
-            Some(current.path()),
-            "stale Recalculate cannot restore an old folder"
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn local_listing_failure_posts_deduplicated_retry_for_the_requested_directory(
-    cx: &mut TestAppContext,
-) {
-    use {gpui_kit::test::TestWindowExt as _, nocterm_ui::notice};
-    let directory = tempfile::tempdir().unwrap();
-    let requested = directory.path().join("missing");
-    let (handle, _, _, panel) = panel_fixture(cx, Arc::new(PendingFs::default()));
-    panel.update(cx, |panel, cx| panel.load_local(requested.clone(), cx));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
-        window.render_frame(cx);
-    })
-    .unwrap();
-    panel.update(cx, |panel, cx| panel.load_local(requested.clone(), cx));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(
-            nocterm_ui::notice::count(window, cx),
-            1,
-            "same operation replaces its notice"
-        );
-    })
-    .unwrap();
-    std::fs::create_dir(&requested).unwrap();
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(notice::run_action(window, cx, "files-local-list"));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path.as_ref(), Some(&requested));
-        assert!(panel.local.error.is_none());
-    });
 }

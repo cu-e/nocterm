@@ -188,6 +188,7 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
     let mut pages = vec![
         nocterm_keymap_ui::settings_page(),
         nocterm_monitor_ui::settings_page(),
+        nocterm_files::settings_page(),
     ];
     if vault_ready {
         pages.push(nocterm_vault_ui::settings_page());
@@ -215,6 +216,7 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
     open_on::<OpenSSHSettings>(workspace, "ssh", &pages);
     open_on::<OpenKeymap>(workspace, "keymap", &pages);
     open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages);
+    open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages);
     if vault_ready {
         open_on::<OpenVault>(workspace, "vault", &pages);
     }

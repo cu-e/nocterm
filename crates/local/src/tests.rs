@@ -281,9 +281,11 @@ fn zsh_and_fish_integration_keep_cwd_and_prompt_markers() {
             }
         }
         assert!(
-            String::from_utf8_lossy(&out)
-                .contains(&format!("file://localhost{}", directory.path().display())),
-            "{executable}: {}",
+            String::from_utf8_lossy(&out).contains(&format!(
+                "file://localhost{}\x07",
+                directory.path().display()
+            )),
+            "{executable} must report the directory exactly: {}",
             String::from_utf8_lossy(&out)
         );
         session.input(b"printf 'integration-zf-ok\\n'\r".to_vec());

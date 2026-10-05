@@ -40,6 +40,8 @@ pub struct Settings {
     pub ai: crate::AiSettings,
     /// The active host's resources in the status bar.
     pub monitor: crate::MonitorSettings,
+    /// The Explorer: folder statistics and the programs that open files.
+    pub explorer: crate::ExplorerSettings,
 }
 
 /// How the interface looks.
@@ -281,6 +283,7 @@ impl Settings {
         self.vault.auto_lock_minutes = self.vault.auto_lock_minutes.clamp(1, 1440);
         self.ai.sanitize();
         self.monitor.sanitize();
+        self.explorer.sanitize();
         self
     }
 }
