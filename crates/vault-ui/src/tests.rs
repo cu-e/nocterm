@@ -398,3 +398,40 @@ fn unlock_dialog_offers_and_accepts_an_enabled_fingerprint(cx: &mut TestAppConte
     assert!(service.is_unlocked());
     cx.update(|cx| assert!(!prompt.read(cx).scanning && prompt.read(cx).error.is_none()));
 }
+
+#[gpui_kit::test]
+fn enter_in_the_unlock_dialog_submits_the_password_and_keeps_errors_visible(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let (handle, _, service) = setup(cx, directory.path().join("vault"));
+    block_on(service.create(Secret::new("portable master password"))).unwrap();
+    service.lock();
+    cx.update_window(handle, |_, window, cx| {
+        crate::unlock::open(window, cx);
+        window.render_frame(cx);
+        assert!(window.find("vault-unlock-prompt").visible());
+    })
+    .unwrap();
+    // A wrong password leaves the dialog open with its error.
+    cx.simulate_input(handle, "wrong master password");
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    drain(&service, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("vault-unlock-prompt").visible());
+    })
+    .unwrap();
+    assert!(!service.is_unlocked());
+    cx.simulate_input(handle, "portable master password");
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    drain(&service, cx);
+    assert!(service.is_unlocked());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("vault-unlock-prompt").is_none());
+    })
+    .unwrap();
+}
