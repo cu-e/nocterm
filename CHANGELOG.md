@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/cu-e/nocterm/compare/v1.3.0...v1.4.0) (2026-10-05)
+
+
+### Features
+
+* **workspace:** add floating card layout with pill tabs ([ccf1f92](https://github.com/cu-e/nocterm/commit/ccf1f920e456ff15527817ae4b1223b44d92f5af))
+* **workspace:** add floating card layout with pill tabs ([e165ca7](https://github.com/cu-e/nocterm/commit/e165ca714d71df34e2c58eec9851725b8603dfd7))
+
+
+### Bug Fixes
+
+* **workspace:** align floating tab bar with the agent header ([20013a2](https://github.com/cu-e/nocterm/commit/20013a27c3e9b603b8a694c1387e3b843780763d))
+* **workspace:** keep card corner mask out of the scroll region ([1dee04f](https://github.com/cu-e/nocterm/commit/1dee04fcc4e086613285c291971fbe8a24ebbb37))
+
 ## [1.3.0](https://github.com/cu-e/nocterm/compare/v1.2.0...v1.3.0) (2026-10-05)
 
 
