@@ -313,29 +313,7 @@ impl Terminal {
         self.set_status(Status::Connecting(ConnectStage::Connecting), cx);
         cx.emit(TerminalEvent::Changed);
 
-        let epoch = self.connection_epoch;
-
-        self._pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(event) = session.next_event().await {
-                let alive = this.update(cx, |this, cx| {
-                    if this.connection_epoch != epoch {
-                        return false;
-                    }
-                    this.handle_event(event, cx);
-                    true
-                });
-                if !matches!(alive, Ok(true)) {
-                    return;
-                }
-            }
-            // The transport went away without saying why.
-            let _ = this.update(cx, |this, cx| {
-                if this.connection_epoch == epoch && !matches!(this.status, Status::Closed(_)) {
-                    let lost = SessionError::ConnectionLost("the transport stopped".into());
-                    this.handle_event(Event::Closed(CloseReason::Failed(lost)), cx);
-                }
-            });
-        }));
+        self.spawn_pump(session, cx);
     }
 
     /// Replaces a live connection as well as reconnecting a closed one.
@@ -441,8 +419,10 @@ impl Terminal {
                     self.send(bytes);
                 }
                 Effect::Title(title) => {
-                    self.program_title = title;
-                    cx.emit(TerminalEvent::Changed);
+                    if self.program_title != title {
+                        self.program_title = title;
+                        cx.emit(TerminalEvent::Changed);
+                    }
                 }
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
@@ -1141,6 +1121,7 @@ mod local_tests {
 }
 
 mod program;
+mod pump;
 
 #[cfg(test)]
 mod credential_tests;

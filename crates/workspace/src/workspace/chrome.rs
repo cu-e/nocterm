@@ -1,7 +1,8 @@
 //! The window's frame around the tabs: the title bar, the body's columns,
 //! the sidebar and the footer.
 use gpui_kit::{
-    Action as _, Anchor, AnyElement, Context, Entity, MouseButton, TestSupportExt as _, Window,
+    Action as _, Anchor, AnyElement, AnyView, Context, Entity, MouseButton, StyleRefinement,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
@@ -19,6 +20,13 @@ use super::{
     layout::{BodyWidths, Column},
 };
 use crate::NewTab;
+
+/// `view`, drawn again only when it notifies or the window is refreshed.
+/// Whatever redraws the workspace (each keystroke in a terminal does) would
+/// otherwise rebuild every panel beside it.
+fn cached(view: AnyView) -> impl IntoElement {
+    view.cached(StyleRefinement::default().size_full())
+}
 
 /// Which end of the footer a feature's status view sits at.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,7 +68,7 @@ impl Workspace {
                 .test_support()
                 .size_full()
                 .when_some(self.right_panel.as_ref(), |body, panel| {
-                    body.child(panel.view())
+                    body.child(cached(panel.view()))
                 })
                 .into_any_element();
         }
@@ -84,7 +92,7 @@ impl Workspace {
                             .test_support()
                             .size_full()
                             .when_some(self.right_panel.as_ref(), |body, panel| {
-                                body.child(panel.view())
+                                body.child(cached(panel.view()))
                             }),
                     ),
             });
@@ -185,7 +193,7 @@ impl Workspace {
                             .text_color(theme.muted_foreground)
                             .child(panel.title(cx).to_uppercase()),
                     )
-                    .child(div().flex_1().min_h_0().child(panel.view()))
+                    .child(div().flex_1().min_h_0().child(cached(panel.view())))
             })
             .when(panel.is_none(), |sidebar| sidebar.child(div().flex_1()))
     }

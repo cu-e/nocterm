@@ -218,6 +218,7 @@ impl AgentThread {
             .grants
             .requires_approval(&call.call, &cx.settings().ai.approval)
         {
+            self.approval_generation = self.approval_generation.wrapping_add(1);
             self.tools.push(call);
             cx.notify();
             return;

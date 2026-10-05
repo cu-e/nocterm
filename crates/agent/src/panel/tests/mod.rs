@@ -442,6 +442,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod composer;
 mod history;
+mod invalidation;
 mod lifecycle;
 mod routing;
 mod servers;

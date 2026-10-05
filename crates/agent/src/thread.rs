@@ -117,6 +117,8 @@ pub(crate) struct AgentThread {
     pub connecting_session: bool,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
+    /// Advances only when a new request needs user approval.
+    pub approval_generation: u64,
     pub context_bytes: usize,
     pub tool_bytes: usize,
     pub epoch: u64,
@@ -203,6 +205,7 @@ impl AgentThread {
             connecting_session: false,
             permissions: Vec::new(),
             tools: Vec::new(),
+            approval_generation: 0,
             context_bytes: 0,
             tool_bytes: 0,
             epoch: 0,
@@ -385,6 +388,7 @@ impl AgentThread {
             let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
             return;
         }
+        self.approval_generation = self.approval_generation.wrapping_add(1);
         self.permissions
             .push(PendingPermission { request, respond });
         cx.notify();

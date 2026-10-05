@@ -8,8 +8,21 @@ use crate::Panel;
 impl Workspace {
     /// Adds a sidebar panel, after the ones already there.
     pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        // A panel's badge sits in the footer, which the workspace draws.
-        cx.observe(&panel, |_, _, cx| cx.notify()).detach();
+        // A panel's title, icon and badge sit in the workspace's chrome; the
+        // rest of the panel redraws itself, so only a change to them counts.
+        let chrome = |panel: &Entity<T>, cx: &gpui_kit::App| {
+            let panel = panel.read(cx);
+            (panel.title(cx), panel.icon(cx), panel.badge(cx))
+        };
+        let mut shown = chrome(&panel, cx);
+        cx.observe(&panel, move |_, panel, cx| {
+            let now = chrome(&panel, cx);
+            if now != shown {
+                shown = now;
+                cx.notify();
+            }
+        })
+        .detach();
         self.panels.push(Box::new(panel));
         cx.notify();
     }
@@ -63,3 +76,6 @@ impl Workspace {
         cx.notify();
     }
 }
+
+#[cfg(test)]
+mod tests;
