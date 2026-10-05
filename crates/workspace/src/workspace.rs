@@ -24,6 +24,7 @@ use nocterm_ui::{ActiveDesign as _, IconName};
 mod background;
 mod chrome;
 mod layout;
+mod sessions;
 
 use crate::{
     CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
@@ -589,46 +590,6 @@ impl Workspace {
             });
         }
         cx.notify();
-    }
-
-    /// The latest published session behind the active central tab. Reading the
-    /// snapshot is safe even while that Item is rendering or being updated.
-    pub fn active_session(&self, _cx: &App) -> Option<SessionContext> {
-        self.announced_session.clone()
-    }
-
-    /// A connected session for an explicit destination, even when a utility
-    /// tab is active. Prefer the active matching tab, then registration order.
-    /// Uses only published snapshots and never reads a feature Item.
-    pub fn connected_session_for_target(&self, target: &Target) -> Option<SessionContext> {
-        let matches = |session: &&SessionContext| session.connected && session.target == *target;
-        self.active_item
-            .and_then(|ix| self.items.get(ix))
-            .and_then(|open| open.session.as_ref())
-            .filter(matches)
-            .or_else(|| {
-                self.items
-                    .iter()
-                    .filter_map(|open| open.session.as_ref())
-                    .find(matches)
-            })
-            .cloned()
-    }
-
-    fn announce_session(&mut self, cx: &mut Context<Self>) {
-        let session = self
-            .active_item
-            .and_then(|ix| self.items.get(ix))
-            .and_then(|open| open.session.clone());
-        let unchanged = match (&session, &self.announced_session) {
-            (Some(now), Some(before)) => now.same_as(before),
-            (None, None) => true,
-            _ => false,
-        };
-        if !unchanged {
-            self.announced_session = session;
-            cx.emit(WorkspaceEvent::ActiveSessionChanged);
-        }
     }
 
     /// Record focus without changing the toolkit's layout or stealing focus.
