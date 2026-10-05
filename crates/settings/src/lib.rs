@@ -5,6 +5,7 @@
 //! A setting left unset falls back to the matching token.
 
 mod ai;
+mod explorer;
 mod monitor;
 mod schema;
 mod session_options;
@@ -14,6 +15,10 @@ pub use session_options::{
 mod store;
 
 pub use ai::{AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode};
+pub use explorer::{
+    ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,
+    OpenSettings, Opener,
+};
 pub use monitor::{
     MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorMetric,
     MonitorSettings,
