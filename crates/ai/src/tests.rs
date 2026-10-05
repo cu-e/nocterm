@@ -223,7 +223,7 @@ fn images_reject_bombs_bad_headers_and_decode_valid_png() {
         .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
         .unwrap();
     let valid = PromptImage::validate(bytes.clone()).unwrap();
-    assert_eq!(valid.mime_type, "image/png");
+    assert_eq!(valid.mime_type(), "image/png");
     assert!(matches!(valid.content(), acp::ContentBlock::Image(_)));
     bytes[16..20].copy_from_slice(&100_000u32.to_be_bytes());
     assert!(PromptImage::validate(bytes).is_err());
@@ -331,15 +331,10 @@ fn all_supported_image_formats_validate_and_aggregate_bytes_are_bounded() {
         let mut bytes = std::io::Cursor::new(Vec::new());
         pixel.write_to(&mut bytes, format).unwrap();
         let validated = PromptImage::validate(bytes.into_inner()).unwrap();
-        assert_eq!(validated.mime_type, mime);
-        assert_eq!((validated.width, validated.height), (2, 2));
+        assert_eq!(validated.mime_type(), mime);
+        assert_eq!(validated.dimensions(), (2, 2));
     }
-    let synthetic = PromptImage {
-        mime_type: "image/png".into(),
-        data: vec![0; MAX_IMAGE_BYTES],
-        width: 1,
-        height: 1,
-    };
+    let synthetic = PromptImage::test_only_bytes(MAX_IMAGE_BYTES);
     assert!(validate_collection(&vec![synthetic.clone(); 4]).is_ok());
     assert!(validate_collection(&vec![synthetic; 5]).is_err());
 }

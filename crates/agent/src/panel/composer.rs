@@ -1,7 +1,7 @@
 //! The composer: attachments, images, the message field and the controls
 //! under it.
 use gpui_kit::{
-    Anchor, AnyElement, Context, Entity, SharedString, TestSupportExt as _,
+    Anchor, AnyElement, Context, Entity, Focusable as _, SharedString, TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -15,7 +15,6 @@ use gpui_kit::{
 };
 use nocterm_ai::{acp, thread::ThreadState};
 use nocterm_ui::IconName;
-use nocterm_workspace::TerminalStatus;
 
 use super::{
     AgentPanel, MenuKind, usage,
@@ -23,7 +22,7 @@ use super::{
 };
 use crate::{
     runtime::Runtime,
-    thread::{AgentThread, Attachment, config_label},
+    thread::{AgentThread, config_label},
 };
 
 impl AgentPanel {
@@ -31,11 +30,19 @@ impl AgentPanel {
         &mut self,
         thread: &Entity<AgentThread>,
         state: &ThreadState,
+        labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let stop_button = thread.read(cx).generating
+            && self.input.read(cx).value().trim().is_empty()
+            && thread.read(cx).images.is_empty()
+            && self.composer.edit.is_none();
         let mut composer = v_flex()
             .id("agent-composer")
             .test_support()
+            .when(!self.command_matches(cx).is_empty(), |composer| {
+                composer.key_context("AgentSlashCommands")
+            })
             .m_3()
             .p_2()
             .gap_2()
@@ -57,7 +64,7 @@ impl AgentPanel {
                         .max_w_full()
                         .label(config_label(option))
                         .dropdown_caret(true)
-                        .tooltip(option.name.clone())
+                        .tooltip(super::commands::config_hint(option))
                         .disabled(thread.read(cx).generating),
                     Anchor::BottomLeft,
                     cx,
@@ -81,16 +88,9 @@ impl AgentPanel {
                 ),
             );
         }
-        let summaries = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).connection_directory())
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default();
-        let descriptions = thread.update(cx, |thread, cx| thread.resolved(cx));
         let context_tooltip = format!(
             "{} attached terminals · sent metadata {} B · terminal output {} B",
-            descriptions.len(),
+            thread.read(cx).attachments.len(),
             thread.read(cx).context_bytes,
             thread.read(cx).tool_bytes
         );
@@ -103,27 +103,8 @@ impl AgentPanel {
             .items_start();
         for attachment in &thread.read(cx).attachments {
             let value = attachment.clone();
-            let label = match attachment {
-                Attachment::Terminal(id) => descriptions
-                    .iter()
-                    .find(|(_, entry, _)| entry.item == *id)
-                    .map(|(_, entry, _)| entry.title.to_string())
-                    .unwrap_or_else(|| "Closed terminal".into()),
-                Attachment::Connection(id) => summaries
-                    .iter()
-                    .find(|summary| summary.id.as_ref() == id)
-                    .map(|summary| summary.name.to_string())
-                    .unwrap_or_else(|| "Unavailable connection".into()),
-                Attachment::Group(group) => format!("Group {group}"),
-            };
-            let running = match attachment {
-                Attachment::Terminal(id) => descriptions
-                    .iter()
-                    .find(|(_, entry, _)| entry.item == *id)
-                    .and_then(|(_, entry, _)| entry.access.info(cx))
-                    .is_some_and(|info| info.status == TerminalStatus::Connected),
-                _ => false,
-            };
+            let label = labels.label(attachment);
+            let running = labels.connected(attachment);
             chips = chips.child(
                 Button::new(SharedString::from(format!("chip-{label}")))
                     .custom(menu_variant(cx))
@@ -152,10 +133,10 @@ impl AgentPanel {
             .images
             .iter()
             .map(|image| {
-                let key = (image.data.as_ptr() as usize, image.data.len(), false);
+                let key = (image.bytes().as_ptr() as usize, image.bytes().len(), false);
                 (
                     key,
-                    (!self.image_cache.contains_key(&key)).then(|| image.data.clone()),
+                    (!self.image_cache.contains_key(&key)).then(|| image.bytes().to_vec()),
                 )
             })
             .collect::<Vec<_>>();
@@ -196,10 +177,34 @@ impl AgentPanel {
             composer = composer.child(strip);
         }
         let weak = cx.weak_entity();
+        let command_panel = cx.weak_entity();
+        let command_input = self.input.clone();
         composer = composer.child(
             Textarea::new(&self.input)
                 .appearance(false)
                 .bordered(false)
+                .token(move |token, _, cx| {
+                    let name = token.token().id().to_string();
+                    let owner = command_panel.clone();
+                    div()
+                        .id("composer-command-token")
+                        .test_support()
+                        .h(token.line_height())
+                        .rounded(px(4.))
+                        .px_1()
+                        .bg(cx.theme().accent)
+                        .text_color(cx.theme().accent_foreground)
+                        .child(token.token().label().clone())
+                        .hoverable_tooltip(move |_, cx| {
+                            super::commands::tooltip(name.clone(), owner.clone(), cx)
+                        })
+                })
+                .on_token_click(move |event, window, cx| {
+                    command_input.update(cx, |input, cx| {
+                        input.set_selected_range(event.range(), cx);
+                        window.focus(&input.focus_handle(cx), cx);
+                    });
+                })
                 .on_paste(move |clipboard, _, cx| {
                     let paths = clipboard
                         .entries()
@@ -224,114 +229,101 @@ impl AgentPanel {
                             None
                         }
                     }) {
-                        let _ =
-                            weak.update(cx, |panel, cx| {
-                                if let Some(thread) = panel.current()
-                                    && thread.read(cx).info.as_ref().is_some_and(|info| {
-                                        info.capabilities.prompt_capabilities.image
-                                    })
-                                {
-                                    match nocterm_ai::images::PromptImage::validate(image.bytes) {
-                                        Ok(image) => {
-                                            let mut images = thread.read(cx).images.clone();
-                                            images.push(image);
-                                            match nocterm_ai::images::validate_collection(&images) {
-                                                Ok(()) => thread.update(cx, |thread, cx| {
-                                                    thread.images = images;
-                                                    cx.notify();
-                                                }),
-                                                Err(error) => panel.error = Some(error),
-                                            }
-                                        }
-                                        Err(error) => panel.error = Some(error),
-                                    }
-                                    cx.notify();
-                                }
-                            });
+                        let _ = weak.update(cx, |panel, cx| panel.add_image_bytes(image.bytes, cx));
                         return true;
                     }
                     false
                 }),
         );
-        composer =
-            composer.child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        self.menu_popover(
-                            "context-popover",
-                            MenuKind::Context,
-                            Button::new("agent-attach-context")
-                                .ghost()
-                                .small()
-                                .icon(IconName::Plus)
-                                .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
-                            Anchor::BottomLeft,
-                            cx,
-                        ),
-                    )
-                    .child(
-                        Button::new("agent-attach-image")
+        composer = composer.child(
+            h_flex()
+                .gap_1()
+                .child(
+                    self.menu_popover(
+                        "context-popover",
+                        MenuKind::Context,
+                        Button::new("agent-attach-context")
                             .ghost()
                             .small()
-                            .icon(IconName::ImagePlus)
-                            .tooltip("Attach image")
-                            .disabled(
-                                !thread.read(cx).info.as_ref().is_some_and(|info| {
+                            .icon(IconName::Plus)
+                            .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
+                        Anchor::BottomLeft,
+                        cx,
+                    ),
+                )
+                .child(
+                    Button::new("agent-attach-image")
+                        .ghost()
+                        .small()
+                        .icon(IconName::ImagePlus)
+                        .tooltip("Attach image")
+                        .disabled(
+                            self.preparing_images()
+                                || !thread.read(cx).info.as_ref().is_some_and(|info| {
                                     info.capabilities.prompt_capabilities.image
                                 }),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
-                    )
-                    .child(div().flex_1().min_w_0().child(controls))
-                    .child(
-                        usage::context_ring(state.usage.as_ref(), cx)
-                            .selected(self.menu == Some(MenuKind::Usage))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if this.menu != Some(MenuKind::Usage) {
-                                    this.refresh_usage(cx);
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
+                )
+                .child(div().flex_1().min_w_0().child(controls))
+                .child(
+                    usage::context_ring(state.usage.as_ref(), cx)
+                        .selected(self.menu == Some(MenuKind::Usage))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if this.menu != Some(MenuKind::Usage) {
+                                this.refresh_usage(cx);
+                            }
+                            this.toggle_menu(MenuKind::Usage, cx);
+                        })),
+                )
+                .child(
+                    Button::new("agent-send")
+                        .primary()
+                        .small()
+                        .icon(if stop_button {
+                            IconName::CircleStop
+                        } else {
+                            IconName::ArrowUp
+                        })
+                        .rounded(px(999.))
+                        .accessibility_label(if stop_button {
+                            "Stop generation"
+                        } else {
+                            "Send message"
+                        })
+                        .flex_shrink_0()
+                        .tooltip(if stop_button { "Stop" } else { "Send" })
+                        .disabled(
+                            thread.read(cx).session.is_none()
+                                || thread.read(cx).auth_required
+                                || self.preparing_images(),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.current().is_some_and(|thread| {
+                                thread.read(cx).generating
+                                    && this.input.read(cx).value().trim().is_empty()
+                                    && thread.read(cx).images.is_empty()
+                                    && this.composer.edit.is_none()
+                            }) {
+                                if let Some(thread) = this.current() {
+                                    thread.update(cx, |thread, cx| thread.stop(cx));
                                 }
-                                this.toggle_menu(MenuKind::Usage, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("agent-send")
-                            .primary()
-                            .small()
-                            .icon(if thread.read(cx).generating {
-                                IconName::CircleStop
                             } else {
-                                IconName::ArrowUp
-                            })
-                            .rounded(px(999.))
-                            .accessibility_label(if thread.read(cx).generating {
-                                "Stop generation"
-                            } else {
-                                "Send message"
-                            })
-                            .flex_shrink_0()
-                            .tooltip(if thread.read(cx).generating {
-                                "Stop"
-                            } else {
-                                "Send"
-                            })
-                            .disabled(
-                                thread.read(cx).session.is_none() || thread.read(cx).auth_required,
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if this
-                                    .current()
-                                    .is_some_and(|thread| thread.read(cx).generating)
-                                {
-                                    if let Some(thread) = this.current() {
-                                        thread.update(cx, |thread, cx| thread.stop(cx));
-                                    }
-                                } else {
-                                    this.send(window, cx);
-                                }
-                            })),
-                    ),
+                                this.send(window, cx);
+                            }
+                        })),
+                ),
+        );
+        if self.preparing_images() {
+            composer = composer.child(
+                h_flex().gap_1().child(running_dot(cx)).child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Preparing images…"),
+                ),
             );
+        }
         if thread.read(cx).ended() && !thread.read(cx).generating {
             composer = composer.child(
                 Button::new("agent-restart")

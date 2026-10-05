@@ -1,6 +1,7 @@
 //! Runtime-neutral agent contracts and bounded, explicitly selected terminal context.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
+pub mod commands;
 pub mod connection;
 pub mod context;
 pub mod env;

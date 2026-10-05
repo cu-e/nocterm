@@ -98,7 +98,7 @@ impl AgentPanel {
                         .group
                         .as_ref()
                         .is_some_and(|name| name.as_ref() == group),
-                    Attachment::Terminal(_) => false,
+                    Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
                 })
         });
         let selected = thread.read(cx).attachments.contains(&attachment) || through_server;

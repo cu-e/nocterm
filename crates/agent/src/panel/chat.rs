@@ -2,10 +2,9 @@
 //! line and the composer.
 use gpui_kit::{
     AnyElement, Context, Entity, SharedString, TestSupportExt as _, Window,
-    component::{ActiveTheme as _, v_flex},
-    div, list,
+    component::{ActiveTheme as _, message_scroller::MessageScroller, v_flex},
+    div,
     prelude::*,
-    px,
 };
 
 use super::{AgentPanel, MenuKind, widgets::activity_text};
@@ -31,15 +30,17 @@ impl AgentPanel {
         };
         if count != self.list_count {
             if count > self.list_count {
-                self.list
-                    .splice(self.list_count..self.list_count, count - self.list_count);
+                self.list.update(cx, |list, cx| {
+                    list.append(count - self.list_count, cx);
+                });
             } else {
-                self.list.reset(count);
+                self.list.update(cx, |list, cx| list.reset(count, cx));
             }
             self.list_count = count;
-        } else if count > 0 {
-            self.list.remeasure_items(0..count);
         }
+        let dirty = thread.update(cx, |thread, _| std::mem::take(&mut thread.dirty_rows));
+        let dirty = dirty.into_iter().collect::<Vec<_>>();
+        self.sync_stream(&dirty, cx);
         body = body.child(
             div()
                 .relative()
@@ -48,28 +49,15 @@ impl AgentPanel {
                 .flex_1()
                 .min_h_0()
                 .child(
-                    list(
+                    MessageScroller::new(
+                        "agent-transcript",
                         self.list.clone(),
                         cx.processor(|this, index, _, cx| this.render_entry(index, cx)),
                     )
+                    .with_row_style(gpui_kit::StyleRefinement::default().px_0().pb_0())
+                    .with_bottom_fade(cx.theme().background)
                     .size_full(),
                 )
-                // The transcript fades out above the composer instead of
-                // ending at a hard edge.
-                .child({
-                    let background = cx.theme().background;
-                    div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .h(px(28.))
-                        .bg(gpui_kit::linear_gradient(
-                            180.,
-                            gpui_kit::linear_color_stop(background.opacity(0.), 0.),
-                            gpui_kit::linear_color_stop(background, 1.),
-                        ))
-                })
                 // The usage card lies over the chat, just above the composer.
                 .when(self.menu == Some(MenuKind::Usage), |area| {
                     area.child(
@@ -98,12 +86,14 @@ impl AgentPanel {
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
         }
-        let composer = self.render_composer(&thread, &state, cx);
+        let labels = super::attachments::AttachmentLabels::new(&self.workspace, cx);
+        let composer = self.render_composer(&thread, &state, &labels, cx);
         body = body
             .when(
                 thread.read(cx).generating
                     || thread.read(cx).session.is_none()
                     || thread.read(cx).auth_required
+                    || thread.read(cx).fallback_history
                     || thread.read(cx).status_error
                     || !thread.read(cx).accept_updates,
                 |body| {
@@ -127,6 +117,8 @@ impl AgentPanel {
                     )
                 },
             )
+            .children(self.render_queue(&thread, &labels, window, cx))
+            .children(self.render_commands(window, cx))
             .child(composer);
         body.into_any_element()
     }

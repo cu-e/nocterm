@@ -56,8 +56,28 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let active = self.current().map(|thread| thread.entity_id());
-        self.threads.retain(|thread| keep(thread, cx));
+        let removed: Vec<_> = self
+            .threads
+            .iter()
+            .filter(|thread| !keep(thread, cx))
+            .map(|thread| thread.entity_id())
+            .collect();
+        if self
+            .composer
+            .edit
+            .as_ref()
+            .is_some_and(|edit| removed.contains(&edit.thread))
+        {
+            self.leave_composer_with(true, cx);
+        }
+        self.composer.drafts.retain(|id, _| !removed.contains(id));
+        self.queue_heights.retain(|id, _| !removed.contains(id));
+        self.threads
+            .retain(|thread| !removed.contains(&thread.entity_id()));
         self.active = active.and_then(|id| self.index_of(id));
+        if active.is_some_and(|id| removed.contains(&id)) {
+            self.reset_chat_view(cx);
+        }
     }
 
     /// Drops empty, unnamed chats other than `keep`: a chat nobody wrote in
@@ -71,19 +91,14 @@ impl AgentPanel {
 
     /// Shows chat `id`, connecting it if it came from history.
     pub(super) fn open_thread(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        self.leave_composer(cx);
         self.discard_drafts(Some(id), cx);
         let Some(index) = self.index_of(id) else {
             return;
         };
         let thread = self.threads[index].clone();
         self.wake(&thread, cx);
-        self.active = Some(index);
-        self.menu = None;
-        self.list.reset(0);
-        self.list_count = 0;
-        self.expanded.clear();
-        self.image_cache.clear();
-        cx.notify();
+        self.select_thread(id, cx);
     }
 
     pub(super) fn delete_thread(
@@ -96,8 +111,10 @@ impl AgentPanel {
             let chat = self.threads[index].read(cx).chat_id.clone();
             Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
-            self.list.reset(0);
-            self.list_count = 0;
+            if self.current().is_none() {
+                self.input
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+            }
         }
         self.sync_approval_attention(window, cx);
         cx.notify();
@@ -345,6 +362,16 @@ impl AgentPanel {
                             .w_full()
                             .min_w_0()
                             .gap_1()
+                            .child(if chat.generating {
+                                gpui_kit::component::spinner::Spinner::new()
+                                    .small()
+                                    .color(cx.theme().muted_foreground)
+                                    .into_any_element()
+                            } else {
+                                nocterm_ui::agent_icon(&chat.agent_id)
+                                    .small()
+                                    .into_any_element()
+                            })
                             .when(pinned, |row| {
                                 row.child(
                                     gpui_kit::component::Icon::new(IconName::Pin)

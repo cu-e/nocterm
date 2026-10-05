@@ -42,7 +42,7 @@ pub trait AgentCommands: Send + Sync {
         _request: RestoreSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
         Box::pin(async {
-            Err(AgentError::Io(
+            Err(AgentError::RestoreUnavailable(
                 "The agent cannot reopen earlier chats.".into(),
             ))
         })
@@ -89,6 +89,8 @@ pub enum AgentEvent {
 pub enum AgentError {
     #[error("Authentication required: {0}")]
     AuthRequired(String),
+    #[error("{0}")]
+    RestoreUnavailable(String),
     #[error("ACP error: {0}")]
     Rpc(acp::Error),
     #[error("Agent exited ({code:?}): {stderr_tail}")]

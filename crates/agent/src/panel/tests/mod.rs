@@ -24,6 +24,7 @@ use std::{
 #[derive(Default)]
 struct Commands {
     sessions: AtomicU64,
+    session_gate: Mutex<Option<oneshot::Receiver<()>>>,
     auth_required: AtomicBool,
     authentications: AtomicUsize,
     authentication_failure: AtomicBool,
@@ -33,6 +34,7 @@ struct Commands {
     pending: Mutex<Option<oneshot::Sender<acp::PromptResponse>>>,
     /// Each reopened session, and whether it was forked.
     restores: Mutex<Vec<(acp::SessionId, bool)>>,
+    restore_errors: Mutex<std::collections::VecDeque<AgentError>>,
     /// The MCP servers each new session was given.
     servers: Mutex<Vec<Vec<acp::McpServer>>>,
 }
@@ -42,9 +44,13 @@ impl AgentCommands for Commands {
         request: acp::NewSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
         self.servers.lock().unwrap().push(request.mcp_servers);
+        let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
         let auth_required = self.auth_required.load(Ordering::SeqCst);
         async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
             if auth_required {
                 Err(AgentError::AuthRequired("Sign in to continue".into()))
             } else {
@@ -61,6 +67,9 @@ impl AgentCommands for Commands {
             .lock()
             .unwrap()
             .push((request.session_id.clone(), request.fork));
+        if let Some(error) = self.restore_errors.lock().unwrap().pop_front() {
+            return async move { Err(error) }.boxed();
+        }
         let session = if request.fork {
             acp::SessionId::new(format!("fork-of-{}", request.session_id))
         } else {
@@ -369,6 +378,18 @@ fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
 }
+fn complete_active(f: &Fixture, cx: &mut TestAppContext) {
+    f.commands
+        .pending
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .unwrap();
+    cx.run_until_parked();
+}
+
 fn exchange(f: &Fixture, text: &str, answer: &str, cx: &mut TestAppContext) -> acp::SessionId {
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -424,3 +445,12 @@ mod history;
 mod lifecycle;
 mod routing;
 mod servers;
+
+mod flow;
+
+mod queue_layout;
+mod verification;
+
+mod commands;
+
+mod audit;

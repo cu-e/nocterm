@@ -35,7 +35,10 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     ));
     // The terminal context sent with the prompt is not part of the chat.
     let text = std::fs::read_to_string(chats.join(format!("{}.json", saved[0].id))).unwrap();
-    assert!(!text.contains("terminal"), "{text}");
+    assert!(
+        !text.contains(nocterm_ai::context::TERMINAL_RULES),
+        "{text}"
+    );
 
     // As after a restart: a new panel shows the saved chat, not yet connected.
     cx.update(|cx| {

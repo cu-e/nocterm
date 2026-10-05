@@ -40,14 +40,16 @@ impl AgentThread {
     }
 
     fn attaches_server(&self, summary: &ConnectionSummary) -> bool {
-        self.attachments.iter().any(|attachment| match attachment {
-            Attachment::Terminal(_) => false,
-            Attachment::Connection(id) => summary.id.as_ref() == id,
-            Attachment::Group(group) => summary
-                .group
-                .as_ref()
-                .is_some_and(|name| name.as_ref() == group),
-        })
+        self.attachment_scope()
+            .iter()
+            .any(|attachment| match attachment {
+                Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
+                Attachment::Connection(id) => summary.id.as_ref() == id,
+                Attachment::Group(group) => summary
+                    .group
+                    .as_ref()
+                    .is_some_and(|name| name.as_ref() == group),
+            })
     }
 
     /// The terminals this chat may use: attached tabs, and every open
@@ -73,7 +75,9 @@ impl AgentThread {
                     .profile
                     .as_ref()
                     .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
-                let attached = self.attachments.contains(&Attachment::Terminal(entry.item))
+                let attached = self
+                    .attachment_scope()
+                    .contains(&Attachment::Terminal(entry.item))
                     || summary.is_some_and(|summary| self.attaches_server(summary));
                 if !attached {
                     return None;
