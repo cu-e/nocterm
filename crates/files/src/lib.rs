@@ -80,6 +80,8 @@ pub struct FilesPanel {
     local: LocalBrowser,
     remote_counter: statistics::Counter,
     activity: activity::Activity,
+    /// A finished transfer changed the shown folder: (remote, local).
+    stale: (bool, bool),
     workspace: WeakEntity<Workspace>,
     divider: Entity<ResizableState>,
     collisions: CollisionPolicy,
@@ -125,29 +127,38 @@ impl FilesPanel {
             .map(|service| service.snapshot())
             .unwrap_or_default();
         let (changed, finished) = self.activity.update(snapshot);
-        if !changed {
-            return;
+        if changed {
+            cx.notify();
         }
-        cx.notify();
         let remote = self
             .session
             .as_ref()
             .map(|s| s.target.clone())
             .zip(self.browser.path.clone());
-        if !self.browser.loading
-            && let Some((target, shown)) = &remote
+        if let Some((target, shown)) = &remote
             && finished
                 .iter()
                 .any(|job| activity::changes_remote(job, target, shown))
         {
-            self.load(self.requested_directory.clone(), cx);
+            self.stale.0 = true;
         }
-        if !self.local.loading
-            && let Some(shown) = self.local.path.clone()
+        if let Some(shown) = &self.local.path
             && finished
                 .iter()
-                .any(|job| activity::changes_local(job, &shown))
+                .any(|job| activity::changes_local(job, shown))
         {
+            self.stale.1 = true;
+        }
+        // A folder still loading is listed again once that load is over.
+        if self.stale.0 && !self.browser.loading {
+            self.stale.0 = false;
+            self.load(self.requested_directory.clone(), cx);
+        }
+        if self.stale.1
+            && !self.local.loading
+            && let Some(shown) = self.local.path.clone()
+        {
+            self.stale.1 = false;
             self.load_local(shown, cx);
         }
     }
@@ -238,6 +249,7 @@ impl FilesPanel {
             local: LocalBrowser::default(),
             remote_counter: statistics::Counter::default(),
             activity: activity::Activity::default(),
+            stale: (false, false),
             workspace: workspace.downgrade(),
             divider: cx.new(|_| ResizableState::default()),
             collisions: CollisionPolicy::Skip,

@@ -14,7 +14,6 @@ impl FilesPanel {
         let window = self.window;
         let retry_directory = directory.clone();
         let home_requested = directory.is_none();
-        self.remote_counter.stop();
         self.remote_task = Some(cx.spawn(async move |this, cx| {
             let listing_fs = fs.clone();
             let result = cx

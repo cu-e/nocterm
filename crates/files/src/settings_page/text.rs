@@ -1,14 +1,22 @@
 //! How lists and arguments are typed into one line of text.
 
 /// Splits `line` at spaces; double or single quotes keep spaces in an
-/// argument. No other shell syntax is interpreted.
+/// argument, and a backslash outside single quotes takes the next character
+/// literally. No other shell syntax is interpreted.
 pub(crate) fn split_args(line: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut quote = None;
     let mut started = false;
-    for character in line.chars() {
+    let mut characters = line.chars();
+    while let Some(character) = characters.next() {
         match (quote, character) {
+            (Some('\''), '\'') => quote = None,
+            (Some('\''), c) => current.push(c),
+            (_, '\\') => {
+                current.extend(characters.next());
+                started = true;
+            }
             (Some(open), c) if c == open => quote = None,
             (Some(_), c) => current.push(c),
             (None, '"' | '\'') => {
@@ -37,14 +45,12 @@ pub(crate) fn split_args(line: &str) -> Vec<String> {
 pub(crate) fn join_args(args: &[String]) -> String {
     args.iter()
         .map(|arg| {
-            if arg.is_empty() || arg.contains(char::is_whitespace) || arg.contains(['"', '\'']) {
-                if arg.contains('"') {
-                    format!("'{arg}'")
-                } else {
-                    format!("\"{arg}\"")
-                }
-            } else {
+            let plain = !arg.is_empty()
+                && !arg.contains(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '\\'));
+            if plain {
                 arg.clone()
+            } else {
+                format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
             }
         })
         .collect::<Vec<_>>()
@@ -70,6 +76,8 @@ mod tests {
         assert_eq!(args, ["-R", "+{file}", "two words", "say \"hi\"", ""]);
         assert_eq!(split_args(&join_args(&args)), args);
         assert!(split_args("   ").is_empty());
+        let mixed = vec![r#"a"b'c"#.to_owned(), r"C:\dir".to_owned()];
+        assert_eq!(split_args(&join_args(&mixed)), mixed);
     }
 
     #[test]

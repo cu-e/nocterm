@@ -60,7 +60,7 @@ impl Activity {
 }
 
 /// Whether a finished upload changed the remote folder `shown` on `target`:
-/// it was copied into that folder or into one of its subfolders.
+/// it was copied into that folder or into one of its direct subfolders.
 pub(crate) fn changes_remote(job: &Progress, target: &Target, shown: &str) -> bool {
     let trim = |value: &str| value.trim_end_matches('/').to_owned();
     job.direction == TransferDirection::Upload
