@@ -111,6 +111,15 @@ impl FilesPanel {
                 .filter(|e| e.kind == EntryKind::Directory && !e.symlink)
         {
             self.load_local(entry.path.clone(), cx);
+        } else if event.click_count == 2
+            && let Some(entry) = self
+                .local
+                .entries
+                .get(ix)
+                .filter(|e| e.kind == EntryKind::File)
+        {
+            let target = FileTarget::Local(entry.path.clone());
+            open::later(target, self.workspace.clone(), self.window, cx);
         } else {
             cx.notify();
         }
@@ -146,6 +155,8 @@ impl FilesPanel {
             .map(FileTarget::Local)
             .collect::<Vec<_>>();
         let refresh = self.refresh_after_mutation(true, cx);
+        let workspace = self.workspace.clone();
+        let folder = entry.kind == EntryKind::Directory;
         let enabled = !self.local.loading;
         div()
             .id(("local-entry", ix))
@@ -217,14 +228,15 @@ impl FilesPanel {
                     },
                 ))
             })
-            .context_menu(move |menu, _, _| {
-                dialogs::menu(
+            .context_menu(move |menu, _, cx| {
+                let menu = dialogs::menu(
                     menu,
                     target.clone(),
                     selected_targets.clone(),
                     refresh.clone(),
                     enabled,
-                )
+                );
+                open::menu_items(menu, &target, folder, workspace.clone(), cx)
             })
             .into_any_element()
     }

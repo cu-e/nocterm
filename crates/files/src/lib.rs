@@ -4,6 +4,7 @@ mod dialogs;
 mod local;
 mod local_operations;
 mod local_pane;
+mod open;
 mod operations;
 mod registration;
 mod remote;

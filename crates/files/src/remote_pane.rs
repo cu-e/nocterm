@@ -137,6 +137,15 @@ impl FilesPanel {
                 .as_deref()
                 .map(|parent| path::join(parent, &entry.name));
             self.load(destination, cx);
+        } else if event.click_count == 2
+            && self
+                .browser
+                .entries
+                .get(ix)
+                .is_some_and(|entry| entry.kind == EntryKind::File)
+            && let Some(target) = self.remote_file_target(ix)
+        {
+            open::later(target, self.workspace.clone(), self.window, cx);
         } else {
             cx.notify();
         }
@@ -165,6 +174,7 @@ impl FilesPanel {
             .filter_map(|ix| self.remote_file_target(ix))
             .collect::<Vec<_>>();
         let refresh = self.refresh_after_mutation(false, cx);
+        let workspace = self.workspace.clone();
         div()
             .id(("remote-entry", ix))
             .w_full()
@@ -252,14 +262,17 @@ impl FilesPanel {
                     },
                 ))
             })
-            .context_menu(move |menu, _, _| match &target {
-                Some(target) => dialogs::menu(
-                    menu,
-                    target.clone(),
-                    selected_targets.clone(),
-                    refresh.clone(),
-                    enabled,
-                ),
+            .context_menu(move |menu, _, cx| match &target {
+                Some(target) => {
+                    let menu = dialogs::menu(
+                        menu,
+                        target.clone(),
+                        selected_targets.clone(),
+                        refresh.clone(),
+                        enabled,
+                    );
+                    open::menu_items(menu, target, directory, workspace.clone(), cx)
+                }
                 None => menu,
             })
             .into_any_element()

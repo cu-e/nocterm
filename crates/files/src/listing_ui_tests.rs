@@ -240,3 +240,6 @@ fn a_finished_upload_lists_the_shown_remote_folder_again(cx: &mut TestAppContext
         "listed again once, without a click"
     );
 }
+
+#[path = "open_ui_tests.rs"]
+mod open_ui;
