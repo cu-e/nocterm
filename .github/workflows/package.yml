@@ -8,10 +8,16 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      tag:
-        description: Release tag to build and upload assets to.
+      ref:
+        description: Exact commit or ref to build.
         type: string
-        required: true
+        required: false
+        default: ""
+      tag:
+        description: Published release tag to upload assets to (empty for validation).
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -23,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98.0"
@@ -50,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.sha }}
       - name: Install native dependencies
         run: |
           sudo apt-get update
@@ -76,7 +82,7 @@ jobs:
         run: scripts/package-linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-packages
+          name: linux-packages-${{ inputs.ref || inputs.tag || github.sha }}
           path: target/packages/*
 
   windows:
@@ -86,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98.0"
@@ -105,7 +111,7 @@ jobs:
           iscc "/DAppVersion=$version" packaging\windows\nocterm.iss
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: windows-installer-${{ inputs.ref || inputs.tag || github.sha }}
           path: target/packages/*.exe
 
   upload:
@@ -117,6 +123,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: packages
+          pattern: '*-${{ inputs.tag }}'
           merge-multiple: true
       - name: Upload release assets
         env:

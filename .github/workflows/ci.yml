@@ -5,37 +5,85 @@ on:
     types: [opened, edited, synchronize, reopened]
   push:
     branches: [master]
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to validate.
+        type: string
+        required: false
+        default: ""
+      pr_number:
+        description: Release pull request whose title and commits must be checked.
+        type: number
+        required: false
+        default: 0
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  release-pipeline:
+    name: Release pipeline regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install isolated updater test dependencies
+        run: npm install --prefix "$RUNNER_TEMP/release-pipeline-tests" --ignore-scripts --no-audit --no-fund release-please@17.3.0 yaml@2.9.1
+      - name: Check release updates and validation wiring
+        env:
+          NODE_PATH: ${{ runner.temp }}/release-pipeline-tests/node_modules
+        run: node scripts/test-release-pipeline.cjs
+      - name: Check release notice preparation
+        run: python3 scripts/test-prepare-release-pr.py
+
   conventions:
     name: Conventional Commits
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || inputs.pr_number != 0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Read release pull request
+        if: inputs.pr_number != 0
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({
+              ...context.repo, pull_number: ${{ inputs.pr_number || 0 }}
+            });
+            core.setOutput('title', pr.title);
+            core.setOutput('base', pr.base.sha);
 
       # PRs are squash-merged, so the title becomes the commit on master
       # and is what release-please reads.
       - name: Lint PR title
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_TITLE: ${{ steps.pr.outputs.title || github.event.pull_request.title }}
         run: |
           printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/title"
           scripts/lint-commit-msg.sh "$RUNNER_TEMP/title"
 
       - name: Lint commits
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ steps.pr.outputs.base || github.event.pull_request.base.sha }}
+          HEAD: ${{ inputs.ref || github.event.pull_request.head.sha }}
         run: |
           status=0
           for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
@@ -52,6 +100,8 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - name: Install native dependencies
         run: |
           sudo apt-get update
@@ -102,6 +152,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98.0"
