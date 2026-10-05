@@ -3,21 +3,35 @@ use std::rc::Rc;
 
 use crate::{ItemHandle, TabState, Workspace};
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity, Window,
+    App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla, Subscription,
+    WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _,
+        ActiveTheme as _, Icon, Sizable as _, Theme,
         button::{Button, ButtonVariants as _},
         dock::{BasePanel, Panel, PanelEvent},
         h_flex,
         input::{Input, InputEvent, InputState},
-        menu::{ContextMenuExt as _, PopupMenuItem},
+        menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     },
     div,
     prelude::*,
     rems,
 };
 use nocterm_ui::ActiveDesign as _;
+
+/// The colors groups of tabs are marked with, in the order they are handed out.
+const GROUP_COLORS: [fn(&Theme) -> Hsla; 6] = [
+    |theme| theme.blue,
+    |theme| theme.magenta,
+    |theme| theme.cyan,
+    |theme| theme.green,
+    |theme| theme.yellow,
+    |theme| theme.red,
+];
+
+/// How many colors groups of tabs are told apart by.
+pub(crate) const GROUP_PALETTE: usize = GROUP_COLORS.len();
 
 pub(crate) struct DockItem {
     pub(crate) item: Rc<dyn ItemHandle>,
@@ -28,6 +42,9 @@ pub(crate) struct DockItem {
     editing_blur: Option<Subscription>,
     focus: FocusHandle,
     bottom: bool,
+    /// The color of the group of tabs this one is in, an index into
+    /// [`GROUP_COLORS`].
+    group_color: Option<usize>,
     /// Hiding the bottom dock detaches its panel without ending the session.
     suppress_next_removal: bool,
     _subscriptions: Vec<Subscription>,
@@ -64,6 +81,7 @@ impl DockItem {
             editing_blur: None,
             focus,
             bottom,
+            group_color: None,
             suppress_next_removal: false,
             _subscriptions: subscriptions,
         }
@@ -74,6 +92,16 @@ impl DockItem {
         cx.defer_in(window, move |_, _, cx| {
             let _ = workspace.update(cx, |workspace, cx| workspace.mark_active(id, cx));
         });
+    }
+    pub(crate) fn set_group_color(&mut self, color: Option<usize>, cx: &mut Context<Self>) {
+        if self.group_color != color {
+            self.group_color = color;
+            cx.notify();
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn group_color(&self) -> Option<usize> {
+        self.group_color
     }
     pub(crate) fn detach_without_closing(&mut self) {
         self.suppress_next_removal = true;
@@ -157,6 +185,10 @@ impl Panel for DockItem {
     fn inner_padding(&self, _: &App) -> bool {
         false
     }
+    fn tab_accent(&self, cx: &App) -> Option<Hsla> {
+        let color = GROUP_COLORS[self.group_color? % GROUP_PALETTE];
+        Some(color(cx.theme()))
+    }
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let icon_color = match self.item.tab_state(cx) {
             TabState::Idle => cx.theme().muted_foreground,
@@ -234,7 +266,7 @@ impl Panel for DockItem {
                         });
                     }),
             )
-            .context_menu(move |mut menu, _, cx| {
+            .context_menu(move |mut menu, window, cx| {
                 use crate::workspace::TabCloseScope;
                 if bottom {
                     let workspace = menu_workspace.clone();
@@ -286,10 +318,59 @@ impl Panel for DockItem {
                         });
                     }));
                 }
-                menu.separator()
+                group_menu(menu.separator(), id, &menu_workspace, window, cx)
+                    .separator()
                     .menu("Settings", Box::new(crate::OpenSettings))
             })
     }
+}
+/// What the tab menu offers for groups of tabs.
+fn group_menu(
+    mut menu: PopupMenu,
+    id: EntityId,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(this) = workspace.upgrade() else {
+        return menu;
+    };
+    let (grouped, groups) = {
+        let this = this.read(cx);
+        (this.is_tab_grouped(id), this.tab_groups_to_join(id, cx))
+    };
+    let item =
+        |label: &'static str,
+         action: fn(&mut Workspace, EntityId, &mut Window, &mut Context<Workspace>)| {
+            let workspace = workspace.clone();
+            PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                let _ = workspace.update(cx, |workspace, cx| action(workspace, id, window, cx));
+            })
+        };
+    menu = menu.item(item("Add to New Group", Workspace::new_tab_group));
+    if !groups.is_empty() {
+        let workspace = workspace.clone();
+        menu = menu.submenu("Add to Group", window, cx, move |mut menu, _, _| {
+            for (beside, name) in &groups {
+                let (workspace, beside) = (workspace.clone(), *beside);
+                menu = menu.item(PopupMenuItem::new(name.clone()).on_click(
+                    move |_, window, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.group_tab_with(id, beside, window, cx)
+                        });
+                    },
+                ));
+            }
+            menu
+        });
+    }
+    if grouped {
+        menu = menu
+            .item(item("Remove from Group", Workspace::ungroup_tab))
+            .item(item("Ungroup", Workspace::dissolve_tab_group))
+            .item(item("Close Group", Workspace::close_tab_group));
+    }
+    menu
 }
 impl Render for DockItem {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

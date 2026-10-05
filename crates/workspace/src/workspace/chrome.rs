@@ -205,6 +205,7 @@ impl Workspace {
                         .small()
                         .icon(panel.icon(cx))
                         .tooltip(panel.title(cx))
+                        .when_some(panel.badge(cx), Button::label)
                         .selected(self.sidebar_open && ix == self.active_panel)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             // The shown panel's button hides the sidebar.

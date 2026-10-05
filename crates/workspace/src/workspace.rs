@@ -23,12 +23,16 @@ use nocterm_ui::{ActiveDesign as _, IconName};
 
 mod background;
 mod chrome;
+mod groups;
 mod layout;
+mod openers;
+mod panels;
+mod panes;
 mod sessions;
 
 use crate::{
     CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
-    Panel, PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
+    PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -115,6 +119,7 @@ pub struct Workspace {
     local_terminal: Option<BottomTerminal>,
     local_opener: Option<LocalOpener>,
     items: Vec<OpenItem>,
+    tab_groups: crate::tab_groups::TabGroups<PanelId, gpui_kit::component::dock::NodeId>,
     active_item: Option<usize>,
     panels: Vec<Box<dyn PanelHandle>>,
     active_panel: usize,
@@ -129,6 +134,7 @@ pub struct Workspace {
     new_tab_menu: Option<NewTabMenu>,
     new_tab_menu_open: bool,
     session_opener: Option<SessionOpener>,
+    program_opener: Option<openers::ProgramOpener>,
     actions: Vec<ActionRegistration>,
     status_views: Vec<(chrome::StatusSide, AnyView)>,
     /// The active session as last announced, to announce only changes.
@@ -156,6 +162,7 @@ impl Workspace {
         skin.set_toggle_button_visible(false, cx);
         let subscription = cx.subscribe_in(&dock, window, |this, _, _: &DockEvent, window, cx| {
             this.schedule_hidden_dock_detach(window, cx);
+            this.regroup(window, cx);
             let focused = this
                 .items
                 .iter()
@@ -180,6 +187,7 @@ impl Workspace {
             local_opener: None,
             focus_handle: cx.focus_handle(),
             items: Vec::new(),
+            tab_groups: Default::default(),
             active_item: None,
             panels: Vec::new(),
             active_panel: 0,
@@ -194,6 +202,7 @@ impl Workspace {
             new_tab_menu: None,
             new_tab_menu_open: false,
             session_opener: None,
+            program_opener: None,
             actions: Vec::new(),
             status_views: Vec::new(),
             announced_session: None,
@@ -832,222 +841,11 @@ impl Workspace {
             .change_directory(path, window, cx)
     }
 
-    /// Move the active tab beside its current pane without recreating its Item.
-    pub fn split_active(
-        &mut self,
-        placement: gpui_kit::component::Placement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(id) = self.active_item().map(|item| item.item_id()) else {
-            return;
-        };
-        self.split_item(id, placement, window, cx);
-    }
-
-    /// Splitting moves a tab out of a pane which retains another tab.
-    pub fn can_split_active(&self, cx: &App) -> bool {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
-            return false;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        self.dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                tree.find_panel_node(panel)
-                    .and_then(|node| tree.find_node(node))
-            })
-            .is_some_and(
-                |node| matches!(node.kind(), PaneRef::Tabs { panels, .. } if panels.len() > 1),
-            )
-    }
-
-    pub fn split_item(
-        &mut self,
-        id: gpui_kit::EntityId,
-        placement: gpui_kit::component::Placement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(open) = self.items.iter().find(|item| item.handle.item_id() == id) else {
-            return;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let node = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| tree.find_panel_node(panel));
-        if let Some(node) = node {
-            self.dock.update(cx, |dock, cx| {
-                dock.move_panel(
-                    panel,
-                    InsertTarget::Split {
-                        node,
-                        placement,
-                        size: None,
-                    },
-                    window,
-                    cx,
-                )
-            });
-        }
-        cx.notify();
-    }
-
-    pub fn focus_pane(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
-            return;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let nodes: Vec<_> = tree
-                    .node_ids()
-                    .into_iter()
-                    .filter_map(|node| match tree.find_node(node)?.kind() {
-                        PaneRef::Tabs { panels, active_ix } if !panels.is_empty() => {
-                            Some((node, panels[active_ix.min(panels.len() - 1)]))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let current = tree.find_panel_node(panel)?;
-                let ix = nodes.iter().position(|(node, _)| *node == current)?;
-                Some(nodes[(ix as isize + offset).rem_euclid(nodes.len() as isize) as usize].1)
-            });
-        if let Some(target) = target
-            && let Some(ix) = self
-                .items
-                .iter()
-                .position(|open| PanelId::from(open.dock_item.entity_id()) == target)
-        {
-            self.activate_item(ix, window, cx);
-        }
-    }
-
-    fn cycle_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
-            return;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let node = tree.find_panel_node(panel)?;
-                let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                    return None;
-                };
-                let ix = panels.iter().position(|id| *id == panel)?;
-                Some(panels[(ix as isize + offset).rem_euclid(panels.len() as isize) as usize])
-            });
-        if let Some(target) = target
-            && let Some(ix) = self
-                .items
-                .iter()
-                .position(|open| PanelId::from(open.dock_item.entity_id()) == target)
-        {
-            self.activate_item(ix, window, cx);
-        }
-    }
-
-    /// Reorder the active tab in its pane. Pointer drag uses this same dock tree.
-    pub fn move_active_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
-            return;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let node = tree.find_panel_node(panel)?;
-                let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                    return None;
-                };
-                let ix = panels.iter().position(|id| *id == panel)?;
-                let next = ix.checked_add_signed(offset)?;
-                (next < panels.len()).then_some(InsertTarget::Tabs {
-                    node,
-                    ix: Some(if offset > 0 { next + 1 } else { next }),
-                    activate: true,
-                })
-            });
-        if let Some(target) = target {
-            self.dock
-                .update(cx, |dock, cx| dock.move_panel(panel, target, window, cx));
-        }
-    }
-
     pub fn rename_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(item) = self.active_item.and_then(|ix| self.items.get(ix)) {
             item.dock_item
                 .update(cx, |item, cx| item.start_alias(window, cx));
         }
-    }
-
-    // ── Panels ───────────────────────────────────────────────────────────────
-
-    /// Adds a sidebar panel, after the ones already there.
-    pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        self.panels.push(Box::new(panel));
-        cx.notify();
-    }
-
-    /// Shows the panel at `ix`, opening the sidebar if it is closed.
-    pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        let Some(panel) = self.panels.get(ix) else {
-            return;
-        };
-        self.active_panel = ix;
-        self.sidebar_open = true;
-        window.focus(&panel.focus_handle(cx), cx);
-        cx.notify();
-    }
-
-    /// Shows the panel showing a `T`, if there is one.
-    pub fn activate_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.panel_index_of::<T>() {
-            self.activate_panel(ix, window, cx);
-        }
-    }
-
-    /// Shows the panel showing a `T`, or hides the sidebar when it already
-    /// shows it.
-    pub fn toggle_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.panel_index_of::<T>() {
-            Some(ix) if self.sidebar_open && self.active_panel == ix => {
-                self.toggle_sidebar(window, cx)
-            }
-            Some(ix) => self.activate_panel(ix, window, cx),
-            None => {}
-        }
-    }
-
-    fn panel_index_of<T: Panel>(&self) -> Option<usize> {
-        self.panels
-            .iter()
-            .position(|panel| panel.view().downcast::<T>().is_ok())
-    }
-
-    pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        self.sidebar_open = !self.sidebar_open;
-        if !self.sidebar_open
-            && let Some(item) = self.active_item()
-        {
-            let focus = item.focus_handle(cx);
-            window.focus(&focus, cx);
-        }
-        cx.notify();
     }
 
     pub fn set_right_panel<T: crate::RightPanel>(
@@ -1167,23 +965,6 @@ impl Workspace {
         if self.new_tab_menu_open != open {
             self.new_tab_menu_open = open;
             cx.notify();
-        }
-    }
-
-    /// Installs what turns a [`SessionSpec`] into a tab.
-    pub fn set_session_opener(
-        &mut self,
-        opener: impl Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>) + 'static,
-    ) {
-        self.session_opener = Some(Rc::new(opener));
-    }
-
-    /// Opens a session in a new tab.
-    pub fn open_session(&mut self, spec: SessionSpec, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_new_tab_menu(false, cx);
-        match self.session_opener.clone() {
-            Some(opener) => opener(self, spec, window, cx),
-            None => tracing::warn!("no session opener is installed"),
         }
     }
 

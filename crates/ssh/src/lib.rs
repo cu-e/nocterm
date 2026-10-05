@@ -18,7 +18,7 @@ mod sftp;
 
 use std::{path::PathBuf, sync::Arc};
 
-use nocterm_session::{ConnectRequest, Session, Transport};
+use nocterm_session::{ConnectRequest, Session, SessionError, Transport};
 use tokio::runtime::{Builder, Runtime};
 
 /// Threads serving every SSH connection of the application.
@@ -64,19 +64,20 @@ impl SshTransport {
 
 impl Transport for SshTransport {
     fn open(&self, request: ConnectRequest) -> Session {
+        let Some(runtime) = &self.runtime else {
+            return Session::failed(SessionError::Other("the SSH transport has stopped".into()));
+        };
         let (fs, fs_requests) = sftp::channel();
-        let (exec, exec_requests) = exec::channel();
+        let (exec, exec_requests) = exec::channel(runtime.handle().clone());
         let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));
         let session = session.with_exec(Arc::new(exec));
-        if let Some(runtime) = &self.runtime {
-            runtime.spawn(connection::run(
-                self.config.clone(),
-                request,
-                driver,
-                fs_requests,
-                exec_requests,
-            ));
-        }
+        runtime.spawn(connection::run(
+            self.config.clone(),
+            request,
+            driver,
+            fs_requests,
+            exec_requests,
+        ));
         session
     }
 }

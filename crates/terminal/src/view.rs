@@ -112,7 +112,7 @@ impl TerminalView {
         Self::with_terminal(terminal, window, cx)
     }
 
-    fn with_terminal(
+    pub(crate) fn with_terminal(
         terminal: Entity<Terminal>,
         window: &mut Window,
         cx: &mut Context<Self>,

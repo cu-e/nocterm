@@ -16,7 +16,7 @@ use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
 };
-use nocterm_workspace::{SessionContext, SessionSpec};
+use nocterm_workspace::SessionSpec;
 
 use crate::{ActiveTransport, LocalTransportFactory, integration::ShellIntegration};
 
@@ -219,13 +219,6 @@ impl Terminal {
         self.status == Status::Connected
     }
 
-    /// The session, as the workspace shows it to panels.
-    pub fn session_context(&self) -> SessionContext {
-        let (target, session) = (self.spec.target.clone(), self.session.as_ref());
-        SessionContext::new(target, self.fs.clone(), self.is_connected())
-            .with_exec(session.and_then(Session::exec))
-    }
-
     // ── Session ──────────────────────────────────────────────────────────────
 
     /// Opens a new session, replacing the current one.
@@ -273,13 +266,12 @@ impl Terminal {
             });
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
-        let transport = if self.local {
-            self.local_transport.clone().or_else(|| {
-                cx.try_global::<LocalTransportFactory>()
-                    .map(|factory| (factory.0)(launch.clone()))
-            })
-        } else {
-            cx.try_global::<ActiveTransport>().map(|t| t.0.clone())
+        let transport = match &self.local_transport {
+            Some(transport) => Some(transport.clone()),
+            None if self.local => cx
+                .try_global::<LocalTransportFactory>()
+                .map(|factory| (factory.0)(launch.clone())),
+            None => cx.try_global::<ActiveTransport>().map(|t| t.0.clone()),
         };
         let Some(transport) = transport else {
             self.set_status(
@@ -1170,6 +1162,8 @@ mod local_tests {
         });
     }
 }
+
+mod program;
 
 #[cfg(test)]
 mod credential_tests;

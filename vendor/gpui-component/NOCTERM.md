@@ -43,3 +43,11 @@ when upstream exposes equivalent safe per-window updates.
 unchanged. Without the global, the upstream button dimensions apply. An
 explicit custom `Size::Size` also keeps its requested size. This keeps compact
 product-wide sizing in one place, including buttons supplied by the toolkit.
+
+`src/dock/panel.rs` adds `Panel::tab_accent`, a color the tab bar marks a
+panel's tab with; it defaults to `None`, so other panels are unchanged.
+`src/dock/tab_panel.rs` passes it to `Tab::accent` in `src/tab/tab.rs`, which
+draws a thin stripe along the tab's top edge. Nocterm marks the tabs of a tab
+group with the group's color this way, without forking tab rendering or drag
+and drop; which tabs form a group stays with the workspace. Remove this patch
+when upstream lets a panel style its own tab.

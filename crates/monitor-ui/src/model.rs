@@ -1,84 +1,38 @@
 //! Which host the monitor watches, and the one script that watches it.
 //!
-//! The model follows the workspace's active session. A remote session that
-//! can run programs is watched over its own connection; anything else is
-//! this computer, when the settings allow. Only one script runs at a time,
+//! The model follows the workspace's active host ([`nocterm_workspace::host`]):
+//! a remote session over its own connection, otherwise this computer, when
+//! the settings allow. Only one script runs at a time,
 //! and it collects only what is on screen: the status bar's metrics while
 //! the details are closed, at the slow interval, and everything the details
 //! show while they are open, at the fast one.
 
 use std::{sync::Arc, time::Duration};
 
-use gpui_kit::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui_kit::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use nocterm_monitor::{MetricSet, Platform, Sampler, Watch, detect, local_platform};
-use nocterm_session::{ExecError, HostExec, Target};
+use nocterm_session::{ExecError, HostExec};
 use nocterm_settings::MonitorSettings;
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
-use nocterm_workspace::{SessionContext, Workspace, WorkspaceEvent};
+use nocterm_workspace::{Host, HostKey, SessionContext, Workspace, host::follow_active_session};
 
 /// How long a failed or ended watch waits before it is tried again.
 const RETRY: Duration = Duration::from_secs(10);
 /// Hosts whose platform and history are remembered for switching back.
 const REMEMBERED_HOSTS: usize = 8;
 
-/// Which machine a reading is about.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HostKey {
-    /// The computer nocterm runs on.
-    Local,
-    Remote(Target),
-}
-
-impl HostKey {
-    pub(crate) fn label(&self) -> String {
-        match self {
-            Self::Local => "This computer".into(),
-            Self::Remote(target) => target.to_string(),
-        }
-    }
-}
-
-/// The machine to watch and how to reach it.
-#[derive(Clone)]
-pub(crate) struct Host {
-    pub(crate) key: HostKey,
-    exec: Arc<dyn HostExec>,
-    connected: bool,
-}
-
-impl Host {
-    /// The host behind `session`: its own connection when it can run
-    /// programs, otherwise this computer, if `settings` allow watching it.
-    pub(crate) fn resolve(
-        session: Option<&SessionContext>,
-        local: Option<&Arc<dyn HostExec>>,
-        settings: &MonitorSettings,
-    ) -> Option<Self> {
-        if !settings.enabled {
-            return None;
-        }
-        if let Some((session, exec)) =
-            session.and_then(|session| Some((session, session.exec.clone()?)))
-        {
-            return Some(Self {
-                key: HostKey::Remote(session.target.clone()),
-                exec,
-                connected: session.connected,
-            });
-        }
-        settings.local.then_some(())?;
-        Some(Self {
-            key: HostKey::Local,
-            exec: local?.clone(),
-            connected: true,
-        })
-    }
-
-    fn same_as(&self, other: &Self) -> bool {
-        self.key == other.key
-            && self.connected == other.connected
-            && Arc::ptr_eq(&self.exec, &other.exec)
-    }
+/// The host to watch: the active session's, or this computer when the
+/// settings allow; nothing while monitoring is off.
+pub(crate) fn watched_host(
+    session: Option<&SessionContext>,
+    local: Option<&Arc<dyn HostExec>>,
+    settings: &MonitorSettings,
+) -> Option<Host> {
+    let local = local.filter(|_| settings.local);
+    settings
+        .enabled
+        .then(|| Host::resolve(session, local))
+        .flatten()
 }
 
 /// What to collect and how often.
@@ -156,20 +110,7 @@ impl HostMonitor {
         local: Option<Arc<dyn HostExec>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let follow = cx.subscribe(workspace, |_, workspace, event, cx| {
-            if *event == WorkspaceEvent::ActiveSessionChanged {
-                let workspace = workspace.downgrade();
-                let monitor = cx.entity().downgrade();
-                // The workspace may still be mid-update when it announces.
-                cx.defer(move |cx| {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return;
-                    };
-                    let session = workspace.read(cx).active_session(cx);
-                    let _ = monitor.update(cx, |this, cx| this.follow(session, cx));
-                });
-            }
-        });
+        let follow = follow_active_session(workspace, cx, Self::follow);
         let settings = cx.observe_global::<SettingsStore>(|this, cx| this.refresh(cx));
         let mut this = Self {
             local,
@@ -224,7 +165,7 @@ impl HostMonitor {
     /// settings and the details.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let settings = cx.settings().monitor.clone();
-        let host = Host::resolve(self.session.as_ref(), self.local.as_ref(), &settings);
+        let host = watched_host(self.session.as_ref(), self.local.as_ref(), &settings);
         let plan = Plan::new(&settings, self.open);
         let history = settings.history_points as usize;
         for record in &mut self.records {
@@ -320,6 +261,7 @@ async fn watch(
                 }
                 Err(ExecError::Disconnected) => "The connection closed.".into(),
                 Err(ExecError::Failed(error)) => error,
+                Err(error @ ExecError::NotFound(_)) => error.to_string(),
                 Ok(()) => "The monitor script stopped.".into(),
             };
             if this.current(&key).is_some() {
@@ -377,13 +319,4 @@ async fn run(
         }
     }
     Ok(())
-}
-
-/// The program runner for this computer, installed by the application.
-pub(crate) struct LocalExec(pub(crate) Arc<dyn HostExec>);
-
-impl gpui_kit::Global for LocalExec {}
-
-pub(crate) fn local_exec(cx: &App) -> Option<Arc<dyn HostExec>> {
-    cx.try_global::<LocalExec>().map(|local| local.0.clone())
 }

@@ -295,6 +295,22 @@ impl Session {
         self
     }
 
+    /// The same session, browsing `fs` as its host's file system.
+    pub fn with_fs(mut self, fs: Option<Arc<dyn RemoteFs>>) -> Self {
+        self.fs = fs;
+        self
+    }
+
+    /// A session that has already ended with `error`.
+    pub fn failed(error: SessionError) -> Self {
+        let (session, driver) = channel(None);
+        // The backlog is empty, so the one event always fits.
+        let _ = driver
+            .events
+            .try_send(Event::Closed(CloseReason::Failed(error)));
+        session
+    }
+
     fn send(&self, command: Command) {
         // Control commands are best-effort; close also has a separate signal.
         let _ = self.commands.try_send(command);

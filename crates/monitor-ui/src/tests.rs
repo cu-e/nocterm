@@ -12,9 +12,9 @@ use nocterm_monitor::MonitorMetric;
 use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Target};
 use nocterm_settings::{MonitorSettings, Settings};
 use nocterm_ui::{DesignTokens, SettingsStore, edit_settings};
-use nocterm_workspace::{Item, ItemEvent, SessionContext, Workspace};
+use nocterm_workspace::{HostKey, Item, ItemEvent, SessionContext, Workspace};
 
-use crate::model::{Host, HostKey, HostMonitor, Plan, Status};
+use crate::model::{HostMonitor, Plan, Status, watched_host};
 
 /// A host that answers `uname` and keeps every other program running until
 /// the test writes to it.
@@ -120,28 +120,28 @@ fn sessions_that_run_programs_are_watched_remotely() {
     let host = FakeHost::new("Linux");
     let local: Arc<dyn HostExec> = FakeHost::new("Linux");
 
-    let watched = Host::resolve(Some(&remote(&host, true)), Some(&local), &settings).unwrap();
+    let watched = watched_host(Some(&remote(&host, true)), Some(&local), &settings).unwrap();
     assert_eq!(watched.key, HostKey::Remote(target("user@host")));
 
     let without_exec = SessionContext::new(target("user@other"), None, true);
-    let watched = Host::resolve(Some(&without_exec), Some(&local), &settings).unwrap();
+    let watched = watched_host(Some(&without_exec), Some(&local), &settings).unwrap();
     assert_eq!(watched.key, HostKey::Local);
     assert_eq!(
-        Host::resolve(None, Some(&local), &settings).unwrap().key,
+        watched_host(None, Some(&local), &settings).unwrap().key,
         HostKey::Local
     );
-    assert!(Host::resolve(None, None, &settings).is_none());
+    assert!(watched_host(None, None, &settings).is_none());
 
     let remote_only = MonitorSettings {
         local: false,
         ..MonitorSettings::default()
     };
-    assert!(Host::resolve(None, Some(&local), &remote_only).is_none());
+    assert!(watched_host(None, Some(&local), &remote_only).is_none());
     let off = MonitorSettings {
         enabled: false,
         ..MonitorSettings::default()
     };
-    assert!(Host::resolve(Some(&remote(&host, true)), Some(&local), &off).is_none());
+    assert!(watched_host(Some(&remote(&host, true)), Some(&local), &off).is_none());
 }
 
 struct SessionItem {

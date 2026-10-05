@@ -33,7 +33,7 @@ const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What the connection's protocol callbacks have seen so far.
 #[derive(Default)]
-struct Observed {
+pub(crate) struct Observed {
     host_key: Option<(PublicKey, Verdict)>,
     disconnect: Option<String>,
 }
@@ -146,7 +146,12 @@ async fn session(
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let mut files = tokio::spawn(sftp::serve(handle.clone(), fs_requests, stopped));
     let (stop_programs, programs_stopped) = tokio::sync::oneshot::channel();
-    let mut programs = tokio::spawn(exec::serve(handle.clone(), exec_requests, programs_stopped));
+    let mut programs = tokio::spawn(exec::serve(
+        handle.clone(),
+        observed.clone(),
+        exec_requests,
+        programs_stopped,
+    ));
     let reason = tokio::select! {
         () = driver.closed() => CloseReason::ClosedByUser,
         reason = run_shell(shell, driver, &observed) => reason,
@@ -345,6 +350,17 @@ async fn start_shell(
     size: PtySize,
     launch: &nocterm_session::ShellLaunch,
 ) -> Result<Channel<Msg>, russh::Error> {
+    open_terminal(handle, term, size, remote_command(launch)).await
+}
+
+/// Opens a channel with a terminal and starts `command` on it, or the
+/// user's shell when there is none.
+pub(crate) async fn open_terminal(
+    handle: &Handle<Client>,
+    term: &str,
+    size: PtySize,
+    command: Option<String>,
+) -> Result<Channel<Msg>, russh::Error> {
     let mut channel = handle.channel_open_session().await?;
     channel
         .request_pty(
@@ -358,7 +374,7 @@ async fn start_shell(
         )
         .await?;
     confirmed(&mut channel).await?;
-    match remote_command(launch) {
+    match command {
         Some(command) => channel.exec(true, command).await?,
         None => channel.request_shell(true).await?,
     }
@@ -413,7 +429,7 @@ pub(crate) async fn confirmed(channel: &mut Channel<Msg>) -> Result<(), russh::E
 }
 
 /// Shuttles bytes between the remote shell and the session's owner.
-async fn run_shell(
+pub(crate) async fn run_shell(
     channel: Channel<Msg>,
     driver: &SessionDriver,
     observed: &Arc<Mutex<Observed>>,

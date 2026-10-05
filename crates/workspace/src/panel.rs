@@ -8,6 +8,14 @@ pub trait Panel: Render + Focusable {
 
     /// The panel's icon in the switcher strip at the foot of the sidebar.
     fn icon(&self, cx: &App) -> IconName;
+
+    /// A short count beside the switcher icon, such as how many things in
+    /// the panel need attention; `None` shows none. The footer is redrawn
+    /// whenever the panel notifies.
+    fn badge(&self, cx: &App) -> Option<SharedString> {
+        let _ = cx;
+        None
+    }
 }
 
 /// A [`Panel`] of any type, as the workspace holds it.
@@ -16,6 +24,7 @@ pub trait PanelHandle: 'static {
     fn view(&self) -> AnyView;
     fn title(&self, cx: &App) -> SharedString;
     fn icon(&self, cx: &App) -> IconName;
+    fn badge(&self, cx: &App) -> Option<SharedString>;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
 }
 
@@ -34,6 +43,10 @@ impl<T: Panel> PanelHandle for Entity<T> {
 
     fn icon(&self, cx: &App) -> IconName {
         self.read(cx).icon(cx)
+    }
+
+    fn badge(&self, cx: &App) -> Option<SharedString> {
+        self.read(cx).badge(cx)
     }
 
     fn focus_handle(&self, cx: &App) -> FocusHandle {

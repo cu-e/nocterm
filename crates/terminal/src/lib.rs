@@ -13,7 +13,7 @@
 //!
 //! The crate never names a transport. The application installs one with
 //! [`init`], and the workspace reaches this crate through [`open_session`],
-//! installed as its session opener.
+//! installed as its session opener, and [`open_program`], its program opener.
 
 mod access;
 mod codec;
@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use gpui_kit::{App, Context, Global, KeyBinding, NoAction, Window, prelude::*};
 use nocterm_session::{ShellLaunch, Transport};
-use nocterm_workspace::{SessionSpec, Workspace};
+use nocterm_workspace::{ProgramSpec, SessionSpec, Workspace};
 
 pub use terminal::{FindState, Status, Terminal, TerminalEvent};
 pub use view::TerminalView;
@@ -135,6 +135,21 @@ pub fn open_local_command(
 ) {
     let view = cx.new(|cx| {
         TerminalView::new_local_command(launch, title, transport, completion, window, cx)
+    });
+    workspace.add_item(view, window, cx);
+}
+
+/// Opens `spec`'s program in a new tab. Install it with
+/// [`Workspace::set_program_opener`].
+pub fn open_program(
+    workspace: &mut Workspace,
+    spec: ProgramSpec,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let view = cx.new(|cx| {
+        let terminal = cx.new(|cx| Terminal::new_program(spec, cx));
+        TerminalView::with_terminal(terminal, window, cx)
     });
     workspace.add_item(view, window, cx);
 }
