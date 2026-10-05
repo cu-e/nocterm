@@ -72,7 +72,7 @@ pub(crate) struct Runtime {
     /// Chats read from disk and not yet shown by a panel; `None` while reading.
     pub(crate) saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
     /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
-    chat_writes: HashMap<String, Option<nocterm_ai::history::SavedChat>>,
+    chat_writes: HashMap<String, Option<Arc<nocterm_ai::history::SharedChat>>>,
     chat_writer: Option<Task<()>>,
     /// Deleted chats, never written again by a late save.
     deleted_chats: std::collections::HashSet<String>,
@@ -266,7 +266,7 @@ impl Runtime {
     /// Queues `chat` to be written, replacing an older queued snapshot.
     pub(crate) fn save_chat(
         &mut self,
-        chat: nocterm_ai::history::SavedChat,
+        chat: Arc<nocterm_ai::history::SharedChat>,
         cx: &mut Context<Self>,
     ) {
         if self.deleted_chats.contains(&chat.id) {
@@ -291,7 +291,7 @@ impl Runtime {
             .flat_map(|connection| connection.users.values())
             .filter_map(WeakEntity::upgrade)
         {
-            if let Some(chat) = thread.read(cx).snapshot()
+            if let Some(chat) = thread.read(cx).shared_snapshot(cx)
                 && !self.deleted_chats.contains(&chat.id)
             {
                 writes.insert(chat.id.clone(), Some(chat));
@@ -299,7 +299,7 @@ impl Runtime {
         }
         for (id, chat) in writes {
             let result = match chat {
-                Some(chat) => nocterm_ai::history::save(&self.services.chats_dir, &chat),
+                Some(chat) => nocterm_ai::history::save_shared(&self.services.chats_dir, &chat),
                 None => nocterm_ai::history::delete(&self.services.chats_dir, &id),
             };
             if let Err(error) = result {
@@ -328,17 +328,34 @@ impl Runtime {
                     return;
                 };
                 let dir = dir.clone();
+                let write_id = id.clone();
+                let retry = chat.clone();
                 let result = cx
                     .background_executor()
                     .spawn(async move {
                         match chat {
-                            Some(chat) => nocterm_ai::history::save(&dir, &chat),
+                            Some(chat) => nocterm_ai::history::save_shared(&dir, &chat),
                             None => nocterm_ai::history::delete(&dir, &id),
                         }
                     })
                     .await;
                 if let Err(error) = result {
                     tracing::warn!(%error, "could not save agent chat");
+                    let _ = this.update(cx, |this, cx| {
+                        this.chat_writes.entry(write_id.clone()).or_insert(retry);
+                        this.chat_writer = None;
+                        for thread in this.connections.values().flat_map(|connection| connection.users.values()).filter_map(WeakEntity::upgrade) {
+                            thread.update(cx, |thread, cx| {
+                                if thread.chat_id == write_id {
+                                    thread.queue_paused = true;
+                                    thread.status = format!("Could not save chat: {error}. Queued messages are retained; check disk space before continuing.");
+                                    thread.status_error = true;
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    });
+                    return;
                 }
             }
         }));
@@ -569,6 +586,13 @@ impl Runtime {
                 };
                 for thread in connection.users.values().filter_map(WeakEntity::upgrade) {
                     thread.update(cx, |thread, cx| {
+                        if thread.connecting_session && thread.session.is_none() && matches!(notification.update,
+                            acp::SessionUpdate::AvailableCommandsUpdate(_) | acp::SessionUpdate::CurrentModeUpdate(_) | acp::SessionUpdate::ConfigOptionUpdate(_)) {
+                            // Keep the latest control of each kind for each session, without replaying transcript chunks.
+                            thread.pending_controls.retain(|(id, update)| id != &notification.session_id || std::mem::discriminant(update) != std::mem::discriminant(&notification.update));
+                            if thread.pending_controls.len() == 64 { thread.pending_controls.remove(0); }
+                            thread.pending_controls.push((notification.session_id.clone(), notification.update.clone()));
+                        }
                         if thread.session.as_ref() == Some(&notification.session_id)
                             && thread.accept_updates
                             && !matches!(
@@ -576,7 +600,15 @@ impl Runtime {
                                 acp::SessionUpdate::UserMessageChunk(_)
                             )
                         {
+                            let index = match &notification.update {
+                                acp::SessionUpdate::ToolCallUpdate(update) => thread.state.entries.iter().position(|entry| matches!(entry, nocterm_ai::thread::Entry::Tool(call) if call.tool_call_id == update.tool_call_id)),
+                                _ => thread.state.entries.len().checked_sub(1),
+                            };
                             let change = thread.state.apply(notification.update.clone());
+                            if change == nocterm_ai::thread::ThreadChange::Transcript {
+                                if let Some(index) = index { thread.mark_dirty(index); }
+                                if let Some(index) = thread.state.entries.len().checked_sub(1) { thread.mark_dirty(index); }
+                            }
                             if change == nocterm_ai::thread::ThreadChange::Metadata {
                                 thread.persist(cx);
                             }

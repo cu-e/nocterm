@@ -176,19 +176,21 @@ impl AgentCommands for Commands {
             let session_id = request.session_id.clone();
             if request.fork {
                 if !fork_supported {
-                    return Err(AgentError::Io("The agent cannot fork chats.".into()));
+                    return Err(AgentError::RestoreUnavailable(
+                        "The agent cannot fork chats.".into(),
+                    ));
                 }
                 let message = UntypedMessage::new(
                     "session/fork",
                     acp::ForkSessionRequest::new(request.session_id, request.cwd)
                         .mcp_servers(request.mcp_servers),
                 )
-                .map_err(|error| map_error_with(error, &secrets))?;
+                .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
                 let raw = connection
                     .send_request(message)
                     .block_task()
                     .await
-                    .map_err(|error| map_error_with(error, &secrets))?;
+                    .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
                 return models
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -207,17 +209,17 @@ impl AgentCommands for Commands {
                         .mcp_servers(request.mcp_servers),
                 ),
                 Restore::Unsupported => {
-                    return Err(AgentError::Io(
+                    return Err(AgentError::RestoreUnavailable(
                         "The agent cannot reopen earlier chats.".into(),
                     ));
                 }
             }
-            .map_err(|error| map_error_with(error, &secrets))?;
+            .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
             let mut raw = connection
                 .send_request(message)
                 .block_task()
                 .await
-                .map_err(|error| map_error_with(error, &secrets))?;
+                .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
             // Restored sessions keep their id; the answer does not repeat it.
             if let Some(object) = raw.as_object_mut() {
                 object.insert("sessionId".into(), serde_json::json!(session_id.0));
@@ -390,6 +392,25 @@ fn scrub(text: &str, secrets: &[String]) -> String {
     }
     nocterm_ai::redact::redact(&text)
 }
+fn restore_error(error: AgentError) -> AgentError {
+    let unavailable = match &error {
+        AgentError::Rpc(error) => {
+            error.code == acp::ErrorCode::MethodNotFound || {
+                let message = error.message.to_lowercase();
+                message.contains("session not found")
+                    || message.contains("unknown session")
+                    || message.contains("session does not exist")
+            }
+        }
+        _ => false,
+    };
+    if unavailable {
+        AgentError::RestoreUnavailable(error.to_string())
+    } else {
+        error
+    }
+}
+
 #[cfg(test)]
 fn map_error(error: acp::Error) -> AgentError {
     map_error_with(error, &[])

@@ -23,6 +23,7 @@ pub struct ThreadState {
     /// The session's token totals as of the last finished turn.
     pub tokens: Option<acp::Usage>,
     pub commands: Vec<acp::AvailableCommand>,
+    pub commands_revision: u64,
     pub title: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +112,7 @@ impl ThreadState {
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::AvailableCommandsUpdate(update) => {
+                self.commands_revision = self.commands_revision.wrapping_add(1);
                 self.commands = update.available_commands;
                 ThreadChange::Controls
             }

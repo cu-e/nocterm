@@ -1,16 +1,16 @@
 //! The chat transcript: messages, reasoning, tool calls and images.
-use std::{io::Read as _, path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use base64::Engine as _;
 use gpui_kit::{
-    Context, PathPromptOptions, SharedString, TestSupportExt as _,
+    Context, SharedString, TestSupportExt as _,
     component::{ActiveTheme as _, h_flex, v_flex},
     div, img,
     prelude::*,
     px, relative, rems,
 };
 use nocterm_ai::{acp, thread::Entry};
-use nocterm_ui::{ActiveAi as _, IconName};
+use nocterm_ui::IconName;
 
 use super::{
     AgentPanel, CachedImage,
@@ -19,75 +19,6 @@ use super::{
 };
 
 impl AgentPanel {
-    pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let Some(thread) = self.current() else {
-            return;
-        };
-        if !thread
-            .read(cx)
-            .info
-            .as_ref()
-            .is_some_and(|info| info.capabilities.prompt_capabilities.image)
-        {
-            return;
-        }
-        let epoch = thread.read(cx).epoch;
-        let thread = thread.downgrade();
-        let future = cx.background_executor().spawn(async move {
-            paths
-                .into_iter()
-                .map(|path| {
-                    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-                    let mut bytes = Vec::new();
-                    std::io::Read::take(
-                        &mut file,
-                        (nocterm_ai::images::MAX_IMAGE_BYTES + 1) as u64,
-                    )
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| error.to_string())?;
-                    nocterm_ai::images::PromptImage::validate(bytes)
-                })
-                .collect::<Result<Vec<_>, String>>()
-        });
-        cx.spawn(async move |this, cx| {
-            let result = future.await;
-            let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok(images) => {
-                        let _ = thread.update(cx, |thread, cx| {
-                            if thread.epoch != epoch || !cx.ai_enabled() {
-                                return;
-                            }
-                            let mut collection = thread.images.clone();
-                            collection.extend(images);
-                            match nocterm_ai::images::validate_collection(&collection) {
-                                Ok(()) => thread.images = collection,
-                                Err(error) => this.error = Some(error),
-                            }
-                            cx.notify();
-                        });
-                    }
-                    Err(error) => this.error = Some(error),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-    pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: None,
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = picked.await {
-                let _ = this.update(cx, |this, cx| this.add_images(paths, cx));
-            }
-        })
-        .detach();
-    }
     fn image_view(&self, key: (usize, usize, bool)) -> gpui_kit::AnyElement {
         match self.image_cache.get(&key) {
             Some(CachedImage::Ready(image)) => img(image.clone())
@@ -107,6 +38,16 @@ impl AgentPanel {
         encoded: bool,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
+        self.cached_image_for_row(key, data, encoded, None, cx)
+    }
+    fn cached_image_for_row(
+        &mut self,
+        key: (usize, usize, bool),
+        data: impl FnOnce() -> Vec<u8>,
+        encoded: bool,
+        row: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.image_cache.entry(key) {
             entry.insert(CachedImage::Loading(None));
             let bytes = data();
@@ -122,7 +63,7 @@ impl AgentPanel {
                     bytes
                 };
                 let image = nocterm_ai::images::PromptImage::validate(bytes)?;
-                let thumbnail = image::load_from_memory(&image.data)
+                let thumbnail = image::load_from_memory(image.bytes())
                     .map_err(|error| error.to_string())?
                     .thumbnail(640, 640);
                 let mut png = std::io::Cursor::new(Vec::new());
@@ -144,7 +85,10 @@ impl AgentPanel {
                             Ok(image) => CachedImage::Ready(image),
                             Err(_) => CachedImage::Failed,
                         });
-                        this.list.remeasure();
+                        if let Some(row) = row {
+                            this.list
+                                .update(cx, |list, cx| list.remeasure_items(row..row + 1, cx));
+                        }
                         cx.notify();
                     }
                 });
@@ -153,16 +97,7 @@ impl AgentPanel {
                 *pending = Some(task);
             }
         }
-        match self.image_cache.get(&key) {
-            Some(CachedImage::Ready(image)) => img(image.clone())
-                .max_w_full()
-                .h(rems(10.))
-                .into_any_element(),
-            Some(CachedImage::Failed) => {
-                div().child("Image could not be loaded.").into_any_element()
-            }
-            _ => div().child("Loading image…").into_any_element(),
-        }
+        self.image_view(key)
     }
     pub(super) fn render_entry(
         &mut self,
@@ -243,16 +178,17 @@ impl AgentPanel {
             }
             Entry::Agent(text) => {
                 let time = thread.read(cx).state.time(index);
-                let text = text.clone();
-                row = row.group(MESSAGE_GROUP).child(chat_markdown(
-                    ("agent-message", index),
-                    safe_markdown(&text),
-                ));
+                let full_text = text.clone();
+                let text = self.stream.text(index, text);
+                row = row.group(MESSAGE_GROUP).child(
+                    chat_markdown(("agent-message", index), safe_markdown(&text))
+                        .stream_fade(thread.read(cx).generating || self.stream.pending()),
+                );
                 if !live {
                     row = row.child(self.render_message_actions(
                         thread.entity_id(),
                         index,
-                        text,
+                        full_text,
                         time,
                         false,
                         cx,
@@ -260,6 +196,7 @@ impl AgentPanel {
                 }
             }
             Entry::Thought(text) => {
+                row = row.text_color(cx.theme().muted_foreground);
                 row = row.child(
                     disclosure_header(
                         ("thought", index),
@@ -286,7 +223,8 @@ impl AgentPanel {
                         if !this.expanded.insert(index) {
                             this.expanded.remove(&index);
                         }
-                        this.list.remeasure_items(index..index + 1);
+                        this.list
+                            .update(cx, |list, cx| list.remeasure_items(index..index + 1, cx));
                         cx.notify();
                     })),
                 );
@@ -301,6 +239,7 @@ impl AgentPanel {
                             .overflow_x_scroll()
                             .child(
                                 chat_markdown(("thought-text", index), safe_markdown(text))
+                                    .text_color(cx.theme().muted_foreground)
                                     .w_full()
                                     .max_w_full(),
                             ),
@@ -308,6 +247,7 @@ impl AgentPanel {
                 }
             }
             Entry::Tool(call) => {
+                row = row.text_color(cx.theme().muted_foreground);
                 row = row.child(
                     disclosure_header(
                         ("tool-call", index),
@@ -325,7 +265,8 @@ impl AgentPanel {
                         if !this.expanded.insert(index) {
                             this.expanded.remove(&index);
                         }
-                        this.list.remeasure_items(index..index + 1);
+                        this.list
+                            .update(cx, |list, cx| list.remeasure_items(index..index + 1, cx));
                         cx.notify();
                     })),
                 );
@@ -365,7 +306,7 @@ impl AgentPanel {
             Entry::Content(_) => row = row.child("Agent supplied additional content."),
         }
         for (key, data) in pending_images {
-            self.cached_image(key, || data, true, cx);
+            self.cached_image_for_row(key, || data, true, Some(index), cx);
         }
         row.into_any_element()
     }

@@ -11,7 +11,13 @@ use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+mod attachments;
+mod prompt;
+mod queue;
+pub(crate) use queue::QueuedPrompt;
+mod restart;
 mod saved;
+mod session;
 mod tools;
 #[cfg(test)]
 pub(crate) use saved::chat_title;
@@ -21,6 +27,7 @@ pub(crate) enum Attachment {
     Terminal(EntityId),
     Connection(String),
     Group(String),
+    UnavailableLocal(String),
 }
 /// A background session asks for a secret. The user answers in the chat, or
 /// unlocks the vault when a saved secret answers it; no tab opens.
@@ -96,11 +103,25 @@ pub(crate) struct AgentThread {
     /// Background sessions waiting for the user to sign in from the chat.
     pub sign_ins: Vec<SignInWait>,
     pub images: Vec<nocterm_ai::images::PromptImage>,
+    pub queue: Vec<queue::QueuedPrompt>,
+    pub queue_paused: bool,
+    /// Composer edits suspend dispatch independently of stops and errors.
+    pub queue_editing: bool,
+    composer_defaults: Option<attachments::ComposerDefaults>,
+    pub prompt_attachments: Option<Vec<Attachment>>,
+    pub dirty_rows: std::collections::HashSet<usize>,
+    storage_dirty: std::collections::HashSet<usize>,
+    storage_budget: nocterm_ai::history::HistoryBudget,
+    pub fallback_history: bool,
+    pub pending_controls: Vec<(acp::SessionId, acp::SessionUpdate)>,
+    pub connecting_session: bool,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
     pub context_bytes: usize,
     pub tool_bytes: usize,
     pub epoch: u64,
+    pub turn: u64,
+    pub next_queue_id: u64,
     ids: OpaqueIds,
     /// Ids of attached servers without a session, as agents see them.
     server_ids: OpaqueIds,
@@ -169,11 +190,24 @@ impl AgentThread {
             background: Vec::new(),
             sign_ins: Vec::new(),
             images: Vec::new(),
+            queue: Vec::new(),
+            queue_paused: false,
+            queue_editing: false,
+            composer_defaults: None,
+            prompt_attachments: None,
+            dirty_rows: Default::default(),
+            storage_dirty: Default::default(),
+            storage_budget: Default::default(),
+            fallback_history: false,
+            pending_controls: Vec::new(),
+            connecting_session: false,
             permissions: Vec::new(),
             tools: Vec::new(),
             context_bytes: 0,
             tool_bytes: 0,
             epoch: 0,
+            turn: 0,
+            next_queue_id: 1,
             ids: Default::default(),
             server_ids: OpaqueIds::with_prefix("s"),
             grants: Default::default(),
@@ -187,122 +221,11 @@ impl AgentThread {
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
         self.state.entries.is_empty()
+            && self.queue.is_empty()
             && self.name.is_none()
             && !self.generating
             && self.permissions.is_empty()
             && self.tools.is_empty()
-    }
-    pub(crate) fn create_session(
-        &mut self,
-        commands: Arc<dyn AgentCommands>,
-        info: AgentInfo,
-        workdir: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        if !cx.ai_enabled() {
-            return;
-        }
-        let Some(registration) = &self.registration else {
-            self.fail("Terminal bridge is unavailable.", cx);
-            return;
-        };
-        let binary = match std::env::current_exe() {
-            Ok(binary) => binary,
-            Err(error) => {
-                self.fail(&error.to_string(), cx);
-                return;
-            }
-        };
-        let server = acp::McpServerStdio::new(bridge_server_name(registration.id), binary)
-            .args(vec!["agent-bridge".into()])
-            .env(vec![
-                acp::EnvVariable::new("NOCTERM_BRIDGE_ENDPOINT", registration.endpoint.clone()),
-                acp::EnvVariable::new("NOCTERM_BRIDGE_TOKEN", registration.token.clone()),
-            ]);
-        self.commands = Some(commands.clone());
-        self.info = Some(info);
-        self.status = "Starting chat…".into();
-        self.status_error = false;
-        self.auth_required = false;
-        let restore = self
-            .restore
-            .take()
-            .filter(|restore| restore.workdir.is_absolute());
-        self.session_workdir = Some(
-            restore
-                .as_ref()
-                .map_or_else(|| workdir.clone(), |restore| restore.workdir.clone()),
-        );
-        let epoch = self.epoch;
-        let servers = vec![acp::McpServer::Stdio(server)];
-        let session_commands = commands.clone();
-        let pending_restore = restore.clone();
-        let future = cx.background_executor().spawn(async move {
-            // A saved chat reopens its session so the agent remembers it;
-            // failing that, the chat goes on in a new session.
-            if let Some(restore) = &restore {
-                match session_commands
-                    .restore_session(nocterm_ai::RestoreSessionRequest {
-                        session_id: restore.session.clone(),
-                        cwd: restore.workdir.clone(),
-                        mcp_servers: servers.clone(),
-                        fork: restore.fork,
-                    })
-                    .await
-                {
-                    Ok(response) => return (Ok(response), Some(true), workdir),
-                    Err(error @ nocterm_ai::AgentError::AuthRequired(_)) => {
-                        return (Err(error), None, workdir);
-                    }
-                    Err(error) => {
-                        tracing::debug!(%error, "could not reopen agent session");
-                    }
-                }
-            }
-            let result = session_commands
-                .new_session(acp::NewSessionRequest::new(workdir.clone()).mcp_servers(servers))
-                .await;
-            (result, restore.is_some().then_some(false), workdir)
-        });
-        cx.spawn(async move |this, cx| {
-            let (result, restored, workdir) = future.await;
-            let _ = this.update(cx, |this, cx| {
-                if restored == Some(false) {
-                    // The new session lives in the connection's directory.
-                    this.session_workdir = Some(workdir);
-                }
-                if restored.is_none() && result.is_err() {
-                    // Kept for after signing in.
-                    this.restore = pending_restore;
-                }
-                if this.epoch != epoch || !cx.ai_enabled() {
-                    if let Ok(response) = result {
-                        commands.close_session(response.session_id);
-                    }
-                    return;
-                }
-                match result {
-                    Ok(response) => {
-                        this.state.modes = response.modes;
-                        this.state.config_options = response.config_options.unwrap_or_default();
-                        this.session = Some(response.session_id);
-                        this.auth_required = false;
-                        this.status = if restored == Some(false) {
-                            "Started a new agent session: the agent does not remember the messages above.".into()
-                        } else {
-                            "Ready".into()
-                        };
-                        cx.notify();
-                    }
-                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
-                        this.require_authentication(&message, cx);
-                    }
-                    Err(error) => this.fail(&error.to_string(), cx),
-                }
-            });
-        })
-        .detach();
-        cx.notify();
     }
     pub(crate) fn fail(&mut self, message: &str, cx: &mut Context<Self>) {
         self.finish_pending_tools();
@@ -315,6 +238,8 @@ impl AgentThread {
         self.generating = false;
         self.auth_required = false;
         self.authenticating = false;
+        self.queue_paused = true;
+        self.connecting_session = false;
         self.status = nocterm_ai::redact::redact(message);
         self.status_error = true;
         self.cancel_pending();
@@ -325,6 +250,7 @@ impl AgentThread {
     }
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
         self.finish_pending_tools();
+        self.queue_paused = true;
         self.auth_required = true;
         self.authenticating = false;
         self.generating = false;
@@ -417,8 +343,16 @@ impl AgentThread {
         .detach();
         cx.notify();
     }
+    pub(crate) fn mark_dirty(&mut self, index: usize) {
+        self.dirty_rows.insert(index);
+        self.storage_dirty.insert(index);
+    }
+    pub(super) fn refresh_storage_budget(&mut self) -> Result<(), String> {
+        let dirty = self.storage_dirty.drain().collect::<Vec<_>>();
+        self.storage_budget.refresh(&self.state.entries, &dirty)
+    }
     fn finish_pending_tools(&mut self) {
-        for entry in &mut self.state.entries {
+        for (index, entry) in self.state.entries.iter_mut().enumerate() {
             if let nocterm_ai::thread::Entry::Tool(call) = entry
                 && matches!(
                     call.status,
@@ -426,6 +360,8 @@ impl AgentThread {
                 )
             {
                 call.status = acp::ToolCallStatus::Failed;
+                self.dirty_rows.insert(index);
+                self.storage_dirty.insert(index);
             }
         }
     }
@@ -478,92 +414,6 @@ impl AgentThread {
             })
             .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
         let _ = permission.respond.send(outcome);
-        cx.notify();
-    }
-    pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() || self.generating || self.auth_required || self.ended() {
-            return;
-        }
-        let (Some(commands), Some(session)) = (self.commands.clone(), self.session.clone()) else {
-            return;
-        };
-        if text.trim().is_empty() && self.images.is_empty() {
-            return;
-        }
-        // A new turn: updates count again.
-        self.stopped = false;
-        self.accept_updates = true;
-        let context = format!(
-            "{}\n{}",
-            nocterm_ai::context::TERMINAL_RULES,
-            self.context(cx)
-        );
-        self.context_bytes += context.len();
-        let mut visible = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
-        visible.extend(self.images.drain(..).map(|image| image.content()));
-        self.state.push_user(visible.clone());
-        self.persist(cx);
-        let mut content = vec![acp::ContentBlock::Text(acp::TextContent::new(context))];
-        content.extend(visible);
-        self.last_prompt = Some(PromptMetadata {
-            model: self
-                .state
-                .config_options
-                .iter()
-                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
-                .map(config_label)
-                .filter(|model| !model.is_empty()),
-        });
-        self.generating = true;
-        self.status = "Working…".into();
-        self.status_error = false;
-        let epoch = self.epoch;
-        let future = cx
-            .background_executor()
-            .spawn(commands.prompt(acp::PromptRequest::new(session, content)));
-        cx.spawn(async move |this, cx| {
-            let result = future.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch || !cx.ai_enabled() {
-                    return;
-                }
-                this.generating = false;
-                this.cancel_pending();
-                this.persist(cx);
-                match result {
-                    Ok(response) => {
-                        if response.usage.is_some() {
-                            this.state.tokens = response.usage;
-                        }
-                        // Agents that keep limits in their own files have
-                        // just written this turn's.
-                        let agent = this.agent_id.clone();
-                        cx.defer(move |cx| {
-                            Runtime::global(cx)
-                                .update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
-                        });
-                        this.status = if this.stopped {
-                            "Stopped".into()
-                        } else {
-                            format!("{:?}", response.stop_reason)
-                        };
-                        cx.notify();
-                    }
-                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
-                        this.require_authentication(&message, cx);
-                    }
-                    // Some agents answer a cancelled prompt with an error; the
-                    // session itself goes on.
-                    Err(error) if this.stopped => {
-                        tracing::debug!(%error, "stopped prompt ended with an error");
-                        this.status = "Stopped".into();
-                        cx.notify();
-                    }
-                    Err(error) => this.fail(&error.to_string(), cx),
-                }
-            });
-        })
-        .detach();
         cx.notify();
     }
     pub(crate) fn set_config(
@@ -638,6 +488,7 @@ impl AgentThread {
     /// Cancels the turn in progress. The session stays open for the next
     /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
+        self.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
         if !self.generating {
@@ -651,12 +502,13 @@ impl AgentThread {
         self.stopped = true;
         self.status = "Stopping…".into();
         let epoch = self.epoch;
+        let turn = self.turn;
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_secs(10))
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.generating && this.epoch == epoch {
+                if this.generating && this.epoch == epoch && this.turn == turn {
                     this.fail(
                         "Cancellation timed out. Restart this chat before sending another prompt.",
                         cx,
@@ -674,12 +526,20 @@ impl AgentThread {
             .position(|value| value == &attachment)
         {
             self.attachments.remove(index);
-            self.grants.clear();
-            self.cancel_pending();
-            self.prune_background(cx);
+            if self.composer_defaults.is_none() {
+                if let Some(attached) = &mut self.prompt_attachments {
+                    attached.retain(|value| value != &attachment);
+                }
+                self.grants.clear();
+                self.cancel_pending();
+                if !self.generating {
+                    self.prune_background(cx);
+                }
+            }
         } else {
             self.attachments.push(attachment);
         }
+        self.save(cx);
         cx.notify();
     }
 }

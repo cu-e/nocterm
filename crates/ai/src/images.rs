@@ -6,10 +6,12 @@ pub const MAX_TOTAL_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub const MAX_IMAGE_PIXELS: u64 = 16_777_216;
 #[derive(Clone, Debug)]
 pub struct PromptImage {
-    pub mime_type: String,
-    pub data: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    mime_type: String,
+    data: std::sync::Arc<[u8]>,
+    width: u32,
+    height: u32,
+    content: std::sync::Arc<acp::ContentBlock>,
+    encoded_len: usize,
 }
 impl PromptImage {
     pub fn validate(data: Vec<u8>) -> Result<Self, String> {
@@ -31,18 +33,43 @@ impl PromptImage {
         reader
             .decode()
             .map_err(|_| "Invalid image data or decoding limit exceeded")?;
+        let content =
+            acp::ContentBlock::Image(acp::ImageContent::new(STANDARD.encode(&data), mime));
+        let encoded_len = crate::history::content_size(&content)?;
         Ok(Self {
             mime_type: mime.into(),
-            data,
+            data: data.into(),
             width: w,
             height: h,
+            content: std::sync::Arc::new(content),
+            encoded_len,
         })
     }
     pub fn content(&self) -> acp::ContentBlock {
-        acp::ContentBlock::Image(acp::ImageContent::new(
-            STANDARD.encode(&self.data),
-            self.mime_type.clone(),
-        ))
+        (*self.content).clone()
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.data
+    }
+    pub fn mime_type(&self) -> &str {
+        &self.mime_type
+    }
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+    pub fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+    #[cfg(test)]
+    pub(crate) fn test_only_bytes(length: usize) -> Self {
+        Self {
+            mime_type: "image/png".into(),
+            data: vec![0; length].into(),
+            width: 1,
+            height: 1,
+            content: std::sync::Arc::new(acp::ContentBlock::Text(acp::TextContent::new("test"))),
+            encoded_len: 0,
+        }
     }
 }
 pub fn validate_collection(images: &[PromptImage]) -> Result<(), String> {

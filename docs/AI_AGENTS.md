@@ -9,8 +9,9 @@ Preferences → Settings and Ctrl+, (Cmd+, on macOS). The footer no longer has a
 Settings button.
 
 Create a chat with Claude, Codex, Hermes, or a custom ACP executable; the
-built-in agents show their brand marks in the menu, the panel header and AI
-Settings, custom agents a generic icon. Ctrl+N (Cmd+N on macOS) in the panel
+built-in agents show their brand marks in the menu, the panel header, chat
+history and AI Settings; custom agents show a generic icon. A working chat
+shows a spinner in history; its pin remains a separate indicator. Ctrl+N (Cmd+N on macOS) in the panel
 starts a new chat with the agent the last chat was started with (remembered in
 `agents.toml`; before any chat, the default agent); the new-chat menu shows the
 shortcut beside that agent. Agent
@@ -83,8 +84,13 @@ first.
 After a restart, saved chats appear in the history without starting their
 agent. Opening one connects the agent and reopens its session with
 `session/resume` (no replay) or `session/load`, whichever the agent advertises.
-An agent with neither, or one that refuses, starts a new session; the status
-line then says the agent does not remember the earlier messages. Saved chats
+An agent without restoration, or whose saved session no longer exists, starts
+a new session. A bounded copy of the saved user/assistant conversation accompanies
+the next prompt, and the status explains the fallback. Temporary restoration
+errors are retried once and retain the session descriptor; authentication keeps
+it for retry after sign-in. Attached connections and groups survive restarts;
+a remote terminal attachment restores through its saved connection. Local
+shells cannot be reconnected from an earlier process. Saved chats
 load into the first window that opens the panel, so two windows never write the
 same file. Turning AI off and on again shows them only after a restart.
 
@@ -103,7 +109,7 @@ opens its chat anywhere it is clicked; its `…` menu offers:
 | Action | Effect |
 | --- | --- |
 | Rename | Edit the name in place; Enter or leaving the field saves, Escape cancels. An empty name returns to the agent's title. |
-| Fork | A new chat with the same messages and attachments, opened at once. The agent continues in a copy of the session (`session/fork`) when it advertises forking; otherwise the copy starts a new session that does not remember the messages. |
+| Fork | A new chat with the same messages and attachments, opened at once. The agent continues in a copy of the session (`session/fork`) when it advertises forking; otherwise the copy starts a new session with bounded saved conversation context. |
 | Pin / Unpin | Pinned chats show a pin before the title and stay at the top. |
 
 The trash button deletes the chat and its file.
@@ -115,12 +121,53 @@ a Copy button that copies the message's text, and a Fork button. Forking from
 the last message is the same as Fork in the history menu. Forking from an
 earlier message copies the chat up to and including that message, and the copy
 starts a new agent session: the agent cannot be made to forget what came after,
-so it does not remember the copied messages either.
+with bounded saved conversation context accompanying its next prompt.
 
 Attached images are shown as a row of thumbnails above the message field, each
 with its own remove button, and in a row inside the sent message. Tool output
 is shown as the text the tool returned, wrapping long lines, and as JSON only
 for other content.
+
+Typing `/` offers the commands this ACP agent advertises, including descriptions
+and input hints. Up/Down select; Tab inserts the selected command, and further
+Tab/Shift+Tab presses cycle the original matches without leaving the composer.
+Enter or a click confirms the selection with the caret at the end. Escape closes
+the suggestions. Rows show a short single-line summary and follow the keyboard selection as
+you move through the list. Hovering a row shows its full description and arguments.
+A recognized command followed by a space becomes a highlighted token inside the
+message field; hovering that token opens the same compact card. There is no
+automatic description overlay. Clicking the token selects it for replacement;
+Backspace/Delete remove it as a unit, and undo restores edits. Arguments remain
+ordinary text, and the sent prompt retains the original `/command args` text.
+For model selection, the composer dropdown browses and searches the models the
+agent advertises; its tooltip reports their count. `/model list` is not invented
+or intercepted: each agent decides what its command arguments mean. An advertised `/command` and any arguments are sent as the first prompt block,
+without terminal instructions or history prepended. Unknown slash names and paths
+such as `/var/log/nginx/error.log` remain ordinary messages with their terminal
+context and saved history. Unadorned administrative
+commands remain a single text block; any saved-conversation fallback waits for
+the next ordinary question. This pending context is saved across further restarts
+and successful native resumes, then cleared on disk after a completed ordinary turn.
+
+You can send another message while the agent works. It joins this chat's FIFO
+queue with its text, images and attachment snapshot. The strip peeking above the
+composer shows the count; clicking it unfolds the complete queue. Its height
+fits the laid-out text, images and attachments; large queues scroll within a
+maximum height. The arrow sends
+a selected message next: it cancels the current response and waits for cancellation
+to finish before sending. Other messages keep their order. The pencil edits a
+queued message in place and restores your unsent composer draft after saving or
+cancelling. Send-now controls are disabled while editing. Queued images are saved
+in full; a message exceeding the saved chat's 32 MiB limit is rejected with its
+draft intact. Restored queues wait for an explicit send-now action. Stopping,
+authentication failures and session failures retain and pause the remaining queue.
+A disk-write failure also pauses the queue and reports the problem. Finishing or
+cancelling an edit preserves any stop or error that paused the queue during editing.
+
+Streamed replies reveal gradually and fade in, with reduced-motion preferences
+showing new text immediately. The transcript follows the latest response until
+you scroll up; **Jump to latest** resumes following. Reasoning and tool details
+use the secondary text color.
 
 Stop cancels the current turn (`session/cancel`). Updates the agent sends after
 answering the cancellation are dropped, and the next prompt continues in the
@@ -354,3 +401,8 @@ Hermes.
 The new `[ai]` table uses strict schema validation. Older Nocterm versions that
 do not know this table may reject those settings; keep a backup before opening
 the same settings with an older version.
+
+Unavailable local terminal references stay visible after reopening, including beside
+working remote attachments. They grant no terminal access and can be removed explicitly.
+Editing queued attachments changes only that future message; the active turn and
+saved chat defaults keep their original attachment scope.

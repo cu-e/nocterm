@@ -13,7 +13,15 @@ impl AgentThread {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let pending_history =
+            chat.pending_history || (chat.session_id.is_none() && !chat.entries.is_empty());
+        let prepared_sizes = chat
+            .prepared_budget()
+            .map(|prepared| prepared.prompt_sizes().to_vec())
+            .unwrap_or_default();
         let mut thread = Self::new(chat.agent_id.clone(), workspace, cx);
+        thread.storage_budget =
+            nocterm_ai::history::HistoryBudget::restored(chat.prepared_budget());
         thread.chat_id = chat.id;
         thread.updated = chat.updated;
         thread.dormant = true;
@@ -23,6 +31,29 @@ impl AgentThread {
         thread.state.title = chat.title;
         thread.name = chat.name;
         thread.pinned = chat.pinned;
+        thread.attachments = super::queue::restore_attachments(&chat.attachments);
+        thread.queue = chat
+            .queue
+            .into_iter()
+            .enumerate()
+            .map(|(index, saved)| {
+                let attachments = super::queue::restore_attachments(&saved.attachments);
+                super::queue::QueuedPrompt::prepared(
+                    saved,
+                    attachments,
+                    prepared_sizes.get(index).copied(),
+                )
+            })
+            .collect();
+        thread.next_queue_id = thread
+            .queue
+            .iter()
+            .map(|prompt| prompt.saved.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        thread.queue_paused = true;
+        thread.fallback_history = pending_history;
         thread.restore = chat.session_id.map(|session| Restore {
             session: acp::SessionId::new(session),
             workdir: chat.workdir.unwrap_or_default(),
@@ -49,6 +80,7 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
+        chat.pending_history = self.fallback_history || !whole;
         let restore = match (&self.session, &self.restore) {
             (Some(session), _) => self.session_workdir.clone().map(|workdir| Restore {
                 session: session.clone(),
@@ -65,7 +97,7 @@ impl AgentThread {
         Fork {
             chat,
             restore,
-            attachments: self.attachments.clone(),
+            attachments: self.default_attachments().to_vec(),
         }
     }
     /// The chat `fork` made, connected only when opened.
@@ -74,7 +106,10 @@ impl AgentThread {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let pending_history =
+            fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
         let mut thread = Self::restored(fork.chat, workspace, cx);
+        thread.fallback_history = pending_history;
         thread.restore = fork.restore;
         thread.attachments = fork.attachments;
         thread.status = "Forked chat".into();
@@ -105,19 +140,20 @@ impl AgentThread {
         cx.notify();
     }
     /// What is saved of this chat; `None` until something was said.
-    pub(crate) fn snapshot(&self) -> Option<nocterm_ai::history::SavedChat> {
-        if self.state.entries.is_empty() {
-            return None;
-        }
+    pub(super) fn history_metadata(&self, cx: &gpui_kit::App) -> nocterm_ai::history::SavedChat {
         let mut chat = nocterm_ai::history::SavedChat::new(self.agent_id.clone());
         chat.id = self.chat_id.clone();
         chat.updated = self.updated;
         chat.title = self.state.title.clone();
         chat.name = self.name.clone();
         chat.pinned = self.pinned;
-        chat.entries = self.state.entries.clone();
-        chat.times = self.state.times.clone();
+        chat.attachments = self.stable_attachments(self.default_attachments(), cx);
+        chat.times = nocterm_ai::history::SavedChat::bounded_times(
+            self.state.entries.len(),
+            &self.state.times,
+        );
         chat.model = self.model();
+        chat.pending_history = self.fallback_history;
         match (&self.session, &self.restore) {
             (Some(session), _) => {
                 chat.session_id = Some(session.0.to_string());
@@ -131,6 +167,35 @@ impl AgentThread {
             }
             (None, _) => {}
         }
+        chat
+    }
+    pub(crate) fn shared_snapshot(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> Option<std::sync::Arc<nocterm_ai::history::SharedChat>> {
+        if self.state.entries.is_empty() && self.queue.is_empty() {
+            return None;
+        }
+        let mut metadata = self.history_metadata(cx);
+        metadata.entries = nocterm_ai::history::SavedChat::bounded_entries(&self.state.entries);
+        Some(std::sync::Arc::new(nocterm_ai::history::SharedChat {
+            metadata,
+            queue: self
+                .queue
+                .iter()
+                .map(|prompt| prompt.saved.clone())
+                .collect(),
+        }))
+    }
+    #[cfg(test)]
+    pub(crate) fn snapshot(&self, cx: &gpui_kit::App) -> Option<nocterm_ai::history::SavedChat> {
+        let shared = self.shared_snapshot(cx)?;
+        let mut chat = shared.metadata.clone();
+        chat.queue = shared
+            .queue
+            .iter()
+            .map(|prompt| (**prompt).clone())
+            .collect();
         Some(chat)
     }
     /// Marks the chat as changed now and saves it.
@@ -140,7 +205,7 @@ impl AgentThread {
     }
     /// Saves the chat to history, if anything was said.
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
-        if let Some(chat) = self.snapshot() {
+        if let Some(chat) = self.shared_snapshot(cx) {
             // Deferred: this may run while the runtime itself is updating.
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| runtime.save_chat(chat, cx))

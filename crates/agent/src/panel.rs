@@ -1,10 +1,7 @@
-use crate::{
-    runtime::Runtime,
-    thread::{AgentThread, Attachment},
-};
+use crate::{runtime::Runtime, thread::AgentThread};
 use gpui_kit::{
-    Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
-    SharedString, Subscription, Task, TestSupportExt as _, WeakEntity, Window,
+    Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
+    Task, TestSupportExt as _, WeakEntity, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -28,14 +25,20 @@ use widgets::HEADER_HEIGHT;
 
 mod approvals;
 mod attach;
+mod attachments;
 mod chat;
+pub(crate) mod commands;
 mod composer;
 mod entries;
 mod history;
+mod images;
+mod lifecycle;
 mod menu;
 mod message_actions;
+mod queue;
 mod servers;
 mod split;
+mod stream;
 mod usage;
 mod widgets;
 
@@ -72,7 +75,13 @@ pub(crate) struct AgentPanel {
     history_search: Entity<InputState>,
     renaming: Option<history::Renaming>,
     menu: Option<MenuKind>,
-    list: ListState,
+    list: Entity<gpui_kit::component::message_scroller::MessageScrollerState>,
+    stream: stream::StreamReveal,
+    stream_tick: Option<Task<()>>,
+    queue_open: bool,
+    queue_heights: HashMap<gpui_kit::EntityId, gpui_kit::Pixels>,
+    composer: queue::ComposerState,
+    commands: commands::CommandState,
     list_count: usize,
     expanded: HashSet<usize>,
     error: Option<String>,
@@ -101,19 +110,33 @@ impl AgentPanel {
                 this.send(window, cx);
             }
         });
+        let input_observer = cx.observe_in(&input, window, |this, _, window, cx| {
+            let value = this.input.read(cx).value().to_string();
+            if value == this.commands.input_value {
+                return;
+            }
+            this.commands.input_value = value;
+            if !this
+                .commands
+                .cycle
+                .as_ref()
+                .is_some_and(|cycle| cycle.inserted == this.input.read(cx).value().as_ref())
+            {
+                this.commands.cycle = None;
+                this.commands.selected = 0;
+                this.commands.reveal(0);
+                this.commands.dismissed = None;
+            }
+            this.sync_command_token(window, cx);
+            cx.notify();
+        });
         let search_observer = cx.observe(&search, |_, _, cx| cx.notify());
         let history_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
         let history_search_observer = cx.observe(&history_search, |_, _, cx| cx.notify());
         let settings = cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
             let enabled = cx.ai_enabled();
             if !enabled {
-                this.threads.clear();
-                this.image_cache.clear();
-                this.active = None;
-                this.menu = None;
-                this.sync_approval_attention(window, cx);
-                this.input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
+                this.clear_chats(window, cx);
             }
             let workspace = this.workspace.clone();
             window.defer(cx, move |window, cx| {
@@ -155,12 +178,20 @@ impl AgentPanel {
             history_search,
             renaming: None,
             menu: None,
-            list: ListState::new(0, ListAlignment::Bottom, px(500.)),
+            list: cx
+                .new(|cx| gpui_kit::component::message_scroller::MessageScrollerState::new(0, cx)),
+            stream: Default::default(),
+            stream_tick: None,
+            queue_open: false,
+            queue_heights: HashMap::new(),
+            composer: Default::default(),
+            commands: Default::default(),
             list_count: 0,
             expanded: HashSet::new(),
             error: None,
             subscriptions: [
                 Some(submit),
+                Some(input_observer),
                 Some(search_observer),
                 Some(history_search_observer),
                 Some(settings),
@@ -196,190 +227,34 @@ impl AgentPanel {
             .cloned()
             .or_else(|| registry.iter().next().map(|launch| launch.id.clone()))
     }
-    fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_thread_connection(id, false, window, cx);
-    }
-    fn new_thread_connection(
-        &mut self,
-        id: String,
-        fresh: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(launch) = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
-            .get(&id)
-            .cloned()
-        else {
-            return;
-        };
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.set_last_agent(&id, cx));
-        let active = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).active_terminal(cx));
-        // An empty chat left behind is not history.
-        self.discard_drafts(None, cx);
-        let thread = cx.new(|cx| AgentThread::new(id, self.workspace.clone(), cx));
-        if let Some(id) = active {
-            thread.update(cx, |thread, _| {
-                thread.attachments.push(Attachment::Terminal(id))
-            });
-        }
-        self.track(&thread, window, cx);
-        self.connect_thread(&thread, launch, fresh, cx);
-        self.threads.push(thread);
-        self.active = Some(self.threads.len() - 1);
-        self.menu = None;
-        self.list.reset(0);
-        self.list_count = 0;
-        self.expanded.clear();
-        self.image_cache.clear();
-        window.focus(&self.input.read(cx).focus_handle(cx), cx);
-        cx.notify();
-    }
-    /// Replaces the open chat, whose session ended, with the same chat in a
-    /// new agent process.
-    fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(old) = self.current() else {
-            return;
-        };
-        let (agent, chat_id, name, pinned, state, attachments, last_prompt) = {
-            let old = old.read(cx);
-            (
-                old.agent_id.clone(),
-                old.chat_id.clone(),
-                old.name.clone(),
-                old.pinned,
-                old.state.clone(),
-                old.attachments.clone(),
-                old.last_prompt.clone(),
-            )
-        };
-        self.new_thread_connection(agent, true, window, cx);
-        if let Some(thread) = self.current() {
-            thread.update(cx, |thread, cx| {
-                thread.chat_id = chat_id;
-                thread.name = name;
-                thread.pinned = pinned;
-                thread.state = state;
-                thread.attachments = attachments;
-                thread.last_prompt = last_prompt;
-                cx.notify();
-            });
-        }
-        let old = old.entity_id();
-        self.retain_threads(|thread, _| thread.entity_id() != old, cx);
-    }
-    /// Registers `thread` with the terminal bridge and connects its agent.
-    fn connect_thread(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        launch: nocterm_ai::AgentLaunch,
-        fresh: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let runtime = Runtime::global(cx);
-        let registration = runtime.update(cx, |runtime, cx| runtime.register_bridge(thread, cx));
-        match registration {
-            Ok(registration) => {
-                thread.update(cx, |thread, _| thread.registration = Some(registration))
-            }
-            Err(error) => thread.update(cx, |thread, cx| thread.fail(&error, cx)),
-        };
-        if thread.read(cx).registration.is_some() {
-            runtime.update(cx, |runtime, cx| {
-                runtime.connect(thread.clone(), launch, fresh, cx)
-            });
-        }
-    }
-    /// Shows the chats saved in earlier runs, oldest first, before the
-    /// chats of this run.
-    fn adopt_saved_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() {
-            return;
-        }
-        let Some(mut chats) =
-            Runtime::global(cx).update(cx, |runtime, _| runtime.take_saved_chats())
-        else {
-            return;
-        };
-        if chats.is_empty() {
-            return;
-        }
-        chats.reverse();
-        let restored: Vec<_> = chats
-            .into_iter()
-            .map(|chat| {
-                let thread = cx.new(|cx| AgentThread::restored(chat, self.workspace.clone(), cx));
-                self.track(&thread, window, cx);
-                thread
-            })
-            .collect();
-        let count = restored.len();
-        self.threads.splice(0..0, restored);
-        self.active = self.active.map(|active| active + count);
-        cx.notify();
-    }
-    /// Connects a chat restored from history when it is opened.
-    fn wake(&mut self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) {
-        if !thread.read(cx).dormant {
-            return;
-        }
-        thread.update(cx, |thread, _| thread.dormant = false);
-        let agent = thread.read(cx).agent_id.clone();
-        match nocterm_ai::AgentRegistry::new(&cx.settings().ai)
-            .get(&agent)
-            .cloned()
-        {
-            Some(launch) => self.connect_thread(thread, launch, false, cx),
-            None => thread.update(cx, |thread, cx| {
-                thread.fail(
-                    &format!("The agent `{agent}` is no longer configured. Start a new chat."),
-                    cx,
-                )
-            }),
-        }
-    }
-    fn track(&mut self, thread: &Entity<AgentThread>, window: &mut Window, cx: &mut Context<Self>) {
-        // Background sessions the chat opens belong to this window.
-        let handle = window.window_handle();
-        thread.update(cx, |thread, _| thread.window = Some(handle));
-        self.subscriptions
-            .push(cx.observe_in(thread, window, |this, _, window, cx| {
-                let panel = cx.weak_entity();
-                window.defer(cx, move |window, cx| {
-                    let _ = panel.update(cx, |panel, cx| panel.sync_approval_attention(window, cx));
-                });
-                if this.notify_queued {
-                    return;
-                }
-                this.notify_queued = true;
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(33))
-                        .await;
-                    let _ = this.update(cx, |this, cx| {
-                        this.notify_queued = false;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }));
-    }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preparing_images() {
+            return;
+        }
         let Some(thread) = self.current() else {
             return;
         };
-        if thread.read(cx).generating
-            || thread.read(cx).session.is_none()
-            || thread.read(cx).ended()
-        {
-            return;
-        }
         let text = self.input.read(cx).value().to_string();
-        thread.update(cx, |thread, cx| thread.send(text, cx));
-        self.input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        let replace = self
+            .composer
+            .edit
+            .as_ref()
+            .filter(|edit| edit.thread == thread.entity_id())
+            .map(|edit| edit.id);
+        let result = thread.update(cx, |thread, cx| thread.submit(text, replace, cx));
+        match result {
+            Ok(true) => {
+                self.input
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.finish_queue_edit(window, cx);
+            }
+            Ok(false) => return,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        }
         self.menu = None;
         cx.notify();
     }
@@ -437,14 +312,12 @@ impl AgentPanel {
             .filter(pending)
             .or_else(|| self.threads.iter().find(|thread| pending(thread)).cloned());
         if let Some(owner) = owner {
-            self.active = self
-                .threads
-                .iter()
-                .position(|thread| thread.entity_id() == owner.entity_id());
-            self.list.reset(0);
-            self.list_count = 0;
-            self.expanded.clear();
-            self.image_cache.clear();
+            if self
+                .current()
+                .is_none_or(|thread| thread.entity_id() != owner.entity_id())
+            {
+                self.open_thread(owner.entity_id(), cx);
+            }
             cx.notify();
         }
     }
@@ -510,6 +383,38 @@ impl Render for AgentPanel {
             .size_full()
             .min_w_0()
             .bg(cx.theme().background)
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MoveUp, window, cx| {
+                    this.command_action("up", window, cx);
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::MoveDown, window, cx| {
+                    this.command_action("down", window, cx);
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::IndentInline, window, cx| {
+                    this.command_action("tab", window, cx);
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::OutdentInline, window, cx| {
+                    this.command_action("shift-tab", window, cx);
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, _: &gpui_kit::component::input::Escape, window, cx| {
+                    this.command_action("escape", window, cx);
+                },
+            ))
+            .capture_action(cx.listener(
+                |this, action: &gpui_kit::component::input::Enter, window, cx| {
+                    if !action.shift && !action.secondary {
+                        this.command_action("enter", window, cx);
+                    }
+                },
+            ))
             .on_action(cx.listener(|this, _: &crate::NewThread, _, cx| {
                 this.toggle_menu(MenuKind::Agents, cx)
             }))

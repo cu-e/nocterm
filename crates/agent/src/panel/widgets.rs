@@ -96,7 +96,7 @@ pub(super) fn attachment_icon(attachment: &Attachment) -> IconName {
     match attachment {
         Attachment::Group(_) => IconName::FolderTree,
         Attachment::Connection(_) => IconName::Server,
-        Attachment::Terminal(_) => IconName::Terminal,
+        Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => IconName::Terminal,
     }
 }
 /// A saved server's system icon, the size of a menu icon.
@@ -124,7 +124,7 @@ pub(super) fn running_dot(cx: &App) -> impl IntoElement {
 pub(super) fn entry_is_live(entries: &[Entry], index: usize, generating: bool) -> bool {
     generating
         && match entries.get(index) {
-            Some(Entry::Thought(_)) => index + 1 == entries.len(),
+            Some(Entry::Thought(_) | Entry::Agent(_)) => index + 1 == entries.len(),
             Some(Entry::Tool(call)) => matches!(
                 call.status,
                 acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
@@ -145,11 +145,18 @@ pub(super) fn activity_text(
                 ShimmerText::new(text)
                     .id(id)
                     .text_color(cx.theme().muted_foreground)
-                    .highlight_color(cx.theme().foreground),
+                    .highlight_color(
+                        cx.theme()
+                            .muted_foreground
+                            .blend(cx.theme().foreground.opacity(0.18)),
+                    ),
             )
             .into_any_element()
     } else {
-        label.child(text).into_any_element()
+        label
+            .text_color(cx.theme().muted_foreground)
+            .child(text)
+            .into_any_element()
     }
 }
 pub(super) fn chat_markdown(id: impl Into<gpui_kit::ElementId>, text: String) -> TextView {
@@ -178,6 +185,7 @@ pub(super) fn disclosure_header(
 ) -> Button {
     Button::new(id)
         .text()
+        .text_color(cx.theme().muted_foreground)
         .small()
         .w_full()
         .min_w_0()
