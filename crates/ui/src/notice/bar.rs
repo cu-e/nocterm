@@ -25,6 +25,11 @@ pub(super) const LINE_WIDTH: f32 = 340.;
 const MARQUEE_GAP: f32 = 48.;
 /// How fast scrolling text moves, in pixels a second.
 const MARQUEE_SPEED: f32 = 40.;
+/// How many times long text scrolls past before it rests at its start.
+/// Bounded: a running animation redraws the whole window every frame.
+const MARQUEE_PASSES: u32 = 3;
+/// How often scrolling text moves; each step redraws the window.
+const MARQUEE_FPS: f32 = 30.;
 
 /// The newest notice on one line, with its icon, action and dismiss button,
 /// and a bell that opens every notice of the window. Long text scrolls.
@@ -115,8 +120,8 @@ fn line(notice: Notice, window: &mut Window, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-/// `text` on one line; when it is wider than the line it scrolls in a loop.
-/// Clicking it opens the list.
+/// `text` on one line; when it is wider than the line it scrolls past a few
+/// times, then rests at its start. Clicking it opens the list.
 fn marquee(id: u64, text: SharedString, window: &mut Window) -> AnyElement {
     let font_size = rems(0.75).to_pixels(window.rem_size());
     let run = window.text_style().to_run(text.len());
@@ -139,7 +144,8 @@ fn marquee(id: u64, text: SharedString, window: &mut Window) -> AnyElement {
         return container.child(text).into_any_element();
     }
     let travel = width + px(MARQUEE_GAP);
-    let period = Duration::from_secs_f32(f32::from(travel) / MARQUEE_SPEED);
+    let passes = MARQUEE_PASSES as f32;
+    let duration = Duration::from_secs_f32(f32::from(travel) / MARQUEE_SPEED * passes);
     container
         .w(viewport)
         .child(
@@ -151,8 +157,8 @@ fn marquee(id: u64, text: SharedString, window: &mut Window) -> AnyElement {
                 .child(div().flex_none().child(text))
                 .with_animation(
                     ("notice-marquee", id),
-                    Animation::new(period).repeat(),
-                    move |row, delta| row.ml(-(travel * delta)),
+                    Animation::new(duration).with_max_fps(MARQUEE_FPS),
+                    move |row, delta| row.ml(-(travel * (delta * passes).fract())),
                 ),
         )
         .into_any_element()

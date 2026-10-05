@@ -11,7 +11,7 @@ pub trait Panel: Render + Focusable {
 
     /// A short count beside the switcher icon, such as how many things in
     /// the panel need attention; `None` shows none. The footer is redrawn
-    /// whenever the panel notifies.
+    /// when that title, icon or badge changes.
     fn badge(&self, cx: &App) -> Option<SharedString> {
         let _ = cx;
         None

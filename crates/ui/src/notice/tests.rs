@@ -24,7 +24,7 @@ impl gpui_kit::Render for Probe {
     }
 }
 
-fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
+pub(super) fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
     let handle = cx.update(|cx| {
         gpui_kit::init(cx);
         crate::init(

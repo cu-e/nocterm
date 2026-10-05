@@ -145,21 +145,33 @@ fn act(window: &mut Window, cx: &mut App, id: u64) {
 
 fn set_expanded(window: &mut Window, cx: &mut App, expanded: bool) {
     let list = notices(window, cx);
-    list.expanded = expanded && !list.notices.is_empty();
-    window.refresh();
+    let expanded = expanded && !list.notices.is_empty();
+    if list.expanded != expanded {
+        list.expanded = expanded;
+        window.refresh();
+    }
 }
 
 /// Removes one keyed operational notice without affecting unrelated notices.
 pub fn remove(window: &mut Window, cx: &mut App, key: &'static str) {
-    notices(window, cx)
-        .notices
-        .retain(|notice| notice.key != key);
-    window.refresh();
+    let list = notices(window, cx);
+    let before = list.notices.len();
+    list.notices.retain(|notice| notice.key != key);
+    if list.notices.is_empty() {
+        list.expanded = false;
+    }
+    // A refresh redraws the whole window past every cache: only for a change.
+    if list.notices.len() != before {
+        window.refresh();
+    }
 }
 
 /// Removes every notice of the window.
 pub fn clear(window: &mut Window, cx: &mut App) {
     let list = notices(window, cx);
+    if list.notices.is_empty() && !list.expanded {
+        return;
+    }
     list.notices.clear();
     list.expanded = false;
     window.refresh();
@@ -270,3 +282,6 @@ pub fn warning_action(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod performance_tests;

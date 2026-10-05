@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 use nocterm_ai::acp;
 use nocterm_ui::{ActiveAi as _, ActiveSettings as _, IconName, SettingsStore};
-use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace};
+use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -87,6 +87,7 @@ pub(crate) struct AgentPanel {
     error: Option<String>,
     subscriptions: Vec<Subscription>,
     notify_queued: bool,
+    approval_notice: Option<Vec<(gpui_kit::EntityId, u64)>>,
     history_tick: Option<Task<()>>,
     /// Password fields of the sign-in cards, by background session.
     sign_in_inputs: HashMap<gpui_kit::EntityId, approvals::SignInInput>,
@@ -110,6 +111,11 @@ impl AgentPanel {
                 this.send(window, cx);
             }
         });
+        let search_observer = cx.subscribe(&search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         let input_observer = cx.observe_in(&input, window, |this, _, window, cx| {
             let value = this.input.read(cx).value().to_string();
             if value == this.commands.input_value {
@@ -130,9 +136,12 @@ impl AgentPanel {
             this.sync_command_token(window, cx);
             cx.notify();
         });
-        let search_observer = cx.observe(&search, |_, _, cx| cx.notify());
         let history_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
-        let history_search_observer = cx.observe(&history_search, |_, _, cx| cx.notify());
+        let history_search_observer = cx.subscribe(&history_search, |_, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         let settings = cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
             let enabled = cx.ai_enabled();
             if !enabled {
@@ -146,9 +155,23 @@ impl AgentPanel {
             });
             cx.notify();
         });
-        let workspace_observer = workspace
-            .upgrade()
-            .map(|workspace| cx.observe(&workspace, |_, _, cx| cx.notify()));
+        let workspace_observer = workspace.upgrade().map(|workspace| {
+            cx.subscribe_in(
+                &workspace,
+                window,
+                |this, _, event, window, cx| match event {
+                    WorkspaceEvent::ItemsChanged
+                    | WorkspaceEvent::ActiveItemChanged
+                    | WorkspaceEvent::ActiveSessionChanged
+                    | WorkspaceEvent::LocalDirectoryChanged
+                    | WorkspaceEvent::ConnectionsChanged => cx.notify(),
+                    WorkspaceEvent::RightPanelVisibilityChanged => {
+                        this.sync_approval_attention(window, cx);
+                        cx.notify();
+                    }
+                },
+            )
+        });
         let runtime_observer =
             cx.observe_in(&Runtime::global(cx), window, |this, _, window, cx| {
                 this.adopt_saved_chats(window, cx);
@@ -204,6 +227,7 @@ impl AgentPanel {
             .flatten()
             .collect(),
             notify_queued: false,
+            approval_notice: None,
             history_tick: None,
         }
     }
@@ -280,6 +304,20 @@ impl AgentPanel {
         let _ = self.workspace.update(cx, |workspace, cx| {
             workspace.set_right_panel_attention(attention, cx)
         });
+        let requests = needs_notice.then(|| {
+            self.threads
+                .iter()
+                .filter_map(|thread| {
+                    let state = thread.read(cx);
+                    (!state.tools.is_empty() || !state.permissions.is_empty())
+                        .then_some((thread.entity_id(), state.approval_generation))
+                })
+                .collect()
+        });
+        if self.approval_notice == requests {
+            return;
+        }
+        self.approval_notice = requests;
         if !needs_notice {
             nocterm_ui::notice::remove(window, cx, "agent-approval");
             return;

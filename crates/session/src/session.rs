@@ -292,6 +292,11 @@ impl Session {
         self.events.recv().await.ok()
     }
 
+    /// An event that has already arrived, without waiting for one.
+    pub fn try_next_event(&self) -> Option<Event> {
+        self.events.try_recv().ok()
+    }
+
     /// The remote file system, when the transport has one.
     pub fn fs(&self) -> Option<Arc<dyn RemoteFs>> {
         self.fs.clone()

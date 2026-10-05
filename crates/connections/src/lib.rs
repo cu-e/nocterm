@@ -66,7 +66,15 @@ pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context
     let connections = Connections::global(cx);
     cx.observe(&connections, |_, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ItemsChanged);
+        cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
         cx.notify();
+    })
+    .detach();
+    // A cached agent panel reads these facts through ConnectionDirectory.
+    // Notify its semantic dependency directly; sidebar content changes need
+    // not invalidate unrelated workspace chrome.
+    cx.observe(&ServerFacts::global(cx), |_, _, cx| {
+        cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
     })
     .detach();
     // Learn about servers as their sessions come up.
