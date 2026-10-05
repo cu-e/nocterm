@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/cu-e/nocterm/compare/v1.4.0...v1.4.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **acp:** retry interrupted bridge reads and disconnect before cancel ([2a431f3](https://github.com/cu-e/nocterm/commit/2a431f3b92adae9f90729f1d98d3ea321107d879))
+
 ## [1.4.0](https://github.com/cu-e/nocterm/compare/v1.3.0...v1.4.0) (2026-10-05)
 
 
