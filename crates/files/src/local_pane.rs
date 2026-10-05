@@ -1,0 +1,425 @@
+//! The Explorer's local half: browsing this computer.
+use super::*;
+
+impl FilesPanel {
+    pub(super) fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
+        self.local.cancel.store(true, Ordering::Release);
+        self.local.cancel = Arc::new(AtomicBool::new(false));
+        self.local.generation = self.local.generation.wrapping_add(1);
+        let generation = self.local.generation;
+        self.local.loading = true;
+        self.local.error = None;
+        self.local.requested = Some(directory.clone());
+        let cancel = self.local.cancel.clone();
+        let progress = Arc::new(Mutex::new(local::Statistics::default()));
+        self.local.progress = progress.clone();
+        self.local.statistics = Default::default();
+        self.statistics_reported = false;
+        cx.notify();
+        let window = self.window;
+        self.local_task = Some(cx.spawn(async move |this, cx| {
+            let path = directory.clone();
+            let listing_cancel = cancel.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { local::read_directory(&path, &listing_cancel) })
+                .await;
+            let outcome = this
+                .update(cx, |this, cx| {
+                    if this.local.generation != generation {
+                        return None;
+                    }
+                    this.local.loading = false;
+                    match result {
+                        Ok(entries) => {
+                            this.local.path = Some(directory.clone());
+                            this.local.entries = entries;
+                            this.local.selected.clear();
+                            this.local.anchor = None;
+                        }
+                        Err(error) => this.local.error = Some(error),
+                    }
+                    cx.notify();
+                    Some(this.local.error.clone())
+                })
+                .ok()
+                .flatten();
+            match outcome {
+                Some(None) => {
+                    cx.background_executor()
+                        .spawn(async move {
+                            local::scan(directory, cancel, progress);
+                        })
+                        .await;
+                }
+                Some(Some(error)) => {
+                    let panel = this.clone();
+                    let _ = window.update(cx, |_, window, cx| {
+                        nocterm_ui::notice::error_action(
+                            window,
+                            cx,
+                            "files-local-list",
+                            "Could not load local directory",
+                            error,
+                            "Retry",
+                            move |_, cx| {
+                                let _ = panel.update(cx, |this, cx| {
+                                    if this.local.generation == generation {
+                                        this.load_local(directory.clone(), cx);
+                                    }
+                                });
+                            },
+                        );
+                    });
+                }
+                None => {}
+            }
+        }));
+    }
+
+    pub(super) fn select_local(
+        &mut self,
+        ix: usize,
+        event: &gpui_kit::MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if event.modifiers.shift {
+            let anchor = self.local.anchor.unwrap_or(ix);
+            self.local.selected.extend(anchor.min(ix)..=anchor.max(ix));
+        } else if event.modifiers.control || event.modifiers.platform {
+            if !self.local.selected.insert(ix) {
+                self.local.selected.remove(&ix);
+            }
+            self.local.anchor = Some(ix);
+        } else {
+            self.local.selected.clear();
+            self.local.selected.insert(ix);
+            self.local.anchor = Some(ix);
+        }
+        if event.click_count == 2
+            && let Some(entry) = self
+                .local
+                .entries
+                .get(ix)
+                .filter(|e| e.kind == EntryKind::Directory && !e.symlink)
+        {
+            self.load_local(entry.path.clone(), cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn local_paths(&self, index: usize) -> Vec<PathBuf> {
+        if self.local.selected.contains(&index) {
+            self.local
+                .selected
+                .iter()
+                .filter_map(|ix| self.local.entries.get(*ix))
+                .map(|e| e.path.clone())
+                .collect()
+        } else {
+            self.local
+                .entries
+                .get(index)
+                .map(|e| vec![e.path.clone()])
+                .unwrap_or_default()
+        }
+    }
+
+    pub(super) fn render_local_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let entry = &self.local.entries[ix];
+        let paths = self.local_paths(ix);
+        let preview = entry.name.clone();
+        let destination = entry.path.clone();
+        let directory = entry.kind == EntryKind::Directory && !entry.symlink;
+        let target = FileTarget::Local(entry.path.clone());
+        let selected_targets = paths
+            .iter()
+            .cloned()
+            .map(FileTarget::Local)
+            .collect::<Vec<_>>();
+        let refresh = self.refresh_after_mutation(true, cx);
+        let enabled = !self.local.loading;
+        div()
+            .id(("local-entry", ix))
+            .w_full()
+            .h_8()
+            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(self.local.selected.contains(&ix), |row| {
+                row.bg(cx.theme().accent)
+            })
+            .hover(|s| s.bg(cx.theme().accent))
+            .child(
+                Icon::new(if entry.kind == EntryKind::Directory {
+                    IconName::Folder
+                } else {
+                    IconName::File
+                })
+                .small(),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(format!(
+                        "{}{}",
+                        entry.name,
+                        if entry.symlink { " (link)" } else { "" }
+                    )),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event, _, cx| this.select_local(ix, event, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.local.selected.contains(&ix) {
+                        this.local.selected.clear();
+                        this.local.selected.insert(ix);
+                        this.local.anchor = Some(ix);
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_drag(LocalPaths(paths), move |files, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| {
+                    nocterm_ui::DragPreview::new(preview.clone(), files.0.len(), IconName::File)
+                })
+            })
+            .when(directory, |row| {
+                row.drag_over::<RemotePaths>(|style, _, _, cx| {
+                    style
+                        .bg(cx.theme().accent)
+                        .border_1()
+                        .border_color(cx.theme().primary)
+                })
+                .on_drop(cx.listener(
+                    move |this, files: &RemotePaths, window, cx| {
+                        cx.stop_propagation();
+                        this.enqueue_download(files.clone(), Some(destination.clone()), window, cx);
+                    },
+                ))
+            })
+            .context_menu(move |menu, _, _| {
+                dialogs::menu(
+                    menu,
+                    target.clone(),
+                    selected_targets.clone(),
+                    refresh.clone(),
+                    enabled,
+                )
+            })
+            .into_any_element()
+    }
+
+    pub(super) fn render_local(&self, cx: &mut Context<Self>) -> AnyElement {
+        let cwd = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).local_terminal_cwd(cx));
+        let s = &self.local.statistics;
+        let information = format!(
+            "{} files · {} folders · {}{}{}",
+            s.files,
+            s.directories,
+            local::bytes(s.bytes),
+            if s.complete { "" } else { " · calculating…" },
+            if s.inaccessible > 0 {
+                " · incomplete"
+            } else {
+                ""
+            }
+        );
+        v_flex()
+            .id("local-browser")
+            .size_full()
+            .min_h_0()
+            .gap_1()
+            .px_2()
+            .pt_2()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(div().flex_1().text_sm().child("Local"))
+                    .child(
+                        Button::new("local-home")
+                            .small()
+                            .ghost()
+                            .label("Home")
+                            .disabled(self.local.loading)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(home) = local::home() {
+                                    this.load_local(home, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("local-parent")
+                            .small()
+                            .ghost()
+                            .label("Up")
+                            .disabled(
+                                self.local.loading
+                                    || self
+                                        .local
+                                        .path
+                                        .as_deref()
+                                        .and_then(|p| p.parent())
+                                        .is_none(),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(parent) = this
+                                    .local
+                                    .path
+                                    .as_deref()
+                                    .and_then(|p| p.parent())
+                                    .map(|p| p.to_owned())
+                                {
+                                    this.load_local(parent, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("local-refresh")
+                            .small()
+                            .ghost()
+                            .icon(IconName::RefreshCw)
+                            .tooltip("Refresh local directory")
+                            .disabled(self.local.loading)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(path) = this.local.requested.clone() {
+                                    this.load_local(path, cx);
+                                }
+                            })),
+                    ),
+            )
+            .when_some(self.local.path.as_ref(), |p, path| {
+                p.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .child(path.display().to_string()),
+                )
+            })
+            .when(self.local.loading, |p| {
+                p.child(div().text_sm().child("Loading directory…"))
+            })
+            .when_some(self.local.error.as_ref(), |p, e| {
+                p.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(e.clone()),
+                )
+            })
+            .when(
+                !self.local.loading && self.local.entries.is_empty() && self.local.error.is_none(),
+                |p| {
+                    p.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("This directory is empty."),
+                    )
+                },
+            )
+            .child(
+                uniform_list(
+                    "local-file-list",
+                    self.local.entries.len(),
+                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                        range
+                            .map(|ix| this.render_local_row(ix, cx))
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .flex_1()
+                .min_h_0(),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .py_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(information),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_1()
+                            .child(
+                                Button::new("explorer-to-terminal")
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::ArrowDown)
+                                    .tooltip("Explorer → Local terminal")
+                                    .disabled(self.local.path.is_none())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if let (Some(path), Some(workspace)) =
+                                            (this.local.path.clone(), this.workspace.upgrade())
+                                        {
+                                            let result = workspace.update(cx, |workspace, cx| {
+                                                workspace.change_local_directory(path, window, cx)
+                                            });
+                                            if let Err(error) = result {
+                                                nocterm_ui::notice::error(
+                                                    window,
+                                                    cx,
+                                                    "files-shell-directory",
+                                                    "Could not change shell directory",
+                                                    error,
+                                                );
+                                            }
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("terminal-to-explorer")
+                                    .small()
+                                    .ghost()
+                                    .icon(IconName::ArrowUp)
+                                    .tooltip("Local terminal → Explorer")
+                                    .disabled(cwd.is_none())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(path) =
+                                            this.workspace.upgrade().and_then(|workspace| {
+                                                workspace.read(cx).local_terminal_cwd(cx)
+                                            })
+                                        {
+                                            this.load_local(path, cx);
+                                        }
+                                    })),
+                            ),
+                    ),
+            )
+            .drag_over::<RemotePaths>(|style, _, _, cx| {
+                style
+                    .bg(cx.theme().accent)
+                    .border_1()
+                    .border_color(cx.theme().primary)
+            })
+            .on_drop(cx.listener(|this, files: &RemotePaths, window, cx| {
+                cx.stop_propagation();
+                this.enqueue_download(files.clone(), None, window, cx);
+            }))
+            .into_any_element()
+    }
+}

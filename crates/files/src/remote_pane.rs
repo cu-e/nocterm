@@ -1,0 +1,422 @@
+//! The Explorer's remote half: browsing the active session's host.
+use super::*;
+
+impl FilesPanel {
+    pub(super) fn load(&mut self, directory: Option<String>, cx: &mut Context<Self>) {
+        let Some(fs) = self.filesystem() else {
+            return;
+        };
+        let generation = self.browser.begin();
+        self.remote_selected.clear();
+        self.remote_anchor = None;
+        self.requested_directory = directory.clone();
+        cx.notify();
+        let window = self.window;
+        let retry_directory = directory.clone();
+        self.remote_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { listing(fs, directory).await })
+                .await;
+            let error = this
+                .update(cx, |this, cx| {
+                    if this.browser.finish(generation, result) {
+                        cx.notify();
+                        this.browser.error.as_ref().map(ToString::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            if let Some(error) = error {
+                let panel = this.clone();
+                let _ = window.update(cx, |_, window, cx| {
+                    nocterm_ui::notice::error_action(
+                        window,
+                        cx,
+                        "files-remote-list",
+                        "Could not load remote directory",
+                        error,
+                        "Retry",
+                        move |_, cx| {
+                            let _ = panel.update(cx, |this, cx| {
+                                if this.browser.generation == generation {
+                                    this.load(retry_directory.clone(), cx);
+                                }
+                            });
+                        },
+                    );
+                });
+            }
+        }));
+    }
+
+    pub(super) fn remote_file_target(&self, index: usize) -> Option<FileTarget> {
+        let entry = self.browser.entries.get(index)?;
+        let session = self.session.as_ref()?;
+        Some(FileTarget::Remote {
+            path: path::join(self.browser.path.as_deref()?, &entry.name),
+            host: session.target.clone(),
+            fs: session.fs.clone()?,
+        })
+    }
+
+    pub(super) fn remote_paths(&self, indices: impl Iterator<Item = usize>) -> Option<RemotePaths> {
+        let parent = self.browser.path.as_deref()?;
+        let sources = indices
+            .filter_map(|index| self.browser.entries.get(index))
+            .map(|entry| path::join(parent, &entry.name))
+            .collect();
+        Some(RemotePaths {
+            sources,
+            target: self.session.as_ref()?.target.clone(),
+            fs: self.filesystem()?,
+        })
+    }
+
+    pub(super) fn select_remote(
+        &mut self,
+        ix: usize,
+        event: &gpui_kit::MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if event.modifiers.shift {
+            let anchor = self.remote_anchor.unwrap_or(ix);
+            self.remote_selected.extend(anchor.min(ix)..=anchor.max(ix));
+        } else if event.modifiers.control || event.modifiers.platform {
+            if !self.remote_selected.insert(ix) {
+                self.remote_selected.remove(&ix);
+            }
+            self.remote_anchor = Some(ix);
+        } else {
+            self.remote_selected.clear();
+            self.remote_selected.insert(ix);
+            self.remote_anchor = Some(ix);
+        }
+        if event.click_count == 2
+            && let Some(entry) = self
+                .browser
+                .entries
+                .get(ix)
+                .filter(|entry| entry.kind == EntryKind::Directory)
+        {
+            let destination = self
+                .browser
+                .path
+                .as_deref()
+                .map(|parent| path::join(parent, &entry.name));
+            self.load(destination, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn render_remote_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let entry = &self.browser.entries[ix];
+        let directory = entry.kind == EntryKind::Directory;
+        let selected: Vec<usize> = if self.remote_selected.contains(&ix) {
+            self.remote_selected.iter().copied().collect()
+        } else {
+            vec![ix]
+        };
+        let download = self.remote_paths(selected.iter().copied());
+        let preview = entry.name.clone();
+        let destination = self
+            .browser
+            .path
+            .as_deref()
+            .map(|parent| path::join(parent, &entry.name));
+        let drop_path = destination;
+        let enabled = self.filesystem().is_some() && !self.browser.loading;
+        let target = self.remote_file_target(ix);
+        let selected_targets = selected
+            .into_iter()
+            .filter_map(|ix| self.remote_file_target(ix))
+            .collect::<Vec<_>>();
+        let refresh = self.refresh_after_mutation(false, cx);
+        div()
+            .id(("remote-entry", ix))
+            .w_full()
+            .h_8()
+            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_sm()
+            .when(enabled, |row| row.cursor_pointer())
+            .when(self.remote_selected.contains(&ix), |row| {
+                row.bg(cx.theme().accent)
+            })
+            .hover(|s| s.bg(cx.theme().accent))
+            .child(
+                Icon::new(if directory {
+                    IconName::Folder
+                } else {
+                    IconName::File
+                })
+                .small(),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(format!(
+                        "{}{}",
+                        entry.name,
+                        if entry.is_symlink { " (link)" } else { "" }
+                    )),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event, _, cx| this.select_remote(ix, event, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.remote_selected.contains(&ix) {
+                        this.remote_selected.clear();
+                        this.remote_selected.insert(ix);
+                        this.remote_anchor = Some(ix);
+                        cx.notify();
+                    }
+                }),
+            )
+            .when_some(download, |row, download| {
+                row.on_drag(download, move |files, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| {
+                        nocterm_ui::DragPreview::new(
+                            preview.clone(),
+                            files.sources.len(),
+                            IconName::File,
+                        )
+                    })
+                })
+            })
+            .when(directory && enabled, |row| {
+                row.drag_over::<LocalPaths>(|s, _, _, cx| {
+                    s.bg(cx.theme().accent)
+                        .border_1()
+                        .border_color(cx.theme().primary)
+                })
+                .drag_over::<ExternalPaths>(|s, _, _, cx| {
+                    s.bg(cx.theme().accent)
+                        .border_1()
+                        .border_color(cx.theme().primary)
+                })
+                .on_drop(cx.listener({
+                    let drop_path = drop_path.clone();
+                    move |this, files: &LocalPaths, window, cx| {
+                        cx.stop_propagation();
+                        this.enqueue(files.0.clone(), drop_path.clone(), window, cx);
+                    }
+                }))
+                .on_drop(cx.listener(
+                    move |this, files: &ExternalPaths, window, cx| {
+                        cx.stop_propagation();
+                        this.enqueue(files.paths().to_vec(), drop_path.clone(), window, cx);
+                    },
+                ))
+            })
+            .context_menu(move |menu, _, _| match &target {
+                Some(target) => dialogs::menu(
+                    menu,
+                    target.clone(),
+                    selected_targets.clone(),
+                    refresh.clone(),
+                    enabled,
+                ),
+                None => menu,
+            })
+            .into_any_element()
+    }
+
+    pub(super) fn render_remote(&self, cx: &mut Context<Self>) -> AnyElement {
+        let enabled = self.filesystem().is_some() && !self.browser.loading;
+        let hint = match &self.session {
+            None => Some("Open a connection to browse remote files."),
+            Some(s) if !s.connected => Some("Disconnected. Reconnect to browse files."),
+            Some(s) if s.fs.is_none() => Some("This host does not provide SFTP."),
+            _ => None,
+        };
+        v_flex()
+            .id("remote-browser")
+            .size_full()
+            .min_h_0()
+            .gap_1()
+            .px_2()
+            .pb_2()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(div().flex_1().text_sm().child("Remote"))
+                    .child(
+                        Button::new("files-download")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ArrowDown)
+                            .tooltip("Download selected items to the local Explorer directory")
+                            .disabled(
+                                !enabled
+                                    || self.remote_selected.is_empty()
+                                    || self.local.loading
+                                    || self.local.path.is_none(),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(files) =
+                                    this.remote_paths(this.remote_selected.iter().copied())
+                                {
+                                    this.enqueue_download(files, None, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("files-home")
+                            .small()
+                            .ghost()
+                            .label("Home")
+                            .disabled(!enabled)
+                            .on_click(cx.listener(|this, _, _, cx| this.load(None, cx))),
+                    )
+                    .child(
+                        Button::new("files-parent")
+                            .small()
+                            .ghost()
+                            .label("Up")
+                            .disabled(
+                                !enabled || self.browser.path.as_deref().is_none_or(|p| p == "/"),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load(
+                                    this.browser
+                                        .path
+                                        .as_deref()
+                                        .map(|p| path::parent(p).to_owned()),
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        Button::new("files-refresh")
+                            .small()
+                            .ghost()
+                            .icon(IconName::RefreshCw)
+                            .tooltip("Refresh remote directory")
+                            .disabled(!enabled)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load(this.requested_directory.clone(), cx)
+                            })),
+                    ),
+            )
+            .when_some(self.browser.path.clone(), |p, path| {
+                p.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .child(path),
+                )
+            })
+            .when_some(hint, |p, hint| {
+                p.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(hint),
+                )
+            })
+            .when(self.browser.loading, |p| {
+                p.child(div().text_sm().child("Loading directory…"))
+            })
+            .when_some(self.browser.error.as_ref(), |p, e| {
+                p.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(format!("{e}. Refresh to retry.")),
+                )
+            })
+            .when(
+                enabled && self.browser.entries.is_empty() && self.browser.error.is_none(),
+                |p| {
+                    p.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Empty directory. Drop local files here to upload."),
+                    )
+                },
+            )
+            .child(
+                uniform_list(
+                    "remote-file-list",
+                    self.browser.entries.len(),
+                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                        range
+                            .map(|ix| this.render_remote_row(ix, cx))
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .flex_1()
+                .min_h_0(),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Existing:"),
+                    )
+                    .children(
+                        [
+                            ("skip", "Skip", CollisionPolicy::Skip),
+                            ("rename", "Rename", CollisionPolicy::Rename),
+                            ("replace", "Replace", CollisionPolicy::Replace),
+                        ]
+                        .into_iter()
+                        .map(|(id, label, policy)| {
+                            Button::new(SharedString::from(format!("collision-policy-{id}")))
+                                .xsmall()
+                                .ghost()
+                                .label(label)
+                                .selected(self.collisions == policy)
+                                .tooltip(match policy {
+                                    CollisionPolicy::Skip => "Skip existing names",
+                                    CollisionPolicy::Rename => "Choose a new filename",
+                                    CollisionPolicy::Replace => {
+                                        "Replace existing files atomically if supported"
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.collisions = policy;
+                                    cx.notify();
+                                }))
+                        }),
+                    ),
+            )
+            .drag_over::<LocalPaths>(|s, _, _, cx| {
+                s.bg(cx.theme().accent)
+                    .border_1()
+                    .border_color(cx.theme().primary)
+            })
+            .drag_over::<ExternalPaths>(|s, _, _, cx| {
+                s.bg(cx.theme().accent)
+                    .border_1()
+                    .border_color(cx.theme().primary)
+            })
+            .on_drop(cx.listener(|this, files: &LocalPaths, window, cx| {
+                this.enqueue(files.0.clone(), None, window, cx)
+            }))
+            .on_drop(cx.listener(|this, files: &ExternalPaths, window, cx| {
+                this.enqueue(files.paths().to_vec(), None, window, cx)
+            }))
+            .into_any_element()
+    }
+}
