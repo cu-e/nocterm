@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,6 +12,8 @@ use nocterm_session::{Auth, CredentialId, Target};
 use nocterm_workspace::{SessionSpec, Workspace};
 
 use crate::store::{Profile, ProfileId, Profiles, Recent, Recents};
+
+mod shutdown;
 
 const MAX_PENDING_WRITES: usize = 32;
 const MAX_PROFILE_BYTES: usize = 64 * 1024;
@@ -60,6 +63,7 @@ struct Write {
     pending: PendingWrite,
     candidate: Result<Profiles, String>,
     path: Option<PathBuf>,
+    saving: Arc<()>,
     #[cfg(test)]
     writer: Option<ProfileWriter>,
 }
@@ -79,6 +83,9 @@ pub struct Connections {
     recents_writer: Option<Task<()>>,
     recents_revision: u64,
     recents_written_revision: u64,
+    /// Cloned into every disk write; a count above one means a write is in
+    /// flight. Shutdown polls it because the app cannot be read while quitting.
+    saving: Arc<()>,
     closing: bool,
     #[cfg(test)]
     test_writer: Option<ProfileWriter>,
@@ -114,6 +121,7 @@ impl Connections {
             recents_writer: None,
             recents_revision: 0,
             recents_written_revision: 0,
+            saving: Arc::new(()),
             closing: false,
             #[cfg(test)]
             test_writer: None,
@@ -121,44 +129,7 @@ impl Connections {
     }
     pub(crate) fn install(self, cx: &mut App) {
         let entity = cx.new(|_| self);
-        let connections = entity.clone();
-        cx.on_app_quit(move |cx| {
-            connections.update(cx, |this, _| this.closing = true);
-            let connections = connections.clone();
-            let app = cx.to_async();
-            let executor = cx.background_executor().clone();
-            async move {
-                // GPUI allows 200 ms for native shutdown callbacks.
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(180);
-                loop {
-                    let busy = connections.read_with(&app, |this, _| {
-                        this.writer.is_some() || this.recents_writer.is_some()
-                    });
-                    if !busy {
-                        break;
-                    }
-                    if std::time::Instant::now() >= deadline {
-                        tracing::warn!("timed out saving connections during shutdown; queued writes may be incomplete");
-                        return;
-                    }
-                    executor.timer(std::time::Duration::from_millis(10)).await;
-                }
-                let final_snapshot = connections.read_with(&app, |this, _| {
-                    (this.recents_revision != this.recents_written_revision)
-                        .then(|| this.recents_file.clone().map(|path| (path, this.recents.clone()))).flatten()
-                });
-                if let Some((path, recents)) = final_snapshot {
-                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                    let work = executor.spawn(async move { persist::save(&path, &recents) });
-                    match futures::future::select(work, executor.timer(remaining)).await {
-                        futures::future::Either::Left((Err(error), _)) => tracing::warn!(%error, "could not save final recent connections"),
-                        futures::future::Either::Right(_) => tracing::warn!("timed out saving final recent connections"),
-                        _ => {},
-                    }
-                }
-            }
-        })
-        .detach();
+        shutdown::save_on_quit(entity.clone(), cx);
         cx.set_global(GlobalConnections(entity));
     }
     pub fn global(cx: &App) -> Entity<Connections> {
@@ -413,6 +384,7 @@ impl Connections {
                             pending,
                             candidate,
                             path,
+                            saving: this.saving.clone(),
                             #[cfg(test)]
                             writer: this.test_writer.clone(),
                         })
@@ -424,6 +396,7 @@ impl Connections {
                         pending,
                         candidate,
                         path,
+                        saving,
                         #[cfg(test)]
                         writer,
                     } = write;
@@ -432,6 +405,7 @@ impl Connections {
                             let (profiles, result) = cx
                                 .background_executor()
                                 .spawn(async move {
+                                    let _saving = saving;
                                     #[cfg(test)]
                                     let result = if let Some(writer) = writer {
                                         writer(profiles.clone()).await
@@ -524,11 +498,12 @@ impl Connections {
         }
         self.recents_writer = Some(cx.spawn(async move |this, cx| {
             loop {
-                let Ok((path, recents, revision)) = this.update(cx, |this, _| {
+                let Ok((path, recents, revision, saving)) = this.update(cx, |this, _| {
                     (
                         this.recents_file.clone(),
                         this.recents.clone(),
                         this.recents_revision,
+                        this.saving.clone(),
                     )
                 }) else {
                     return;
@@ -536,6 +511,7 @@ impl Connections {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
+                        let _saving = saving;
                         path.map_or(Ok(()), |path| {
                             persist::save(&path, &recents).map_err(|error| error.to_string())
                         })
@@ -1252,5 +1228,18 @@ mod tests {
         fs::write(&path, "not toml at all [").unwrap();
 
         assert_eq!(load_recents(&path), Recents::default());
+    }
+
+    #[gpui_kit::test]
+    async fn quitting_with_queued_writes_does_not_panic(cx: &mut gpui_kit::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let entity = cx.update(|cx| {
+            let mut connections = Connections::in_memory();
+            connections.profiles_file = Some(directory.path().join("connections.toml"));
+            connections.install(cx);
+            Connections::global(cx)
+        });
+        let _save = entity.update(cx, |c, cx| c.save_profile(profile("Queued"), cx));
+        cx.quit();
     }
 }

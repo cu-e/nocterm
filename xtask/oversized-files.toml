@@ -4,7 +4,7 @@
 # to the limit: split by responsibility into child modules (see AGENTS.md).
 
 [files]
-"crates/connections/src/model.rs" = 1256
+"crates/connections/src/model.rs" = 1245
 "crates/connections/src/panel.rs" = 1618
 "crates/files/src/lib.rs" = 1190
 "crates/files/src/operations_ui_tests.rs" = 833
