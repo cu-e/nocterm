@@ -1,4 +1,5 @@
 //! A split Explorer with independent local navigation and pinned remote uploads.
+mod activity;
 mod dialogs;
 mod local;
 mod local_operations;
@@ -67,6 +68,7 @@ pub struct FilesPanel {
     remote_anchor: Option<usize>,
     local: LocalBrowser,
     remote_counter: statistics::Counter,
+    activity: activity::Activity,
     workspace: WeakEntity<Workspace>,
     divider: Entity<ResizableState>,
     collisions: CollisionPolicy,
@@ -104,6 +106,39 @@ impl FilesPanel {
                 }
             });
         })
+    }
+    /// Follows the transfer queue and lists again a shown folder that a
+    /// finished transfer changed.
+    fn poll_transfers(&mut self, cx: &mut Context<Self>) {
+        let snapshot = transfers::service(cx)
+            .map(|service| service.snapshot())
+            .unwrap_or_default();
+        let (changed, finished) = self.activity.update(snapshot);
+        if !changed {
+            return;
+        }
+        cx.notify();
+        let remote = self
+            .session
+            .as_ref()
+            .map(|s| s.target.clone())
+            .zip(self.browser.path.clone());
+        if !self.browser.loading
+            && let Some((target, shown)) = &remote
+            && finished
+                .iter()
+                .any(|job| activity::changes_remote(job, target, shown))
+        {
+            self.load(self.requested_directory.clone(), cx);
+        }
+        if !self.local.loading
+            && let Some(shown) = self.local.path.clone()
+            && finished
+                .iter()
+                .any(|job| activity::changes_local(job, &shown))
+        {
+            self.load_local(shown, cx);
+        }
     }
     /// Shows the walks' latest counts and reports a partial local count once.
     fn poll_statistics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -172,7 +207,10 @@ impl FilesPanel {
                     .timer(Duration::from_millis(150))
                     .await;
                 if this
-                    .update_in(cx, |this, window, cx| this.poll_statistics(window, cx))
+                    .update_in(cx, |this, window, cx| {
+                        this.poll_transfers(cx);
+                        this.poll_statistics(window, cx);
+                    })
                     .is_err()
                 {
                     break;
@@ -188,6 +226,7 @@ impl FilesPanel {
             remote_anchor: None,
             local: LocalBrowser::default(),
             remote_counter: statistics::Counter::default(),
+            activity: activity::Activity::default(),
             workspace: workspace.downgrade(),
             divider: cx.new(|_| ResizableState::default()),
             collisions: CollisionPolicy::Skip,

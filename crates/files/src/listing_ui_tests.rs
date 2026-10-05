@@ -1,4 +1,5 @@
-//! Folder statistics and listing failures as the Explorer shows them.
+//! What the Explorer lists: folder statistics, listing failures and fresh
+//! listings after transfers.
 use super::*;
 
 #[gpui_kit::test]
@@ -156,4 +157,86 @@ fn remote_folders_are_counted_except_the_home_folder(cx: &mut TestAppContext) {
             "1 files · 1 folders · 3.0 KiB"
         );
     });
+}
+
+/// Publishes every upload at once and counts listings of each folder.
+#[derive(Default)]
+struct InstantUploads {
+    listings: Mutex<Vec<String>>,
+}
+impl RemoteFs for InstantUploads {
+    fn home(&self) -> FsFuture<String> {
+        async { Ok("/home/test".into()) }.boxed()
+    }
+    fn read_dir(&self, directory: &str) -> FsFuture<Vec<DirEntry>> {
+        self.listings.lock().unwrap().push(directory.into());
+        async { Ok(Vec::new()) }.boxed()
+    }
+    fn stat(&self, _: &str) -> FsFuture<Option<DirEntry>> {
+        async { Ok(None) }.boxed()
+    }
+    fn upload(
+        &self,
+        path: &str,
+        _: nocterm_session::fs::UploadMode,
+    ) -> FsFuture<Box<dyn nocterm_session::fs::RemoteUpload>> {
+        let path = path.to_owned();
+        async move { Ok(Box::new(Published(path)) as Box<dyn nocterm_session::fs::RemoteUpload>) }
+            .boxed()
+    }
+}
+struct Published(String);
+impl nocterm_session::fs::RemoteUpload for Published {
+    fn write(&mut self, _: Vec<u8>) -> FsFuture<()> {
+        async { Ok(()) }.boxed()
+    }
+    fn finish(self: Box<Self>) -> FsFuture<String> {
+        async move { Ok(self.0) }.boxed()
+    }
+    fn cancel(self: Box<Self>) -> FsFuture<()> {
+        async { Ok(()) }.boxed()
+    }
+}
+
+#[gpui_kit::test]
+fn a_finished_upload_lists_the_shown_remote_folder_again(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("report.txt");
+    std::fs::write(&file, b"done").unwrap();
+    let fs = Arc::new(InstantUploads::default());
+    let (handle, _, _, panel) = panel_fixture(cx, fs.clone());
+    let service = cx
+        .update_window(handle, |_, _, cx| {
+            transfers::init(cx);
+            transfers::service(cx).unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let listed = |fs: &InstantUploads| {
+        fs.listings
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.as_str() == "/home/test")
+            .count()
+    };
+    let before = listed(&fs);
+    cx.update_window(handle, |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.enqueue(vec![file.clone()], None, window, cx)
+        });
+    })
+    .unwrap();
+    wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(
+        service.snapshot()[0].state,
+        nocterm_transfers::TransferState::Completed
+    );
+    assert_eq!(
+        listed(&fs),
+        before + 1,
+        "listed again once, without a click"
+    );
 }

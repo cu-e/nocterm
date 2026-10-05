@@ -395,6 +395,13 @@ impl FilesPanel {
                 .flex_1()
                 .min_h_0(),
             )
+            .children(self.session.as_ref().and_then(|session| {
+                activity::strip(
+                    "remote-transfers",
+                    self.activity.uploads(&session.target),
+                    cx,
+                )
+            }))
             .when(self.browser.path.is_some() && enabled, |p| {
                 p.child(
                     div()

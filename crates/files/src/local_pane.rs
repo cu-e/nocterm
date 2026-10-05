@@ -343,6 +343,11 @@ impl FilesPanel {
                 .flex_1()
                 .min_h_0(),
             )
+            .children(activity::strip(
+                "local-transfers",
+                self.activity.downloads(),
+                cx,
+            ))
             .child(
                 v_flex()
                     .gap_1()

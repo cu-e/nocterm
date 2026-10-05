@@ -1087,10 +1087,10 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
     wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
 }
 
+#[path = "listing_ui_tests.rs"]
+mod listing_ui;
 #[path = "operations_ui_tests.rs"]
 mod operations_ui;
-#[path = "statistics_ui_tests.rs"]
-mod statistics_ui;
 
 #[test]
 fn custom_remote_adapter_cannot_deliver_an_unbounded_explorer_listing() {
