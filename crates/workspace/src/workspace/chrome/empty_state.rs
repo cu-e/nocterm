@@ -88,6 +88,13 @@ impl Workspace {
             .cursor_pointer()
             .hover(|row| row.bg(theme.sidebar_accent))
             .text_color(theme.foreground)
+            .child(match connection.icon {
+                Some(icon) => img(icon).size_4().flex_shrink_0().into_any_element(),
+                None => Icon::new(IconName::Server)
+                    .small()
+                    .text_color(theme.muted_foreground)
+                    .into_any_element(),
+            })
             .child(
                 div()
                     .flex_1()
@@ -96,13 +103,6 @@ impl Workspace {
                     .truncate()
                     .child(connection.name),
             )
-            .child(match connection.icon {
-                Some(icon) => img(icon).size_4().flex_shrink_0().into_any_element(),
-                None => Icon::new(IconName::Server)
-                    .small()
-                    .text_color(theme.muted_foreground)
-                    .into_any_element(),
-            })
             .when_some(connection.flag, |row, flag| {
                 row.child(
                     div()
