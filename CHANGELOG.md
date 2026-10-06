@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.2](https://github.com/cu-e/nocterm/compare/v1.4.1...v1.4.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* keep license notices valid across release version bumps ([b655b61](https://github.com/cu-e/nocterm/commit/b655b61f6b22ca4d3e4a65e4ddad48616e390041))
+* keep license notices valid across release version bumps ([4fd4c5b](https://github.com/cu-e/nocterm/commit/4fd4c5b5671ba77ec35495cfe4b484f3091844db))
+
 ## [1.4.1](https://github.com/cu-e/nocterm/compare/v1.4.0...v1.4.1) (2026-10-05)
 
 
