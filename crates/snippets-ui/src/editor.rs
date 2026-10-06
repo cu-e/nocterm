@@ -47,6 +47,10 @@ pub(crate) fn open(
             // Both text areas use Enter to insert new lines; save is explicit.
             .on_ok(|_, _, _| false)
     });
+    // The toolkit focuses the new modal root before rendering its children.
+    // Keep that owner handle so a save cannot dismiss a newer stacked dialog.
+    let dialog_focus = window.focused(cx);
+    editor.update(cx, |editor, _| editor.dialog_focus = dialog_focus);
     let focus = editor.read(cx).focus_handle(cx);
     window.focus(&focus, cx);
     editor
@@ -59,6 +63,8 @@ pub(crate) struct SnippetEditor {
     code: Entity<EditorState>,
     workspace: WeakEntity<Workspace>,
     pending: bool,
+    saved: bool,
+    dialog_focus: Option<FocusHandle>,
     dismissed: Arc<AtomicBool>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -87,18 +93,21 @@ impl SnippetEditor {
             cx.subscribe(&name, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
+                    this.saved = false;
                     cx.notify();
                 }
             }),
             cx.subscribe(&description, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
+                    this.saved = false;
                     cx.notify();
                 }
             }),
             cx.subscribe(&code, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
+                    this.saved = false;
                     cx.notify();
                 }
             }),
@@ -111,12 +120,15 @@ impl SnippetEditor {
             code,
             workspace,
             pending: false,
+            saved: false,
+            dialog_focus: None,
             dismissed: Default::default(),
             error: None,
             _subscriptions: subscriptions,
         }
     }
     fn select_language(&mut self, language: Language, cx: &mut Context<Self>) {
+        self.saved = false;
         self.draft.language = language;
         self.code
             .update(cx, |code, cx| code.set_highlighter(language.id(), cx));
@@ -147,6 +159,7 @@ impl SnippetEditor {
             model.save(snippet.clone(), self.original.clone(), cx)
         });
         self.pending = true;
+        self.saved = false;
         self.error = None;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
@@ -163,8 +176,19 @@ impl SnippetEditor {
                     }
                     Ok(()) => {
                         this.original = Some(snippet);
-                        this.dismissed.store(true, Ordering::Release);
-                        window.close_dialog(cx);
+                        this.saved = true;
+                        if this
+                            .dialog_focus
+                            .as_ref()
+                            .is_some_and(|focus| focus.contains_focused(window, cx))
+                        {
+                            this.dismissed.store(true, Ordering::Release);
+                            window.close_dialog(cx);
+                        } else {
+                            // A newer modal has focus. Leave it intact and keep this saved
+                            // draft available to close or continue editing when it resurfaces.
+                            cx.notify();
+                        }
                     }
                 }
             });
@@ -184,6 +208,7 @@ impl SnippetEditor {
         } else {
             bindings.retain(|existing| existing != &id);
         }
+        self.saved = false;
         self.error = None;
         cx.notify();
     }

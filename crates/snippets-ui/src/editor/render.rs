@@ -128,6 +128,9 @@ impl SnippetEditor {
     pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         v_flex()
             .gap_2()
+            .when(self.saved, |footer| {
+                footer.child(form::note("Snippet saved.", cx))
+            })
             .when_some(self.error.clone(), |footer, error| {
                 footer.child(form::error_text(error, cx))
             })
@@ -138,7 +141,7 @@ impl SnippetEditor {
                     .child(
                         Button::new("snippet-cancel")
                             .ghost()
-                            .label("Cancel")
+                            .label(if self.saved { "Close" } else { "Cancel" })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.dismissed.store(true, Ordering::Release);
                                 window.close_dialog(cx);

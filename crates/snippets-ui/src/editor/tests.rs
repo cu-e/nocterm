@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::{AnyWindowHandle, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_ui::{Design, DesignTokens};
 fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
@@ -99,4 +100,100 @@ fn selected_languages_have_real_bundled_parsers() {
         assert!(highlighter.update(None, &Rope::from(code), None));
         assert!(highlighter.tree().is_some(), "{} must parse", language.id());
     }
+}
+
+#[gpui_kit::test]
+fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) {
+    let (handle, workspace) = workspace(cx);
+    let editor = cx
+        .update_window(handle, |_, window, cx| {
+            let editor = open(None, workspace.downgrade(), window, cx);
+            window.render_frame(cx);
+            editor.update(cx, |editor, cx| {
+                editor
+                    .name
+                    .update(cx, |name, cx| name.set_value("Inspect", window, cx));
+                editor
+                    .code
+                    .update(cx, |code, cx| code.set_value("echo first", window, cx));
+                editor.save(window, cx);
+            });
+            // Application menus can stack an About dialog while the save is in flight.
+            // Open it before the ready in-memory completion is delivered to the editor.
+            window.open_dialog(cx, |dialog, _, _| {
+                dialog.title("About").child(
+                    gpui_kit::div()
+                        .id("about-content")
+                        .test_support()
+                        .child("Nocterm"),
+                )
+            });
+            assert!(
+                !editor
+                    .read(cx)
+                    .dialog_focus
+                    .as_ref()
+                    .unwrap()
+                    .contains_focused(window, cx),
+                "About initially owns focus"
+            );
+            window.render_frame(cx);
+            assert!(
+                !editor
+                    .read(cx)
+                    .dialog_focus
+                    .as_ref()
+                    .unwrap()
+                    .contains_focused(window, cx),
+                "About owns focus after render"
+            );
+            editor
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("about-content").is_some(),
+            "Saving must preserve the newer dialog."
+        );
+        assert!(!editor.read(cx).dismissed.load(Ordering::Acquire));
+        assert!(editor.read(cx).saved);
+        assert!(!editor.read(cx).pending);
+        assert_eq!(
+            Snippets::global(cx).read(cx).library.snippets[0].content,
+            "echo first"
+        );
+        window.close_dialog(cx);
+        window.render_frame(cx);
+        editor.update(cx, |editor, cx| {
+            editor.code.update(cx, |code, cx| {
+                code.focus(window, cx);
+                code.set_selected_range(0..code.value().len(), cx);
+            });
+        });
+        window.render_frame(cx);
+        window.input("echo second", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!editor.read(cx).saved, "Editing clears the saved status.");
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("dialog").is_none(),
+            "The resurfaced editor can save and close normally."
+        );
+        assert_eq!(
+            Snippets::global(cx).read(cx).library.snippets[0].content,
+            "echo second"
+        );
+    })
+    .unwrap();
 }
