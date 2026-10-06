@@ -23,6 +23,11 @@ pub struct ConnectionSummary {
 /// update: opening a connection updates the workspace itself.
 pub trait ConnectionDirectory: 'static {
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary>;
+    /// Recently opened saved servers, most recent first, using current metadata.
+    /// Quick connections and deleted profiles are excluded.
+    fn recent_connections(&self, _: &App) -> Vec<ConnectionSummary> {
+        Vec::new()
+    }
     /// All named groups, including groups without connections.
     fn groups(&self, cx: &App) -> Vec<SharedString> {
         let mut groups: Vec<_> = self
