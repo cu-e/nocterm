@@ -22,5 +22,6 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
+nocterm-session.workspace = true
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

@@ -15,6 +15,7 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<SnippetsPanel>) 
     });
     let panel = cx
         .update_window(handle, |_, window, cx| {
+            window.activate_window();
             let panel = cx
                 .new(|cx| SnippetsPanel::new(Snippets::global(cx), workspace.clone(), window, cx));
             workspace.update(cx, |workspace, cx| {
@@ -107,6 +108,8 @@ fn fold_search_copy_and_edit_preserve_exact_saved_snippet(cx: &mut TestAppContex
         window.click("edit", cx);
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_some());
+        window.click("snippet-section-attachments", cx);
+        window.render_frame(cx);
         assert!(window.try_find("profile-missing-server").is_some());
         assert!(window.try_find("group-Missing group").is_some());
         window.click("snippet-save", cx);
@@ -121,6 +124,8 @@ fn fold_search_copy_and_edit_preserve_exact_saved_snippet(cx: &mut TestAppContex
             std::slice::from_ref(&original)
         );
         window.click("edit", cx);
+        window.render_frame(cx);
+        window.click("snippet-section-attachments", cx);
         window.render_frame(cx);
         window.click("profile-missing-server", cx);
         window.click("group-Missing group", cx);

@@ -197,3 +197,91 @@ fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn attachment_navigation_preserves_draft_and_validation_returns_to_snippet(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace) = workspace(cx);
+    let editor = cx
+        .update_window(handle, |_, window, cx| {
+            let editor = open(None, workspace.downgrade(), window, cx);
+            editor.update(cx, |editor, cx| {
+                editor.description.update(cx, |description, cx| {
+                    description.set_value("First\nSecond", window, cx)
+                });
+                editor
+                    .code
+                    .update(cx, |code, cx| code.set_value("echo preserved", window, cx));
+            });
+            window.render_frame(cx);
+            window.click("snippet-section-attachments", cx);
+            editor
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(matches!(
+            editor.read(cx).section,
+            EditorSection::Attachments
+        ));
+        editor.update(cx, |editor, cx| {
+            editor.set_binding(true, "Work".into(), true, cx);
+            assert!(
+                editor.draft.profiles.is_empty(),
+                "A group binding never expands into direct profile IDs."
+            );
+            editor.set_binding(false, "specific-server".into(), true, cx);
+            editor.set_binding(true, "Work".into(), false, cx);
+            assert_eq!(editor.draft.profiles, ["specific-server"]);
+            editor
+                .attachment_search
+                .update(cx, |search, cx| search.set_value("unmatched", window, cx));
+        });
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let draft = editor.read(cx);
+        assert!(matches!(draft.section, EditorSection::Snippet));
+        assert!(draft.name.read(cx).focus_handle(cx).is_focused(window));
+        assert!(draft.error.is_some());
+        assert_eq!(draft.description.read(cx).value().as_ref(), "First\nSecond");
+        assert_eq!(draft.code.read(cx).value().as_ref(), "echo preserved");
+        assert_eq!(draft.draft.profiles, ["specific-server"]);
+        window.click("snippet-cancel", cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn minimum_window_keeps_footer_visible_on_both_pages(cx: &mut TestAppContext) {
+    let (handle, workspace) = workspace(cx);
+    cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(400.)));
+    cx.update_window(handle, |_, window, cx| {
+        open(None, workspace.downgrade(), window, cx);
+    })
+    .unwrap();
+    for section in ["snippet-section-snippet", "snippet-section-attachments"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(section, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for button in ["snippet-save", "snippet-cancel"] {
+                let bounds = window.find(button).bounds();
+                assert!(
+                    bounds.bottom() <= window.viewport_size().height,
+                    "{section}: {button} must stay visible"
+                );
+            }
+        })
+        .unwrap();
+    }
+}

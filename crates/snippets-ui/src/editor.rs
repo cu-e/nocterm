@@ -1,4 +1,5 @@
 //! A focused draft with native code highlighting and explicit binding choices.
+mod bindings;
 mod render;
 use crate::model::Snippets;
 use gpui_kit::{
@@ -12,6 +13,7 @@ use gpui_kit::{
 };
 use nocterm_snippets::{Language, Snippet, ValidationError};
 use nocterm_workspace::Workspace;
+use std::collections::HashSet;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -55,6 +57,12 @@ pub(crate) fn open(
     window.focus(&focus, cx);
     editor
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditorSection {
+    Snippet,
+    Attachments,
+}
+
 pub(crate) struct SnippetEditor {
     original: Option<Snippet>,
     draft: Snippet,
@@ -62,6 +70,10 @@ pub(crate) struct SnippetEditor {
     description: Entity<TextareaState>,
     code: Entity<EditorState>,
     workspace: WeakEntity<Workspace>,
+    section: EditorSection,
+    attachment_search: Entity<InputState>,
+    folded_groups: HashSet<Option<String>>,
+    focus: FocusHandle,
     pending: bool,
     saved: bool,
     dialog_focus: Option<FocusHandle>,
@@ -89,7 +101,10 @@ impl SnippetEditor {
                 .language(draft.language.id())
                 .default_value(draft.content.clone())
         });
+        let attachment_search = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Search servers, hosts or groups…"));
         let subscriptions = vec![
+            cx.observe(&attachment_search, |_, _, cx| cx.notify()),
             cx.subscribe(&name, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
@@ -119,6 +134,10 @@ impl SnippetEditor {
             description,
             code,
             workspace,
+            section: EditorSection::Snippet,
+            attachment_search,
+            folded_groups: HashSet::new(),
+            focus: cx.focus_handle(),
             pending: false,
             saved: false,
             dialog_focus: None,
@@ -150,7 +169,8 @@ impl SnippetEditor {
             };
             self.error = Some(error.to_string().into());
             if let Some(focus) = focus {
-                window.focus(&focus, cx);
+                self.section = EditorSection::Snippet;
+                self.focus_after_render(EditorSection::Snippet, focus, window, cx);
             }
             cx.notify();
             return;
@@ -194,6 +214,37 @@ impl SnippetEditor {
             });
         })
         .detach();
+    }
+    fn select_section(
+        &mut self,
+        section: EditorSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.section = section;
+        let focus = match section {
+            EditorSection::Snippet => self.name.read(cx).focus_handle(cx),
+            EditorSection::Attachments => self.attachment_search.read(cx).focus_handle(cx),
+        };
+        self.focus_after_render(section, focus, window, cx);
+        cx.notify();
+    }
+    fn focus_after_render(
+        &self,
+        section: EditorSection,
+        focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            if editor.upgrade().is_some_and(|editor| {
+                editor.read(cx).section == section
+                    && !editor.read(cx).dismissed.load(Ordering::Acquire)
+            }) {
+                window.focus(&focus, cx);
+            }
+        });
     }
     fn set_binding(&mut self, group: bool, id: String, checked: bool, cx: &mut Context<Self>) {
         let bindings = if group {

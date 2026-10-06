@@ -26,7 +26,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: their schema and their file. |
 | `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-settings`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
-| `nocterm-snippets-ui` | feature | `nocterm-core`, `nocterm-snippets`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
+| `nocterm-snippets-ui` | feature | `nocterm-core`, `nocterm-session`, `nocterm-snippets`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-session` | SSH and SFTP transport, implemented with russh. |
 | `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
@@ -112,6 +112,7 @@ graph TD
     nocterm_settings_ui --> nocterm_ui
     nocterm_settings_ui --> nocterm_workspace
     nocterm_snippets_ui --> nocterm_core
+    nocterm_snippets_ui --> nocterm_session
     nocterm_snippets_ui --> nocterm_snippets
     nocterm_snippets_ui --> nocterm_ui
     nocterm_snippets_ui --> nocterm_workspace
