@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Rejects a push whose third-party notices no longer match their inputs, the
+# same fast check CI runs. Regenerate with scripts/generate-license-notices.py.
+exec python3 "$(git rev-parse --show-toplevel)/scripts/generate-license-notices.py" --check-inputs

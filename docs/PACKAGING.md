@@ -90,6 +90,13 @@ when updating a fork. Release binary and installer extensions (`.exe`, `.deb`,
 `.rpm`, `.AppImage`, including different letter case) are ignored throughout the
 repository; built artifacts belong in `target/packages` and release attachments.
 
+The committed notices record a fingerprint of their inputs: every `Cargo.toml`,
+`Cargo.lock`, vendored manifests and license files, bundled assets, the toolchain
+pin and the packaging workflow. Nocterm's own release version is masked, so
+release-please's version bump never makes them stale, and vendored code changes are
+not inputs. Pull request CI and the `pre-push` hook run the fast input check, so
+stale notices cannot reach `master`.
+
 Regenerate the committed notices after reviewing dependency and asset changes:
 
 ```sh

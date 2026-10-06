@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class ReleasePreparation(unittest.TestCase):
-    def test_release_bump_regenerates_and_pushes_only_notices(self):
+    def test_release_preparation_regenerates_and_pushes_only_notices(self):
         with tempfile.TemporaryDirectory() as directory:
             temp = Path(directory)
             repo = temp / "repo"
@@ -44,11 +44,14 @@ class ReleasePreparation(unittest.TestCase):
                 return subprocess.run(args, cwd=repo, env=env, check=check,
                                       capture_output=True, text=True)
 
-            def version(number):
+            def version(number, dependency=""):
                 (repo / "Cargo.toml").write_text(
-                    f'[package]\nname = "nocterm"\nversion = "{number}"\n')
+                    f'[package]\nname = "nocterm"\nversion = "{number}"\n'
+                    + (f'\n[dependencies]\n{dependency} = "1"\n' if dependency else ""))
                 (repo / "Cargo.lock").write_text(
-                    f'[[package]]\nname = "nocterm"\nversion = "{number}"\n')
+                    f'[[package]]\nname = "nocterm"\nversion = "{number}"\n'
+                    + (f'\n[[package]]\nname = "{dependency}"\nversion = "1.0.0"\n'
+                       if dependency else ""))
 
             run("git", "init", "-b", "release-please--branches--master")
             run("git", "config", "user.name", "Test")
@@ -60,7 +63,32 @@ class ReleasePreparation(unittest.TestCase):
             run("git", "add", ".")
             run("git", "commit", "-m", "chore: initialize release")
             run("git", "push", "-u", "origin", "HEAD")
-            version("1.1.0")
+            # A release bumps only the application's own version, which no
+            # notice mentions: merging it at once must leave packaging valid.
+            initial = run("git", "rev-parse", "HEAD").stdout.strip()
+            version("1.0.1")
+            run("python3", "scripts/generate-license-notices.py", "--check-inputs")
+            run("git", "add", "Cargo.toml", "Cargo.lock")
+            run("git", "commit", "-m", "chore(master): release 1.0.1")
+            bump = run("git", "rev-parse", "HEAD").stdout.strip()
+            run("bash", "scripts/prepare-release-pr.sh")
+            self.assertEqual(run("git", "rev-parse", "HEAD").stdout.strip(), bump)
+            self.assertNotEqual(bump, initial)
+            self.assertEqual((temp / "output").read_text(), f"sha={bump}\n")
+            (temp / "output").write_text("")
+            run("git", "push", "origin", "HEAD")
+            # Vendored code is not a notice input; a vendored license is.
+            vendored = repo / "vendor" / "fork"
+            (vendored / "src").mkdir(parents=True)
+            (vendored / "src" / "lib.rs").write_text("pub fn patched() {}\n")
+            run("python3", "scripts/generate-license-notices.py", "--check-inputs")
+            (vendored / "LICENSE").write_text("Fork license.\n")
+            self.assertNotEqual(run("python3", "scripts/generate-license-notices.py",
+                                    "--check-inputs", check=False).returncode, 0)
+            shutil.rmtree(repo / "vendor")
+            # A release that also carries a dependency change does need new
+            # notices, and preparation commits exactly those.
+            version("1.1.0", "new-dependency")
             run("git", "add", "Cargo.toml", "Cargo.lock")
             run("git", "commit", "-m", "chore(master): release 1.1.0")
             run("git", "push", "origin", "HEAD")
@@ -120,7 +148,7 @@ class ReleasePreparation(unittest.TestCase):
             run("git", "-C", str(competitor), "commit", "-m", "chore: advance release")
             run("git", "-C", str(competitor), "push", "origin", "HEAD")
             remote_sha = run("git", "ls-remote", "origin", f"refs/heads/{branch}").stdout.split()[0]
-            version("1.2.0")
+            version("1.2.0", "another-dependency")
             run("git", "add", "Cargo.toml", "Cargo.lock")
             run("git", "commit", "-m", "chore(master): release 1.2.0")
             original_output = (temp / "output").read_text()
