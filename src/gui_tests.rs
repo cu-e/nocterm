@@ -102,6 +102,7 @@ fn fixture_with_vault(
         }
         nocterm_terminal::init(transport.clone(), cx);
         nocterm_connections::init(None, cx);
+        nocterm_snippets_ui::init(None, cx);
         nocterm_agent::init(
             nocterm_agent::AgentServices {
                 terminal_auth: None,
@@ -126,6 +127,7 @@ fn fixture_with_vault(
                     nocterm_connections::register(&mut workspace, window, cx);
                     super::register_settings(&mut workspace, vault_ready);
                     nocterm_files::register(&mut workspace, window, cx);
+                    nocterm_snippets_ui::register(&mut workspace, window, cx);
                     nocterm_monitor_ui::register(&mut workspace, window, cx);
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);

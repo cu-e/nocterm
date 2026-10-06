@@ -23,6 +23,17 @@ pub struct ConnectionSummary {
 /// update: opening a connection updates the workspace itself.
 pub trait ConnectionDirectory: 'static {
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary>;
+    /// All named groups, including groups without connections.
+    fn groups(&self, cx: &App) -> Vec<SharedString> {
+        let mut groups: Vec<_> = self
+            .connections(cx)
+            .into_iter()
+            .filter_map(|connection| connection.group)
+            .collect();
+        groups.sort();
+        groups.dedup();
+        groups
+    }
     /// Opens a saved connection in a new tab, through the normal
     /// authentication UI, as if chosen in the sidebar.
     fn open(

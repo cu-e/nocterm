@@ -75,6 +75,19 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
+`nocterm-snippets` owns the serialized snippet library, validation and exact profile/group
+matching without GUI dependencies. `nocterm-snippets-ui` registers the sidebar before
+containers and projects the active profile through workspace contracts. Snippets for
+that profile or its group appear first; all remaining snippets occupy a collapsible
+section. Group identities are exact connection group names; unavailable bindings
+remain visible in the editor and never turn into global snippets. After renaming a
+connection group, reattach its snippets to the new name in the editor. The native
+GPUI Kit Editor supplies bundled Shell, JSON, Python, YAML and TOML syntax grammars.
+Library writes run in one bounded background queue, rebase checked draft/delete
+snapshots on the last persisted state, and publish only after an atomic save succeeds.
+Invalid library files remain read-only; persistence errors appear in the panel and
+editor. Copy preserves code verbatim without sending it to a terminal.
+
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. `nocterm-connections` owns persisted profiles and recents,

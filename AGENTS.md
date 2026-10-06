@@ -61,6 +61,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `transfers` | bounded upload/download service |
 | `monitor` | host resource collection, parsing and history |
 | `monitor-ui` | status bar monitor, details popup and settings page |
+| `snippets` | snippet library, validation and connection bindings |
+| `snippets-ui` | contextual snippet panel and highlighted editor |
 | `containers` | container engine CLI, listing and actions |
 | `containers-ui` | containers panel, logs and shell tabs |
 | `vault` | encrypted credential storage |

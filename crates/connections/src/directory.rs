@@ -26,6 +26,16 @@ impl ConnectionDirectory for Directory {
             .collect()
     }
 
+    fn groups(&self, cx: &App) -> Vec<gpui_kit::SharedString> {
+        Connections::global(cx)
+            .read(cx)
+            .profiles()
+            .groups()
+            .into_iter()
+            .map(|group| group.to_owned().into())
+            .collect()
+    }
+
     fn open(
         &self,
         id: &str,
