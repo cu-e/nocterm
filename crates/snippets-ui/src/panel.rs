@@ -144,17 +144,6 @@ impl SnippetsPanel {
         let run = snippet.clone();
         let double_click = snippet.clone();
         let copied = self.copied.as_deref() == Some(&snippet.id.to_string());
-        let scope = if snippet.profiles.is_empty() && snippet.groups.is_empty() {
-            "Unassigned".to_owned()
-        } else {
-            format!(
-                "{} server{}, {} group{}",
-                snippet.profiles.len(),
-                if snippet.profiles.len() == 1 { "" } else { "s" },
-                snippet.groups.len(),
-                if snippet.groups.len() == 1 { "" } else { "s" }
-            )
-        };
         let theme = cx.theme().clone();
         v_flex()
             .id(SharedString::from(format!("snippet-{}", snippet.id)))
@@ -247,8 +236,7 @@ impl SnippetsPanel {
                     .gap_2()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(snippet.language.label())
-                    .child(scope),
+                    .child(snippet.language.label()),
             )
     }
 }
