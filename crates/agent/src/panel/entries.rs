@@ -18,6 +18,8 @@ use super::{
     widgets::{chat_markdown, disclosure_header, entry_is_live, safe_markdown},
 };
 
+pub(super) mod tool_input;
+
 impl AgentPanel {
     fn image_view(&self, key: (usize, usize, bool)) -> gpui_kit::AnyElement {
         match self.image_cache.get(&key) {
@@ -271,6 +273,9 @@ impl AgentPanel {
                     })),
                 );
                 if expanded {
+                    if let Some(input) = tool_input::source(call) {
+                        row = row.child(tool_input::render(index, input, cx));
+                    }
                     let text = tool_output_text(&call.content);
                     let mut end = text.len().min(200 * 1024);
                     while !text.is_char_boundary(end) {
