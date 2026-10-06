@@ -90,5 +90,6 @@ Linux system dependencies and setup are in [README.md](README.md). GUI checks
 require an X11 or Wayland session and Vulkan driver. Regenerate references after
 changing schemas, tokens, actions, keymap or internal Cargo dependencies.
 Regenerate `THIRD_PARTY_NOTICES.txt` (`python3 scripts/generate-license-notices.py`,
-needs `cargo-about` 0.9.2) after changing any `Cargo.toml`, `Cargo.lock`, `vendor/`
-or bundled assets; CI rejects stale notices ([docs/PACKAGING.md](docs/PACKAGING.md)).
+needs `cargo-about` 0.9.2) after changing dependencies, vendored manifests or license
+files, or bundled assets; CI and the pre-push hook reject stale notices
+([docs/PACKAGING.md](docs/PACKAGING.md)).
