@@ -79,6 +79,12 @@ impl TerminalAccess for Access {
             .map_err(|_| "Terminal was closed.".to_owned())?
     }
 
+    fn paste_snippet(&self, text: &str, execute: bool, cx: &mut App) -> Result<(), String> {
+        self.0
+            .update(cx, |terminal, cx| terminal.paste_snippet(text, execute, cx))
+            .map_err(|_| "Terminal was closed.".to_owned())?
+    }
+
     fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String> {
         self.0
             .update(cx, |terminal, cx| {

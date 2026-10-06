@@ -10,10 +10,10 @@
 "crates/files/src/tests.rs" = 1125
 "crates/ssh/src/sftp.rs" = 1362
 "crates/terminal/src/element.rs" = 835
-"crates/terminal/src/terminal.rs" = 1267
+"crates/terminal/src/terminal.rs" = 1194
 "crates/terminal/src/view.rs" = 1393
 "crates/vault/src/lib.rs" = 826
 "crates/vt/src/emulator.rs" = 1391
 "crates/vt/src/search.rs" = 994
 "crates/workspace/src/tests.rs" = 1201
-"crates/workspace/src/workspace.rs" = 1210
+"crates/workspace/src/workspace.rs" = 1154

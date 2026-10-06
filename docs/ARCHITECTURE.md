@@ -86,7 +86,16 @@ GPUI Kit Editor supplies bundled Shell, JSON, Python, YAML and TOML syntax gramm
 Library writes run in one bounded background queue, rebase checked draft/delete
 snapshots on the last persisted state, and publish only after an atomic save succeeds.
 Invalid library files remain read-only; persistence errors appear in the panel and
-editor. Copy preserves code verbatim without sending it to a terminal.
+editor. The Snippet and Attachments pages keep one draft with a fixed footer;
+attachments show searchable server folders with independent direct-profile and
+whole-group bindings. Copy preserves code verbatim. Run and a row double-click
+resolve the exact last-focused visible user terminal, including the bottom shell,
+and share a user paste contract separate from agent execution. Successful submission
+returns keyboard focus to that same terminal. The terminal applies
+its current bracketed-paste mode and session charset, then appends one Enter after
+the paste closing marker. It sends the complete sequence atomically and refuses
+authentication, disconnected or alternate-screen states. Shell integration is not
+required; SSH and local shells use the same terminal path.
 
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session

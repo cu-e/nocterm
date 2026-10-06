@@ -179,3 +179,6 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
     })
     .unwrap();
 }
+
+#[path = "run_tests.rs"]
+mod run_tests;

@@ -68,6 +68,12 @@ pub trait TerminalAccess: 'static {
     fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String>;
     /// Adds command-specific busy, dirty-input and alternate-screen guards.
     fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String>;
+    /// A direct user paste, optionally followed by Enter, through the terminal's
+    /// native paste protocol. This is separate from agent command execution and
+    /// works without shell integration. Unsupported terminal providers refuse it.
+    fn paste_snippet(&self, _text: &str, _execute: bool, _cx: &mut App) -> Result<(), String> {
+        Err("This terminal does not support snippets.".into())
+    }
     /// Answers [`TerminalInfo::sign_in`] with what the user typed. Never
     /// exposed to agent tools.
     fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String>;

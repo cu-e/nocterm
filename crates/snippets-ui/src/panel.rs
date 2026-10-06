@@ -1,8 +1,10 @@
 //! The active connection's snippets precede the collapsible remaining library.
+mod run;
 use crate::{editor, model::Snippets};
 use gpui_kit::{
-    App, ClipboardItem, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
-    WeakEntity, Window,
+    App, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, SharedString,
+    Subscription, WeakEntity, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -27,6 +29,7 @@ pub struct SnippetsPanel {
     context: SharedString,
     folded: bool,
     copied: Option<String>,
+    run_enabled: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl SnippetsPanel {
@@ -66,9 +69,10 @@ impl SnippetsPanel {
             search,
             profile: None,
             group: None,
-            context: "No active server".into(),
+            context: "No active terminal".into(),
             folded: false,
             copied: None,
+            run_enabled: false,
             _subscriptions: subscriptions,
         };
         let weak = cx.weak_entity();
@@ -85,17 +89,12 @@ impl SnippetsPanel {
             return;
         };
         let workspace = workspace.read(cx);
-        let active = workspace.active_item();
-        let profile = active
-            .and_then(|item| item.session_spec(cx))
-            .and_then(|spec| spec.profile)
-            .or_else(|| {
-                active
-                    .and_then(|item| item.terminal_access(cx))
-                    .and_then(|access| access.info(cx))
-                    .and_then(|info| info.profile)
-            });
-        self.profile = profile.map(|id| id.to_string());
+        let target = self.target(cx).ok().map(|target| target.info);
+        self.run_enabled = target.as_ref().is_some_and(Self::ready);
+        self.profile = target
+            .as_ref()
+            .and_then(|info| info.profile.as_ref().map(ToString::to_string));
+        let title = target.map_or_else(|| "No active terminal".into(), |info| info.title);
         let saved = workspace.connection_directory().and_then(|directory| {
             directory
                 .connections(cx)
@@ -105,8 +104,7 @@ impl SnippetsPanel {
         self.group = saved
             .as_ref()
             .and_then(|connection| connection.group.as_ref().map(ToString::to_string));
-        self.context =
-            saved.map_or_else(|| "No active server".into(), |connection| connection.name);
+        self.context = saved.map_or(title, |connection| connection.name);
     }
     fn confirm_delete(&self, snippet: Snippet, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.model.clone();
@@ -143,6 +141,8 @@ impl SnippetsPanel {
         let edit = snippet.clone();
         let delete = snippet.clone();
         let copy = snippet.clone();
+        let run = snippet.clone();
+        let double_click = snippet.clone();
         let copied = self.copied.as_deref() == Some(&snippet.id.to_string());
         let scope = if snippet.profiles.is_empty() && snippet.groups.is_empty() {
             "Unassigned".to_owned()
@@ -158,11 +158,20 @@ impl SnippetsPanel {
         let theme = cx.theme().clone();
         v_flex()
             .id(SharedString::from(format!("snippet-{}", snippet.id)))
+            .test_support()
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    cx.stop_propagation();
+                    this.run(&double_click.content, window, cx);
+                }
+            }))
             .px_3()
             .py_2()
             .gap_1()
             .border_b_1()
             .border_color(theme.border.opacity(0.5))
+            .cursor_pointer()
+            .hover(|row| row.bg(theme.sidebar_accent))
             .child(
                 h_flex()
                     .gap_1()
@@ -176,6 +185,17 @@ impl SnippetsPanel {
                             .child(snippet.name.clone()),
                     )
                     .child(
+                        Button::new("run").ghost().xsmall().icon(IconName::Play).label("Run")
+                            .disabled(!self.run_enabled)
+                            .tooltip(if self.run_enabled { format!("Run in {}", self.context) } else { "Focus a connected terminal outside an alternate screen to run snippets".into() })
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                if event.click_count() == 1 {
+                                    this.run(&run.content, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
                         Button::new("copy")
                             .ghost()
                             .xsmall()
@@ -186,6 +206,7 @@ impl SnippetsPanel {
                             })
                             .tooltip(if copied { "Copied" } else { "Copy snippet" })
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     copy.content.clone(),
                                 ));
@@ -200,6 +221,7 @@ impl SnippetsPanel {
                             .icon(IconName::Pencil)
                             .tooltip("Edit snippet")
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
                                 editor::open(
                                     Some(edit.clone()),
                                     this.workspace.clone(),
@@ -215,18 +237,11 @@ impl SnippetsPanel {
                             .icon(IconName::Trash)
                             .tooltip("Delete snippet")
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
                                 this.confirm_delete(delete.clone(), window, cx)
                             })),
                     ),
             )
-            .when(!snippet.description.is_empty(), |row| {
-                row.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(snippet.description.clone()),
-                )
-            })
             .child(
                 h_flex()
                     .gap_2()
@@ -234,21 +249,6 @@ impl SnippetsPanel {
                     .text_color(theme.muted_foreground)
                     .child(snippet.language.label())
                     .child(scope),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_color(theme.muted_foreground)
-                    .truncate()
-                    .child(
-                        snippet
-                            .content
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                            .to_owned(),
-                    ),
             )
     }
 }
