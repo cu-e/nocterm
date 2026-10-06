@@ -2,13 +2,14 @@
 use std::time::Duration;
 
 use gpui_kit::{
-    App, IntoElement, SharedString,
+    App, IntoElement, SharedString, TestSupportExt as _,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonCustomVariant, ButtonVariants as _},
         h_flex,
         shimmer::ShimmerText,
         text::{TextView, TextViewStyle},
+        tooltip::Tooltip,
     },
     div,
     prelude::*,
@@ -23,6 +24,21 @@ use crate::thread::Attachment;
 // through explicit ACP image blocks and the same bounded validation as attachments.
 pub(super) fn safe_markdown(text: &str) -> String {
     text.replace("![", "[").replace("<img", "&lt;img")
+}
+
+/// A compact visible label; the original text remains available in tooltips and data.
+pub(super) fn single_line_label(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub(super) fn short_hover_label(text: &str) -> String {
+    let text = single_line_label(text);
+    let mut chars = text.chars();
+    let mut label: String = chars.by_ref().take(160).collect();
+    if chars.next().is_some() {
+        label.push('…');
+    }
+    label
 }
 
 pub(super) fn mode_label(state: &nocterm_ai::thread::ThreadState) -> String {
@@ -138,6 +154,7 @@ pub(super) fn activity_text(
     live: bool,
     cx: &App,
 ) -> gpui_kit::AnyElement {
+    let text = single_line_label(&text);
     let label = div().flex_1().min_w_0().max_w_full().truncate().text_sm();
     if live {
         label
@@ -183,7 +200,8 @@ pub(super) fn disclosure_header(
     expanded: bool,
     cx: &App,
 ) -> Button {
-    Button::new(id)
+    let hover_label = short_hover_label(&title);
+    let mut button = Button::new(id)
         .text()
         .text_color(cx.theme().muted_foreground)
         .small()
@@ -192,7 +210,6 @@ pub(super) fn disclosure_header(
         .max_w_full()
         .px_0()
         .accessibility_label(title.clone())
-        .tooltip(title.clone())
         .child(
             h_flex()
                 .w_full()
@@ -210,5 +227,22 @@ pub(super) fn disclosure_header(
                     .small()
                     .flex_shrink_0(),
                 ),
-        )
+        );
+    button.interactivity().tooltip(move |window, cx| {
+        let label = hover_label.clone();
+        Tooltip::element(move |_, _| {
+            div()
+                .id("agent-activity-tooltip")
+                .test_support()
+                .w(px(280.))
+                .max_w_full()
+                .max_h(px(140.))
+                .overflow_hidden()
+                .whitespace_normal()
+                .child(label.clone())
+        })
+        .max_w(px(320.))
+        .build(window, cx)
+    });
+    button
 }
