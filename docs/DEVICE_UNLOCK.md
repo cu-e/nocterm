@@ -68,6 +68,13 @@ master-password unlock re-registers the key automatically. Restarting Nocterm
 keeps it: fingerprint unlock works right away. Turn off removes the
 registration.
 
+A fingerprint unlock allows up to three completed non-matching scans within one
+30-second scanning deadline. Scan hints, such as repositioning a finger, do not
+consume an attempt. A match ends authentication immediately; reader faults,
+disconnection, service errors and cancellation stop it with the specific reason.
+After three non-matches, the dialog reports “Fingerprint was not recognized after
+3 attempts”. You can start another scan or use the master password.
+
 To uninstall a package, remove it with the package manager. For a manual
 installation, stop and disable `nocterm-vault-broker.service`, remove
 `/etc/systemd/system/nocterm-vault-broker.service`,

@@ -97,6 +97,21 @@ fn broker_missing() -> String {
          {install}. The master password always works."
     )
 }
+// Only recognized broker envelopes are presentation noise. Keep unexpected
+// transport or protocol failures intact so their cause is still visible.
+fn broker_release_error(error: zbus::Error) -> E {
+    match error {
+        zbus::Error::MethodError(name, Some(description), _)
+            if matches!(
+                name.as_str(),
+                "org.freedesktop.DBus.Error.AccessDenied" | "org.freedesktop.DBus.Error.Failed"
+            ) =>
+        {
+            E::Platform(description)
+        }
+        error => platform(error),
+    }
+}
 fn token_string(token: &[u8]) -> Result<&str, E> {
     let token = std::str::from_utf8(token).map_err(|_| E::Invalidated)?;
     if token.len() != 64
@@ -194,7 +209,7 @@ impl DeviceUnlockProvider for Linux {
     ) -> Result<VaultKey, E> {
         let token = token_string(token)?;
         cancel.check()?;
-        self.run(|client| client.bounded(Duration::from_secs(35), async {
+        self.run(|client| client.bounded(Duration::from_secs(40), async {
             trusted(&client.connection, BROKER).await?;
             let proxy = Proxy::new(&client.connection,BROKER,PATH,BROKER).await.map_err(platform)?;
             let identity = binding.identifier();
@@ -204,7 +219,7 @@ impl DeviceUnlockProvider for Linux {
             tokio::pin!(future);
             let bytes = loop {
                 tokio::select! {
-                    result = &mut future => break zeroize::Zeroizing::new(result.map_err(platform)?),
+                    result = &mut future => break zeroize::Zeroizing::new(result.map_err(broker_release_error)?),
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {
                         if cancel.is_cancelled() {
                             let _: Result<(),_> = tokio::time::timeout(Duration::from_secs(1), proxy.call("Cancel", &(identity.as_str(),token))).await.unwrap_or_else(|_| Err(zbus::Error::Failure("timeout".into())));
@@ -270,5 +285,46 @@ mod tests {
             assert!(token_string(&invalid).is_err());
         }
         assert_eq!(token_string(&b"a".repeat(64)).unwrap(), "a".repeat(64));
+    }
+    fn method_error(name: &str, description: Option<&str>) -> zbus::Error {
+        let message = zbus::Message::method_call(PATH, "Release")
+            .unwrap()
+            .build(&())
+            .unwrap();
+        zbus::Error::MethodError(
+            name.try_into().unwrap(),
+            description.map(str::to_string),
+            message,
+        )
+    }
+    #[test]
+    fn broker_release_errors_show_known_descriptions_and_keep_unexpected_errors() {
+        for name in [
+            "org.freedesktop.DBus.Error.AccessDenied",
+            "org.freedesktop.DBus.Error.Failed",
+        ] {
+            let error =
+                broker_release_error(method_error(name, Some("Fingerprint reader disconnected")));
+            assert_eq!(
+                error.to_string(),
+                "Device unlock failed: Fingerprint reader disconnected"
+            );
+        }
+        let error = method_error(
+            "net.reactivated.Fprint.Error.PermissionDenied",
+            Some("Permission denied"),
+        );
+        let expected = platform(error.clone()).to_string();
+        assert_eq!(broker_release_error(error).to_string(), expected);
+        let error = method_error("org.freedesktop.DBus.Error.Failed", None);
+        assert_eq!(
+            broker_release_error(error.clone()).to_string(),
+            platform(error).to_string()
+        );
+        let error = zbus::Error::Failure("Connection closed".into());
+        assert_eq!(
+            broker_release_error(error.clone()).to_string(),
+            platform(error).to_string()
+        );
     }
 }
