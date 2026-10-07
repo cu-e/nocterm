@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, Hsla, Image, ImageFormat,
-    MouseButton, ObjectFit, SharedString, StyledImage as _, Subscription, WeakEntity, Window,
+    MouseButton, SharedString, Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
@@ -27,6 +27,8 @@ use crate::{
     os::{self, Os},
     store::{Profile, ProfileId},
 };
+
+mod row;
 
 /// A server's icon: `os` in `color` (its brand colour when none), or the
 /// generic server icon in `color` (`fallback` when none).
@@ -452,142 +454,6 @@ impl ConnectionsPanel {
         .detach();
     }
 
-    fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let id = profile.id;
-        let element_id = SharedString::from(format!("connection-{id}"));
-        let name = profile.name.clone();
-        let group = profile.group.clone();
-        let facts = ServerFacts::global(cx).read(cx);
-        let detected = facts.os(id);
-        let flag = facts
-            .shown_country(profile, cx)
-            .and_then(|code| Some((code.to_uppercase(), facts.flag(code)?)));
-        let icon = server_icon(
-            profile.icon.as_deref().and_then(os::find).or(detected),
-            profile
-                .icon_color
-                .as_deref()
-                .filter(|color| os::is_valid_color(color)),
-            theme.muted_foreground,
-        );
-
-        h_flex()
-            .id(element_id)
-            .test_support()
-            .group(ROW_GROUP)
-            .gap_2()
-            .mx_1()
-            .px_2()
-            .py_1()
-            .rounded(theme.radius)
-            .cursor_pointer()
-            .hover(|row| row.bg(theme.sidebar_accent))
-            .on_drag(DraggedProfile(id), move |_, _, _, cx| {
-                cx.stop_propagation();
-                cx.new(|_| nocterm_ui::DragPreview::new(name.clone(), 1, IconName::Server))
-            })
-            // Dropping on a row files the dragged connection just above it.
-            .drag_over::<DraggedProfile>(|style, _, _, cx| {
-                style.border_t_2().border_color(cx.theme().primary)
-            })
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, group.clone(), Some(id), window, cx)
-                }),
-            )
-            .when(!profile.description.is_empty(), |row| {
-                let description = description_tooltip(&profile.description);
-                row.tooltip(move |_, cx| {
-                    cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(description.clone()))
-                        .into()
-                })
-            })
-            .child(icon)
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .min_w_0()
-                            .child(div().text_sm().truncate().child(profile.name.clone()))
-                            .when_some(flag, |line, (country, flag)| {
-                                line.child(
-                                    div()
-                                        .id(SharedString::from(format!("connection-flag-{id}")))
-                                        .flex_shrink_0()
-                                        .rounded_xs()
-                                        .overflow_hidden()
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .child(
-                                            img(flag)
-                                                .w(gpui_kit::px(16.))
-                                                .h(gpui_kit::px(11.))
-                                                .object_fit(ObjectFit::Cover),
-                                        )
-                                        .tooltip(move |_, cx| {
-                                            cx.new(|_| {
-                                                gpui_kit::component::tooltip::Tooltip::new(
-                                                    country.clone(),
-                                                )
-                                            })
-                                            .into()
-                                        }),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .truncate()
-                            .text_color(theme.muted_foreground)
-                            .child(profile.target.to_string()),
-                    )
-                    .when(!profile.description.is_empty(), |column| {
-                        column.child(
-                            div()
-                                .text_xs()
-                                .truncate()
-                                .text_color(theme.muted_foreground)
-                                .child(description_preview(&profile.description)),
-                        )
-                    }),
-            )
-            .child(
-                h_flex()
-                    .invisible()
-                    .group_hover(ROW_GROUP, |buttons| buttons.visible())
-                    .child(
-                        Button::new(SharedString::from(format!("edit-{id}")))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Pencil)
-                            .tooltip("Edit")
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                this.edit(id, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("delete-{id}")))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Trash)
-                            .tooltip("Delete")
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                this.confirm_delete(id, window, cx);
-                            })),
-                    ),
-            )
-            .on_click(
-                cx.listener(move |this, _: &ClickEvent, window, cx| this.open(id, window, cx)),
-            )
-    }
-
     fn render_group_header(
         &self,
         group: &str,
@@ -755,6 +621,7 @@ impl ConnectionsPanel {
         for profile in &top {
             list = list.child(self.render_row(profile, cx));
         }
+        list = list.child(self.render_append_zone(None, cx));
         for (group, members) in &groups {
             // A filter shows every match, folded or not.
             let collapsed = !filtering && self.collapsed.contains(group);
@@ -775,7 +642,7 @@ impl ConnectionsPanel {
                 for profile in members {
                     folder = folder.child(self.render_row(profile, cx));
                 }
-                list = list.child(folder);
+                list = list.child(folder.child(self.render_append_zone(Some(group), cx)));
             }
         }
 

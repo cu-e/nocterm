@@ -126,6 +126,11 @@ impl Paths {
         self.config_dir.join("connections.toml")
     }
 
+    /// Saved snippet library.
+    pub fn snippets_file(&self) -> PathBuf {
+        self.config_dir.join("snippets.toml")
+    }
+
     /// Host keys the user accepted from inside nocterm.
     pub fn known_hosts_file(&self) -> PathBuf {
         self.config_dir.join("known_hosts")
@@ -251,6 +256,10 @@ mod tests {
         assert_eq!(
             paths.settings_file(),
             Path::new("/tmp/nocterm-test/config/settings.toml")
+        );
+        assert_eq!(
+            paths.snippets_file(),
+            Path::new("/tmp/nocterm-test/config/snippets.toml")
         );
         assert_eq!(
             paths.recents_file(),

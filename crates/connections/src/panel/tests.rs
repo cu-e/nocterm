@@ -2,6 +2,7 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 
+mod drag;
 mod reorder;
 
 #[test]
@@ -59,10 +60,10 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         use gpui_kit::{
             InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
         };
-        let from = window
+        let source = window
             .find(SharedString::from(format!("connection-{}", a.id)))
-            .bounds()
-            .center();
+            .bounds();
+        let from = source.center();
         let to = window.find("group-Personal").bounds().center();
         window.dispatch_event(
             MouseMoveEvent {
@@ -104,7 +105,10 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
             preview.size.height > gpui_kit::px(20.) && preview.size.height < gpui_kit::px(80.),
             "preview geometry must be independent of terminal font size"
         );
-        assert!(preview.size.width > gpui_kit::px(40.) && preview.size.width <= gpui_kit::px(320.));
+        assert_eq!(
+            preview.size, source.size,
+            "drag preview keeps the actual row footprint"
+        );
         window.dispatch_event(
             MouseUpEvent {
                 position: to,

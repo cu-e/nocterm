@@ -9,7 +9,7 @@ use gpui_kit::{
     Action as _, Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton,
     StyleRefinement, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
+        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
         floating::FloatingCards,
         h_flex, h_resizable,
@@ -26,6 +26,8 @@ use super::{
     layout::{BodyWidths, Column},
 };
 use crate::NewTab;
+
+mod empty_state;
 
 /// `view`, drawn again only when it notifies or the window is refreshed.
 /// Whatever redraws the workspace (each keystroke in a terminal does) would
@@ -148,23 +150,7 @@ impl Workspace {
                 .child(self.dock.clone())
                 .into_any_element();
         }
-        tile(
-            cards,
-            v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .text_color(cx.theme().muted_foreground)
-                .child(Icon::new(IconName::SquareTerminal).large())
-                .child("No open sessions")
-                .child(
-                    Button::new("empty-new-tab")
-                        .primary()
-                        .label("New Tab")
-                        .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx)),
-                ),
-        )
+        tile(cards, self.render_empty_state(cx))
     }
 
     pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {

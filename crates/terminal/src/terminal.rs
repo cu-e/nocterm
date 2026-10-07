@@ -1,3 +1,6 @@
+mod input;
+mod output;
+
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -358,20 +361,7 @@ impl Terminal {
                     self.start_recording(cx);
                 }
             }
-            Event::Output(bytes) => {
-                let bytes = self.codec.decode(&bytes, false);
-                if let Some(recording) = &mut self.recording {
-                    recording.output(&bytes);
-                }
-                if self.local && self.integration.borrow_mut().advance(&bytes) {
-                    cx.emit(TerminalEvent::Changed);
-                }
-                let effects = self.emulator.advance(&bytes);
-                self.apply(effects, cx);
-                self.schedule_sync(cx);
-                self.refresh_find(cx);
-                cx.emit(TerminalEvent::Output);
-            }
+            Event::Output(bytes) => self.advance_output(&bytes, cx),
             Event::Prompt(prompt) => {
                 // A newer question supersedes an unanswered one, including an
                 // identical retry. Views must discard the previous input state.
@@ -518,69 +508,6 @@ impl Terminal {
         Ok(())
     }
 
-    // ── Input ────────────────────────────────────────────────────────────────
-
-    pub(crate) fn agent_prompt_state(&self) -> (Option<bool>, bool) {
-        let integration = self.integration.borrow();
-        (
-            self.local.then_some(integration.at_prompt),
-            integration.dirty_input,
-        )
-    }
-
-    pub(crate) fn agent_send(
-        &mut self,
-        text: &str,
-        command: bool,
-        cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        if !self.is_connected() || self.prompt.is_some() {
-            return Err("Terminal is unavailable or waiting for authentication.".into());
-        }
-        if text.len() > 16 * 1024 {
-            return Err("Terminal input exceeds 16 KiB.".into());
-        }
-        if command {
-            if text.contains(['\0', '\r', '\n']) {
-                return Err("Run one command without control characters.".into());
-            }
-            let integration = self.integration.borrow();
-            if self.emulator.modes().alt_screen
-                || (self.local && (!integration.at_prompt || integration.dirty_input))
-            {
-                return Err(
-                    "The terminal is busy, has unfinished input, or is in an alternate screen."
-                        .into(),
-                );
-            }
-        }
-        let text = if command {
-            format!("{text}\r")
-        } else {
-            text.to_owned()
-        };
-        let bytes = self.codec.encode(&text)?;
-        if !self.send(bytes) {
-            return Err("Terminal input queue rejected the input.".into());
-        }
-        cx.emit(TerminalEvent::Changed);
-        Ok(())
-    }
-
-    /// Encodes only user text. Protocol replies and mouse messages use send unchanged.
-    pub fn send_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        let previous = self.text_error();
-        match self.codec.encode(text) {
-            Ok(bytes) => {
-                self.text_error = None;
-                self.send(bytes);
-            }
-            Err(error) => self.text_error = Some(error),
-        }
-        if previous != self.text_error() {
-            cx.emit(TerminalEvent::Changed);
-        }
-    }
     pub fn text_error(&self) -> Option<String> {
         self.text_error
             .clone()

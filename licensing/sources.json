@@ -565,5 +565,37 @@
     "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
     "component": "libfuse-source-tools",
     "version": "3.15.0"
+  },
+  {
+    "packages": [
+      "tree-sitter-bash@0.23.3"
+    ],
+    "path": "upstream/tree-sitter-bash-0.23.3-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/487734f87fd87118028a65a4599352fa99c9cde8/LICENSE",
+    "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+  },
+  {
+    "packages": [
+      "tree-sitter-json@0.24.8"
+    ],
+    "path": "upstream/tree-sitter-json-0.24.8-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "packages": [
+      "tree-sitter-python@0.23.6"
+    ],
+    "path": "upstream/tree-sitter-python-0.23.6-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/bffb65a8cfe4e46290331dfef0dbf0ef3679de11/LICENSE",
+    "sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f"
+  },
+  {
+    "packages": [
+      "tree-sitter-toml-ng@0.7.0"
+    ],
+    "path": "upstream/tree-sitter-toml-ng-0.7.0-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE",
+    "sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
   }
 ]

@@ -1,5 +1,7 @@
 //! The Explorer's local half: browsing this computer.
 use super::*;
+use gpui_kit::base::{ElementExt as _, TestSupportExt as _};
+use row::ExplorerRow;
 
 impl FilesPanel {
     pub(super) fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
@@ -145,7 +147,14 @@ impl FilesPanel {
     pub(super) fn render_local_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.local.entries[ix];
         let paths = self.local_paths(ix);
-        let preview = entry.name.clone();
+        let visual = ExplorerRow {
+            name: entry.name.clone(),
+            directory: entry.kind == EntryKind::Directory,
+            symlink: entry.symlink,
+            selected: self.local.selected.contains(&ix),
+            font_size: cx.design().typography.explorer_size.unwrap_or(12.0),
+        };
+        let source = nocterm_ui::DragSource::default();
         let destination = entry.path.clone();
         let directory = entry.kind == EntryKind::Directory && !entry.symlink;
         let target = FileTarget::Local(entry.path.clone());
@@ -158,41 +167,15 @@ impl FilesPanel {
         let workspace = self.workspace.clone();
         let folder = entry.kind == EntryKind::Directory;
         let enabled = !self.local.loading;
-        div()
+        visual
+            .render(false, cx)
             .id(("local-entry", ix))
-            .w_full()
-            .h_8()
-            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
-            .px_2()
-            .flex()
-            .items_center()
-            .gap_2()
-            .rounded_sm()
-            .cursor_pointer()
-            .when(self.local.selected.contains(&ix), |row| {
-                row.bg(cx.theme().accent)
+            .test_support()
+            .on_prepaint({
+                let source = source.clone();
+                move |bounds, window, _| source.capture(bounds, window)
             })
-            .hover(|s| s.bg(cx.theme().accent))
-            .child(
-                Icon::new(if entry.kind == EntryKind::Directory {
-                    IconName::Folder
-                } else {
-                    IconName::File
-                })
-                .small(),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(format!(
-                        "{}{}",
-                        entry.name,
-                        if entry.symlink { " (link)" } else { "" }
-                    )),
-            )
+            .cursor_pointer()
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event, _, cx| this.select_local(ix, event, cx)),
@@ -208,11 +191,10 @@ impl FilesPanel {
                     }
                 }),
             )
-            .on_drag(LocalPaths(paths), move |files, _, _, cx| {
+            .on_drag(LocalPaths(paths), move |_, _, _, cx| {
                 cx.stop_propagation();
-                cx.new(|_| {
-                    nocterm_ui::DragPreview::new(preview.clone(), files.0.len(), IconName::File)
-                })
+                let visual = visual.clone();
+                cx.new(|_| source.preview(move |_, cx| visual.render(true, cx).into_any_element()))
             })
             .when(directory, |row| {
                 row.drag_over::<RemotePaths>(|style, _, _, cx| {

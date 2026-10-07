@@ -64,3 +64,17 @@ hairline so the gap is the divider. `src/tab/tab.rs` and `src/tab/tab_bar.rs`
 add `TabVariant::Floating`: rounded tabs, concentric with the card, whose
 selection fill slides between tabs, and whose group accent is an inset
 underline. Remove this patch when upstream offers an equivalent card layout.
+
+`src/dock/tab_panel.rs` and its added `drag_preview.rs` child share tab and
+single-panel title presentation between their interactive source and passive
+preview. `src/tab/tab.rs` observes its native outer layout box through the added
+`bounds.rs` child, preserving borders and close suffixes; its existing tests were
+moved unchanged into a child module. Painted bounds and inherited typography replace the fixed 96-by-30
+preview; the unchanged `DragPanel` payload receives the actual size and pointer
+offset for drop geometry. Tabs retain aliases or rich titles, group accents and
+close suffixes. Previews preserve the source bar, card or custom title backdrop
+behind transparent content. Floating previews use the existing selected Tab fill because
+the TabBar's separate sliding indicator is outside the drag root. No extra
+preview frame, padding, opacity or controls are introduced. The child module's
+native pointer regressions cover active and inactive default tabs, floating tabs
+and single-panel titles.

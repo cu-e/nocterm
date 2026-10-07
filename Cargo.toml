@@ -16,6 +16,7 @@ nocterm-agent.workspace = true
 nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
 nocterm-containers-ui.workspace = true
+nocterm-snippets-ui.workspace = true
 nocterm-core.workspace = true
 nocterm-design.workspace = true
 nocterm-files.workspace = true
@@ -133,6 +134,8 @@ nocterm-device-unlock = { path = "crates/device-unlock" }
 nocterm-connections = { path = "crates/connections" }
 nocterm-containers = { path = "crates/containers" }
 nocterm-containers-ui = { path = "crates/containers-ui" }
+nocterm-snippets = { path = "crates/snippets" }
+nocterm-snippets-ui = { path = "crates/snippets-ui" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
