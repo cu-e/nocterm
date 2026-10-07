@@ -5,6 +5,8 @@ use row::ExplorerRow;
 
 impl FilesPanel {
     pub(super) fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
+        self.local_path
+            .update(cx, |input, cx| input.begin_navigation(cx));
         let (cancel, progress) = self.local.counter.restart();
         self.local.generation = self.local.generation.wrapping_add(1);
         let generation = self.local.generation;
@@ -39,12 +41,23 @@ impl FilesPanel {
                                 )),
                                 None => walk = true,
                             }
+                            this.local_path.update(cx, |input, cx| {
+                                input.accept(
+                                    path_input::Directory::Local(directory.clone()),
+                                    home.map(path_input::Directory::Local),
+                                    cx,
+                                )
+                            });
                             this.local.path = Some(directory.clone());
                             this.local.entries = entries;
                             this.local.selected.clear();
                             this.local.anchor = None;
                         }
-                        Err(error) => this.local.error = Some(error),
+                        Err(error) => {
+                            this.local_path
+                                .update(cx, |input, cx| input.navigation_failed(error.clone(), cx));
+                            this.local.error = Some(error);
+                        }
                     }
                     cx.notify();
                     Some(this.local.error.clone().ok_or(walk))
@@ -231,6 +244,7 @@ impl FilesPanel {
         let information = statistics::summary(&self.local.counter.shown);
         v_flex()
             .id("local-browser")
+            .overflow_hidden()
             .size_full()
             .min_h_0()
             .gap_1()
@@ -292,16 +306,7 @@ impl FilesPanel {
                             })),
                     ),
             )
-            .when_some(self.local.path.as_ref(), |p, path| {
-                p.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .text_ellipsis()
-                        .overflow_hidden()
-                        .child(path.display().to_string()),
-                )
-            })
+            .child(self.local_path.clone())
             .when(self.local.loading, |p| {
                 p.child(div().text_sm().child("Loading directory…"))
             })

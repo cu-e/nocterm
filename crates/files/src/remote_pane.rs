@@ -8,6 +8,8 @@ impl FilesPanel {
         let Some(fs) = self.filesystem() else {
             return;
         };
+        self.remote_path
+            .update(cx, |input, cx| input.begin_navigation(cx));
         let generation = self.browser.begin();
         self.remote_selected.clear();
         self.remote_anchor = None;
@@ -29,7 +31,19 @@ impl FilesPanel {
                             if home_requested {
                                 this.browser.home = this.browser.path.clone();
                             }
+                            if let Some(path) = this.browser.path.clone() {
+                                let home =
+                                    this.browser.home.clone().map(path_input::Directory::Remote);
+                                this.remote_path.update(cx, |input, cx| {
+                                    input.accept(path_input::Directory::Remote(path), home, cx)
+                                });
+                            }
                             this.count_remote(fs, cx);
+                        }
+                        if let Some(error) = this.browser.error.as_ref() {
+                            let error = error.to_string();
+                            this.remote_path
+                                .update(cx, |input, cx| input.navigation_failed(error, cx));
                         }
                         cx.notify();
                         this.browser.error.as_ref().map(ToString::to_string)
@@ -267,6 +281,7 @@ impl FilesPanel {
         };
         v_flex()
             .id("remote-browser")
+            .overflow_hidden()
             .size_full()
             .min_h_0()
             .gap_1()
@@ -334,16 +349,7 @@ impl FilesPanel {
                             })),
                     ),
             )
-            .when_some(self.browser.path.clone(), |p, path| {
-                p.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .text_ellipsis()
-                        .overflow_hidden()
-                        .child(path),
-                )
-            })
+            .child(self.remote_path.clone())
             .when_some(hint, |p, hint| {
                 p.child(
                     div()

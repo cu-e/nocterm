@@ -143,6 +143,14 @@ cancellable background logical-size scan. Request tasks are dropped when
 superseded, and generations reject stale replies. The local cwd bridge goes
 through Workspace's `LocalTerminal` contract, without Files depending on Terminal.
 
+Explorer location editors own native input and asynchronous, bounded directory
+completion. Suggestions use a viewport-constrained popup anchored below the input,
+flipping above it when needed, so minimum-height split panes retain usable rows.
+Tab and Shift+Tab cycle files and folders from one cached directory;
+editing, blur, navigation and session changes invalidate pending generations.
+Enter resolves a literal absolute, relative or home path through the existing
+browser loader, retaining the draft on failure.
+
 Explorer context menus snapshot typed local/remote targets. A mutation dialog runs
 I/O on the background executor; completion refreshes only a matching navigation
 generation and filesystem instance. New metadata/rename/remove/permission methods

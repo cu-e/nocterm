@@ -6,6 +6,7 @@ mod local_operations;
 mod local_pane;
 mod open;
 mod operations;
+mod path_input;
 mod registration;
 mod remote;
 mod remote_pane;
@@ -79,6 +80,9 @@ pub struct FilesPanel {
     remote_selected: BTreeSet<usize>,
     remote_anchor: Option<usize>,
     local: LocalBrowser,
+    local_path: Entity<path_input::PathInput>,
+    remote_path: Entity<path_input::PathInput>,
+    _path_subscriptions: Vec<Subscription>,
     remote_counter: statistics::Counter,
     activity: activity::Activity,
     /// A finished transfer changed the shown folder: (remote, local).
@@ -240,6 +244,20 @@ impl FilesPanel {
                 }
             }
         });
+        let local_path = cx.new(|cx| path_input::PathInput::new(window, cx));
+        let remote_path = cx.new(|cx| path_input::PathInput::new(window, cx));
+        let path_subscriptions = [&local_path, &remote_path]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe(
+                    input,
+                    |this, _, event: &path_input::Navigate, cx| match &event.0 {
+                        path_input::Directory::Local(path) => this.load_local(path.clone(), cx),
+                        path_input::Directory::Remote(path) => this.load(Some(path.clone()), cx),
+                    },
+                )
+            })
+            .collect();
         let mut panel = Self {
             focus: cx.focus_handle(),
             session: None,
@@ -248,6 +266,9 @@ impl FilesPanel {
             remote_selected: BTreeSet::new(),
             remote_anchor: None,
             local: LocalBrowser::default(),
+            local_path,
+            remote_path,
+            _path_subscriptions: path_subscriptions,
             remote_counter: statistics::Counter::default(),
             activity: activity::Activity::default(),
             stale: (false, false),
@@ -270,6 +291,9 @@ impl FilesPanel {
             return;
         }
         self.session = session;
+        let filesystem = self.filesystem();
+        self.remote_path
+            .update(cx, |input, cx| input.reset_remote(filesystem, cx));
         self.requested_directory = None;
         self.browser.clear();
         self.remote_selected.clear();

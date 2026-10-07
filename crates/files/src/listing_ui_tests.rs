@@ -5,6 +5,9 @@ use super::*;
 #[path = "drag_ui_tests.rs"]
 mod drag_ui;
 
+#[path = "path_ui_tests.rs"]
+mod path_ui;
+
 #[gpui_kit::test]
 fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navigate(
     cx: &mut TestAppContext,
