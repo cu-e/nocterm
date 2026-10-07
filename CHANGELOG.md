@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.5.0](https://github.com/cu-e/nocterm/compare/v1.4.2...v1.5.0) (2026-10-07)
+
+
+### Features
+
+* **agent:** render tool input and collapse titles ([c92bb61](https://github.com/cu-e/nocterm/commit/c92bb61b21e0477171e39201677fe6b6c2a82613))
+* **agent:** render tool input and collapse titles ([5eaa820](https://github.com/cu-e/nocterm/commit/5eaa82085026e3f9c60f591be70ff881be123384))
+* **snippets-ui:** organise attachments into a searchable tree ([b9b5c13](https://github.com/cu-e/nocterm/commit/b9b5c1381789462e60741554222f44d0a58bd068))
+* **snippets-ui:** run snippets in the focused terminal ([df4a305](https://github.com/cu-e/nocterm/commit/df4a305bbbd21e8a56c3eb481eaf9a0db73d763a))
+* **snippets:** add a contextual snippet library ([e678e6f](https://github.com/cu-e/nocterm/commit/e678e6fff8761718ec502e14c13beb7fcd7f24bf))
+* **snippets:** add contextual snippet library ([440bf30](https://github.com/cu-e/nocterm/commit/440bf30293c3e0e3f798fb2b18b3a43e5c9fd125))
+* **workspace:** show recent servers in the empty state ([721f3b9](https://github.com/cu-e/nocterm/commit/721f3b95a318e544a88e552427de0b49af0d217f))
+
+
+### Bug Fixes
+
+* **keymap:** expose snippet commands in the palette ([2a9145d](https://github.com/cu-e/nocterm/commit/2a9145d2e3ba267ff1fff2fc76cae8bb434504b4))
+* **snippets-ui:** preserve modal ownership when saving ([b7ab9c8](https://github.com/cu-e/nocterm/commit/b7ab9c85b03ae07c9c3b13586d9aa1c3989050e4))
+* **snippets-ui:** remove attachment labels from snippet rows ([9986c4c](https://github.com/cu-e/nocterm/commit/9986c4ca7e2e0d3416bc1466f5689088ac126a24))
+* **ui:** preserve source appearance in drag previews ([c063ff3](https://github.com/cu-e/nocterm/commit/c063ff374688f74431ed945046a12ff4fe56508f))
+* **vault-broker:** report failures and retry fingerprint verification ([ca2c3cc](https://github.com/cu-e/nocterm/commit/ca2c3cc95c68e3a102b52af67fce11c4c29c4815))
+* **vault-broker:** report failures and retry fingerprint verification ([963f044](https://github.com/cu-e/nocterm/commit/963f044c6a5f46ecc33564937a94e6562660d213))
+* **workspace:** place recent server icons before names ([0f9d7de](https://github.com/cu-e/nocterm/commit/0f9d7de30ed84c683f7767d5f2651853d56313a2))
+
 ## [1.4.2](https://github.com/cu-e/nocterm/compare/v1.4.1...v1.4.2) (2026-10-06)
 
 
