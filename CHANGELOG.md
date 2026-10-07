@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.0.0](https://github.com/cu-e/nocterm/compare/v1.5.0...v2.0.0) (2026-10-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **terminal:** run_command requires a known, empty shell prompt. Use exec_command on SSH sessions without shell integration.
+
+### Features
+
+* **agent:** execute scoped host commands ([e4cb88c](https://github.com/cu-e/nocterm/commit/e4cb88c342572438c48dd9bea3ba5ef145eb2d22))
+* **files:** add editable paths with asynchronous completion ([3ec6e07](https://github.com/cu-e/nocterm/commit/3ec6e070ece90d4396a4b55f57e2f59915291bf6))
+* **files:** merge explorer path interactions into dev ([9e45d43](https://github.com/cu-e/nocterm/commit/9e45d4388f21897a6f1b0b5c0e81dc5a7c9db6d3))
+* **terminal:** improve terminal interaction ([9ac83ab](https://github.com/cu-e/nocterm/commit/9ac83ab96f18e588cc1d958be0a091fed4a3970c))
+* **terminal:** paste dragged explorer paths into terminals ([e0239cb](https://github.com/cu-e/nocterm/commit/e0239cb5a74a769fcb234a7b99de6c7acc0adf73))
+* **workspace:** add local terminal tabs with header controls ([f52a805](https://github.com/cu-e/nocterm/commit/f52a8057ed600e47162693ef0e5a1a74b35c1369))
+
+
+### Bug Fixes
+
+* **agent:** clarify terminal tool calls in chat ([c3a8b2c](https://github.com/cu-e/nocterm/commit/c3a8b2cd4a33b0f984a6f0af1e6f3c56673de649))
+* **ai:** preserve credential masks across workspace aliases ([2e2ff10](https://github.com/cu-e/nocterm/commit/2e2ff10ee8c9d08f3ec661e3276824aa8b4b61aa))
+* **device-unlock:** report fingerprint attempt state ([9d30482](https://github.com/cu-e/nocterm/commit/9d30482573fa1603fcdcc5eb82ccadff1743008f))
+* **files:** refine explorer directory navigation ([f85bd77](https://github.com/cu-e/nocterm/commit/f85bd7708179f193f56efac5407392c87123be84))
+* **ssh:** prevent blocked program startup ([9deef2f](https://github.com/cu-e/nocterm/commit/9deef2fa3ede529f2b3239932fc672c4d1843ec1))
+* **terminal:** guard agent commands with prompt ownership ([2d270d5](https://github.com/cu-e/nocterm/commit/2d270d5dce08e08177b40ecb695a13c181b69bdd))
+* **vault-broker:** persist fingerprint attempt limits ([586f659](https://github.com/cu-e/nocterm/commit/586f6595e0d113d9a28e35ef8b88c4babe49362a))
+* **workspace:** keep zoomed terminal groups interactive ([ef78bbd](https://github.com/cu-e/nocterm/commit/ef78bbd73fc56980beae63b31a9f436ebe71894d))
+* **workspace:** stop dock zoom event feedback ([77b3c05](https://github.com/cu-e/nocterm/commit/77b3c055c14ca32cdc8c03b3d39c104430e66f9b))
+* **workspace:** unify terminal tab operations ([b9ef593](https://github.com/cu-e/nocterm/commit/b9ef593ea95f85f734528ccdd926b36a7118f049))
+
+
+### Performance
+
+* **terminal:** reuse unchanged terminal frames ([40a7a8a](https://github.com/cu-e/nocterm/commit/40a7a8a15c00b41a567aa081a56ca894b0d53cad))
+* **ui:** add opt-in Linux retained rendering ([a8ab0aa](https://github.com/cu-e/nocterm/commit/a8ab0aa1d6094fbdc016270cdbe2e57c6051b8bc))
+* **ui:** retain Windows renderer frames ([0b25b4b](https://github.com/cu-e/nocterm/commit/0b25b4b730e717cdcc02d3bc96b5c35890391549))
+
+
+### Documentation
+
+* **ui:** mark shared GPUI fork modifications ([a239938](https://github.com/cu-e/nocterm/commit/a2399389df228f604ea6cfc334ba7878c23f7d56))
+* **ui:** mark the spring animation fork change ([2891ad4](https://github.com/cu-e/nocterm/commit/2891ad4eade0aba5e7017bf016737e276c0dc432))
+
 ## [1.5.0](https://github.com/cu-e/nocterm/compare/v1.4.2...v1.5.0) (2026-10-07)
 
 
