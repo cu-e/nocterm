@@ -71,6 +71,7 @@ fn fallback_pixels(
 #[test]
 fn transformed_scene_uses_direct_full_without_allocating_or_resizing_retained_image() -> Result<()>
 {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let bytes = [200; 64];
     let tile = renderer
@@ -161,6 +162,7 @@ fn transformed_scene_uses_direct_full_without_allocating_or_resizing_retained_im
 
 #[test]
 fn exhausted_record_budget_uses_original_direct_full_without_retained_allocation() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let mut scene = Scene::default();
     // Zero-area quads exercise the record cap without excessive fragment overdraw.
@@ -174,6 +176,7 @@ fn exhausted_record_budget_uses_original_direct_full_without_retained_allocation
 
 #[test]
 fn ineligible_target_rejects_before_atlas_flush_and_snapshot_preparation() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let original_format = renderer.core.target_format;
     let original_limit = renderer.core.max_texture_size;

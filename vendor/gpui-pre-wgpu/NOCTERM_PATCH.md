@@ -67,6 +67,14 @@ Native tests assert whole-image equality against original full rendering,
 including alpha, clipping, transformed fallback, path pass scissor restoration,
 atlas mutations, target formats, allocation scopes and poisoned presentation
 destinations. They complement actual compositor UI/performance runs.
+GPU test fixtures share a guard from before native instance creation until after
+renderer destruction. Independent concurrent fixture lifetimes reproduced a
+Vulkan loader crash in debug-object naming; sharing an instance instead exposed
+concurrent GL adapter enumeration errors. The guard keeps these driver lifetimes
+exclusive while the default test harness still runs all tests, including shader
+and policy checks, in parallel. Each GPU test retains its own instance, device,
+queue and error state, and all pixel assertions are unchanged. Shipping renderer
+construction and driver settings are unchanged.
 
 Linux captures into a bounded spare snapshot and compares with a per-call exact
 record-pair memo. The committed snapshot and spare rotate only after successful

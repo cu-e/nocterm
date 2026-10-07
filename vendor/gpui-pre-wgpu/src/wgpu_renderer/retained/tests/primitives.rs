@@ -22,6 +22,7 @@ fn glyph_key(subpixel: bool, id: u32) -> AtlasKey {
 
 #[test]
 fn mono_subpixel_clipping_transform_and_alpha_order_match_full_pixels() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for subpixel in [false, true] {
         renderer.core.retained.reset();
@@ -98,6 +99,7 @@ fn mono_subpixel_clipping_transform_and_alpha_order_match_full_pixels() -> Resul
 
 #[test]
 fn path_pass_reopening_restores_damage_scissor_with_shadow_and_wavy_underline() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for offset in [0., 4.25, 12., 0.] {
         let mut scene = scene(false);

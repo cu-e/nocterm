@@ -8,6 +8,15 @@ use gpui::{
 use gpui::{DevicePixels, PlatformHeadlessRenderer, Scene};
 use wgpu::naga;
 
+/// Native GPU fixtures own independent instances, devices and driver contexts.
+/// Keep their creation, rendering and destruction exclusive: concurrent fixture
+/// lifetimes can race Vulkan debug-object dispatch and GL adapter enumeration.
+#[cfg(target_os = "linux")]
+pub(super) fn gpu_test() -> std::sync::MutexGuard<'static, ()> {
+    static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GPU.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 #[cfg(target_os = "linux")]
 fn device_size(width: i32, height: i32) -> Size<DevicePixels> {
     Size {
@@ -64,6 +73,7 @@ const BLACK: [u8; 4] = [0, 0, 0, 255];
 #[cfg(target_os = "linux")]
 #[test]
 fn headless_renderer_draws_quads_with_distinct_colors() -> anyhow::Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let mut scene = Scene::default();
     scene.insert_primitive(solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red()));
@@ -82,6 +92,7 @@ fn headless_renderer_draws_quads_with_distinct_colors() -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 #[test]
 fn headless_renderer_captures_each_requested_size() -> anyhow::Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let mut scene = Scene::default();
     scene.insert_primitive(solid_quad(2.0, 2.0, 4.0, 3.0, gpui::red()));
@@ -108,6 +119,7 @@ fn headless_renderer_captures_each_requested_size() -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 #[test]
 fn headless_renderer_reuses_target_for_same_size() -> anyhow::Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let target_texture = |renderer: &WgpuHeadlessRenderer| {
         renderer
@@ -131,6 +143,7 @@ fn headless_renderer_reuses_target_for_same_size() -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 #[test]
 fn headless_renderer_rejects_invalid_sizes() -> anyhow::Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let too_large = renderer.core.max_texture_size as i32 + 1;
 

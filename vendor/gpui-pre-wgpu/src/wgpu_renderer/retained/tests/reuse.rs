@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// Nocterm regression tests; native GPU fixtures use exclusive driver lifetimes.
 // Successful publication and error/atlas-race storage ownership regressions.
 use super::*;
 
@@ -16,6 +17,7 @@ fn storage_bytes(frame: &RetainedFrame) -> usize {
 
 #[test]
 fn repeated_reused_frames_match_full_pixels_and_release_on_viewport_change() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for index in 0..40 {
         assert_matches(
@@ -50,6 +52,7 @@ fn repeated_reused_frames_match_full_pixels_and_release_on_viewport_change() -> 
 
 #[test]
 fn rendering_error_discards_both_snapshots_and_next_frame_repairs_fully() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for changed in [false, true, false] {
         assert_matches(
@@ -88,6 +91,7 @@ fn rendering_error_discards_both_snapshots_and_next_frame_repairs_fully() -> Res
 #[test]
 fn real_atlas_mutation_after_submission_rejects_commit_and_next_frame_repairs_fully() -> Result<()>
 {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for changed in [false, true, false] {
         assert_matches(

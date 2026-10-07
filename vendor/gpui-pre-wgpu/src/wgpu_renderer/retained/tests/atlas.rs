@@ -42,6 +42,7 @@ fn image_scene(tile: gpui::AtlasTile) -> Scene {
 
 #[test]
 fn atlas_uploads_removals_and_cache_hits_preserve_same_scene_pixels() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let first = tile(&renderer, 1, &[30; 256])?;
     let scene = image_scene(first);

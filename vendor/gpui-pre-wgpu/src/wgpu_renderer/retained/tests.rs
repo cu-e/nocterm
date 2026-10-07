@@ -1,5 +1,6 @@
 // Nocterm regression tests, licensed under the upstream Apache-2.0 license.
 use super::super::headless::HeadlessRenderTarget;
+use super::super::tests::gpu_test;
 use super::*;
 mod atlas;
 mod fallback;
@@ -130,6 +131,7 @@ fn assert_matches(
 
 #[test]
 fn partial_alpha_and_repeated_updates_match_original_full_pixels() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for premultiplied in [false, true] {
         renderer.core.resources.pipelines = WgpuRendererCore::create_pipelines(
@@ -178,6 +180,7 @@ fn partial_alpha_and_repeated_updates_match_original_full_pixels() -> Result<()>
 
 #[test]
 fn unchanged_frame_copies_the_whole_retained_image_to_poisoned_destination() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let dimensions = viewport(256, 192);
     let scene = scene(false);
@@ -251,6 +254,7 @@ fn unchanged_frame_copies_the_whole_retained_image_to_poisoned_destination() -> 
 
 #[test]
 fn lifecycle_changes_invalidate_before_reuse_and_match_full_pixels() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let scene = scene(false);
     for dimensions in [viewport(256, 192), viewport(193, 137), viewport(256, 192)] {
@@ -298,6 +302,7 @@ fn limits_and_invalid_allocation_fall_back_without_accepted_invalid_handles() ->
     assert!(!bounded_size(viewport(0, 10), 8192));
     assert!(!bounded_size(viewport(10, -1), 8192));
     assert!(!bounded_size(viewport(8193, 1), 8192));
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     eprintln!("NOCTERM_NATIVE_ADAPTER: {:?}", renderer.core.adapter_info);
     assert!(
@@ -348,6 +353,7 @@ fn overwrite_clear_shader_is_valid() {
 
 #[test]
 fn surface_without_copy_destination_uses_original_full_renderer() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     let dimensions = viewport(256, 192);
     assert_matches(
@@ -396,6 +402,7 @@ fn surface_without_copy_destination_uses_original_full_renderer() -> Result<()> 
 
 #[test]
 fn matching_rgba_bgra_and_srgb_formats_reallocate_then_repair_exact_pixels() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     for format in [
         wgpu::TextureFormat::Rgba8Unorm,
@@ -443,6 +450,7 @@ fn matching_rgba_bgra_and_srgb_formats_reallocate_then_repair_exact_pixels() -> 
 
 #[test]
 fn whole_viewport_damage_uses_original_full_clear_then_local_damage_stays_partial() -> Result<()> {
+    let _gpu = gpu_test();
     let mut renderer = WgpuHeadlessRenderer::new()?;
     assert_matches(
         &mut renderer,
