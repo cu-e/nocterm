@@ -2,7 +2,11 @@
 use crate::{
     CredentialBinding, CredentialInfo, DeviceCapability, DeviceUnlockProvider, Vault, VaultError,
 };
-use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
+use futures::{
+    FutureExt as _,
+    channel::{mpsc as progress, oneshot},
+    future::BoxFuture,
+};
 use nocterm_session::{CredentialId, Secret};
 use std::{
     path::PathBuf,
@@ -184,6 +188,19 @@ impl VaultService {
     }
     pub fn unlock_with_device(&self) -> VaultFuture<()> {
         self.request(|vault| vault.unlock_with_device())
+    }
+    /// The receiver closes when authentication finishes or is cancelled.
+    pub fn unlock_with_device_progress(
+        &self,
+    ) -> (VaultFuture<()>, progress::UnboundedReceiver<u8>) {
+        let (sender, receiver) = progress::unbounded();
+        let observer = Arc::new(move |remaining| {
+            let _ = sender.unbounded_send(remaining);
+        });
+        (
+            self.request(move |vault| vault.unlock_with_device_observer(Some(observer))),
+            receiver,
+        )
     }
     pub fn disable_device_unlock(&self) -> VaultFuture<()> {
         self.request(|vault| vault.disable_device_unlock())

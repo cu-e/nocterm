@@ -1,5 +1,6 @@
 //! Unlocking and locking the vault from anywhere: the command palette, or a
 //! sign-in prompt that could use a saved secret.
+use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window,
     base::TestSupportExt as _,
@@ -82,6 +83,8 @@ pub(crate) struct UnlockPrompt {
     pub(crate) scanning: bool,
     /// Identifies the latest scan, so a cancelled one cannot report late.
     scan: u64,
+    pub(crate) attempts_remaining: Option<u8>,
+    pub(crate) device_locked: bool,
 }
 
 impl UnlockPrompt {
@@ -100,6 +103,16 @@ impl UnlockPrompt {
             let Ok(capability) = probe.await else {
                 return;
             };
+            if capability.availability == DeviceAvailability::LockedOut {
+                let _ = this.update_in(cx, |this, _, cx| {
+                    this.device = Some(capability.label.into());
+                    this.device_locked = true;
+                    this.attempts_remaining = Some(0);
+                    this.error = Some(capability.detail.into());
+                    cx.notify();
+                });
+                return;
+            }
             if !capability.armed || capability.availability != DeviceAvailability::Available {
                 return;
             }
@@ -117,22 +130,38 @@ impl UnlockPrompt {
             device: None,
             scanning: false,
             scan: 0,
+            attempts_remaining: None,
+            device_locked: false,
         }
     }
 
     /// Starts device authentication; typing the password stays possible and
     /// cancels it on submit.
     fn unlock_with_device(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.scanning || self.service.is_unlocked() {
+        if self.busy || self.scanning || self.device_locked || self.service.is_unlocked() {
             return;
         }
         self.scanning = true;
         self.scan += 1;
         let scan = self.scan;
         self.error = None;
-        let future = self.service.unlock_with_device();
+        self.attempts_remaining = None;
+        let (future, mut progress) = self.service.unlock_with_device_progress();
         cx.spawn_in(window, async move |this, cx| {
-            let result = future.await;
+            let future = future.fuse();
+            futures::pin_mut!(future);
+            let result = loop {
+                futures::select_biased! {
+                    result = future => break result,
+                    remaining = progress.next().fuse() => {
+                        let Some(remaining) = remaining else { break future.await; };
+                        let _ = this.update_in(cx, |this, _, cx| {
+                            this.scan_progress(scan, remaining);
+                            cx.notify();
+                        });
+                    }
+                }
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 if !this.scanning || this.scan != scan {
                     return;
@@ -146,6 +175,11 @@ impl UnlockPrompt {
                     Err(
                         VaultError::Cancelled | VaultError::Device(DeviceUnlockError::Cancelled),
                     ) => {}
+                    Err(VaultError::Device(DeviceUnlockError::Locked)) => {
+                        this.device_locked = true;
+                        this.attempts_remaining = Some(0);
+                        this.error = Some(DeviceUnlockError::Locked.to_string().into());
+                    }
                     Err(error) => this.error = Some(error.to_string().into()),
                 }
                 cx.notify();
@@ -155,6 +189,11 @@ impl UnlockPrompt {
         cx.notify();
     }
 
+    pub(crate) fn scan_progress(&mut self, scan: u64, remaining: u8) {
+        if self.scanning && self.scan == scan {
+            self.attempts_remaining = Some(remaining);
+        }
+    }
     fn cancel_device(&mut self) {
         if std::mem::take(&mut self.scanning) {
             // Locking advances the vault epoch, which cancels the native prompt.
@@ -231,11 +270,12 @@ impl Render for UnlockPrompt {
                             Button::new("vault-unlock-device")
                                 .outline()
                                 .icon(Icon::new(IconName::FingerprintPattern).size_5())
+                                .accessibility_label(format!("Unlock with {label}"))
                                 .tooltip(format!("Unlock with {label}"))
                                 .when(self.scanning, |button| {
                                     button.text_color(theme.primary).border_color(theme.primary)
                                 })
-                                .disabled(self.busy)
+                                .disabled(self.busy || self.device_locked)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.unlock_with_device(window, cx)
                                 })),
@@ -244,13 +284,17 @@ impl Render for UnlockPrompt {
             )
             .when(self.scanning, |prompt| {
                 let label = self.device.clone().unwrap_or_default();
+                let detail = match self.attempts_remaining {
+                    Some(0) => format!("{label}: no attempts remaining. Unlock with the master password."),
+                    Some(1) => format!("{label}: 1 attempt remaining. Touch the sensor, or type the master password."),
+                    Some(remaining) => format!("{label}: {remaining} attempts remaining. Touch the sensor, or type the master password."),
+                    None => format!("{label}: touch the sensor, or type the master password."),
+                };
                 prompt.child(
                     div()
                         .text_xs()
                         .text_color(theme.muted_foreground)
-                        .child(format!(
-                            "{label}: touch the sensor, or type the master password."
-                        )),
+                        .child(detail),
                 )
             })
             .when_some(self.error.clone(), |prompt, error| {
