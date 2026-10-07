@@ -6,6 +6,7 @@ pub const OFFERED_NAMESPACES: &[&str] = &[
     "workspace",
     "terminal",
     "connections",
+    "snippets",
     "files",
     "agent",
     "vault",
@@ -61,6 +62,8 @@ mod tests {
     #[test]
     fn only_nocterm_commands_are_offered() {
         assert!(offered("terminal::Copy"));
+        assert!(offered("snippets::ToggleSnippets"));
+        assert!(offered("snippets::NewSnippet"));
         assert!(!offered("input::Backspace"));
         assert!(!offered("workspace::ToggleCommandPalette"));
     }

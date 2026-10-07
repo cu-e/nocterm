@@ -70,11 +70,12 @@ pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context
         cx.notify();
     })
     .detach();
-    // A cached agent panel reads these facts through ConnectionDirectory.
-    // Notify its semantic dependency directly; sidebar content changes need
-    // not invalidate unrelated workspace chrome.
-    cx.observe(&ServerFacts::global(cx), |_, _, cx| {
+    // Facts feed cached panels and the recent servers on the empty screen.
+    cx.observe(&ServerFacts::global(cx), |workspace, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
+        if workspace.items().next().is_none() && !workspace.local_terminal_is_visible(cx) {
+            cx.notify();
+        }
     })
     .detach();
     // Learn about servers as their sessions come up.

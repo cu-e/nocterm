@@ -1,5 +1,7 @@
 //! The Explorer's remote half: browsing the active session's host.
 use super::*;
+use gpui_kit::base::{ElementExt as _, TestSupportExt as _};
+use row::ExplorerRow;
 
 impl FilesPanel {
     pub(super) fn load(&mut self, directory: Option<String>, cx: &mut Context<Self>) {
@@ -159,7 +161,14 @@ impl FilesPanel {
             vec![ix]
         };
         let download = self.remote_paths(selected.iter().copied());
-        let preview = entry.name.clone();
+        let visual = ExplorerRow {
+            name: entry.name.clone(),
+            directory: entry.kind == EntryKind::Directory,
+            symlink: entry.is_symlink,
+            selected: self.remote_selected.contains(&ix),
+            font_size: cx.design().typography.explorer_size.unwrap_or(12.0),
+        };
+        let source = nocterm_ui::DragSource::default();
         let destination = self
             .browser
             .path
@@ -174,41 +183,15 @@ impl FilesPanel {
             .collect::<Vec<_>>();
         let refresh = self.refresh_after_mutation(false, cx);
         let workspace = self.workspace.clone();
-        div()
+        visual
+            .render(false, cx)
             .id(("remote-entry", ix))
-            .w_full()
-            .h_8()
-            .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.0)))
-            .px_2()
-            .flex()
-            .items_center()
-            .gap_2()
-            .rounded_sm()
-            .when(enabled, |row| row.cursor_pointer())
-            .when(self.remote_selected.contains(&ix), |row| {
-                row.bg(cx.theme().accent)
+            .test_support()
+            .on_prepaint({
+                let source = source.clone();
+                move |bounds, window, _| source.capture(bounds, window)
             })
-            .hover(|s| s.bg(cx.theme().accent))
-            .child(
-                Icon::new(if directory {
-                    IconName::Folder
-                } else {
-                    IconName::File
-                })
-                .small(),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(format!(
-                        "{}{}",
-                        entry.name,
-                        if entry.is_symlink { " (link)" } else { "" }
-                    )),
-            )
+            .when(enabled, |row| row.cursor_pointer())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event, _, cx| this.select_remote(ix, event, cx)),
@@ -225,14 +208,11 @@ impl FilesPanel {
                 }),
             )
             .when_some(download, |row, download| {
-                row.on_drag(download, move |files, _, _, cx| {
+                row.on_drag(download, move |_, _, _, cx| {
                     cx.stop_propagation();
+                    let visual = visual.clone();
                     cx.new(|_| {
-                        nocterm_ui::DragPreview::new(
-                            preview.clone(),
-                            files.sources.len(),
-                            IconName::File,
-                        )
+                        source.preview(move |_, cx| visual.render(true, cx).into_any_element())
                     })
                 })
             })

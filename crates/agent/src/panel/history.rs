@@ -17,7 +17,10 @@ use gpui_kit::{
 use nocterm_ui::IconName;
 use std::time::Duration;
 
-use super::{AgentPanel, widgets::relative_prompt_time};
+use super::{
+    AgentPanel,
+    widgets::{relative_prompt_time, single_line_label},
+};
 use crate::{runtime::Runtime, thread::AgentThread};
 use gpui_kit::{
     EntityId, MouseButton,
@@ -323,7 +326,7 @@ impl AgentPanel {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .child(title.clone())
+                .child(single_line_label(&title))
                 .into_any_element(),
         };
         let panel = cx.weak_entity();

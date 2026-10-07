@@ -526,7 +526,7 @@ impl Render for AgentPanel {
                                     .into()
                                 }
                             })
-                            .child(self.title(cx)),
+                            .child(widgets::single_line_label(&self.title(cx))),
                     )
                     .child(
                         Button::new("agent-history")

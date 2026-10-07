@@ -29,6 +29,7 @@ mod panels;
 mod panes;
 mod right_panel;
 mod sessions;
+mod terminal_target;
 
 use crate::{
     CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
@@ -313,7 +314,10 @@ impl Workspace {
         });
         let focus = dock_item.read(cx).container_focus_handle();
         let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
-            this.last_command_item = Some(id);
+            if this.last_command_item != Some(id) {
+                this.last_command_item = Some(id);
+                cx.emit(WorkspaceEvent::ItemsChanged);
+            }
             this.mark_active(id, cx);
         });
         self.dock.update(cx, |dock, cx| {
@@ -360,60 +364,6 @@ impl Workspace {
     }
     pub fn connection_directory(&self) -> Option<Rc<dyn crate::ConnectionDirectory>> {
         self.connection_directory.clone()
-    }
-
-    pub fn active_terminal(&self, cx: &App) -> Option<EntityId> {
-        let terminals = self.terminals(cx);
-        self.last_command_item
-            .filter(|id| terminals.iter().any(|entry| entry.item == *id))
-            .or_else(|| {
-                self.active_item()
-                    .filter(|item| item.terminal_access(cx).is_some())
-                    .map(|item| item.item_id())
-            })
-    }
-
-    pub fn terminals(&self, cx: &App) -> Vec<crate::TerminalEntry> {
-        let mut entries: Vec<_> = self
-            .items
-            .iter()
-            .filter_map(|open| {
-                Some(crate::TerminalEntry {
-                    item: open.handle.item_id(),
-                    access: open.handle.terminal_access(cx)?,
-                    title: open
-                        .dock_item
-                        .read(cx)
-                        .alias
-                        .clone()
-                        .unwrap_or_else(|| open.handle.tab_title(cx)),
-                    active: false,
-                    bottom: false,
-                    background: false,
-                })
-            })
-            .collect();
-        if let Some(local) = &self.local_terminal
-            && let Some(access) = local.handle.terminal_access(cx)
-        {
-            entries.push(crate::TerminalEntry {
-                item: local.handle.item_id(),
-                access,
-                title: local.handle.tab_title(cx),
-                active: false,
-                bottom: true,
-                background: false,
-            });
-        }
-        entries.extend(self.background_entries(cx));
-        let active = self
-            .last_command_item
-            .filter(|id| entries.iter().any(|entry| entry.item == *id))
-            .or_else(|| self.active_item().map(|item| item.item_id()));
-        for entry in &mut entries {
-            entry.active = active == Some(entry.item);
-        }
-        entries
     }
 
     pub fn active_item(&self) -> Option<&dyn ItemHandle> {
@@ -686,8 +636,11 @@ impl Workspace {
             crate::dock_item::DockItem::new(handle.clone(), workspace, true, window, item_cx)
         });
         let focus = dock_item.read(cx).container_focus_handle();
-        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, _| {
-            this.last_command_item = Some(id);
+        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
+            if this.last_command_item != Some(id) {
+                this.last_command_item = Some(id);
+                cx.emit(WorkspaceEvent::ItemsChanged);
+            }
         });
         let height = rems(cx.design().layout.local_terminal_height).to_pixels(window.rem_size());
         self.dock.update(cx, |dock, cx| {
@@ -699,6 +652,7 @@ impl Workspace {
                 cx,
             )
         });
+        self.last_command_item = Some(id);
         window.focus(&handle.focus_handle(cx), cx);
         self.local_terminal = Some(BottomTerminal {
             item: dock_item,
@@ -781,6 +735,7 @@ impl Workspace {
         } else {
             window.focus(&self.focus_handle, cx);
         }
+        cx.emit(WorkspaceEvent::ItemsChanged);
         cx.notify();
     }
 
@@ -792,6 +747,7 @@ impl Workspace {
         let item = local.item.clone();
         let height = local.height;
         let focus = local.handle.focus_handle(cx);
+        self.last_command_item = Some(local.handle.item_id());
         self.dock.update(cx, |dock, cx| {
             dock.add_panel_view(
                 panel_handle(item),
@@ -802,6 +758,7 @@ impl Workspace {
             )
         });
         window.focus(&focus, cx);
+        cx.emit(WorkspaceEvent::ItemsChanged);
         cx.notify();
     }
 
@@ -823,12 +780,6 @@ impl Workspace {
             cx.emit(WorkspaceEvent::ItemsChanged);
             cx.notify();
         }
-    }
-
-    pub fn local_terminal_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.local_terminal
-            .as_ref()
-            .and_then(|local| local.local.cwd(cx))
     }
 
     pub fn change_local_directory(
@@ -997,13 +948,6 @@ impl Workspace {
     pub fn sidebar_is_open(&self) -> bool {
         self.sidebar_open
     }
-    pub fn local_terminal_is_visible(&self, cx: &App) -> bool {
-        self.local_terminal
-            .as_ref()
-            .is_some_and(|local| local.attached)
-            && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
-    }
-
     /// Supplies window-specific menus to the toolkit's standard menu bar.
     pub fn set_menu_builder(
         &mut self,

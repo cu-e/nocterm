@@ -14,10 +14,9 @@ use std::{
 };
 
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Context, Div, Empty,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
-    Stateful, StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, AnyView, App, Div, Empty, InteractiveElement as _, IntoElement,
+    ParentElement as _, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_base::{
     dock::{
@@ -29,13 +28,13 @@ use gpui_base::{
 use rust_i18n::t;
 
 use crate::{
-    ActiveTheme as _, IconName, Selectable as _, Sizable as _,
-    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    ActiveTheme as _, ElementExt as _, IconName, Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants as _},
     dock::{ClosePanel, PanelControl, PanelHandle, PanelStyle, SkinShared, ToggleZoom},
     floating::FloatingCards,
     h_flex,
     menu::DropdownMenu as _,
-    tab::{Tab, TabBar},
+    tab::TabBar,
 };
 
 /// Names the tab bar's zoom button in the debug-bounds map, so a test can ask
@@ -45,37 +44,9 @@ const ZOOM_CONTROL_SELECTOR: &str = "dock-tab-bar-zoom-control";
 /// Debug-bounds selector for a tab's close (X) button, for tests.
 const CLOSE_BUTTON_SELECTOR: &str = "dock-tab-close-button";
 
-/// The size the styled drag preview occupies, reported to base so a drop
-/// placeholder knows where to fly in from.
-const DRAG_PREVIEW_SIZE: gpui::Size<gpui::Pixels> = gpui::size(px(96.), px(30.));
-
-/// The preview that follows the cursor while a panel is dragged.
-///
-/// `gpui_base::dock::DragPanel` is the payload and draws nothing; this is the
-/// appearance half, reintroduced here.
-pub struct DragPanelPreview {
-    panel: Arc<dyn gpui_base::dock::PanelView>,
-}
-
-impl Render for DragPanelPreview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("drag-panel")
-            .cursor_grab()
-            .py_1()
-            .px_3()
-            .w_24()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded(cx.theme().radius)
-            .text_color(cx.theme().tab_foreground)
-            .bg(cx.theme().tokens.tab_active)
-            .opacity(0.75)
-            .child(panel_title(&self.panel, window, cx))
-    }
-}
+mod drag_preview;
+pub use drag_preview::DragPanelPreview;
+use drag_preview::{PaintedSource, PreviewContent, TabVisual, title_visual};
 
 /// A panel's title, or its registered name when it reached base without this
 /// crate's handle and so carries no presentation. See [`PanelHandle::of`].
@@ -395,6 +366,7 @@ impl TabGroupSkin {
         let handle = PanelHandle::of(panel);
         let title_style = handle.and_then(|handle| handle.title_style(cx));
         let drag = tab_drag(group, ix, cx);
+        let source = PaintedSource::default();
 
         h_flex()
             .justify_between()
@@ -418,24 +390,16 @@ impl TabGroupSkin {
                 )
             })
             .child(
-                div()
-                    .id("tab")
-                    .flex_1()
-                    .min_w_16()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .child(panel_title(panel, window, cx))
+                title_visual(panel, window, cx)
+                    .on_prepaint({
+                        let source = source.clone();
+                        move |bounds, window, _| source.capture(bounds, window)
+                    })
                     .when_some(drag, |this, drag| {
                         this.on_drag(drag, {
                             let panel = panel.clone();
                             move |drag, offset, _, cx| {
-                                cx.stop_propagation();
-                                drag.set_drag_offset(offset);
-                                drag.set_preview_size(DRAG_PREVIEW_SIZE);
-                                cx.new(|_| DragPanelPreview {
-                                    panel: panel.clone(),
-                                })
+                                source.start(drag, offset, PreviewContent::Title(panel.clone()), cx)
                             }
                         })
                     }),
@@ -528,69 +492,24 @@ impl TabGroupSkin {
                         let handle = PanelHandle::of(panel);
                         let drag = tab_drag(group, ix, cx);
 
-                        Tab::new()
-                            .ix(ix)
-                            .tab_bar_prefix(has_leading)
-                            .when_some(
-                                handle.and_then(|handle| handle.tab_accent(cx)),
-                                |this, accent| this.accent(accent),
-                            )
-                            .map(|this| match handle.and_then(|handle| handle.tab_name(cx)) {
-                                Some(tab_name) => this.child(tab_name),
-                                None => this.child(panel_title(panel, window, cx)),
+                        let visual = TabVisual {
+                            panel: panel.clone(),
+                            ix,
+                            has_leading,
+                            floating,
+                            selected: !collapsed && Some(ix) == displayed_ix,
+                            accent: handle.and_then(|handle| handle.tab_accent(cx)),
+                            close: !collapsed
+                                && self.shared.close_button_visible.get()
+                                && group.is_panel_closable(panel.panel_id(cx), cx),
+                        };
+                        let source = PaintedSource::default();
+                        visual
+                            .render(Some(group), window, cx)
+                            .observe_bounds({
+                                let source = source.clone();
+                                move |bounds, window, _| source.capture(bounds, window)
                             })
-                            // Per-tab close (X) button. The gate mirrors
-                            // `TabGroup::close_panel`, plus `!collapsed`, since a
-                            // collapsed strip is a way back in, not a place to
-                            // close. Stops propagation so the click closes by id
-                            // without also selecting the tab.
-                            .when(
-                                !collapsed
-                                    && self.shared.close_button_visible.get()
-                                    && group.is_panel_closable(panel.panel_id(cx), cx),
-                                |this| {
-                                    this.suffix(
-                                        Button::new(("close-tab", ix))
-                                            .icon(IconName::Close)
-                                            .xsmall()
-                                            // The regular ghost hover matches the
-                                            // inactive tab bar background in the
-                                            // default theme. Use a stronger theme
-                                            // surface while keeping a transparent
-                                            // idle background and no border.
-                                            .custom(
-                                                ButtonCustomVariant::new(cx)
-                                                    .foreground(cx.theme().secondary_foreground)
-                                                    .hover(*cx.theme().tokens.secondary_hover)
-                                                    .active(*cx.theme().tokens.secondary_active),
-                                            )
-                                            // The 20px XS button has a 12px icon:
-                                            // 4px inside plus 8px outside matches
-                                            // the label's 12px leading padding.
-                                            // Offset the label's own 12px right
-                                            // padding and the tab's 4px gap so the
-                                            // text-to-icon distance is also 12px.
-                                            .ml(-px(8.))
-                                            .mr_2()
-                                            .tab_stop(false)
-                                            .debug_selector(|| CLOSE_BUTTON_SELECTOR.to_string())
-                                            .on_click({
-                                                let group = group.clone();
-                                                let panel_id = panel.panel_id(cx);
-                                                move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    group.close(panel_id, window, cx);
-                                                }
-                                            }),
-                                    )
-                                },
-                            )
-                            // A collapsed group shows no tab as active: the
-                            // strip is a way back in, not a selection. The
-                            // comparison is against the panel on screen, not
-                            // the stored index: a hidden displayed tab falls
-                            // back to the first visible one.
-                            .selected(!collapsed && Some(ix) == displayed_ix)
                             .on_click({
                                 let group = group.clone();
                                 let area = self.shared.area().clone();
@@ -611,14 +530,14 @@ impl TabGroupSkin {
                             .when(!collapsed, |this| {
                                 this.when_some(drag, |this, drag| {
                                     this.on_drag(drag, {
-                                        let panel = panel.clone();
+                                        let visual = visual.clone();
                                         move |drag, offset, _, cx| {
-                                            cx.stop_propagation();
-                                            drag.set_drag_offset(offset);
-                                            drag.set_preview_size(DRAG_PREVIEW_SIZE);
-                                            cx.new(|_| DragPanelPreview {
-                                                panel: panel.clone(),
-                                            })
+                                            source.start(
+                                                drag,
+                                                offset,
+                                                PreviewContent::Tab(visual.clone()),
+                                                cx,
+                                            )
                                         }
                                     })
                                 })
@@ -901,18 +820,15 @@ mod tests {
     };
 
     use gpui::{
-        Entity, EventEmitter, FocusHandle, Focusable, Modifiers, MouseButton, Pixels,
-        TestAppContext, VisualTestContext,
+        AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
+        MouseButton, Pixels, Render, TestAppContext, VisualTestContext,
     };
     use gpui_base::dock::{DockArea, DockAreaRenderer, DockLayout, DockPlacement, PanelEvent};
 
     use super::*;
-    use crate::{
-        ElementExt as _,
-        dock::{
-            DockSkin, Panel, panel_handle,
-            test_support::{HideableProbe, MeasuredProbe},
-        },
+    use crate::dock::{
+        DockSkin, Panel, panel_handle,
+        test_support::{HideableProbe, MeasuredProbe},
     };
 
     struct Probe {

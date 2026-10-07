@@ -55,8 +55,13 @@ provides shared icons, terminal styling, standalone drag previews and operationa
 notices. Optional toolkit button metrics are projected from design tokens once;
 views retain standard component variants. Notices use the toolkit's window-local
 notification list with stable operation keys and recovery actions, published by
-operation events rather than rendering. Drag previews explicitly carry their
-theme and typography because GPUI renders them outside the application root.
+operation events rather than rendering. Drag previews capture painted source
+bounds and inherited typography because GPUI renders them outside the application
+root. Passive source renderers preserve Connections and Explorer row appearance;
+drag payloads remain independent of the visual snapshot, including multi-selection.
+Connections draw quiet insertion overlays and explicit append targets after every
+expanded group's last row. The toolkit shares tab/title presentation with passive
+previews and reports the actual source size and pointer offset to dock drop geometry.
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
@@ -75,6 +80,28 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
+`nocterm-snippets` owns the serialized snippet library, validation and exact profile/group
+matching without GUI dependencies. `nocterm-snippets-ui` registers the sidebar before
+containers and projects the active profile through workspace contracts. Snippets for
+that profile or its group appear first; all remaining snippets occupy a collapsible
+section. Group identities are exact connection group names; unavailable bindings
+remain visible in the editor and never turn into global snippets. After renaming a
+connection group, reattach its snippets to the new name in the editor. The native
+GPUI Kit Editor supplies bundled Shell, JSON, Python, YAML and TOML syntax grammars.
+Library writes run in one bounded background queue, rebase checked draft/delete
+snapshots on the last persisted state, and publish only after an atomic save succeeds.
+Invalid library files remain read-only; persistence errors appear in the panel and
+editor. The Snippet and Attachments pages keep one draft with a fixed footer;
+attachments show searchable server folders with independent direct-profile and
+whole-group bindings. Copy preserves code verbatim. Run and a row double-click
+resolve the exact last-focused visible user terminal, including the bottom shell,
+and share a user paste contract separate from agent execution. Successful submission
+returns keyboard focus to that same terminal. The terminal applies
+its current bracketed-paste mode and session charset, then appends one Enter after
+the paste closing marker. It sends the complete sequence atomically and refuses
+authentication, disconnected or alternate-screen states. Shell integration is not
+required; SSH and local shells use the same terminal path.
+
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. `nocterm-connections` owns persisted profiles and recents,
@@ -82,8 +109,13 @@ the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
 global keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
 `connections.toml`. Flags are cached in memory and under `flags/`. Icons and flags
-reach other features only as images in `ConnectionSummary`. Editor sections retain
-one draft, with a scrollable active form, multiline description and fixed footer;
+reach other features only as images in `ConnectionSummary`. The empty workspace
+projects its six most recent saved profiles through
+`ConnectionDirectory`, using current names and the same icon and country policy as
+the sidebar. Quick destinations and deleted profiles are excluded. Selecting a
+recent server defers opening through the normal authentication path until the
+workspace borrow ends. Editor sections retain one draft, with a scrollable active
+form, multiline description and fixed footer;
 typed validation selects the section containing the invalid field. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. Group rename, ungroup and

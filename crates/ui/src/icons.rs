@@ -70,6 +70,7 @@ gpui_kit::assets::icon_assets!(
         Image,
         Square,
         ScrollText,
+        Play,
     ]
 );
 
