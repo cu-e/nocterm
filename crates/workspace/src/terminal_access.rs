@@ -1,9 +1,16 @@
 //! Allowlisted access to existing terminals. No authentication or launch data
 //! reaches agents; only the user answers a sign-in prompt.
-use std::{path::PathBuf, rc::Rc};
+use std::{
+    path::PathBuf,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use gpui_kit::{App, EntityId, SharedString};
-use nocterm_session::Target;
+use nocterm_session::{HostExec, Session, Target};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalStatus {
@@ -60,6 +67,34 @@ pub struct TerminalText {
     pub alt_screen: bool,
 }
 
+/// Ownership of a live-shell command. User input and reconnect revoke it.
+/// Releasing observation never sends a signal; explicit cancellation interrupts
+/// only a command whose lease is still active on its original session.
+pub struct LiveCommandLease {
+    active: Arc<AtomicBool>,
+    session: Option<Session>,
+}
+impl LiveCommandLease {
+    pub fn new(active: Arc<AtomicBool>, session: Option<Session>) -> Self {
+        Self { active, session }
+    }
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+    pub fn cancel(&self) {
+        if self.active.swap(false, Ordering::AcqRel)
+            && let Some(session) = &self.session
+        {
+            session.input(vec![3]);
+        }
+    }
+}
+impl Drop for LiveCommandLease {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
 /// Weak access, checked again for each operation and after user approval.
 pub trait TerminalAccess: 'static {
     fn info(&self, cx: &App) -> Option<TerminalInfo>;
@@ -68,6 +103,15 @@ pub trait TerminalAccess: 'static {
     fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String>;
     /// Adds command-specific busy, dirty-input and alternate-screen guards.
     fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String>;
+    /// The executor of the current connected, authenticated session.
+    fn executor(&self, _cx: &App) -> Result<Arc<dyn HostExec>, String> {
+        Err("This terminal does not support structured execution.".into())
+    }
+    /// Claims terminal-owned live input before submitting a command.
+    fn begin_live_command(&self, command: &str, cx: &mut App) -> Result<LiveCommandLease, String> {
+        let _ = (command, cx);
+        Err("This terminal does not support owned live commands.".into())
+    }
     /// A direct user paste, optionally followed by Enter, through the terminal's
     /// native paste protocol. This is separate from agent command execution and
     /// works without shell integration. Unsupported terminal providers refuse it.

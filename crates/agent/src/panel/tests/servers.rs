@@ -33,6 +33,8 @@ struct OpeningDirectory {
 impl OpeningDirectory {
     fn terminal(&self, id: &str, cx: &mut Context<Workspace>) -> Entity<FakeTerminal> {
         let access = Rc::new(Access {
+            executor: Default::default(),
+            lease: Default::default(),
             sent: Default::default(),
             profile: RefCell::new(Some(id.to_owned().into())),
             sign_in: self.sign_in.clone(),

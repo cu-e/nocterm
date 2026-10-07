@@ -5,7 +5,7 @@ use nocterm_session::{ConnectRequest, Event, Session, SessionDriver, Transport};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
-struct Scripted {
+pub(super) struct Scripted {
     drivers: Mutex<Vec<Arc<SessionDriver>>>,
     requests: Mutex<Vec<ConnectRequest>>,
 }
@@ -27,7 +27,9 @@ impl Transport for Scripted {
     }
 }
 
-fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
+pub(super) fn fixture(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
     let transport = Arc::new(Scripted::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -65,7 +67,7 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TerminalView>, A
     emit(cx, &transport, 0, Event::Connected);
     (handle, view, transport)
 }
-fn emit(cx: &mut TestAppContext, transport: &Scripted, index: usize, event: Event) {
+pub(super) fn emit(cx: &mut TestAppContext, transport: &Scripted, index: usize, event: Event) {
     let driver = transport.drivers.lock().unwrap()[index].clone();
     cx.background_executor
         .spawn(async move {
@@ -84,7 +86,11 @@ fn complete(cx: &mut TestAppContext, view: &Entity<TerminalView>) {
     }
     panic!("search did not finish after output became quiet");
 }
-fn drain(driver: &SessionDriver) -> Vec<Vec<u8>> {
+pub(super) fn scripted_driver(transport: &Scripted, index: usize) -> Arc<SessionDriver> {
+    transport.drivers.lock().unwrap()[index].clone()
+}
+
+pub(super) fn drain(driver: &SessionDriver) -> Vec<Vec<u8>> {
     let mut inputs = vec![];
     while let Some(Some(command)) = driver.next_command().now_or_never() {
         if let nocterm_session::Command::Input(bytes) = command {
@@ -589,3 +595,65 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &mut TestAppContext) {
+    let (handle, view, transport) = fixture(cx);
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(b"Failed password from 192.0.2.1".to_vec()),
+    );
+    let assert_role = |expected, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let view = view.read(cx);
+            let frame = view.frame.borrow();
+            assert_eq!(frame.row_text(0), "Failed password from 192.0.2.1");
+            assert_eq!(
+                view.highlights.borrow().role_at(0, &frame.cells[0]),
+                expected
+            );
+        })
+        .unwrap();
+    };
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+    let scans = view.read_with(cx, |view, _| view.highlights.borrow().scan_count());
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| {
+            s.appearance.mode = nocterm_settings::AppearanceMode::Light;
+            s.appearance.detect_server_country = false;
+        })
+        .detach()
+    });
+    cx.run_until_parked();
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.highlights.borrow().scan_count()),
+        scans
+    );
+
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| s.terminal.semantic_highlighting = false).detach()
+    });
+    cx.run_until_parked();
+    assert_role(None, cx);
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| s.terminal.semantic_highlighting = true).detach()
+    });
+    cx.run_until_parked();
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+}
+
+#[path = "view/keyboard_tests.rs"]
+mod keyboard_tests;
+
+#[path = "view/keyboard_transition_tests.rs"]
+mod keyboard_transition_tests;
+
+#[path = "view_input_tests.rs"]
+mod input;
+
+#[path = "view/lease_input_tests.rs"]
+mod lease_input_tests;

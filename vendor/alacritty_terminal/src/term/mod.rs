@@ -22,12 +22,14 @@ use crate::term::color::Colors;
 use crate::vi_mode::{ViModeCursor, ViMotion};
 use crate::vte::ansi::{
     self, Attr, CharsetIndex, Color, CursorShape, CursorStyle, Handler, Hyperlink, KeyboardModes,
-    KeyboardModesApplyBehavior, NamedColor, NamedMode, NamedPrivateMode, PrivateMode, Rgb,
+    KeyboardModesApplyBehavior, ModifyOtherKeys, NamedColor, NamedMode, NamedPrivateMode, PrivateMode, Rgb,
     StandardCharset,
 };
 
 pub mod cell;
 pub mod color;
+mod keyboard;
+use keyboard::KeyboardProtocol;
 pub mod search;
 
 /// Minimum number of columns.
@@ -322,10 +324,14 @@ pub struct Term<T> {
     title_stack: Vec<Option<String>>,
 
     /// The stack for the keyboard modes.
-    keyboard_mode_stack: Vec<KeyboardModes>,
+    keyboard_protocol: KeyboardProtocol,
+    keyboard_protocol_epoch: u64,
 
     /// Currently inactive keyboard mode stack.
-    inactive_keyboard_mode_stack: Vec<KeyboardModes>,
+    inactive_keyboard_protocol: KeyboardProtocol,
+
+    /// xterm modifier resource, shared by both screens.
+    modify_other_keys: ModifyOtherKeys,
 
     /// Information about damaged cells.
     damage: TermDamageState,
@@ -488,8 +494,10 @@ impl<T> Term<T> {
             config,
             grid,
             tabs,
-            inactive_keyboard_mode_stack: Default::default(),
-            keyboard_mode_stack: Default::default(),
+            inactive_keyboard_protocol: Default::default(),
+            keyboard_protocol: Default::default(),
+            keyboard_protocol_epoch: 0,
+            modify_other_keys: ModifyOtherKeys::Reset,
             active_charset: Default::default(),
             vi_mode_cursor: Default::default(),
             cursor_style: Default::default(),
@@ -574,8 +582,10 @@ impl<T> Term<T> {
         }
 
         if self.config.kitty_keyboard != old_config.kitty_keyboard {
-            self.keyboard_mode_stack = Vec::new();
-            self.inactive_keyboard_mode_stack = Vec::new();
+            self.advance_keyboard_epoch();
+            self.keyboard_protocol = Default::default();
+            self.inactive_keyboard_protocol = Default::default();
+            self.modify_other_keys = ModifyOtherKeys::Reset;
             self.mode.remove(TermMode::KITTY_KEYBOARD_PROTOCOL);
         }
 
@@ -781,10 +791,9 @@ impl<T> Term<T> {
             self.inactive_grid.reset_region(..);
         }
 
-        mem::swap(&mut self.keyboard_mode_stack, &mut self.inactive_keyboard_mode_stack);
-        let keyboard_mode =
-            self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE).into();
-        self.set_keyboard_mode(keyboard_mode, KeyboardModesApplyBehavior::Replace);
+        mem::swap(&mut self.keyboard_protocol, &mut self.inactive_keyboard_protocol);
+        self.advance_keyboard_epoch();
+        self.sync_keyboard_mode();
 
         mem::swap(&mut self.grid, &mut self.inactive_grid);
         self.mode ^= TermMode::ALT_SCREEN;
@@ -1088,18 +1097,7 @@ impl<T> Term<T> {
         self.damage.damage_point(point);
     }
 
-    #[inline]
-    fn set_keyboard_mode(&mut self, mode: TermMode, apply: KeyboardModesApplyBehavior) {
-        let active_mode = self.mode & TermMode::KITTY_KEYBOARD_PROTOCOL;
-        self.mode &= !TermMode::KITTY_KEYBOARD_PROTOCOL;
-        let new_mode = match apply {
-            KeyboardModesApplyBehavior::Replace => mode,
-            KeyboardModesApplyBehavior::Union => active_mode.union(mode),
-            KeyboardModesApplyBehavior::Difference => active_mode.difference(mode),
-        };
-        trace!("Setting keyboard mode to {new_mode:?}");
-        self.mode |= new_mode;
-    }
+
 }
 
 impl<T> Dimensions for Term<T> {
@@ -1337,61 +1335,18 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    #[inline]
-    fn report_keyboard_mode(&mut self) {
-        if !self.config.kitty_keyboard {
-            return;
-        }
-
-        trace!("Reporting active keyboard mode");
-        let current_mode =
-            self.keyboard_mode_stack.last().unwrap_or(&KeyboardModes::NO_MODE).bits();
-        let text = format!("\x1b[?{current_mode}u");
-        self.event_proxy.send_event(Event::PtyWrite(text));
-    }
-
-    #[inline]
-    fn push_keyboard_mode(&mut self, mode: KeyboardModes) {
-        if !self.config.kitty_keyboard {
-            return;
-        }
-
-        trace!("Pushing `{mode:?}` keyboard mode into the stack");
-
-        if self.keyboard_mode_stack.len() >= KEYBOARD_MODE_STACK_MAX_DEPTH {
-            let removed = self.title_stack.remove(0);
-            trace!(
-                "Removing '{removed:?}' from bottom of keyboard mode stack that exceeds its \
-                 maximum depth"
-            );
-        }
-
-        self.keyboard_mode_stack.push(mode);
-        self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
-    }
-
-    #[inline]
-    fn pop_keyboard_modes(&mut self, to_pop: u16) {
-        if !self.config.kitty_keyboard {
-            return;
-        }
-
-        trace!("Attempting to pop {to_pop} keyboard modes from the stack");
-        let new_len = self.keyboard_mode_stack.len().saturating_sub(to_pop as usize);
-        self.keyboard_mode_stack.truncate(new_len);
-
-        // Reload active mode.
-        let mode = self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE);
-        self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
-    }
-
-    #[inline]
+    fn report_keyboard_mode(&mut self) { self.keyboard_report(); }
+    fn push_keyboard_mode(&mut self, mode: KeyboardModes) { self.keyboard_push(mode); }
+    fn pop_keyboard_modes(&mut self, count: u16) { self.keyboard_pop(count); }
     fn set_keyboard_mode(&mut self, mode: KeyboardModes, apply: KeyboardModesApplyBehavior) {
-        if !self.config.kitty_keyboard {
-            return;
-        }
-
-        self.set_keyboard_mode(mode.into(), apply);
+        self.keyboard_set(mode, apply);
+    }
+    fn set_modify_other_keys(&mut self, mode: ModifyOtherKeys) {
+        self.advance_keyboard_epoch();
+        self.modify_other_keys = mode;
+    }
+    fn report_modify_other_keys(&mut self) {
+        self.event_proxy.send_event(Event::PtyWrite(format!("\x1b[>4;{}m", self.modify_other_keys as u8)));
     }
 
     #[inline]
@@ -1914,6 +1869,7 @@ impl<T: EventListener> Handler for Term<T> {
     /// Reset all important fields in the term struct.
     #[inline]
     fn reset_state(&mut self) {
+        self.advance_keyboard_epoch();
         if self.mode.contains(TermMode::ALT_SCREEN) {
             mem::swap(&mut self.grid, &mut self.inactive_grid);
         }
@@ -1927,8 +1883,9 @@ impl<T: EventListener> Handler for Term<T> {
         self.title = None;
         self.selection = None;
         self.vi_mode_cursor = Default::default();
-        self.keyboard_mode_stack = Default::default();
-        self.inactive_keyboard_mode_stack = Default::default();
+        self.keyboard_protocol = Default::default();
+        self.inactive_keyboard_protocol = Default::default();
+        self.modify_other_keys = ModifyOtherKeys::Reset;
 
         // Preserve vi mode across resets.
         self.mode &= TermMode::VI;

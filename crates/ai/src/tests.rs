@@ -154,9 +154,9 @@ fn writes_require_target_specific_grant_and_detach_revokes() {
         press_enter: true,
     });
     assert!(g.requires_approval(&call, &settings));
-    g.grant("t2", true);
+    g.grant("t2", ToolCapability::LiveInput);
     assert!(g.requires_approval(&call, &settings));
-    g.grant("t1", true);
+    g.grant("t1", ToolCapability::LiveInput);
     assert!(!g.requires_approval(&call, &settings));
     g.revoke("t1");
     assert!(g.requires_approval(&call, &settings));
@@ -359,4 +359,66 @@ fn config_categories_override_legacy_modes_and_image_chunks_are_retained() {
         state.entries.last(),
         Some(Entry::Content(acp::ContentBlock::Image(_)))
     ));
+}
+
+#[test]
+fn capabilities_do_not_share_execution_input_or_connection_grants() {
+    let settings = ApprovalSettings::default();
+    let mut grants = ApprovalGrants::default();
+    grants.grant("t1", ToolCapability::LiveInput);
+    let execution = TerminalCall::ExecCommand(ExecCommand {
+        terminal_id: "t1".into(),
+        program: "sh".into(),
+        args: vec!["-c".into(), "true".into()],
+        stdin: None,
+        timeout_ms: None,
+        yield_ms: None,
+    });
+    assert!(grants.requires_approval(&execution, &settings));
+    grants.grant("t1", ToolCapability::Execution);
+    assert!(!grants.requires_approval(&execution, &settings));
+    assert!(grants.requires_approval(
+        &TerminalCall::OpenTerminal(OpenTerminal {
+            server_id: "t1".into()
+        }),
+        &settings
+    ));
+    grants.revoke("t1");
+    assert!(grants.requires_approval(&execution, &settings));
+}
+#[test]
+fn structured_execution_bounds_program_arguments_stdin_and_lifetime() {
+    let valid = ExecCommand {
+        terminal_id: "t1".into(),
+        program: "sh".into(),
+        args: vec!["-c".into(), "echo one\necho two".into()],
+        stdin: None,
+        timeout_ms: Some(300_000),
+        yield_ms: Some(10_000),
+    };
+    assert!(TerminalCall::ExecCommand(valid.clone()).validate().is_ok());
+    for invalid in [
+        ExecCommand {
+            program: " ".into(),
+            ..valid.clone()
+        },
+        ExecCommand {
+            args: vec!["bad\0arg".into()],
+            ..valid.clone()
+        },
+        ExecCommand {
+            stdin: Some("x".repeat(MAX_READ_BYTES + 1)),
+            ..valid.clone()
+        },
+        ExecCommand {
+            timeout_ms: Some(300_001),
+            ..valid.clone()
+        },
+        ExecCommand {
+            yield_ms: Some(10_001),
+            ..valid
+        },
+    ] {
+        assert!(TerminalCall::ExecCommand(invalid).validate().is_err());
+    }
 }

@@ -9,7 +9,7 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Icon, Sizable as _, Theme,
         button::{Button, ButtonVariants as _},
-        dock::{BasePanel, Panel, PanelEvent},
+        dock::{BasePanel, Panel, PanelControl, PanelEvent},
         h_flex,
         input::{Input, InputEvent, InputState},
         menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
@@ -41,13 +41,11 @@ pub(crate) struct DockItem {
     editing_subscription: Option<Subscription>,
     editing_blur: Option<Subscription>,
     focus: FocusHandle,
-    bottom: bool,
+    local: bool,
+    header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
     /// The color of the group of tabs this one is in, an index into
     /// [`GROUP_COLORS`].
     group_color: Option<usize>,
-    /// Hiding the bottom dock detaches its panel without ending the session.
-    suppress_next_removal: bool,
-    _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<PanelEvent> for DockItem {}
 impl DockItem {
@@ -62,16 +60,11 @@ impl DockItem {
     pub(crate) fn new(
         item: Rc<dyn ItemHandle>,
         workspace: WeakEntity<Workspace>,
-        bottom: bool,
-        window: &mut Window,
+        local: bool,
+        header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        let subscriptions = vec![cx.on_focus_in(&focus, window, |this, window, cx| {
-            if !this.bottom {
-                this.announce(window, cx);
-            }
-        })];
         Self {
             item,
             workspace,
@@ -80,18 +73,10 @@ impl DockItem {
             editing_subscription: None,
             editing_blur: None,
             focus,
-            bottom,
+            local,
+            header_click_origin,
             group_color: None,
-            suppress_next_removal: false,
-            _subscriptions: subscriptions,
         }
-    }
-    fn announce(&self, window: &Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        let id = self.item.item_id();
-        cx.defer_in(window, move |_, _, cx| {
-            let _ = workspace.update(cx, |workspace, cx| workspace.mark_active(id, cx));
-        });
     }
     pub(crate) fn set_group_color(&mut self, color: Option<usize>, cx: &mut Context<Self>) {
         if self.group_color != color {
@@ -103,9 +88,7 @@ impl DockItem {
     pub(crate) fn group_color(&self) -> Option<usize> {
         self.group_color
     }
-    pub(crate) fn detach_without_closing(&mut self) {
-        self.suppress_next_removal = true;
-    }
+
     pub(crate) fn start_alias(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing.is_some() {
             return;
@@ -163,25 +146,89 @@ impl BasePanel for DockItem {
         "nocterm.item"
     }
     fn on_removed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.suppress_next_removal) {
-            return;
-        }
         let workspace = self.workspace.clone();
         let id = self.item.item_id();
-        let bottom = self.bottom;
-        cx.defer_in(window, move |_, window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.item_removed(id, bottom, window, cx)
-            });
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| workspace.item_removed(id, window, cx));
         });
-    }
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active && !self.bottom && self.contains_focus(window, cx) {
-            self.announce(window, cx);
-        }
     }
 }
 impl Panel for DockItem {
+    fn zoom_control(&self, _: &App) -> Option<PanelControl> {
+        Some(if self.local {
+            PanelControl::Toolbar
+        } else {
+            PanelControl::Menu
+        })
+    }
+    fn menu_visible(&self, _: &App) -> bool {
+        !self.local
+    }
+    fn toolbar_buttons(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<Vec<Button>> {
+        if !self.local {
+            return None;
+        }
+        let workspace = self.workspace.clone();
+        let id = self.item.item_id();
+        Some(vec![
+            Button::new("local-terminal-new")
+                .icon(nocterm_ui::IconName::Plus)
+                .tooltip("New Local Terminal")
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        workspace.new_local_terminal_from(id, window, cx)
+                    });
+                }),
+        ])
+    }
+    fn free_header_content(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        self.local.then(|| {
+            let origin = self.header_click_origin.clone();
+            let id = self.item.item_id();
+            div()
+                .id("local-terminal-free-header")
+                .test_support()
+                .size_full()
+                .on_mouse_down(gpui_kit::MouseButton::Left, {
+                    let origin = origin.clone();
+                    move |event, _, _| {
+                        if event.click_count == 1 {
+                            origin.set(Some(id));
+                        }
+                    }
+                })
+                .on_mouse_down_out({
+                    let origin = origin.clone();
+                    move |event, _, _| {
+                        if event.button == gpui_kit::MouseButton::Left
+                            && event.click_count == 1
+                            && origin.get() == Some(id)
+                        {
+                            origin.set(None);
+                        }
+                    }
+                })
+                .on_click({
+                    let workspace = self.workspace.clone();
+                    move |event: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+                        // Closing a tab can expose blank space under the next
+                        // click. Both presses must start in this free region.
+                        if event.click_count() == 2 && origin.get() == Some(id) {
+                            origin.set(None);
+                            cx.stop_propagation();
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.new_local_terminal_from(id, window, cx)
+                            });
+                        }
+                    }
+                })
+        })
+    }
     fn inner_padding(&self, _: &App) -> bool {
         false
     }
@@ -199,7 +246,6 @@ impl Panel for DockItem {
         let workspace = self.workspace.clone();
         let menu_workspace = workspace.clone();
         let id = self.item.item_id();
-        let bottom = self.bottom;
         h_flex()
             .id(("tab-title", id.as_u64()))
             .test_support()
@@ -255,32 +301,12 @@ impl Panel for DockItem {
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         let _ = workspace.update(cx, |this, cx| {
-                            if bottom {
-                                this.close_local_terminal(window, cx);
-                            } else {
-                                let ix = this.items().position(|item| item.item_id() == id);
-                                if let Some(ix) = ix {
-                                    this.close_item(ix, window, cx);
-                                }
-                            }
+                            this.close_item_by_id(id, window, cx);
                         });
                     }),
             )
             .context_menu(move |mut menu, window, cx| {
                 use crate::workspace::TabCloseScope;
-                if bottom {
-                    let workspace = menu_workspace.clone();
-                    return menu
-                        .item(PopupMenuItem::new("Close Terminal").on_click(
-                            move |_, window, cx| {
-                                let _ = workspace.update(cx, |workspace, cx| {
-                                    workspace.close_local_terminal(window, cx)
-                                });
-                            },
-                        ))
-                        .separator()
-                        .menu("Settings", Box::new(crate::OpenSettings));
-                }
                 for (label, scope) in [
                     ("Close Tab", TabCloseScope::Current),
                     ("Close Other Tabs in Pane", TabCloseScope::Others),
@@ -312,11 +338,16 @@ impl Panel for DockItem {
                     ),
                 ] {
                     let workspace = menu_workspace.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            workspace.split_item(id, placement, window, cx)
-                        });
-                    }));
+                    let disabled = workspace
+                        .upgrade()
+                        .is_none_or(|workspace| !workspace.read(cx).can_split_item(id, cx));
+                    menu = menu.item(PopupMenuItem::new(label).disabled(disabled).on_click(
+                        move |_, window, cx| {
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.split_item(id, placement, window, cx)
+                            });
+                        },
+                    ));
                 }
                 group_menu(menu.separator(), id, &menu_workspace, window, cx)
                     .separator()

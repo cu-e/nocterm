@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
+pub(crate) const MAX_ATTEMPTS: u8 = 3;
 const MAX_ENTRIES: usize = 64;
 const MAX_PER_UID: usize = 4;
 const LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
@@ -25,6 +26,7 @@ pub(crate) struct Entry {
     pub touched: Instant,
     pub cancel: Arc<AtomicBool>,
     pub busy: bool,
+    pub attempts_remaining: u8,
 }
 #[derive(Default)]
 pub(crate) struct Store {
@@ -77,6 +79,7 @@ impl Store {
                 touched: Instant::now(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 busy: false,
+                attempts_remaining: MAX_ATTEMPTS,
             },
         );
         Ok(token)

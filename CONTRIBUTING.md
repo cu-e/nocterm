@@ -10,7 +10,7 @@ confirm that you have the right to license it under these terms.
 
 Contributions to the third-party forks under `vendor/`, including local patches,
 are instead submitted under the license declared by the corresponding vendored
-package: Apache-2.0 for `alacritty_terminal` and `gpui-component`, and MIT for
+package: Apache-2.0 for `alacritty_terminal`, `gpui-base` and `gpui-component`, and MIT for
 `tid-rs`. Preserve upstream copyright notices and license files, and mark changed
 Apache-2.0 files prominently. This policy applies to new contributions; it does
 not change the license of code submitted by others under different terms.

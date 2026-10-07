@@ -11,6 +11,7 @@ layer = "feature"
 
 [dependencies]
 encoding_rs.workspace = true
+regex.workspace = true
 nocterm-session.workspace = true
 nocterm-vault.workspace = true
 nocterm-settings.workspace = true

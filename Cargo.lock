@@ -2856,8 +2856,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64bb52b29a8dcdc8d3f595b8b0839c076f237572ab601ba4577d3da8ae085728"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2985,8 +2983,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre"
 version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e87a42bb37c7cb4e76dd1ac0ce88851e46e976e0373a47ab3e0757abffee54d"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3411,8 +3407,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-wgpu"
 version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0b02657b56b09140ce542f5e4434fb96d9fdaba0fd0035ba7dba13c171ddb9b"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3439,8 +3433,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-windows"
 version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05592a6f9e3e6bb7a9f2a0d4779271cf747a948db1c07b02448de777ffff8f3"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -4982,6 +4974,7 @@ dependencies = [
  "image",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-session",
  "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",
@@ -5278,6 +5271,7 @@ dependencies = [
  "nocterm-vault",
  "nocterm-vt",
  "nocterm-workspace",
+ "regex",
  "tempfile",
  "tracing",
 ]

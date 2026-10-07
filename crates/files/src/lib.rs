@@ -6,6 +6,7 @@ mod local_operations;
 mod local_pane;
 mod open;
 mod operations;
+mod path_input;
 mod registration;
 mod remote;
 mod remote_pane;
@@ -35,7 +36,9 @@ use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
 use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
-use nocterm_workspace::{Panel, SessionContext, Workspace, WorkspaceEvent};
+use nocterm_workspace::{
+    FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
+};
 use operations::FileTarget;
 use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
@@ -51,14 +54,6 @@ pub fn settings_page() -> nocterm_workspace::SettingsPageSpec {
     .with_icon(IconName::FolderTree)
 }
 
-#[derive(Clone)]
-struct LocalPaths(Vec<PathBuf>);
-#[derive(Clone)]
-struct RemotePaths {
-    sources: Vec<String>,
-    target: nocterm_session::Target,
-    fs: Arc<dyn RemoteFs>,
-}
 #[derive(Default)]
 struct LocalBrowser {
     generation: u64,
@@ -79,6 +74,9 @@ pub struct FilesPanel {
     remote_selected: BTreeSet<usize>,
     remote_anchor: Option<usize>,
     local: LocalBrowser,
+    local_path: Entity<path_input::PathInput>,
+    remote_path: Entity<path_input::PathInput>,
+    _path_subscriptions: Vec<Subscription>,
     remote_counter: statistics::Counter,
     activity: activity::Activity,
     /// A finished transfer changed the shown folder: (remote, local).
@@ -240,6 +238,24 @@ impl FilesPanel {
                 }
             }
         });
+        let local_path = cx.new(|cx| path_input::PathInput::new(window, cx));
+        let remote_path = cx.new(|cx| path_input::PathInput::new(window, cx));
+        let path_subscriptions = [&local_path, &remote_path]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe(
+                    input,
+                    |this, _, event: &path_input::Navigate, cx| match &event.directory {
+                        path_input::Directory::Local(path) => {
+                            this.load_local_with_navigation(path.clone(), event.mode, cx)
+                        }
+                        path_input::Directory::Remote(path) => {
+                            this.load_with_navigation(Some(path.clone()), event.mode, cx)
+                        }
+                    },
+                )
+            })
+            .collect();
         let mut panel = Self {
             focus: cx.focus_handle(),
             session: None,
@@ -248,6 +264,9 @@ impl FilesPanel {
             remote_selected: BTreeSet::new(),
             remote_anchor: None,
             local: LocalBrowser::default(),
+            local_path,
+            remote_path,
+            _path_subscriptions: path_subscriptions,
             remote_counter: statistics::Counter::default(),
             activity: activity::Activity::default(),
             stale: (false, false),
@@ -270,6 +289,9 @@ impl FilesPanel {
             return;
         }
         self.session = session;
+        let filesystem = self.filesystem();
+        self.remote_path
+            .update(cx, |input, cx| input.reset_remote(filesystem, cx));
         self.requested_directory = None;
         self.browser.clear();
         self.remote_selected.clear();

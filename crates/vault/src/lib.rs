@@ -7,8 +7,8 @@
 mod device_unlock;
 mod service;
 pub use device_unlock::{
-    DeviceAvailability, DeviceCancellation, DeviceCapability, DeviceUnlockError,
-    DeviceUnlockProvider, VaultBinding, VaultKey,
+    DeviceAvailability, DeviceCancellation, DeviceCapability, DeviceRegistrationState,
+    DeviceUnlockError, DeviceUnlockProvider, VaultBinding, VaultKey,
 };
 pub use service::{VaultFuture, VaultService};
 

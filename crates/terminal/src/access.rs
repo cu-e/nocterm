@@ -1,8 +1,9 @@
 use gpui_kit::{App, WeakEntity};
-use nocterm_session::{Prompt, Secret};
+use nocterm_session::{HostExec, Prompt, Secret};
 use nocterm_workspace::{
     SignInPrompt, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
 };
+use std::sync::Arc;
 
 use crate::{Status, Terminal, credentials::describe};
 
@@ -76,6 +77,27 @@ impl TerminalAccess for Access {
     fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String> {
         self.0
             .update(cx, |terminal, cx| terminal.agent_send(command, true, cx))
+            .map_err(|_| "Terminal was closed.".to_owned())?
+    }
+
+    fn executor(&self, cx: &App) -> Result<Arc<dyn HostExec>, String> {
+        let entity = self.0.upgrade().ok_or("Terminal was closed.")?;
+        let terminal = entity.read(cx);
+        if !terminal.is_connected() || terminal.prompt().is_some() || terminal.awaiting_vault() {
+            return Err("Terminal is unavailable or waiting for authentication.".into());
+        }
+        terminal
+            .agent_executor()
+            .ok_or_else(|| "This session does not support structured execution.".into())
+    }
+
+    fn begin_live_command(
+        &self,
+        command: &str,
+        cx: &mut App,
+    ) -> Result<nocterm_workspace::LiveCommandLease, String> {
+        self.0
+            .update(cx, |terminal, cx| terminal.begin_live_command(command, cx))
             .map_err(|_| "Terminal was closed.".to_owned())?
     }
 

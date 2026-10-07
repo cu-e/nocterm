@@ -113,6 +113,21 @@ pub trait Panel: gpui_base::dock::Panel {
         None
     }
 
+    /// Whether the title bar offers the standard ellipsis menu.
+    fn menu_visible(&self, cx: &App) -> bool {
+        true
+    }
+
+    /// Optional content for the unoccupied title/tab-bar area, excluding tabs
+    /// and toolbar controls. Existing drag/drop handlers remain on its parent.
+    fn free_header_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        None::<gpui::Div>
+    }
+
     /// Entries the panel adds to the title bar's ellipsis menu.
     fn dropdown_menu(
         &mut self,
@@ -164,6 +179,12 @@ pub trait PanelView: gpui_base::dock::PanelView {
     fn tab_accent(&self, cx: &App) -> Option<Hsla>;
     fn title_suffix(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement>;
     fn toolbar_buttons(&self, window: &mut Window, cx: &mut App) -> Option<Vec<Button>>;
+    fn menu_visible(&self, _cx: &App) -> bool {
+        true
+    }
+    fn free_header_content(&self, _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        None
+    }
     fn dropdown_menu(&self, menu: PopupMenu, window: &mut Window, cx: &mut App) -> PopupMenu;
     fn zoom_control(&self, cx: &App) -> Option<PanelControl>;
     fn inner_padding(&self, cx: &App) -> bool;
@@ -196,6 +217,16 @@ impl<T: Panel> PanelView for Entity<T> {
 
     fn toolbar_buttons(&self, window: &mut Window, cx: &mut App) -> Option<Vec<Button>> {
         self.update(cx, |this, cx| this.toolbar_buttons(window, cx))
+    }
+
+    fn menu_visible(&self, cx: &App) -> bool {
+        self.read(cx).menu_visible(cx)
+    }
+    fn free_header_content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        self.update(cx, |this, cx| {
+            this.free_header_content(window, cx)
+                .map(|content| content.into_any_element())
+        })
     }
 
     fn dropdown_menu(&self, menu: PopupMenu, window: &mut Window, cx: &mut App) -> PopupMenu {

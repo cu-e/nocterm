@@ -28,7 +28,10 @@ pub use emulator::{
     Cell, CellPoint, Color, Cursor, CursorShape, Effect, Emulator, EmulatorOptions, Frame,
     LineMetadata, Modes, Palette, Rgb, Scroll, SelectionKind, Side, Style, TermSize,
 };
-pub use keys::{KeyPress, Modifiers, encode_key};
+pub use keys::{
+    KeyEncoding, KeyEvent, KeyEventKind, KeyPress, KeyboardState, Modifiers, ModifyOtherKeys,
+    encode_key, encode_key_event, encode_text_commit,
+};
 pub use mouse::{MouseButton, MouseEvent, MouseEventKind, encode_mouse};
 pub use paste::{encode_focus, encode_paste};
 pub use text::{TextQuery, TextTail};

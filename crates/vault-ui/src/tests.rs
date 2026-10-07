@@ -320,6 +320,7 @@ fn switching_tabs_clears_master_password_drafts(cx: &mut TestAppContext) {
 struct EnrolledDevice(
     std::sync::Mutex<Option<nocterm_vault::VaultKey>>,
     std::sync::Mutex<Option<String>>,
+    std::sync::atomic::AtomicBool,
 );
 impl DeviceUnlockProvider for EnrolledDevice {
     fn probe(&self) -> Result<DeviceCapability, nocterm_vault::DeviceUnlockError> {
@@ -338,6 +339,7 @@ impl DeviceUnlockProvider for EnrolledDevice {
         key: nocterm_vault::VaultKey,
         _: &nocterm_vault::DeviceCancellation,
     ) -> Result<Vec<u8>, nocterm_vault::DeviceUnlockError> {
+        self.2.store(false, std::sync::atomic::Ordering::SeqCst);
         *self.0.lock().unwrap() = Some(key);
         Ok(vec![1])
     }
@@ -347,6 +349,9 @@ impl DeviceUnlockProvider for EnrolledDevice {
         _: &[u8],
         _: &nocterm_vault::DeviceCancellation,
     ) -> Result<nocterm_vault::VaultKey, nocterm_vault::DeviceUnlockError> {
+        if self.2.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(nocterm_vault::DeviceUnlockError::Locked);
+        }
         if let Some(error) = self.1.lock().unwrap().as_ref() {
             return Err(nocterm_vault::DeviceUnlockError::Platform(error.clone()));
         }
@@ -363,6 +368,20 @@ impl DeviceUnlockProvider for EnrolledDevice {
     ) -> Result<(), nocterm_vault::DeviceUnlockError> {
         *self.0.lock().unwrap() = None;
         Ok(())
+    }
+    fn registration_state(
+        &self,
+        binding: nocterm_vault::VaultBinding,
+        token: &[u8],
+    ) -> Result<nocterm_vault::DeviceRegistrationState, nocterm_vault::DeviceUnlockError> {
+        use nocterm_vault::DeviceRegistrationState as State;
+        Ok(if self.2.load(std::sync::atomic::Ordering::SeqCst) {
+            State::Locked
+        } else if self.registered(binding, token) {
+            State::Ready
+        } else {
+            State::Missing
+        })
     }
     fn registered(&self, _: nocterm_vault::VaultBinding, _: &[u8]) -> bool {
         self.0.lock().unwrap().is_some()
@@ -481,3 +500,5 @@ fn fingerprint_failure_shows_its_reason_and_allows_password_unlock(cx: &mut Test
     assert!(service.is_unlocked());
     cx.update(|cx| assert!(prompt.read(cx).error.is_none()));
 }
+
+mod unlock_progress;

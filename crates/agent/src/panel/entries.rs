@@ -10,6 +10,7 @@ use gpui_kit::{
     px, relative, rems,
 };
 use nocterm_ai::{acp, thread::Entry};
+use nocterm_ui::ActiveSettings as _;
 use nocterm_ui::IconName;
 
 use super::{
@@ -258,7 +259,14 @@ impl AgentPanel {
                             index,
                         ),
                         IconName::Wrench,
-                        format!("{} · {:?}", call.title, call.status),
+                        {
+                            let title = nocterm_ai::tool_display::header(call);
+                            if cx.settings().ai.approval.redact_secrets {
+                                nocterm_ai::redact::redact(&title)
+                            } else {
+                                title
+                            }
+                        },
                         live,
                         expanded,
                         cx,
@@ -274,6 +282,11 @@ impl AgentPanel {
                 );
                 if expanded {
                     if let Some(input) = tool_input::source(call) {
+                        let input = if cx.settings().ai.approval.redact_secrets {
+                            input.redact()
+                        } else {
+                            input
+                        };
                         row = row.child(tool_input::render(index, input, cx));
                     }
                     let text = tool_output_text(&call.content);

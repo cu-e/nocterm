@@ -267,7 +267,10 @@ the chat:
 | `list_terminals` | None | Attached terminal descriptors and offline servers only |
 | `read_terminal` | Ask before reading a terminal (off by default) | 2000 logical lines / 64 KiB |
 | `send_input` | Ask before typing or running commands (on by default) | 16 KiB input |
-| `run_command` | Ask before typing or running commands | One command line, at most 16 KiB |
+| `run_command` | Live-input approval | One command line, at most 16 KiB; known empty shell prompt required |
+| `exec_command` | Separate structured-execution approval | 16 KiB program/args, 64 KiB stdin, 5 minute absolute timeout |
+| `read_command` | Reading approval | Full 64 KiB stdout snapshot plus 4 KiB stderr tail |
+| `cancel_command` | Structured-execution approval | One command owned by this chat |
 | `open_terminal` | Ask before typing or running commands | One attached offline server |
 
 The settings apply at once, including to running chats. An approval card shows
@@ -277,8 +280,40 @@ turns, and is dropped when the chat restarts or fails or when an attachment is
 removed. A new member of a group does not inherit an existing grant. Detaching
 or closing a terminal prevents further tool calls. The application checks the
 attachment and terminal state again after approval immediately before input.
-Connecting, closed, and authentication states refuse input. Command execution
-also rejects alternate-screen programs and known busy/dirty local prompts.
+Connecting, closed, and authentication states refuse input. Live `run_command`
+also rejects alternate-screen programs and unknown, busy or dirty prompts,
+including SSH shells without OSC 133 integration. Grants are separate for reading,
+live input, structured execution and opening connections. Explicit `send_input`
+into an unknown, busy or dirty shell always needs a one-time approval, even when
+normal write approvals are disabled; it never consumes a remembered safe-input grant.
+
+`exec_command` starts a fresh process through the exact authenticated connection
+of the attached terminal; local terminals explicitly use the local executor.
+There is no remote-to-local fallback and no inherited live-shell cwd, environment,
+aliases or functions. Pass program and arguments separately; local execution
+passes arguments directly, while SSH renders a POSIX command line. Arbitrary
+arguments require a POSIX-compatible remote command shell; exact argument handling
+is not guaranteed on Windows SSH. Use an explicit shell when shell syntax is
+needed. Short commands return their actual exit status.
+Long commands return a chat-owned `command_id` for `read_command` and
+`cancel_command`. Cancelling a read waiter does not cancel the command. Each chat
+allows four active commands and retains sixteen records; oldest completed records
+are evicted. stdout is continuously drained beyond the retained 64 KiB and marked
+truncated, so a noisy command can still finish and report its real status. Startup
+and execution share an absolute deadline.
+
+Stop, chat closure/restart, AI disable, detachment and session replacement cancel
+owned structured executions. SSH cancellation sends TERM and closes that command's
+channel; servers may ignore signals and remote descendants may survive.
+
+Live `run_command` serializes ownership across chats only while observing its
+result. Stop requests Ctrl-C only during an active observation that still owns the
+same session. Accepted human input or reconnect relinquishes ownership, so a later
+Stop cannot interrupt a new user command. Every observation exit releases the
+lease. Observation reports completion only on a confirmed shell prompt; output
+idle or observation timeout leave completion unknown, never invent an exit status,
+and do not stop the shell. A later Stop no longer controls that program. Use
+`exec_command` when execution needs a durable handle, cancellation and a deadline.
 
 Agents also have their own permission prompts (for example before running a tool
 of their own); those appear as separate cards with the agent's options.
@@ -353,6 +388,9 @@ Code's sandbox:
   profiles, `~/.netrc`, `~/.git-credentials` and similar files, and nocterm's own
   configuration and state (including the vault and saved chats) are replaced by
   empty ones;
+- Selecting home as the workspace keeps credential descendants masked. A workspace
+  inside a credential store, including through a symlink, is refused. The dedicated
+  agent workspace inside nocterm private state remains reachable.
 - `/tmp` is private; the terminal tools' socket directory stays reachable;
 - the process tree gets its own PID namespace and session, so it ends with
   nocterm and cannot type into the terminal nocterm was started from.

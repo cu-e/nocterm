@@ -604,7 +604,7 @@ impl Runtime {
                                 acp::SessionUpdate::ToolCallUpdate(update) => thread.state.entries.iter().position(|entry| matches!(entry, nocterm_ai::thread::Entry::Tool(call) if call.tool_call_id == update.tool_call_id)),
                                 _ => thread.state.entries.len().checked_sub(1),
                             };
-                            let change = thread.state.apply(notification.update.clone());
+                            let change = thread.apply_presented_update(notification.update.clone());
                             if change == nocterm_ai::thread::ThreadChange::Transcript {
                                 if let Some(index) = index { thread.mark_dirty(index); }
                                 if let Some(index) = thread.state.entries.len().checked_sub(1) { thread.mark_dirty(index); }

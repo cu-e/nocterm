@@ -15,6 +15,7 @@ use nocterm_terminal::{TerminalView, open_session};
 use nocterm_ui::ActiveSettings as _;
 use nocterm_workspace::{SessionSpec, Workspace};
 
+mod menu_tabs;
 mod shortcuts;
 mod vault;
 

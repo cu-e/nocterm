@@ -1,8 +1,8 @@
 //! Linux releases a session-only KEK through a root-owned broker, never keyring.
 use crate::platform;
 use nocterm_vault::{
-    DeviceAvailability as A, DeviceCancellation, DeviceCapability, DeviceUnlockError as E,
-    DeviceUnlockProvider, VaultBinding, VaultKey,
+    DeviceAvailability as A, DeviceCancellation, DeviceCapability, DeviceRegistrationState,
+    DeviceUnlockError as E, DeviceUnlockProvider, VaultBinding, VaultKey,
 };
 use std::{sync::Mutex, time::Duration};
 use zbus::{
@@ -101,6 +101,11 @@ fn broker_missing() -> String {
 // transport or protocol failures intact so their cause is still visible.
 fn broker_release_error(error: zbus::Error) -> E {
     match error {
+        zbus::Error::MethodError(name, _, _)
+            if name.as_str() == "dev.nocterm.VaultBroker1.Error.Locked" =>
+        {
+            E::Locked
+        }
         zbus::Error::MethodError(name, Some(description), _)
             if matches!(
                 name.as_str(),
@@ -112,6 +117,28 @@ fn broker_release_error(error: zbus::Error) -> E {
         error => platform(error),
     }
 }
+// Only the old protocol's missing method disables progress; other failures matter.
+fn attempts_result(result: Result<u8, zbus::Error>) -> Result<Option<u8>, E> {
+    match result {
+        Ok(remaining @ 0..=3) => Ok(Some(remaining)),
+        Ok(_) => Err(E::Invalidated),
+        Err(zbus::Error::MethodError(name, _, _))
+            if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod" =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(broker_release_error(error)),
+    }
+}
+async fn attempts_remaining(proxy: &Proxy<'_>, arguments: &(&str, &str)) -> Result<Option<u8>, E> {
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        proxy.call("AttemptsRemaining", arguments),
+    )
+    .await
+    .map_err(|_| E::Platform("Fingerprint progress request timed out".into()))?;
+    attempts_result(result)
+}
 fn token_string(token: &[u8]) -> Result<&str, E> {
     let token = std::str::from_utf8(token).map_err(|_| E::Invalidated)?;
     if token.len() != 64
@@ -122,6 +149,63 @@ fn token_string(token: &[u8]) -> Result<&str, E> {
         return Err(E::Invalidated);
     }
     Ok(token)
+}
+
+async fn cancel_release(proxy: &Proxy<'_>, arguments: &(&str, &str)) {
+    let _ = tokio::time::timeout(
+        Duration::from_secs(1),
+        proxy.call::<_, _, ()>("Cancel", arguments),
+    )
+    .await;
+}
+
+async fn release_key(
+    proxy: &Proxy<'_>,
+    arguments: &(&str, &str),
+    cancel: &DeviceCancellation,
+) -> Result<VaultKey, E> {
+    let mut remaining = attempts_remaining(proxy, arguments).await?;
+    if let Some(value) = remaining {
+        cancel.report_attempts_remaining(value);
+    }
+    if remaining == Some(0) {
+        return Err(E::Locked);
+    }
+    cancel.check()?;
+    // Fingerprint authentication needs a longer budget than passive probes.
+    let future = proxy.call::<_, _, Vec<u8>>("Release", arguments);
+    tokio::pin!(future);
+    let bytes = loop {
+        tokio::select! {
+            result = &mut future => break zeroize::Zeroizing::new(result.map_err(broker_release_error)?),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                if cancel.is_cancelled() {
+                    cancel_release(proxy, arguments).await;
+                    return Err(E::Cancelled);
+                }
+                if remaining.is_some() {
+                    let value = match attempts_remaining(proxy, arguments).await {
+                        Ok(value) => value,
+                        Err(error) => {
+                            cancel_release(proxy, arguments).await;
+                            return Err(error);
+                        }
+                    };
+                    if value != remaining {
+                        if let Some(value) = value { cancel.report_attempts_remaining(value); }
+                        remaining = value;
+                    }
+                }
+            }
+        }
+    };
+    cancel.check()?;
+    if bytes.len() != 32 {
+        return Err(E::Invalidated);
+    }
+    let mut key = VaultKey::new([0; 32]);
+    key.copy_from_slice(&bytes);
+    Ok(key)
 }
 
 impl DeviceUnlockProvider for Linux {
@@ -209,29 +293,17 @@ impl DeviceUnlockProvider for Linux {
     ) -> Result<VaultKey, E> {
         let token = token_string(token)?;
         cancel.check()?;
-        self.run(|client| client.bounded(Duration::from_secs(40), async {
-            trusted(&client.connection, BROKER).await?;
-            let proxy = Proxy::new(&client.connection,BROKER,PATH,BROKER).await.map_err(platform)?;
-            let identity = binding.identifier();
-            let arguments = (identity.as_str(), token);
-            // Fingerprint authentication needs a longer budget than passive probes.
-            let future = proxy.call::<_,_,Vec<u8>>("Release", &arguments);
-            tokio::pin!(future);
-            let bytes = loop {
-                tokio::select! {
-                    result = &mut future => break zeroize::Zeroizing::new(result.map_err(broker_release_error)?),
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                        if cancel.is_cancelled() {
-                            let _: Result<(),_> = tokio::time::timeout(Duration::from_secs(1), proxy.call("Cancel", &(identity.as_str(),token))).await.unwrap_or_else(|_| Err(zbus::Error::Failure("timeout".into())));
-                            return Err(E::Cancelled);
-                        }
-                    }
-                }
-            };
-            cancel.check()?;
-            if bytes.len()!=32 { return Err(E::Invalidated); }
-            let mut key = VaultKey::new([0;32]); key.copy_from_slice(&bytes); Ok(key)
-        }))
+        self.run(|client| {
+            client.bounded(Duration::from_secs(40), async {
+                trusted(&client.connection, BROKER).await?;
+                let proxy = Proxy::new(&client.connection, BROKER, PATH, BROKER)
+                    .await
+                    .map_err(platform)?;
+                let identity = binding.identifier();
+                let arguments = (identity.as_str(), token);
+                release_key(&proxy, &arguments, cancel).await
+            })
+        })
     }
     fn remove(&self, binding: VaultBinding, token: &[u8]) -> Result<(), E> {
         let token = token_string(token)?;
@@ -248,6 +320,37 @@ impl DeviceUnlockProvider for Linux {
                     .call("Remove", &(binding.identifier(), token))
                     .await
                     .map_err(platform)
+            })
+        })
+    }
+    fn registration_state(
+        &self,
+        binding: VaultBinding,
+        token: &[u8],
+    ) -> Result<DeviceRegistrationState, E> {
+        let token = token_string(token)?;
+        self.run(|client| {
+            client.bounded(Duration::from_secs(8), async {
+                trusted(&client.connection, BROKER).await?;
+                let proxy = Proxy::new(&client.connection, BROKER, PATH, BROKER)
+                    .await
+                    .map_err(platform)?;
+                let identity = binding.identifier();
+                let arguments = (identity.as_str(), token);
+                let registered: bool = proxy
+                    .call("Registered", &arguments)
+                    .await
+                    .map_err(platform)?;
+                if !registered {
+                    return Ok(DeviceRegistrationState::Missing);
+                }
+                Ok(
+                    if attempts_remaining(&proxy, &arguments).await? == Some(0) {
+                        DeviceRegistrationState::Locked
+                    } else {
+                        DeviceRegistrationState::Ready
+                    },
+                )
             })
         })
     }
@@ -274,6 +377,34 @@ impl DeviceUnlockProvider for Linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn attempts_protocol_only_falls_back_for_old_brokers() {
+        assert_eq!(attempts_result(Ok(2)).unwrap(), Some(2));
+        assert_eq!(
+            attempts_result(Err(method_error(
+                "org.freedesktop.DBus.Error.UnknownMethod",
+                Some("missing")
+            )))
+            .unwrap(),
+            None
+        );
+        assert!(
+            attempts_result(Err(method_error(
+                "org.freedesktop.DBus.Error.AccessDenied",
+                Some("denied")
+            )))
+            .is_err()
+        );
+        assert!(attempts_result(Ok(4)).is_err());
+        assert!(matches!(
+            broker_release_error(method_error(
+                "dev.nocterm.VaultBroker1.Error.Locked",
+                Some("locked")
+            )),
+            E::Locked
+        ));
+    }
+    mod protocol;
     #[test]
     fn broker_tokens_are_bounded_canonical_identifiers() {
         for invalid in [

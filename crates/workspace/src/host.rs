@@ -86,6 +86,13 @@ impl Host {
     }
 }
 
+/// Literal argument syntax of an interactive shell inside a wrapper program.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellSyntax {
+    Posix,
+    PowerShell,
+}
+
 /// A program shown in a tab of its own, such as a container's log or a shell
 /// inside one. It runs over the host's existing connection.
 #[derive(Clone)]
@@ -93,6 +100,8 @@ pub struct ProgramSpec {
     pub title: SharedString,
     pub host: Host,
     pub program: ExecRequest,
+    /// A known inner shell's syntax. Log followers and other programs leave this unset.
+    pub shell_syntax: Option<ShellSyntax>,
 }
 
 struct LocalExec(Arc<dyn HostExec>);

@@ -9,14 +9,11 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, WeakEntity};
-use nocterm_ai::{
-    BridgeCall, TerminalCall,
-    context::{ConnectionDescriptor, ServerDescriptor, TerminalDescriptor},
-};
+use nocterm_ai::{BridgeCall, TerminalCall};
 use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
-use nocterm_workspace::{ConnectionSummary, TerminalEntry, TerminalStatus, TextRequest};
+use nocterm_workspace::{TerminalStatus, TextRequest};
 
-use super::{AgentThread, Attachment, SignInWait};
+use super::{AgentThread, SignInWait};
 
 /// How long an agent waits for a background session to connect.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -24,184 +21,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(180);
 
 impl AgentThread {
-    /// Saved servers this chat is attached to, directly or by folder.
-    fn attached_servers(&self, cx: &App) -> Vec<ConnectionSummary> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Vec::new();
-        };
-        workspace
-            .read(cx)
-            .connection_directory()
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|summary| self.attaches_server(summary))
-            .collect()
-    }
-
-    fn attaches_server(&self, summary: &ConnectionSummary) -> bool {
-        self.attachment_scope()
-            .iter()
-            .any(|attachment| match attachment {
-                Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
-                Attachment::Connection(id) => summary.id.as_ref() == id,
-                Attachment::Group(group) => summary
-                    .group
-                    .as_ref()
-                    .is_some_and(|name| name.as_ref() == group),
-            })
-    }
-
-    /// The terminals this chat may use: attached tabs, and every open
-    /// session (tab or background) of an attached server.
-    pub(crate) fn resolved(
-        &mut self,
-        cx: &App,
-    ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Vec::new();
-        };
-        let workspace = workspace.read(cx);
-        let summaries = workspace
-            .connection_directory()
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default();
-        workspace
-            .terminals(cx)
-            .into_iter()
-            .filter_map(|entry| {
-                let info = entry.access.info(cx)?;
-                let summary = info
-                    .profile
-                    .as_ref()
-                    .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
-                let attached = self
-                    .attachment_scope()
-                    .contains(&Attachment::Terminal(entry.item))
-                    || summary.is_some_and(|summary| self.attaches_server(summary));
-                if !attached {
-                    return None;
-                }
-                let id = self.ids.get(&format!("{:?}", entry.item));
-                let connection = summary
-                    .map(|summary| ConnectionDescriptor {
-                        id: summary.id.to_string(),
-                        name: summary.name.to_string(),
-                        group: summary.group.as_ref().map(ToString::to_string),
-                        description: summary.description.to_string(),
-                        host: summary.target.host.clone(),
-                        port: summary.target.port,
-                        user: summary.target.user.clone(),
-                    })
-                    .or_else(|| {
-                        info.target.map(|target| ConnectionDescriptor {
-                            id: String::new(),
-                            name: entry.title.to_string(),
-                            group: None,
-                            description: String::new(),
-                            host: target.host,
-                            port: target.port,
-                            user: target.user,
-                        })
-                    });
-                let descriptor = TerminalDescriptor {
-                    id: id.clone(),
-                    title: entry.title.to_string(),
-                    local: info.local,
-                    connection,
-                    cwd: info.cwd.map(|path| path.to_string_lossy().into_owned()),
-                    status: format!("{:?}", info.status),
-                };
-                Some((id, entry, descriptor))
-            })
-            .collect()
-    }
-
-    /// Attached servers without a live session, with the ids agents use for
-    /// them.
-    pub(crate) fn offline_servers(
-        &mut self,
-        cx: &App,
-    ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
-        let live: Vec<String> = self
-            .resolved(cx)
-            .into_iter()
-            .filter(|(_, entry, _)| {
-                entry
-                    .access
-                    .info(cx)
-                    .is_some_and(|info| info.status != TerminalStatus::Closed)
-            })
-            .filter_map(|(_, _, descriptor)| descriptor.connection.map(|connection| connection.id))
-            .collect();
-        self.attached_servers(cx)
-            .into_iter()
-            .filter(|summary| !live.iter().any(|id| id == summary.id.as_ref()))
-            .map(|summary| {
-                let descriptor = ServerDescriptor {
-                    server_id: self.server_ids.get(summary.id.as_ref()),
-                    name: summary.name.to_string(),
-                    group: summary.group.as_ref().map(ToString::to_string),
-                    description: summary.description.to_string(),
-                    host: summary.target.host.clone(),
-                    port: summary.target.port,
-                    user: summary.target.user.clone(),
-                };
-                (descriptor, summary)
-            })
-            .collect()
-    }
-
-    /// What the agent is told about its terminals with each prompt.
-    pub(crate) fn context(&mut self, cx: &App) -> String {
-        let terminals: Vec<_> = self
-            .resolved(cx)
-            .into_iter()
-            .map(|(_, _, descriptor)| descriptor)
-            .collect();
-        let servers: Vec<_> = self
-            .offline_servers(cx)
-            .into_iter()
-            .map(|(server, _)| server)
-            .collect();
-        nocterm_ai::context::context_block(&terminals, &servers)
-    }
-
-    /// A human description of what `call` acts on, for its approval card.
-    pub(crate) fn describe_target(&mut self, call: &TerminalCall, cx: &App) -> String {
-        if let Some(server) = call.server_id() {
-            return self
-                .offline_servers(cx)
-                .into_iter()
-                .find(|(descriptor, _)| descriptor.server_id == server)
-                .map(|(descriptor, _)| {
-                    format!(
-                        "{} · {}@{}:{}",
-                        descriptor.name, descriptor.user, descriptor.host, descriptor.port
-                    )
-                })
-                .unwrap_or_else(|| "Unavailable server".into());
-        }
-        self.resolved(cx)
-            .into_iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
-            .map(|(_, entry, descriptor)| {
-                format!(
-                    "{}{}",
-                    entry.title,
-                    descriptor
-                        .connection
-                        .as_ref()
-                        .map(|connection| format!(
-                            " · {}@{}:{}",
-                            connection.user, connection.host, connection.port
-                        ))
-                        .unwrap_or_default()
-                )
-            })
-            .unwrap_or_else(|| "Unavailable terminal".into())
-    }
-
     pub(crate) fn handle_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
         if !cx.ai_enabled()
             || !self.accept_updates
@@ -217,6 +36,7 @@ impl AgentThread {
         if self
             .grants
             .requires_approval(&call.call, &cx.settings().ai.approval)
+            || self.unsafe_live_input(&call.call, cx)
         {
             self.approval_generation = self.approval_generation.wrapping_add(1);
             self.tools.push(call);
@@ -224,6 +44,17 @@ impl AgentThread {
             return;
         }
         self.execute_tool(call, cx);
+    }
+
+    pub(crate) fn unsafe_live_input(&mut self, call: &TerminalCall, cx: &App) -> bool {
+        if !matches!(call, TerminalCall::SendInput(_)) {
+            return false;
+        }
+        self.resolved(cx)
+            .into_iter()
+            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
+            .and_then(|(_, entry, _)| entry.access.info(cx))
+            .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
     }
 
     pub(crate) fn approve_tool(
@@ -260,8 +91,11 @@ impl AgentThread {
             cx.notify();
             return;
         }
-        if grant && let Some(id) = call.call.target() {
-            self.grants.grant(id, call.call.writes());
+        if grant
+            && !self.unsafe_live_input(&call.call, cx)
+            && let Some(id) = call.call.target()
+        {
+            self.grants.grant(id, call.call.capability());
         }
         self.execute_tool(call, cx);
         cx.notify();
@@ -278,6 +112,7 @@ impl AgentThread {
         }
         match &call.call {
             TerminalCall::ListTerminals => {
+                self.record_tool_display(&call.call, None, cx);
                 let payload = self.context(cx);
                 let _ = call
                     .respond
@@ -286,6 +121,7 @@ impl AgentThread {
             }
             TerminalCall::OpenTerminal(request) => {
                 let server = request.server_id.clone();
+                self.record_tool_display(&call.call, None, cx);
                 self.open_terminal(server, call, cx);
                 return;
             }
@@ -301,6 +137,7 @@ impl AgentThread {
             )));
             return;
         };
+        self.record_tool_display(&call.call, Some(&entry), cx);
         match &call.call {
             TerminalCall::ReadTerminal(request) => {
                 let result = entry
@@ -332,100 +169,11 @@ impl AgentThread {
                 let request = request.clone();
                 self.run_command(entry, request, call, cx);
             }
+            TerminalCall::ExecCommand(_) => self.execute_command(entry, call, cx),
+            TerminalCall::ReadCommand(_) => self.read_command(call, cx),
+            TerminalCall::CancelCommand(_) => self.cancel_command(call, cx),
             TerminalCall::ListTerminals | TerminalCall::OpenTerminal(_) => {}
         }
-    }
-
-    fn run_command(
-        &mut self,
-        entry: TerminalEntry,
-        request: nocterm_ai::RunCommand,
-        call: BridgeCall,
-        cx: &mut Context<Self>,
-    ) {
-        let before = entry.access.read(
-            TextRequest {
-                max_lines: 2000,
-                max_bytes: 64 * 1024,
-                since_line: None,
-            },
-            cx,
-        );
-        let since = match before {
-            Ok(before) => before.next_line,
-            Err(error) => {
-                let _ = call.respond.send(Err(error));
-                return;
-            }
-        };
-        if let Err(error) = entry.access.run_command(&request.command, cx) {
-            let _ = call.respond.send(Err(error));
-            return;
-        }
-        let epoch = self.epoch;
-        let id = request.terminal_id.clone();
-        let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
-        let idle = Duration::from_millis(request.idle_ms.unwrap_or(1000));
-        cx.spawn(async move |this, cx| {
-            let started = Instant::now();
-            let mut changed = started;
-            let mut generation = None;
-            let result = loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                let step = this.update(cx, |this, cx| {
-                    if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
-                        return Err("Command observation cancelled.".into());
-                    }
-                    let (_, entry, _) = this
-                        .resolved(cx)
-                        .into_iter()
-                        .find(|(value, _, _)| *value == id)
-                        .ok_or_else(|| unreachable("Terminal was detached or closed."))?;
-                    let info = entry.access.info(cx).ok_or("Terminal was closed.")?;
-                    if info.status != TerminalStatus::Connected {
-                        return Err(unreachable("Terminal is no longer connected."));
-                    }
-                    if generation != Some(info.generation) {
-                        generation = Some(info.generation);
-                        changed = Instant::now();
-                    }
-                    let reason = if info.at_prompt == Some(true) {
-                        Some("prompt_returned")
-                    } else if started.elapsed() >= timeout {
-                        Some("timeout")
-                    } else if changed.elapsed() >= idle {
-                        Some("output_idle")
-                    } else {
-                        None
-                    };
-                    let Some(reason) = reason else {
-                        return Ok(None);
-                    };
-                    let tail = entry.access.read(
-                        TextRequest {
-                            max_lines: 2000,
-                            max_bytes: 64 * 1024,
-                            since_line: Some(since),
-                        },
-                        cx,
-                    )?;
-                    let mut payload = this.text_payload(tail, cx);
-                    payload["completion"] = serde_json::json!(reason);
-                    payload["exit_status"] = serde_json::Value::Null;
-                    Ok(Some(payload))
-                });
-                match step {
-                    Ok(Ok(Some(result))) => break Ok(result),
-                    Ok(Ok(None)) => {}
-                    Ok(Err(error)) => break Err(error),
-                    Err(_) => break Err("Chat was closed.".into()),
-                }
-            };
-            let _ = call.respond.send(result);
-        })
-        .detach();
     }
 
     /// Connects to an attached offline server without a tab and answers with
@@ -515,7 +263,7 @@ impl AgentThread {
         }
     }
 
-    fn text_payload(
+    pub(super) fn text_payload(
         &mut self,
         tail: nocterm_workspace::TerminalText,
         cx: &App,
@@ -644,7 +392,7 @@ async fn wait_until_connected(
 
 /// A failure to reach a terminal or server, with what the agent should do
 /// about it: tell the user rather than look for another way in.
-pub(crate) fn unreachable(reason: &str) -> String {
+pub(super) fn unreachable(reason: &str) -> String {
     format!(
         "{reason} Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
     )

@@ -5,16 +5,16 @@ use std::path::PathBuf;
 
 impl Workspace {
     pub fn local_terminal_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.local_terminal
-            .as_ref()
-            .and_then(|local| local.local.cwd(cx))
+        self.selected_local(cx)
+            .and_then(|open| open.local.as_ref()?.cwd(cx))
     }
 
     pub fn local_terminal_is_visible(&self, cx: &App) -> bool {
-        self.local_terminal
-            .as_ref()
-            .is_some_and(|local| local.attached)
-            && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+        self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
+            && self.items.iter().any(|open| {
+                self.item_location(open.handle.item_id(), cx)
+                    .is_some_and(|(placement, _)| placement == DockPlacement::Bottom)
+            })
     }
 
     /// Focus exactly this visible user terminal, selecting its central tab if
@@ -25,25 +25,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Some(index) = self.items.iter().position(|item| {
-            item.handle.item_id() == id && item.handle.terminal_access(cx).is_some()
-        }) {
-            self.last_command_item = Some(id);
-            self.activate_item(index, window, cx);
-            return true;
-        }
-        if self.local_terminal_is_visible(cx)
-            && let Some(local) = self.local_terminal.as_ref().filter(|local| {
-                local.handle.item_id() == id && local.handle.terminal_access(cx).is_some()
-            })
-        {
-            let focus = local.handle.focus_handle(cx);
-            self.last_command_item = Some(id);
-            window.focus(&focus, cx);
-            cx.notify();
-            return true;
-        }
-        false
+        self.items
+            .iter()
+            .any(|open| open.handle.item_id() == id && open.handle.terminal_access(cx).is_some())
+            && self.activate_item_by_id(id, window, cx)
     }
 
     pub fn active_terminal(&self, cx: &App) -> Option<EntityId> {
@@ -72,23 +57,13 @@ impl Workspace {
                         .clone()
                         .unwrap_or_else(|| open.handle.tab_title(cx)),
                     active: false,
-                    bottom: false,
+                    bottom: self
+                        .item_location(open.handle.item_id(), cx)
+                        .is_some_and(|(placement, _)| placement == DockPlacement::Bottom),
                     background: false,
                 })
             })
             .collect();
-        if let Some(local) = &self.local_terminal
-            && let Some(access) = local.handle.terminal_access(cx)
-        {
-            entries.push(crate::TerminalEntry {
-                item: local.handle.item_id(),
-                access,
-                title: local.handle.tab_title(cx),
-                active: false,
-                bottom: true,
-                background: false,
-            });
-        }
         entries.extend(self.background_entries(cx));
         let active = self
             .last_command_item

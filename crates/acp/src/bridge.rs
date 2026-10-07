@@ -581,7 +581,27 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(responses.len(), 2);
-        assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 5);
+        let names: std::collections::BTreeSet<_> = responses[1]["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "list_terminals",
+                "open_terminal",
+                "read_terminal",
+                "send_input",
+                "run_command",
+                "exec_command",
+                "read_command",
+                "cancel_command",
+            ]
+            .into_iter()
+            .collect(),
+        );
     }
     #[test]
     fn bounds_unauthenticated_connections_and_protocol_lines() {

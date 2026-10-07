@@ -1,162 +1,134 @@
-//! Arranging tabs in panes: splitting, moving between and within them.
-
-use gpui_kit::{
-    App, Context, Window,
-    component::dock::{DockPlacement, InsertTarget, PaneRef, PanelId},
-};
-
+//! Pane actions use the focused tab and its actual native placement.
 use super::Workspace;
-
+use gpui_kit::{App, Context, EntityId, Window, component::dock::InsertTarget};
 impl Workspace {
-    /// Move the active tab beside its current pane without recreating its Item.
+    fn pane_command_id(&self, window: &Window, cx: &App) -> Option<EntityId> {
+        self.command_item(window, cx).map(|item| item.item_id())
+    }
     pub fn split_active(
         &mut self,
         placement: gpui_kit::component::Placement,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(id) = self.active_item().map(|item| item.item_id()) else {
-            return;
-        };
-        self.split_item(id, placement, window, cx);
+        if let Some(id) = self.pane_command_id(window, cx) {
+            self.split_item(id, placement, window, cx);
+        }
     }
-
-    /// Splitting moves a tab out of a pane which retains another tab.
-    pub fn can_split_active(&self, cx: &App) -> bool {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
-            return false;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        self.dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                tree.find_panel_node(panel)
-                    .and_then(|node| tree.find_node(node))
-            })
-            .is_some_and(
-                |node| matches!(node.kind(), PaneRef::Tabs { panels, .. } if panels.len() > 1),
-            )
+    pub fn can_split_active(&self, window: &Window, cx: &App) -> bool {
+        self.command_item(window, cx)
+            .is_some_and(|item| self.can_split_item(item.item_id(), cx))
+    }
+    pub(crate) fn can_split_item(&self, id: EntityId, cx: &App) -> bool {
+        !self.dock.read(cx).is_locked()
+            && self.item_visible(id, cx)
+            && self
+                .pane_for_item(id, cx)
+                .is_some_and(|pane| pane.panels.len() > 1)
     }
 
     pub fn split_item(
         &mut self,
-        id: gpui_kit::EntityId,
+        id: EntityId,
         placement: gpui_kit::component::Placement,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = self.items.iter().find(|item| item.handle.item_id() == id) else {
+        if !self.can_split_item(id, cx) {
+            return;
+        }
+        let Some((_, node)) = self.item_location(id, cx) else {
             return;
         };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let node = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| tree.find_panel_node(panel));
-        if let Some(node) = node {
-            // A tab split off to sit beside its group no longer moves with it.
-            self.tab_groups.leave(panel);
-            self.dock.update(cx, |dock, cx| {
-                dock.move_panel(
-                    panel,
-                    InsertTarget::Split {
-                        node,
-                        placement,
-                        size: None,
-                    },
-                    window,
-                    cx,
-                )
-            });
-        }
+        let Some(panel) = self.panel_of(id) else {
+            return;
+        };
+        self.tab_groups.leave(panel);
+        self.dock.update(cx, |dock, cx| {
+            dock.move_panel(
+                panel,
+                InsertTarget::Split {
+                    node,
+                    placement,
+                    size: None,
+                },
+                window,
+                cx,
+            )
+        });
         cx.notify();
     }
-
     pub fn focus_pane(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
+        let Some(id) = self.pane_command_id(window, cx) else {
             return;
         };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let nodes: Vec<_> = tree
-                    .node_ids()
-                    .into_iter()
-                    .filter_map(|node| match tree.find_node(node)?.kind() {
-                        PaneRef::Tabs { panels, active_ix } if !panels.is_empty() => {
-                            Some((node, panels[active_ix.min(panels.len() - 1)]))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let current = tree.find_panel_node(panel)?;
-                let ix = nodes.iter().position(|(node, _)| *node == current)?;
-                Some(nodes[(ix as isize + offset).rem_euclid(nodes.len() as isize) as usize].1)
-            });
-        if let Some(target) = target
-            && let Some(ix) = self
-                .items
-                .iter()
-                .position(|open| PanelId::from(open.dock_item.entity_id()) == target)
+        let Some((placement, current)) = self.item_location(id, cx) else {
+            return;
+        };
+        let panes: Vec<_> = self
+            .panes_in(placement, cx)
+            .into_iter()
+            .filter(|pane| !pane.panels.is_empty())
+            .collect();
+        let Some(index) = panes.iter().position(|pane| pane.node == current) else {
+            return;
+        };
+        let target = panes[(index as isize + offset).rem_euclid(panes.len() as isize) as usize]
+            .active_panel();
+        if let Some(id) = target
+            .and_then(|panel| self.item_for_panel(panel))
+            .map(|open| open.handle.item_id())
         {
-            self.activate_item(ix, window, cx);
+            self.activate_item_by_id(id, window, cx);
         }
     }
 
     pub(super) fn cycle_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
+        let Some(id) = self.pane_command_id(window, cx) else {
             return;
         };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let node = tree.find_panel_node(panel)?;
-                let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                    return None;
-                };
-                let ix = panels.iter().position(|id| *id == panel)?;
-                Some(panels[(ix as isize + offset).rem_euclid(panels.len() as isize) as usize])
-            });
-        if let Some(target) = target
-            && let Some(ix) = self
-                .items
-                .iter()
-                .position(|open| PanelId::from(open.dock_item.entity_id()) == target)
+        let Some(pane) = self.pane_for_item(id, cx) else {
+            return;
+        };
+        let Some(panel) = self.panel_of(id) else {
+            return;
+        };
+        let Some(index) = pane.panels.iter().position(|candidate| *candidate == panel) else {
+            return;
+        };
+        let target =
+            pane.panels[(index as isize + offset).rem_euclid(pane.panels.len() as isize) as usize];
+        if let Some(id) = self
+            .item_for_panel(target)
+            .map(|open| open.handle.item_id())
         {
-            self.activate_item(ix, window, cx);
+            self.activate_item_by_id(id, window, cx);
         }
     }
 
-    /// Reorder the active tab in its pane. Pointer drag uses this same dock tree.
     pub fn move_active_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.active_item.and_then(|ix| self.items.get(ix)) else {
+        let Some(id) = self.pane_command_id(window, cx) else {
             return;
         };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        let target = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| {
-                let node = tree.find_panel_node(panel)?;
-                let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                    return None;
-                };
-                let ix = panels.iter().position(|id| *id == panel)?;
-                let next = ix.checked_add_signed(offset)?;
-                (next < panels.len()).then_some(InsertTarget::Tabs {
-                    node,
-                    ix: Some(next),
-                    activate: true,
-                })
+        let Some(pane) = self.pane_for_item(id, cx) else {
+            return;
+        };
+        let Some(panel) = self.panel_of(id) else {
+            return;
+        };
+        if self.dock.read(cx).is_locked() {
+            return;
+        }
+        let target = pane
+            .panels
+            .iter()
+            .position(|candidate| *candidate == panel)
+            .and_then(|index| index.checked_add_signed(offset))
+            .filter(|next| *next < pane.panels.len())
+            .map(|next| InsertTarget::Tabs {
+                node: pane.node,
+                ix: Some(next),
+                activate: true,
             });
         if let Some(target) = target {
             self.dock

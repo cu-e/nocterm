@@ -46,6 +46,7 @@ impl Transport for IsolatedLocalTransport {
 /// Starts `launch` on a new PTY, on a thread of its own.
 fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
     let (session, driver) = channel(None);
+    let session = session.with_exec(Arc::new(LocalExec));
     thread::spawn(move || {
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
             block_on(

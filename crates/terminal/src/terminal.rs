@@ -1,9 +1,10 @@
 mod input;
 mod output;
+mod presentation;
 
 use std::{
     cell::RefCell,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -70,7 +71,9 @@ pub struct Terminal {
     local_transport: Option<Arc<dyn Transport>>,
     command_completion: Option<CommandCompletion>,
     integration: RefCell<ShellIntegration>,
+    agent_input: RefCell<input::AgentInput>,
     shell_program: String,
+    shell_syntax: Option<nocterm_workspace::ShellSyntax>,
     session: Option<Session>,
     fs: Option<Arc<dyn RemoteFs>>,
     status: Status,
@@ -78,6 +81,7 @@ pub struct Terminal {
     prompt_epoch: u64,
     connection_epoch: u64,
     emulator: Emulator,
+    display_revision: u64,
     find: FindState,
     find_task: Option<Task<()>>,
     /// What the running program called its window.
@@ -153,7 +157,9 @@ impl Terminal {
             local_transport,
             command_completion,
             integration: RefCell::default(),
+            agent_input: RefCell::default(),
             shell_program: String::new(),
+            shell_syntax: None,
             session: None,
             fs: None,
             status: Status::Connecting(ConnectStage::Connecting),
@@ -161,6 +167,7 @@ impl Terminal {
             prompt_epoch: 0,
             connection_epoch: 0,
             emulator: Emulator::new(TermSize::default(), options),
+            display_revision: 0,
             find: FindState::default(),
             find_task: None,
             program_title: None,
@@ -170,7 +177,7 @@ impl Terminal {
                 let options = emulator_options(&cx.settings().terminal);
                 this.emulator.set_options(options);
                 this.refresh_find(cx);
-                cx.emit(TerminalEvent::Output);
+                this.emit_output(cx);
             }),
         };
         this.connect(cx);
@@ -263,10 +270,14 @@ impl Terminal {
                 .clone()
                 .unwrap_or_else(|| shell_launch(&settings.ssh.launch))
         };
-        if self.local {
-            self.shell_program = launch.program.clone().unwrap_or_else(|| {
+        self.shell_program = launch.program.clone().unwrap_or_else(|| {
+            if self.local {
                 std::env::var(if cfg!(windows) { "COMSPEC" } else { "SHELL" }).unwrap_or_default()
-            });
+            } else {
+                String::new()
+            }
+        });
+        if self.local {
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
         let transport = match &self.local_transport {
@@ -331,6 +342,8 @@ impl Terminal {
 
     /// Ends the session.
     pub fn close(&mut self) {
+        self.agent_input.borrow_mut().revoke();
+        *self.integration.borrow_mut() = ShellIntegration::default();
         self.connection_epoch = self.connection_epoch.wrapping_add(1);
         self._pump = None;
         self.sync_timer = None;
@@ -406,7 +419,7 @@ impl Terminal {
         for effect in effects {
             match effect {
                 Effect::Reply(bytes) => {
-                    self.send(bytes);
+                    self.send_protocol(bytes);
                 }
                 Effect::Title(title) => {
                     if self.program_title != title {
@@ -445,18 +458,13 @@ impl Terminal {
                         let effects = this.emulator.finish_sync();
                         this.apply(effects, cx);
                         this.refresh_find(cx);
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     // The program ended it, or began another one since.
                     _ => this.schedule_sync(cx),
                 }
             });
         }));
-    }
-
-    /// Whether this terminal runs a one-shot host command.
-    pub fn is_command(&self) -> bool {
-        self.local_transport.is_some()
     }
 
     /// Whether this model owns a local PTY.
@@ -467,45 +475,6 @@ impl Terminal {
     /// Directory announced by OSC 7, never guessed from prompt text.
     pub fn cwd(&self) -> Option<PathBuf> {
         self.integration.borrow().cwd.clone()
-    }
-
-    /// Changes a known idle, empty local prompt. Otherwise returns a prepared command.
-    pub fn change_directory(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<(), String> {
-        if !self.local || !self.is_connected() {
-            return Err("Open a connected local terminal first.".into());
-        }
-        let _ = cx;
-        let stem = Path::new(&self.shell_program)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        let path = path
-            .to_str()
-            .ok_or("The shell cannot represent this directory path.")?;
-        if path.contains(['\0', '\r', '\n']) {
-            return Err(
-                "Directory paths with control characters require manual navigation.".into(),
-            );
-        }
-        let command=match stem {
-            "bash"|"zsh"|"fish"=>format!("cd -- {}",nocterm_session::quote_posix(path)),
-            "pwsh"|"powershell"=>format!("Set-Location -LiteralPath {}",nocterm_session::quote_powershell(path)),
-            _=>return Err("Directory synchronization needs Bash, Zsh, fish or PowerShell with shell integration enabled.".into()),
-        };
-        let integration = self.integration.borrow();
-        if !integration.at_prompt || integration.dirty_input || self.emulator.modes().alt_screen {
-            return Err(format!(
-                "The shell is busy or has unfinished input. Run at an empty prompt: {command}"
-            ));
-        }
-        drop(integration);
-        let bytes = self.codec.encode(&format!("{command}\r"))?;
-        if !self.send(bytes) {
-            return Err(
-                "Directory change was not sent because the terminal input queue is full.".into(),
-            );
-        }
-        Ok(())
     }
 
     pub fn text_error(&self) -> Option<String> {
@@ -591,30 +560,6 @@ impl Terminal {
         cx.emit(TerminalEvent::Changed);
     }
 
-    /// Delivers bytes to the remote program, if it is running.
-    pub fn send(&self, bytes: impl Into<Vec<u8>>) -> bool {
-        if let (Some(session), Status::Connected) = (&self.session, &self.status) {
-            let bytes = bytes.into();
-            let accepted = if self.local {
-                let accepted = session.input(bytes.clone());
-                if accepted {
-                    self.integration.borrow_mut().input(&bytes);
-                }
-                accepted
-            } else {
-                session.input(bytes)
-            };
-            *self.input_error.borrow_mut() = if accepted {
-                None
-            } else {
-                Some("Input was not sent: the connection's input queue is full or the paste exceeds 4 MiB. Wait and retry with a smaller selection.".into())
-            };
-            accepted
-        } else {
-            false
-        }
-    }
-
     /// Lays the grid out anew, and tells the remote program.
     pub fn resize(&mut self, size: TermSize, cx: &mut Context<Self>) {
         if size == self.emulator.size() {
@@ -685,7 +630,7 @@ impl Terminal {
             ..Default::default()
         };
         self.emulator.clear_search();
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
     }
 
     fn refresh_find(&mut self, cx: &mut Context<Self>) {
@@ -720,7 +665,7 @@ impl Terminal {
         if self.find.query.is_empty() {
             self.find.searching = false;
             self.find.result = SearchResult::default();
-            cx.emit(TerminalEvent::Output);
+            self.emit_output(cx);
             return;
         }
         let mut scan = match self.emulator.search_with_options(
@@ -733,12 +678,12 @@ impl Terminal {
             Err(error) => {
                 self.find.error = Some(error);
                 self.find.searching = false;
-                cx.emit(TerminalEvent::Output);
+                self.emit_output(cx);
                 return;
             }
         };
         self.find.searching = true;
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
         self.find_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let mut restart = delay != Duration::ZERO;
@@ -766,7 +711,7 @@ impl Terminal {
                         previewed = Some(found);
                         this.find.result.active = Some(found);
                         this.emulator.show_search_match(found);
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     if let SearchProgress::Failed(error) = &progress {
                         this.find.error = Some(error.clone());
@@ -774,7 +719,7 @@ impl Terminal {
                         this.find.searching = false;
                         this.find_task = None;
                         this.emulator.clear_search();
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     if let SearchProgress::Complete(result) = progress {
                         this.find.result = result;
@@ -785,7 +730,7 @@ impl Terminal {
                         {
                             this.emulator.show_search_match(active);
                         }
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     progress
                 });
@@ -822,21 +767,6 @@ impl Terminal {
                 }
             }
         }));
-    }
-
-    /// Gives the emulator to `edit`, for selection and scrolling, and redraws.
-    pub fn update_emulator<R>(
-        &mut self,
-        cx: &mut Context<Self>,
-        edit: impl FnOnce(&mut Emulator) -> R,
-    ) -> R {
-        let result = edit(&mut self.emulator);
-        cx.emit(TerminalEvent::Output);
-        result
-    }
-
-    pub fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
-        self.update_emulator(cx, |emulator| emulator.scroll(scroll));
     }
 }
 
@@ -882,7 +812,7 @@ mod local_tests {
     use super::*;
     use futures::FutureExt as _;
     use gpui_kit::{AppContext as _, TestAppContext};
-    use std::sync::Mutex;
+    use std::{path::Path, sync::Mutex};
 
     struct FakeTransport(Arc<Mutex<Option<nocterm_session::SessionDriver>>>);
     impl nocterm_session::Transport for FakeTransport {

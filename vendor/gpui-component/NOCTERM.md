@@ -78,3 +78,14 @@ the TabBar's separate sliding indicator is outside the drag root. No extra
 preview frame, padding, opacity or controls are introduced. The child module's
 native pointer regressions cover active and inactive default tabs, floating tabs
 and single-panel titles.
+
+`src/dock/panel.rs` adds presentation hooks `menu_visible` (default `true`)
+and `free_header_content` (default `None`), delegated through `PanelView` and
+`PanelHandle`. The extracted `tab_panel/header.rs` suppresses the ellipsis only
+when requested and places custom content solely in the unoccupied single-title
+area or existing trailing tab-bar space. Tabs, aliases, toolbar controls and
+existing drag/drop handlers retain their original ownership. Nocterm's bottom
+local terminals use these hooks for direct add/zoom controls and a blank-header
+double-click gesture; other panels preserve their original presentation.
+Existing tab-group tests were moved unchanged into coherent child modules.
+Remove this patch when upstream provides equivalent free-header customization.

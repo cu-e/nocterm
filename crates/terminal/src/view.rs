@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui_kit::{
@@ -41,7 +41,13 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// slow link.
 const MAX_WHEEL_REPORTS: i32 = 10;
 
+mod commands;
+mod cursor;
 mod host_key;
+mod input;
+mod keyboard;
+mod paste;
+mod render;
 #[path = "view_secret.rs"]
 mod secret;
 #[cfg(test)]
@@ -51,14 +57,19 @@ mod tests;
 /// A terminal tab.
 pub struct TerminalView {
     terminal: Entity<Terminal>,
+    keyboard: keyboard::KeyboardInput,
     focus_handle: FocusHandle,
     focused: bool,
     /// Shared with the element, which fills them in while painting.
     frame: Rc<RefCell<Frame>>,
+    frame_dirty: Rc<Cell<bool>>,
+    frame_version: Rc<Cell<Option<(u64, u64)>>>,
+    highlights: Rc<RefCell<crate::highlighting::Highlights>>,
     geometry: Rc<Cell<Option<Geometry>>>,
     /// The palette last handed to the emulator.
     palette: Option<Palette>,
     cursor_lit: bool,
+    next_blink: Instant,
     _blink: Task<()>,
     /// Text an input method is composing.
     marked_text: Option<String>,
@@ -122,6 +133,13 @@ impl TerminalView {
 
         let subscriptions = vec![
             cx.subscribe_in(&terminal, window, Self::on_terminal_event),
+            cx.observe_keystrokes(Self::on_keyboard_binding),
+            cx.observe_global::<nocterm_ui::SettingsStore>(|this, cx| {
+                if !cx.settings().terminal.semantic_highlighting {
+                    this.highlights.borrow_mut().clear();
+                }
+                cx.notify();
+            }),
             cx.on_focus_in(&focus_handle, window, |this, _, cx| {
                 this.focus_changed(true, cx)
             }),
@@ -132,12 +150,17 @@ impl TerminalView {
 
         Self {
             terminal,
+            keyboard: Default::default(),
             focus_handle,
             focused: false,
             frame: Rc::default(),
+            frame_dirty: Rc::new(Cell::new(true)),
+            frame_version: Rc::default(),
+            highlights: Rc::default(),
             geometry: Rc::default(),
             palette: None,
             cursor_lit: true,
+            next_blink: cx.background_executor().now() + CURSOR_BLINK_INTERVAL,
             _blink: Self::blink(cx),
             marked_text: None,
             selecting: false,
@@ -162,14 +185,17 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_keyboard(cx);
         match event {
             TerminalEvent::Changed => {
+                self.frame_dirty.set(true);
                 self.sync_secret_field(window, cx);
                 self.sync_operational_notices(window, cx);
                 cx.emit(ItemEvent::Changed);
                 cx.notify();
             }
             TerminalEvent::Output => {
+                self.frame_dirty.set(true);
                 self.sync_operational_notices(window, cx);
                 cx.notify();
             }
@@ -242,9 +268,12 @@ impl TerminalView {
 
     fn focus_changed(&mut self, focused: bool, cx: &mut Context<Self>) {
         self.focused = focused;
+        if !focused {
+            self.keyboard.clear();
+        }
         let terminal = self.terminal.read(cx);
         if let Some(report) = encode_focus(focused, terminal.emulator().modes()) {
-            terminal.send(report);
+            terminal.send_protocol(report);
         }
         if focused
             && self
@@ -259,70 +288,15 @@ impl TerminalView {
         self.wake_cursor(cx);
     }
 
-    // ── Cursor ───────────────────────────────────────────────────────────────
-
-    fn blink(cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
-                let alive = this.update(cx, |this, cx| {
-                    let blinking = this.frame.borrow().cursor.is_some_and(|c| c.blinking);
-                    if this.focused && blinking {
-                        this.cursor_lit = !this.cursor_lit;
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        })
-    }
-
-    /// Lights the cursor and restarts its blink, as after typing.
-    fn wake_cursor(&mut self, cx: &mut Context<Self>) {
-        self.cursor_lit = true;
-        self._blink = Self::blink(cx);
-        cx.notify();
-    }
-
     // ── Keyboard ─────────────────────────────────────────────────────────────
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        // Keys typed into a prompt bubble up through here too.
-        if !self.focus_handle.is_focused(window) {
-            return;
-        }
-        let keystroke = &event.keystroke;
-        // The platform key (cmd, super) belongs to the application's bindings.
-        if keystroke.modifiers.platform {
-            return;
-        }
-        let press = KeyPress {
-            key: &keystroke.key,
-            modifiers: modifiers(&keystroke.modifiers),
-            text: keystroke.key_char.as_deref(),
-        };
-        let modes = self.terminal.read(cx).emulator().modes();
-        if let Some(bytes) = encode_key(&press, modes) {
-            cx.stop_propagation();
-            self.type_text(
-                std::str::from_utf8(&bytes)
-                    .expect("keyboard encoder produces UTF-8 text and ASCII controls"),
-                cx,
-            );
-        }
-    }
-
-    fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |terminal, cx| {
-            terminal.update_emulator(cx, |emulator| {
-                emulator.scroll(Scroll::Bottom);
-                emulator.clear_selection();
-            });
-            terminal.send_text(text, cx);
+    fn type_text(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        let accepted = self.terminal.update(cx, |terminal, cx| {
+            terminal.prepare_input(cx);
+            terminal.send_text(text, cx)
         });
         self.wake_cursor(cx);
+        accepted
     }
     fn toggle_recording(&mut self, _: &ToggleRecording, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal
@@ -496,18 +470,6 @@ impl TerminalView {
         self.copy_selection(cx);
     }
 
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
-        let modes = self.terminal.read(cx).emulator().modes();
-        self.type_text(
-            std::str::from_utf8(&encode_paste(&text, modes))
-                .expect("paste wrapping preserves UTF-8"),
-            cx,
-        );
-    }
-
     fn scroll_page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal
             .update(cx, |terminal, cx| terminal.scroll(Scroll::PageUp, cx));
@@ -613,149 +575,6 @@ impl TerminalView {
         }
     }
 
-    fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let field = self.find.as_ref()?;
-        let find = self.terminal.read(cx).find();
-        let label = if let Some(error) = &find.error {
-            error.clone()
-        } else if find.query.is_empty() {
-            "".into()
-        } else if find.searching {
-            "Searching…".into()
-        } else if find.result.count == 0 {
-            "No matches".into()
-        } else {
-            format!("{} of {}", find.result.ordinal, find.result.count)
-        };
-        let disabled = find.query.is_empty()
-            || find.searching
-            || find.result.count == 0
-            || find.error.is_some();
-        Some(
-            v_flex()
-                .flex_shrink_0()
-                .px_2()
-                .py_1()
-                .gap_1()
-                .bg(cx.theme().background)
-                .on_action(cx.listener(|this, _: &native_input::Escape, window, cx| {
-                    cx.stop_propagation();
-                    this.hide_find(window, cx);
-                }))
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    if event.keystroke.key == "escape" {
-                        cx.stop_propagation();
-                        this.hide_find(window, cx);
-                    }
-                }))
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&field.input).small()),
-                        )
-                        .child(
-                            Button::new("find-regex")
-                                .ghost()
-                                .small()
-                                .label(".*")
-                                .selected(find.options.regex)
-                                .tooltip("Use regular expression (per logical line)")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_find_option(
-                                        |options| options.regex = !options.regex,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(
-                            Button::new("find-case-sensitive")
-                                .ghost()
-                                .small()
-                                .label("Aa")
-                                .selected(find.options.case_sensitive)
-                                .tooltip("Match case")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_find_option(
-                                        |options| options.case_sensitive = !options.case_sensitive,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(
-                            Button::new("find-whole-word")
-                                .ghost()
-                                .small()
-                                .label("ab")
-                                .selected(find.options.whole_word)
-                                .tooltip("Match whole word")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_find_option(
-                                        |options| options.whole_word = !options.whole_word,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                        .child(
-                            Button::new("find-previous")
-                                .ghost()
-                                .small()
-                                .icon(IconName::ArrowUp)
-                                .tooltip("Previous match (Shift+Enter)")
-                                .disabled(disabled)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.terminal.update(cx, |t, cx| t.find_next(true, cx));
-                                })),
-                        )
-                        .child(
-                            Button::new("find-next")
-                                .ghost()
-                                .small()
-                                .icon(IconName::ArrowDown)
-                                .tooltip("Next match (Enter)")
-                                .disabled(disabled)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.terminal.update(cx, |t, cx| t.find_next(false, cx));
-                                })),
-                        )
-                        .child(
-                            Button::new("find-close")
-                                .ghost()
-                                .small()
-                                .icon(IconName::X)
-                                .tooltip("Close search (Escape)")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.hide_find(window, cx)),
-                                ),
-                        ),
-                )
-                .when(!label.is_empty(), |bar| {
-                    bar.child(
-                        div()
-                            .text_xs()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if find.error.is_some() {
-                                cx.theme().danger
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child(label),
-                    )
-                })
-                .into_any_element(),
-        )
-    }
-
-    // ── Prompts ──────────────────────────────────────────────────────────────
-
     /// Creates the field for a requested secret, or drops it once answered.
     fn sync_secret_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.read(cx);
@@ -836,7 +655,7 @@ impl TerminalView {
 
     /// Tells the emulator the colours it is drawn with, so it can answer
     /// programs that ask.
-    fn sync_palette(&mut self, style: &TerminalStyle, cx: &mut Context<Self>) {
+    pub(super) fn sync_palette(&mut self, style: &TerminalStyle, cx: &mut Context<Self>) {
         let rgb = |color: nocterm_ui::Color| Rgb::new(color.r, color.g, color.b);
         let palette = Palette {
             foreground: rgb(style.foreground),
@@ -846,215 +665,10 @@ impl TerminalView {
         };
         if self.palette != Some(palette) {
             self.palette = Some(palette);
+            self.frame_dirty.set(true);
             self.terminal
                 .update(cx, |terminal, _| terminal.set_palette(palette));
         }
-    }
-
-    fn render_prompt(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let card = match self.terminal.read(cx).prompt()? {
-            Prompt::UnknownHostKey {
-                host,
-                algorithm,
-                fingerprint,
-                ..
-            } => {
-                let (host, algorithm, fingerprint) =
-                    (host.clone(), algorithm.clone(), fingerprint.clone());
-                self.render_host_key(host, algorithm, fingerprint, cx)
-            }
-            Prompt::ChangedHostKey {
-                host,
-                port,
-                algorithm,
-                old_fingerprints,
-                fingerprint,
-                known_hosts,
-                line,
-                replacement_error,
-                ..
-            } => {
-                let details = host_key::ChangedKey {
-                    host: if *port == 22 {
-                        host.clone()
-                    } else {
-                        format!("[{host}]:{port}")
-                    },
-                    algorithm: algorithm.clone(),
-                    old_fingerprints: old_fingerprints.clone(),
-                    fingerprint: fingerprint.clone(),
-                    known_hosts: known_hosts.clone(),
-                    line: *line,
-                    replacement_error: replacement_error.clone(),
-                };
-                self.render_changed_host_key(details, cx)
-            }
-            Prompt::Secret { request, .. } => {
-                let request = request.clone();
-                self.render_secret(&request, cx)?
-            }
-        };
-
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(cx.theme().overlay)
-                .occlude()
-                .child(card)
-                .into_any_element(),
-        )
-    }
-
-    pub(super) fn card(&self, title: impl Into<SharedString>, cx: &App) -> gpui_kit::Div {
-        let theme = cx.theme();
-        v_flex()
-            .w(rems(cx.design().layout.dialog_width))
-            .max_w_full()
-            .gap_3()
-            .p_4()
-            .rounded(theme.radius_lg)
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.popover)
-            .text_color(theme.popover_foreground)
-            .shadow_lg()
-            .child(div().font_semibold().child(title.into()))
-    }
-
-    fn render_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let terminal = self.terminal.read(cx);
-        if terminal.prompt().is_some() {
-            return None;
-        }
-        let target = terminal.spec().target.to_string();
-        let theme = cx.theme();
-
-        match terminal.status().clone() {
-            Status::Connected => None,
-            Status::Connecting(stage) => {
-                let text = match stage {
-                    ConnectStage::Connecting => format!("Connecting to {target}…"),
-                    ConnectStage::Authenticating => format!("Signing in to {target}…"),
-                    ConnectStage::StartingShell => "Starting the shell…".to_owned(),
-                };
-                Some(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(Icon::new(IconName::Loader).small())
-                                .child(text),
-                        )
-                        .into_any_element(),
-                )
-            }
-            Status::Closed(reason) => {
-                let (icon, color, text) = match &reason {
-                    CloseReason::Exited(None | Some(0)) => (
-                        IconName::Unplug,
-                        theme.muted_foreground,
-                        "The session ended.".to_owned(),
-                    ),
-                    CloseReason::Exited(Some(code)) => (
-                        IconName::Unplug,
-                        theme.muted_foreground,
-                        format!("The shell exited with status {code}."),
-                    ),
-                    CloseReason::ClosedByUser => (
-                        IconName::Unplug,
-                        theme.muted_foreground,
-                        "The session was closed.".to_owned(),
-                    ),
-                    CloseReason::Failed(error) => (
-                        IconName::ServerOff,
-                        theme.danger,
-                        capitalize(&error.to_string()),
-                    ),
-                };
-                Some(
-                    h_flex()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .justify_center()
-                        .p_3()
-                        .child(
-                            h_flex()
-                                .occlude()
-                                .max_w_full()
-                                .gap_3()
-                                .py_2()
-                                .px_3()
-                                .rounded(theme.radius_lg)
-                                .border_1()
-                                .border_color(theme.border)
-                                .bg(theme.popover)
-                                .text_color(theme.popover_foreground)
-                                .shadow_lg()
-                                .child(Icon::new(icon).small().text_color(color))
-                                .child(div().text_sm().min_w_0().child(text))
-                                .child(
-                                    Button::new("reconnect")
-                                        .primary()
-                                        .small()
-                                        .icon(IconName::Plug)
-                                        .label("Reconnect")
-                                        .disabled(self.terminal.read(cx).is_command())
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reconnect(&Reconnect, window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("close-ended-tab")
-                                        .ghost()
-                                        .small()
-                                        .label("Close")
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(ItemEvent::CloseRequested)
-                                        })),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
-        }
-    }
-}
-
-fn capitalize(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
-
-fn modifiers(modifiers: &gpui_kit::Modifiers) -> Modifiers {
-    Modifiers {
-        ctrl: modifiers.control,
-        alt: modifiers.alt,
-        shift: modifiers.shift,
-    }
-}
-
-fn vt_button(button: MouseButton) -> Option<nocterm_vt::MouseButton> {
-    match button {
-        MouseButton::Left => Some(nocterm_vt::MouseButton::Left),
-        MouseButton::Middle => Some(nocterm_vt::MouseButton::Middle),
-        MouseButton::Right => Some(nocterm_vt::MouseButton::Right),
-        _ => None,
     }
 }
 
@@ -1068,308 +682,6 @@ impl Focusable for TerminalView {
                 .map(|find| find.input.read(cx).focus_handle(cx))
                 .unwrap_or_else(|| self.focus_handle.clone()),
         }
-    }
-}
-
-impl Render for TerminalView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = TerminalStyle::current(cx);
-        self.sync_palette(&style, cx);
-        let background = nocterm_ui::hsla(style.background);
-
-        let element = TerminalElement {
-            view: cx.entity(),
-            terminal: self.terminal.clone(),
-            focus: self.focus_handle.clone(),
-            style,
-            focused: self.focus_handle.is_focused(window),
-            cursor_lit: self.cursor_lit,
-            marked_text: self.marked_text.clone().map(SharedString::from),
-            frame: self.frame.clone(),
-            geometry: self.geometry.clone(),
-        };
-
-        let grid = div()
-            .flex_1()
-            .min_h_0()
-            .key_context(KEY_CONTEXT)
-            .relative()
-            .size_full()
-            .overflow_hidden()
-            .bg(background)
-            .on_key_down(cx.listener(Self::on_key_down))
-            .on_action(cx.listener(Self::scroll_page_up))
-            .on_action(cx.listener(Self::scroll_page_down))
-            .on_action(cx.listener(Self::scroll_to_top))
-            .on_action(cx.listener(Self::scroll_to_bottom))
-            .on_action(cx.listener(Self::reconnect))
-            .on_action(cx.listener(Self::toggle_recording))
-            .child(
-                div()
-                    .key_context(SCREEN_KEY_CONTEXT)
-                    .track_focus(&self.focus_handle)
-                    .on_action(cx.listener(Self::copy))
-                    .on_action(cx.listener(Self::paste))
-                    .on_action(cx.listener(|this, _: &native_input::Copy, _, cx| {
-                        cx.stop_propagation();
-                        this.copy_selection(cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &native_input::Paste, window, cx| {
-                        cx.stop_propagation();
-                        this.paste(&Paste, window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &native_input::SelectAll, _, cx| {
-                        cx.stop_propagation();
-                        this.terminal
-                            .update(cx, |t, cx| t.update_emulator(cx, |e| e.select_all()));
-                    }))
-                    .size_full()
-                    .child(element.render()),
-            )
-            .children(self.render_prompt(cx))
-            .children(self.render_status(cx));
-        let terminal = self.terminal.read(cx);
-        let recording = terminal.recording_status();
-        let active = terminal.is_recording();
-        let command = terminal.is_command();
-        let connected = terminal.is_connected();
-        let path = recording
-            .and_then(|recording| recording.path)
-            .map(|path| path.to_string_lossy().into_owned());
-        v_flex()
-            .size_full()
-            .min_h_0()
-            .children(self.render_find(cx))
-            .child(grid)
-            .child(
-                v_flex()
-                    .flex_shrink_0()
-                    .px_2()
-                    .py_1()
-                    .gap_1()
-                    .bg(cx.theme().background)
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                Button::new("session-recording")
-                                    .ghost()
-                                    .small()
-                                    .label(if active {
-                                        "Stop recording"
-                                    } else {
-                                        "Record output"
-                                    })
-                                    .disabled(!connected || command)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.terminal.update(cx, |terminal, cx| {
-                                            terminal.toggle_recording(cx)
-                                        })
-                                    })),
-                            )
-                            .when_some(path, |row, path| {
-                                row.child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(path),
-                                )
-                            }),
-                    ),
-            )
-    }
-}
-
-impl Item for TerminalView {
-    fn terminal_access(&self) -> Option<std::rc::Rc<dyn nocterm_workspace::TerminalAccess>> {
-        Some(std::rc::Rc::new(crate::access::Access(
-            self.terminal.downgrade(),
-        )))
-    }
-    fn command_enabled(&self, command: ItemCommand, cx: &App) -> bool {
-        let terminal = self.terminal.read(cx);
-        match command {
-            ItemCommand::Copy | ItemCommand::FindNextSelection => {
-                terminal.emulator().selection_text().is_some()
-            }
-            ItemCommand::ClearSelection => terminal.emulator().selection_start().is_some(),
-            ItemCommand::Paste => terminal.is_connected(),
-            ItemCommand::Disconnect => !matches!(terminal.status(), Status::Closed(_)),
-            ItemCommand::StartRecording => {
-                !terminal.is_command() && terminal.is_connected() && !terminal.is_recording()
-            }
-            ItemCommand::Reconnect => !terminal.is_command(),
-            ItemCommand::StopRecording => terminal.is_recording(),
-            ItemCommand::FindNext | ItemCommand::FindPrevious => {
-                !terminal.find().query.is_empty() && terminal.find().error.is_none()
-            }
-            ItemCommand::SelectAll | ItemCommand::Find | ItemCommand::SessionSettings => true,
-        }
-    }
-
-    fn execute(&mut self, command: ItemCommand, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.command_enabled(command, cx) {
-            return;
-        }
-        match command {
-            ItemCommand::Copy => self.copy_selection(cx),
-            ItemCommand::Paste => self.paste(&Paste, window, cx),
-            ItemCommand::SelectAll => self
-                .terminal
-                .update(cx, |t, cx| t.update_emulator(cx, |e| e.select_all())),
-            ItemCommand::ClearSelection => self
-                .terminal
-                .update(cx, |t, cx| t.update_emulator(cx, |e| e.clear_selection())),
-            ItemCommand::Find => self.open_find(None, false, window, cx),
-            ItemCommand::FindNextSelection => {
-                let text = self.terminal.read(cx).emulator().selection_text();
-                self.open_find(text, true, window, cx);
-            }
-            ItemCommand::FindNext | ItemCommand::FindPrevious => {
-                self.terminal.update(cx, |t, cx| {
-                    t.find_next(command == ItemCommand::FindPrevious, cx)
-                })
-            }
-            ItemCommand::Disconnect => self.terminal.update(cx, |t, cx| t.disconnect(cx)),
-            ItemCommand::Reconnect => self.reconnect(&Reconnect, window, cx),
-            ItemCommand::StartRecording => self.terminal.update(cx, |t, cx| t.start_recording(cx)),
-            ItemCommand::StopRecording => self.terminal.update(cx, |t, cx| {
-                t.stop_recording();
-                cx.emit(TerminalEvent::Changed);
-            }),
-            ItemCommand::SessionSettings => {
-                crate::session_settings::open(self.terminal.clone(), window, cx)
-            }
-        }
-    }
-    fn tab_title(&self, cx: &App) -> SharedString {
-        self.terminal.read(cx).spec().title.clone()
-    }
-
-    fn tab_state(&self, cx: &App) -> TabState {
-        let terminal = self.terminal.read(cx);
-        if terminal.prompt().is_some() {
-            return TabState::Attention;
-        }
-        match terminal.status() {
-            Status::Connecting(_) => TabState::Busy,
-            Status::Connected => TabState::Idle,
-            Status::Closed(_) => TabState::Ended,
-        }
-    }
-
-    fn session(&self, cx: &App) -> Option<SessionContext> {
-        let terminal = self.terminal.read(cx);
-        (!terminal.is_local()).then(|| terminal.session_context())
-    }
-
-    fn session_spec(&self, cx: &App) -> Option<SessionSpec> {
-        let terminal = self.terminal.read(cx);
-        (!terminal.is_local() && !terminal.is_command()).then(|| terminal.spec().clone())
-    }
-
-    fn on_close(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.terminal
-            .update(cx, |terminal, cx| terminal.disconnect(cx));
-    }
-}
-
-/// Text input: what the keyboard types once keys are composed, and what an
-/// input method is composing. The terminal has no editable text of its own,
-/// so ranges are relative to the composition.
-impl EntityInputHandler for TerminalView {
-    fn text_for_range(
-        &mut self,
-        _: Range<usize>,
-        _: &mut Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<String> {
-        None
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _: bool,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        let end = self
-            .marked_text
-            .as_ref()
-            .map_or(0, |text| text.encode_utf16().count());
-        Some(UTF16Selection {
-            range: end..end,
-            reversed: false,
-        })
-    }
-
-    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        self.marked_text
-            .as_ref()
-            .map(|text| 0..text.encode_utf16().count())
-    }
-
-    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.marked_text = None;
-        cx.notify();
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
-        text: &str,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.marked_text = None;
-        if !text.is_empty() {
-            self.type_text(text, cx);
-        }
-        cx.notify();
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _: Option<Range<usize>>,
-        text: &str,
-        _: Option<Range<usize>>,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.marked_text = Some(text.to_owned()).filter(|text| !text.is_empty());
-        cx.notify();
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _: Range<usize>,
-        _: Bounds<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        let geometry = self.geometry.get()?;
-        let cursor = self.frame.borrow().cursor?;
-        Some(geometry.cell_bounds(
-            CellPoint {
-                row: cursor.row,
-                col: cursor.col,
-            },
-            1,
-        ))
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _: Point<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<usize> {
-        None
     }
 }
 
@@ -1391,3 +703,20 @@ impl nocterm_workspace::LocalTerminal for TerminalView {
 #[cfg(test)]
 #[path = "view_prompt_tests.rs"]
 mod prompt_tests;
+
+fn modifiers(modifiers: &gpui_kit::Modifiers) -> Modifiers {
+    Modifiers {
+        ctrl: modifiers.control,
+        alt: modifiers.alt,
+        shift: modifiers.shift,
+    }
+}
+
+fn vt_button(button: MouseButton) -> Option<nocterm_vt::MouseButton> {
+    match button {
+        MouseButton::Left => Some(nocterm_vt::MouseButton::Left),
+        MouseButton::Middle => Some(nocterm_vt::MouseButton::Middle),
+        MouseButton::Right => Some(nocterm_vt::MouseButton::Right),
+        _ => None,
+    }
+}

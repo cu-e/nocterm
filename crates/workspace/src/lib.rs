@@ -24,6 +24,7 @@ mod actions;
 pub mod command_palette;
 mod connection_directory;
 mod dock_item;
+mod file_drag;
 pub mod host;
 mod item;
 mod local_terminal;
@@ -36,15 +37,16 @@ mod workspace;
 
 pub use actions::*;
 pub use connection_directory::{ConnectionDirectory, ConnectionSummary};
-pub use host::{Host, HostKey, ProgramSpec};
+pub use file_drag::{FileDrag, RemoteFileDrag};
+pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
 pub use item::{Item, ItemCommand, ItemEvent, ItemHandle, SessionContext, TabState};
-pub use local_terminal::LocalTerminal;
+pub use local_terminal::{LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
 pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
 pub use terminal_access::{
-    SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus, TerminalText,
-    TextRequest,
+    LiveCommandLease, SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus,
+    TerminalText, TextRequest,
 };
 pub use workspace::{SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
 

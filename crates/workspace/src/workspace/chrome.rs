@@ -143,7 +143,11 @@ impl Workspace {
 
     /// The open tabs, or an invitation to open one.
     fn render_content(&self, cards: Option<FloatingCards>, cx: &mut Context<Self>) -> AnyElement {
-        if !self.items.is_empty() || self.local_terminal_is_visible(cx) {
+        if self
+            .items
+            .iter()
+            .any(|open| self.item_visible(open.handle.item_id(), cx))
+        {
             // The dock frames each of its tab groups itself.
             return div()
                 .size_full()

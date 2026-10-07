@@ -62,6 +62,42 @@ drag payloads remain independent of the visual snapshot, including multi-selecti
 Connections draw quiet insertion overlays and explicit append targets after every
 expanded group's last row. The toolkit shares tab/title presentation with passive
 previews and reports the actual source size and pointer offset to dock drop geometry.
+Terminal elements reuse the emulator snapshot until output, presentation state,
+size or palette changes. Selection, scrolling and search advance a presentation
+revision before event subscribers run. Input at an unchanged live screen waits
+for shell echo; cursor timing and IME overlays redraw only when their presentation
+changes. VT scroll boundaries preserve selection and avoid unnecessary output
+notifications, including selection recomputation in vi mode.
+
+Windows incremental painting stays inside the vendored GPUI renderer. Exact
+scene comparisons identify conservative damage; a retained image is cleared and
+recomposed only within that region, then copied completely to the swap chain.
+Terminal and workspace features do not manage GPU textures or dirty rectangles.
+Resize, device recovery, atlas content changes and unsupported content force a full
+frame. Unsupported partial-clear devices and retained-allocation failures keep
+the full-render path. The [renderer patch notes](../vendor/gpui-pre-windows/NOCTERM_PATCH.md)
+describe the resource lifecycle and pixel-equivalence tests.
+
+Linux uses original full rendering by default. Experimental incremental painting
+requires `NOCTERM_EXPERIMENTAL_LINUX_RETAINED_RENDERER=1` and stays inside the
+pinned WGPU renderer. Supported
+surfaces receive a complete copy of a same-format retained image on every
+presentation, including unchanged scenes. Partial updates overwrite the damaged
+rectangle without blending and replay intersecting batches in order; reopened
+path passes restore the scissor. Atlas content revisions and renderer lifecycle
+changes invalidate the image. Capability, allocation and bounded-memory
+fallbacks preserve the original full renderer, which remains the pixel oracle.
+Two bounded snapshots reuse storage; an exact record-pair memo resets for each
+comparison. Snapshots rotate only after successful submission with an unchanged
+atlas revision, and invalidation releases their storage.
+The [WGPU patch notes](../vendor/gpui-pre-wgpu/NOCTERM_PATCH.md) record the Linux
+scope, provenance and tests. Linux scroll-copy is not enabled.
+Measured retained scrolling still increased CPU per event by about 3.3–3.8%
+on the tested Radeon/Vulkan system, so it is not enabled by default.
+The shared GPUI Div scroll handler uses the same snapped and rounded bounds as
+prepaint to clamp a wheel offset before comparing and notifying. Events keep
+bubbling; fitting containers and scroll boundaries avoid transient invalidation.
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
@@ -71,9 +107,24 @@ closures snapshot the clicked Item and resolve its current pane order at executi
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
 footer owns section switches and status views. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
-detaches its panel without closing the Item; showing it restores the same Item
-and dock height. Bottom local
-terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
+uses native dock visibility, preserving its pane tree, sizes, tab order,
+selections, groups and running processes. Every user tab shares one Item registry
+and the same close, split, grouping, rename and keyboard operations. Close scopes
+resolve the clicked tab's current native pane; Close All affects its dock placement.
+Local shell capability is an optional Item contract, so mixed panes and moved local
+tabs retain identical ownership. Local focus preserves the last central remote
+context for Explorer; native group selection owns the local cwd target. Header
+add controls pass an explicit `LocalTerminalTarget::Beside(EntityId)` to the opener,
+resolving the live anchor pane when the new shell registers, including moves to
+Center. A stale anchor closes only the new shell; registered Items are never
+closed by a rejected registration. Native pane queries and empty-region cleanup
+belong to the shared workspace docking module. DockItem adapts presentation;
+the workspace owns focus subscriptions and active session selection.
+Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
+accepted topology changes clear it to reveal their result. Hiding Bottom leaves
+local tabs moved to Center visible. A region's last tab can be dragged to another
+open visible region; the final visible workspace tab and explicit locks remain
+protected. Empty noncentral regions disappear after moves without closing Items. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
 opener connect requests from the connections feature to the terminal feature.
@@ -104,7 +155,57 @@ required; SSH and local shells use the same terminal path.
 
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
-and settings changes. `nocterm-connections` owns persisted profiles and recents,
+and settings changes. Its renderer decorates otherwise unstyled default-color
+output with semantic roles for timestamps, validated IP addresses, versions,
+process/user identifiers and important messages. ANSI colors and program styles,
+selection, search results and block cursors take precedence. This presentation
+never enters clipboard text, recordings or terminal transport. A per-view cache
+uses output generation, viewport size, scroll offset and screen identity; blink
+and selection repaint reuse roles, while palette colors resolve at paint time.
+Only visible rows are examined, joining soft wraps on either screen. Matches
+touching a clipped soft-wrap boundary are skipped without reading off-screen
+text; complete fields elsewhere in that visible group still receive decoration. Work is
+bounded to 64 KiB of text and 65536 examined cells per frame, 4 KiB per logical
+group, 512 field matches per group and 4096 retained compact spans. Oversized
+groups are left undecorated. Disabling `terminal.semantic_highlighting` releases
+the cache and skips parsing; the Terminal settings switch is enabled by default.
+Theme ANSI colors are used only when their normal or bright variant meets 4.5:1
+contrast against the terminal background, otherwise the original foreground is
+kept. Built-in field captures follow the bounded line decoration approach used
+by [iTerm2 triggers](https://iterm2.com/triggers.html) and the semantic log fields
+in [lnav formats](https://docs.lnav.org/en/latest/formats.html).
+
+
+Keyboard input is negotiated through the emulator rather than application-name
+heuristics. `Modes::keyboard` exposes kitty's five progressive flags and xterm's
+modifyOtherKeys level. The encoder separates legacy, kitty and xterm forms,
+returning encoded input, deferred composed text, or an ignored event. Without
+negotiation, Shift+Enter remains CR; kitty flags 7 distinguish it as
+`CSI 13;2u`, while plain Enter stays CR. Enhanced F3 uses `CSI 13~`, avoiding the
+cursor-position-report collision. Kitty takes priority when both protocols are
+requested. Modifier levels and query replies follow
+[kitty's keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+and [xterm's controls](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
+Kitty effective state and a bounded 4096-entry saved stack are independent on
+each screen; the xterm modifier resource is global and resets on RIS. A narrow
+keyboard negotiation epoch also identifies transitions that return to identical
+flags within one output chunk; ordinary text and queries preserve the epoch.
+
+The view forwards repeat and release events only for accepted terminal input,
+tracking at most 128 held keys. Deferred text acquires physical ownership only
+when its commit succeeds. Application bindings, platform keys, focus changes,
+composition, reconnects and negotiation changes discard stale ownership; key
+release does not scroll or clear selection. GPUI text preference leaves AltGr
+and dead-key composition to the input method without duplicating characters.
+Text-only commits use kitty's unknown key 0 when report-all is requested, with
+Unicode text codepoints only when associated-text reporting is enabled. GPUI
+supplies logical keys and produced text, but no reliable physical base-layout
+key, keypad identity, modifier handedness or lock state. These are never guessed:
+known shifted values can be reported, generic modifier names are ignored, and
+optional alternate identities are supported by the VT API for hosts that have
+them. Platform-key combinations remain application shortcuts.
+
+`nocterm-connections` owns persisted profiles and recents,
 the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
 global keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
@@ -142,6 +243,24 @@ half uses home/listing requests; the local half owns navigation, selection and a
 cancellable background logical-size scan. Request tasks are dropped when
 superseded, and generations reject stale replies. The local cwd bridge goes
 through Workspace's `LocalTerminal` contract, without Files depending on Terminal.
+
+Explorer location editors own native input and asynchronous, bounded directory
+completion. Suggestions use a viewport-constrained popup anchored below the input,
+flipping above it when needed, so minimum-height split panes retain usable rows.
+Tab and Shift+Tab complete directories from one cached listing; Up and Down
+cycle the plain-text popup without descending into a single match.
+Editing, blur, navigation and session changes invalidate pending generations.
+Enter resolves a literal absolute, relative or home path through the existing
+browser loader, retaining the draft on failure. With the popup open, successful
+navigation preserves editing and synchronizes its absolute path while retaining
+the current focus; a second Enter without the popup closes editing. A shared
+Workspace `FileDrag`
+contract preserves local paths or pinned remote filesystem/host data. Explorer
+uses it for transfers; Terminal quotes its literal paths for the receiving shell
+and submits one checked native paste without Enter, independently of the source
+host. Wrapper programs can carry a typed receiving-shell syntax through
+`ProgramSpec`; Container Shell marks its known Bash/sh launch as POSIX, while log
+tabs retain unsupported-program handling. No feature depends on its sibling crate.
 
 Explorer context menus snapshot typed local/remote targets. A mutation dialog runs
 I/O on the background executor; completion refreshes only a matching navigation

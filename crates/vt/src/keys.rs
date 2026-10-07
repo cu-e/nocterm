@@ -1,7 +1,7 @@
 //! Turning key presses into the bytes a terminal program expects.
 //!
-//! The encodings are xterm's: `CSI` sequences for navigation keys, an
-//! `ESC` prefix for alt, control characters for ctrl.
+//! The negotiated protocol decides whether a key is legacy input, a kitty
+//! event, an xterm modifyOtherKeys event, or text delivered by the IME.
 
 use crate::Modes;
 
@@ -31,137 +31,129 @@ pub struct KeyPress<'a> {
     pub text: Option<&'a str>,
 }
 
-/// The bytes to send for a key press.
-///
-/// `None` means the key only types text; the host's text input delivers that
-/// separately, which is what makes dead keys and input methods work.
-pub fn encode_key(press: &KeyPress<'_>, modes: Modes) -> Option<Vec<u8>> {
-    let modifiers = press.modifiers;
-    let parameter = modifiers.parameter();
-    let modified = parameter != 1;
+mod kitty;
+mod legacy;
+#[cfg(test)]
+mod protocol_tests;
+mod xterm;
+#[cfg(test)]
+mod xterm_compat_tests;
 
-    match press.key {
-        "enter" => return Some(meta(modifiers.alt, b"\r")),
-        "escape" => return Some(meta(modifiers.alt, b"\x1b")),
-        "tab" if modifiers.shift => return Some(b"\x1b[Z".to_vec()),
-        "tab" => return Some(meta(modifiers.alt, b"\t")),
-        "backspace" => {
-            let erase: &[u8] = if modifiers.ctrl { b"\x08" } else { b"\x7f" };
-            return Some(meta(modifiers.alt, erase));
+/// xterm's negotiated encoding level for ordinary modified keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModifyOtherKeys {
+    #[default]
+    Off,
+    ExceptWellDefined,
+    All,
+}
+
+/// Progressive keyboard features negotiated by the running application.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyboardState {
+    pub disambiguate: bool,
+    pub report_event_types: bool,
+    pub report_alternate_keys: bool,
+    pub report_all_keys: bool,
+    pub report_associated_text: bool,
+    pub modify_other_keys: ModifyOtherKeys,
+}
+
+impl KeyboardState {
+    pub fn kitty_flags(self) -> u8 {
+        u8::from(self.disambiguate)
+            | u8::from(self.report_event_types) << 1
+            | u8::from(self.report_alternate_keys) << 2
+            | u8::from(self.report_all_keys) << 3
+            | u8::from(self.report_associated_text) << 4
+    }
+}
+
+/// Physical key event type, distinct from an IME text commit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyEventKind {
+    #[default]
+    Press,
+    Repeat,
+    Release,
+}
+
+/// Host key information. Optional alternate values must come from the host;
+/// the encoder never guesses the physical key's base keyboard layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyEvent<'a> {
+    pub press: KeyPress<'a>,
+    pub kind: KeyEventKind,
+    pub shifted_key: Option<char>,
+    pub base_layout_key: Option<char>,
+}
+
+impl<'a> KeyEvent<'a> {
+    pub fn new(press: KeyPress<'a>, kind: KeyEventKind) -> Self {
+        Self {
+            press,
+            kind,
+            shifted_key: None,
+            base_layout_key: None,
         }
-        "space" if modifiers.ctrl => return Some(meta(modifiers.alt, b"\0")),
-        "space" if modifiers.alt => return Some(b"\x1b ".to_vec()),
-        "space" => return None,
-        _ => {}
     }
-
-    if let Some(letter) = cursor_key(press.key) {
-        return Some(if modified {
-            format!("\x1b[1;{parameter}{letter}").into_bytes()
-        } else if modes.app_cursor {
-            format!("\x1bO{letter}").into_bytes()
-        } else {
-            format!("\x1b[{letter}").into_bytes()
-        });
-    }
-
-    if let Some(letter) = ss3_function_key(press.key) {
-        return Some(if modified {
-            format!("\x1b[1;{parameter}{letter}").into_bytes()
-        } else {
-            format!("\x1bO{letter}").into_bytes()
-        });
-    }
-
-    if let Some(number) = tilde_key(press.key) {
-        return Some(if modified {
-            format!("\x1b[{number};{parameter}~").into_bytes()
-        } else {
-            format!("\x1b[{number}~").into_bytes()
-        });
-    }
-
-    let mut chars = press.key.chars();
-    let (Some(ch), None) = (chars.next(), chars.next()) else {
-        return None;
-    };
-    if modifiers.ctrl {
-        return control_byte(ch).map(|byte| meta(modifiers.alt, &[byte]));
-    }
-    if modifiers.alt {
-        let typed = match press.text.filter(|text| !text.is_empty()) {
-            Some(text) => text.to_owned(),
-            None if modifiers.shift => press.key.to_uppercase(),
-            None => press.key.to_owned(),
-        };
-        return Some(meta(true, typed.as_bytes()));
-    }
-    None
 }
 
-/// Prefixes `bytes` with `ESC` when alt (meta) is held.
-fn meta(alt: bool, bytes: &[u8]) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(bytes.len() + 1);
-    if alt {
-        encoded.push(0x1b);
+/// A key is encoded once, left to composed text input, or deliberately ignored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyEncoding {
+    Encoded(Vec<u8>),
+    Text,
+    Ignored,
+}
+
+/// Encode according to negotiated keyboard features, with kitty taking priority.
+pub fn encode_key_event(event: &KeyEvent<'_>, modes: Modes) -> KeyEncoding {
+    if modes.keyboard.kitty_flags() != 0 {
+        return kitty::encode(event, modes);
     }
-    encoded.extend_from_slice(bytes);
-    encoded
+    if event.kind == KeyEventKind::Release {
+        return KeyEncoding::Ignored;
+    }
+    if let Some(bytes) = xterm::encode(&event.press, modes.keyboard.modify_other_keys) {
+        return KeyEncoding::Encoded(bytes);
+    }
+    match legacy::encode(&event.press, modes) {
+        Some(bytes) => KeyEncoding::Encoded(bytes),
+        None if text_key(&event.press) => KeyEncoding::Text,
+        None => KeyEncoding::Ignored,
+    }
 }
 
-fn cursor_key(key: &str) -> Option<char> {
-    Some(match key {
-        "up" => 'A',
-        "down" => 'B',
-        "right" => 'C',
-        "left" => 'D',
-        "home" => 'H',
-        "end" => 'F',
-        _ => return None,
-    })
+/// Compatibility convenience for a press. Event-aware hosts use [`encode_key_event`].
+pub fn encode_key(press: &KeyPress<'_>, modes: Modes) -> Option<Vec<u8>> {
+    match encode_key_event(&KeyEvent::new(*press, KeyEventKind::Press), modes) {
+        KeyEncoding::Encoded(bytes) => Some(bytes),
+        KeyEncoding::Text | KeyEncoding::Ignored => None,
+    }
 }
 
-fn ss3_function_key(key: &str) -> Option<char> {
-    Some(match key {
-        "f1" => 'P',
-        "f2" => 'Q',
-        "f3" => 'R',
-        "f4" => 'S',
-        _ => return None,
-    })
+/// Encode a text-only commit after composition. With report-all requested this
+/// uses the protocol's unknown-key code 0, and optionally includes associated text.
+pub fn encode_text_commit(text: &str, modes: Modes) -> Vec<u8> {
+    if modes.keyboard.report_all_keys {
+        kitty::text_commit(text, modes.keyboard)
+    } else {
+        text.as_bytes().to_vec()
+    }
 }
 
-fn tilde_key(key: &str) -> Option<u8> {
-    Some(match key {
-        "insert" => 2,
-        "delete" => 3,
-        "pageup" => 5,
-        "pagedown" => 6,
-        "f5" => 15,
-        "f6" => 17,
-        "f7" => 18,
-        "f8" => 19,
-        "f9" => 20,
-        "f10" => 21,
-        "f11" => 23,
-        "f12" => 24,
-        _ => return None,
-    })
+fn character(key: &str) -> Option<char> {
+    if key == "space" {
+        return Some(' ');
+    }
+    let mut chars = key.chars();
+    let ch = chars.next()?;
+    chars.next().is_none().then_some(ch)
 }
 
-/// The control character ctrl produces with `ch`, where there is one.
-fn control_byte(ch: char) -> Option<u8> {
-    Some(match ch.to_ascii_lowercase() {
-        letter @ 'a'..='z' => letter as u8 - b'a' + 1,
-        '@' | '2' => 0x00,
-        '[' | '3' => 0x1b,
-        '\\' | '4' => 0x1c,
-        ']' | '5' => 0x1d,
-        '^' | '6' => 0x1e,
-        '_' | '7' | '/' => 0x1f,
-        '?' | '8' => 0x7f,
-        _ => return None,
-    })
+fn text_key(press: &KeyPress<'_>) -> bool {
+    character(press.key).is_some() || press.text.is_some_and(|text| !text.is_empty())
 }
 
 #[cfg(test)]

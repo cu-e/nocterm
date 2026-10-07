@@ -8,7 +8,7 @@ impl Terminal {
         if let Some(recording) = &mut self.recording {
             recording.output(&bytes);
         }
-        if self.local && self.integration.borrow_mut().advance(&bytes) {
+        if self.integration.borrow_mut().advance(&bytes) {
             cx.emit(TerminalEvent::Changed);
         }
         let alt_screen = self.emulator.modes().alt_screen;
@@ -21,6 +21,6 @@ impl Terminal {
         }
         self.schedule_sync(cx);
         self.refresh_find(cx);
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
     }
 }

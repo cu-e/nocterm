@@ -49,6 +49,7 @@ pub fn init_recording(directory: std::path::PathBuf, cx: &mut gpui_kit::App) {
     .detach();
 }
 mod element;
+mod highlighting;
 pub use credentials::init_credentials;
 mod integration;
 mod session_settings;
@@ -105,10 +106,15 @@ pub fn init_local(factory: LocalFactory, cx: &mut App) {
     cx.set_global(LocalTransportFactory(factory));
 }
 
-/// Opens the independent bottom shell; Workspace owns its visibility and lifetime.
-pub fn open_local(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+/// Opens a shell in the requested live workspace pane.
+pub fn open_local(
+    workspace: &mut Workspace,
+    target: nocterm_workspace::LocalTerminalTarget,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let view = cx.new(|cx| TerminalView::new_local(window, cx));
-    workspace.set_local_terminal(view, window, cx);
+    workspace.add_local_terminal_at(view, target, window, cx);
 }
 
 /// Opens `spec` without a tab. Install it with

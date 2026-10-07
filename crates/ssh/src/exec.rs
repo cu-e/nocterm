@@ -14,7 +14,9 @@ use russh::{
     Channel, ChannelMsg, Sig,
     client::{Handle, Msg},
 };
-use tokio::{runtime, sync::mpsc, sync::watch, task::JoinSet, time::timeout};
+use tokio::{
+    io::AsyncWriteExt as _, runtime, sync::mpsc, sync::watch, task::JoinSet, time::timeout,
+};
 
 use crate::connection::{Client, Observed, confirmed, open_terminal, run_shell};
 
@@ -139,9 +141,14 @@ pub(crate) async fn serve(
 async fn run(
     handle: Arc<Handle<Client>>,
     request: ExecRequest,
-    answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
+    mut answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
 ) {
-    let channel = match timeout(START_TIMEOUT, start(&handle, &request)).await {
+    let started = tokio::select! {
+        biased;
+        () = answer.cancellation() => return,
+        started = timeout(START_TIMEOUT, start(&handle, &request)) => started,
+    };
+    let mut channel = match started {
         Ok(Ok(channel)) => channel,
         Ok(Err(error)) => {
             let _ = answer.send(Err(ExecError::Failed(error.to_string())));
@@ -156,34 +163,73 @@ async fn run(
     };
     let (sink, output) = ExecOutput::channel();
     if answer.send(Ok(output)).is_ok() {
-        forward(channel, sink).await;
+        forward(channel, request.stdin, sink).await;
     } else {
-        let _ = channel.close().await;
+        let _ = channel.channel().close().await;
     }
 }
 
 async fn start(
     handle: &Handle<Client>,
     request: &ExecRequest,
-) -> Result<Channel<Msg>, russh::Error> {
-    let mut channel = handle.channel_open_session().await?;
-    channel.exec(true, request.command_line()).await?;
-    confirmed(&mut channel).await?;
-    if let Some(stdin) = &request.stdin {
-        channel.data(&stdin[..]).await?;
-    }
-    channel.eof().await?;
+) -> Result<OwnedChannel, russh::Error> {
+    let mut channel = OwnedChannel {
+        channel: Some(handle.channel_open_session().await?),
+    };
+    channel.channel().exec(true, request.command_line()).await?;
+    confirmed(channel.channel()).await?;
     Ok(channel)
 }
 
+/// A cancelled startup or aborted connection task must close its SSH channel.
+struct OwnedChannel {
+    channel: Option<Channel<Msg>>,
+}
+
+impl OwnedChannel {
+    fn channel(&mut self) -> &mut Channel<Msg> {
+        self.channel
+            .as_mut()
+            .expect("channel is present until drop")
+    }
+}
+
+impl Drop for OwnedChannel {
+    fn drop(&mut self) {
+        if let Some(channel) = self.channel.take() {
+            tokio::spawn(async move {
+                let _ = channel.signal(Sig::TERM).await;
+                let _ = channel.close().await;
+            });
+        }
+    }
+}
+
 /// Delivers the program's output until it ends or its reader goes away.
-async fn forward(mut channel: Channel<Msg>, sink: ExecSink) {
+async fn forward(mut channel: OwnedChannel, stdin: Option<Vec<u8>>, sink: ExecSink) {
+    let mut writer = channel.channel().make_writer();
+    // Read while sending stdin: a program may fill its output window before
+    // consuming all input. Sending everything before reading can deadlock.
+    let input = async {
+        if let Some(stdin) = stdin {
+            writer.write_all(&stdin).await?;
+        }
+        writer.shutdown().await
+    };
+    tokio::pin!(input);
+    let mut input_finished = false;
     let mut errors = ErrorTail::default();
     let mut status = None;
     loop {
         tokio::select! {
             () = sink.closed() => break,
-            message = channel.wait() => match message {
+            result = &mut input, if !input_finished => {
+                input_finished = true;
+                if result.is_err() {
+                    break;
+                }
+            }
+            message = channel.channel().wait() => match message {
                 Some(ChannelMsg::Data { data }) => {
                     if !sink.send(data.to_vec()).await {
                         break;
@@ -202,8 +248,7 @@ async fn forward(mut channel: Channel<Msg>, sink: ExecSink) {
     }
     // Not every server honours signals; closing the channel also breaks the
     // program's output pipe.
-    let _ = channel.signal(Sig::TERM).await;
-    let _ = channel.close().await;
+    // OwnedChannel closes on cancellation, including task abortion.
 }
 
 /// Runs a program on a terminal of its own until it ends, its session is
