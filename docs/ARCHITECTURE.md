@@ -69,6 +69,15 @@ for shell echo; cursor timing and IME overlays redraw only when their presentati
 changes. VT scroll boundaries preserve selection and avoid unnecessary output
 notifications, including selection recomputation in vi mode.
 
+Windows incremental painting stays inside the vendored GPUI renderer. Exact
+scene comparisons identify conservative damage; a retained image is cleared and
+recomposed only within that region, then copied completely to the swap chain.
+Terminal and workspace features do not manage GPU textures or dirty rectangles.
+Resize, device recovery, atlas content changes and unsupported content force a full
+frame. Unsupported partial-clear devices and retained-allocation failures keep
+the full-render path. The [renderer patch notes](../vendor/gpui-pre-windows/NOCTERM_PATCH.md)
+describe the resource lifecycle and pixel-equivalence tests.
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
