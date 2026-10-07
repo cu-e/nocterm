@@ -4,6 +4,11 @@
 //! user, with its own host key and authorized keys. Without an `sshd` on the
 //! machine the tests pass vacuously, unless `NOCTERM_REQUIRE_SSHD` is set (CI
 //! sets it, so they cannot silently stop running there).
+//!
+//! This fixture requires a Unix host, POSIX shell tools and Unix filesystem
+//! semantics. The in-process protocol server in `startup.rs` is portable.
+
+#![cfg(unix)]
 
 use std::{
     fs,
