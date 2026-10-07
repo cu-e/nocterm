@@ -55,8 +55,13 @@ provides shared icons, terminal styling, standalone drag previews and operationa
 notices. Optional toolkit button metrics are projected from design tokens once;
 views retain standard component variants. Notices use the toolkit's window-local
 notification list with stable operation keys and recovery actions, published by
-operation events rather than rendering. Drag previews explicitly carry their
-theme and typography because GPUI renders them outside the application root.
+operation events rather than rendering. Drag previews capture painted source
+bounds and inherited typography because GPUI renders them outside the application
+root. Passive source renderers preserve Connections and Explorer row appearance;
+drag payloads remain independent of the visual snapshot, including multi-selection.
+Connections draw quiet insertion overlays and explicit append targets after every
+expanded group's last row. The toolkit shares tab/title presentation with passive
+previews and reports the actual source size and pointer offset to dock drop geometry.
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as

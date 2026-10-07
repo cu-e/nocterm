@@ -9,6 +9,7 @@ mod operations;
 mod registration;
 mod remote;
 mod remote_pane;
+mod row;
 mod settings_page;
 mod statistics;
 #[cfg(test)]
@@ -19,7 +20,7 @@ use gpui_kit::{
     AnyElement, AnyWindowHandle, App, Context, Entity, ExternalPaths, FocusHandle, Focusable,
     MouseButton, SharedString, Subscription, Task, WeakEntity, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Icon, ResizableState, Selectable as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, ResizableState, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         menu::ContextMenuExt as _,

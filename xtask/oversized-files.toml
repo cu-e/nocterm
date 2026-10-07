@@ -5,7 +5,6 @@
 
 [files]
 "crates/connections/src/model.rs" = 1217
-"crates/connections/src/panel.rs" = 890
 "crates/files/src/operations_ui_tests.rs" = 833
 "crates/files/src/tests.rs" = 1125
 "crates/ssh/src/sftp.rs" = 1362

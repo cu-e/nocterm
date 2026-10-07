@@ -23,7 +23,7 @@ mod themes;
 
 pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
-pub use drag_preview::DragPreview;
+pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
 pub use layout::LayoutMemory;
 pub use settings::{ActiveSettings, SettingsStore, edit_settings, save_settings, update_settings};
