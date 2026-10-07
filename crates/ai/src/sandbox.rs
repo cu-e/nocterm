@@ -61,6 +61,8 @@ pub struct SandboxPolicy {
     /// Readable even though they lie under a hidden or temporary path, such
     /// as the directory of the terminal tools' socket.
     pub readable: Vec<PathBuf>,
+    /// Credential roots cannot be used as a writable workspace.
+    pub credentials: Vec<PathBuf>,
 }
 
 impl SandboxPolicy {
@@ -77,16 +79,30 @@ impl SandboxPolicy {
             writable: vec![workdir.to_owned()],
             hidden: private.to_vec(),
             readable: shared.to_vec(),
+            credentials: Vec::new(),
         };
         if let Some(home) = home {
-            policy
-                .hidden
-                .extend(HIDDEN_IN_HOME.iter().map(|path| home.join(path)));
+            policy.credentials = HIDDEN_IN_HOME.iter().map(|path| home.join(path)).collect();
+            policy.hidden.extend(policy.credentials.iter().cloned());
             policy
                 .writable
                 .extend(AGENT_STATE_IN_HOME.iter().map(|path| home.join(path)));
         }
         policy
+    }
+
+    /// Refuses direct and symlinked credential workspaces before mounting them.
+    pub fn validate_workdir(&self, workdir: &Path) -> Result<(), String> {
+        let canonical = std::fs::canonicalize(workdir).unwrap_or_else(|_| workdir.to_owned());
+        if self.credentials.iter().any(|root| {
+            let resolved = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            workdir.starts_with(root) || canonical.starts_with(&resolved)
+        }) {
+            return Err(
+                "The agent workspace cannot be inside a protected credential store.".into(),
+            );
+        }
+        Ok(())
     }
 
     /// Arguments for `bwrap` that run `program` with `args` under this policy.
@@ -98,6 +114,15 @@ impl SandboxPolicy {
         args: &[String],
         exists: impl Fn(&Path) -> Option<bool>,
     ) -> Vec<String> {
+        // Compare and mount the same filesystem locations. HOME and private
+        // state may themselves be symlinks; lexical aliases would otherwise
+        // classify credential descendants as ancestors and reopen them later.
+        let resolve = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let resolved = resolve(workdir);
+        let workdir = resolved.as_path();
+        let writable: Vec<_> = self.writable.iter().map(|path| resolve(path)).collect();
+        let hidden_paths: Vec<_> = self.hidden.iter().map(|path| resolve(path)).collect();
+        let readable: Vec<_> = self.readable.iter().map(|path| resolve(path)).collect();
         let text = |path: &Path| path.to_string_lossy().into_owned();
         let mut out: Vec<String> = [
             "--ro-bind",
@@ -116,31 +141,33 @@ impl SandboxPolicy {
         ]
         .map(str::to_owned)
         .to_vec();
-        // Later mounts lie over earlier ones. Agent state goes first, so a
-        // hidden path inside it (nocterm's state under `~/.local/state`)
-        // stays hidden; the workspace and shared paths go last, so they are
-        // reachable even inside a hidden or temporary directory.
-        let hidden = |path: &Path| self.hidden.iter().any(|hidden| path.starts_with(hidden));
-        for path in self
-            .writable
-            .iter()
-            .filter(|path| path.as_path() != workdir)
-        {
+        // Mount broad writable roots first. Hidden ancestors then mask private
+        // state, while the dedicated workspace can still be reopened inside it.
+        // Hidden descendants go last so choosing home never reveals credentials.
+        let hidden = |path: &Path| hidden_paths.iter().any(|hidden| path.starts_with(hidden));
+        for path in writable.iter().filter(|path| path.as_path() != workdir) {
             if exists(path).is_some() && !hidden(path) {
                 out.extend(["--bind".into(), text(path), text(path)]);
             }
         }
-        for path in &self.hidden {
-            match exists(path) {
-                Some(true) => out.extend(["--tmpfs".into(), text(path)]),
-                Some(false) => out.extend(["--ro-bind".into(), "/dev/null".into(), text(path)]),
-                None => {}
-            }
+        let mask = |out: &mut Vec<String>, path: &Path| match exists(path) {
+            Some(true) => out.extend(["--tmpfs".into(), text(path)]),
+            Some(false) => out.extend(["--ro-bind".into(), "/dev/null".into(), text(path)]),
+            None => {}
+        };
+        for path in hidden_paths
+            .iter()
+            .filter(|path| !path.starts_with(workdir))
+        {
+            mask(&mut out, path);
         }
         if exists(workdir).is_some() {
             out.extend(["--bind".into(), text(workdir), text(workdir)]);
         }
-        for path in &self.readable {
+        for path in hidden_paths.iter().filter(|path| path.starts_with(workdir)) {
+            mask(&mut out, path);
+        }
+        for path in &readable {
             if exists(path).is_some() {
                 out.extend(["--ro-bind".into(), text(path), text(path)]);
             }
@@ -253,6 +280,7 @@ mod tests {
             ],
             hidden: vec![PathBuf::from("/state")],
             readable: Vec::new(),
+            credentials: Vec::new(),
         };
         let args = policy
             .bubblewrap_args(
@@ -264,6 +292,21 @@ mod tests {
             .join(" ");
         assert!(args.contains("--bind /state/agent-workspace /state/agent-workspace"));
         assert!(!args.contains("--bind /state/cache"));
+    }
+
+    #[test]
+    fn home_workspace_keeps_credentials_masked() {
+        let home = Path::new("/home/me");
+        let policy = SandboxPolicy::new(home, Some(home), &[], &[]);
+        let args = policy
+            .bubblewrap_args(home, Path::new("/bin/agent"), &[], |_| Some(true))
+            .join(" ");
+        assert!(
+            args.find("--bind /home/me /home/me").unwrap()
+                < args.find("--tmpfs /home/me/.ssh").unwrap()
+        );
+        assert!(policy.validate_workdir(&home.join(".aws/project")).is_err());
+        assert!(policy.validate_workdir(&home.join("project")).is_ok());
     }
 
     #[test]

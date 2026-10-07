@@ -82,6 +82,9 @@ pub(crate) fn spawn(request: &ConnectRequest) -> Result<Spawned, AgentError> {
     let (executable, process_args) = match &request.sandbox {
         None => (executable, request.launch.args.clone()),
         Some(policy) => {
+            policy
+                .validate_workdir(&request.working_directory)
+                .map_err(AgentError::Io)?;
             // Fail closed: an agent the user asked to isolate never runs
             // without isolation.
             let bwrap = match nocterm_ai::sandbox::availability(&env) {
