@@ -7,37 +7,23 @@ impl Workspace {
         scope: TabCloseScope,
         cx: &App,
     ) -> Vec<EntityId> {
-        let Some((placement, node)) = self.item_location(id, cx) else {
-            return vec![];
-        };
-        let dock = self.dock.read(cx);
-        let Some(tree) = dock.layout(placement) else {
+        let Some(pane) = self.pane_for_item(id, cx) else {
             return vec![];
         };
         let panels = if scope == TabCloseScope::All {
-            tree.node_ids()
+            self.panes_in(pane.placement, cx)
                 .into_iter()
-                .filter_map(|node| tree.find_node(node))
-                .flat_map(|node| match node.kind() {
-                    PaneRef::Tabs { panels, .. } => panels.to_vec(),
-                    _ => vec![],
-                })
+                .flat_map(|pane| pane.panels)
                 .collect::<Vec<_>>()
         } else {
-            let Some(node) = tree.find_node(node) else {
+            let Some(clicked_panel) = self.panel_of(id) else {
                 return vec![];
             };
-            let PaneRef::Tabs { panels, .. } = node.kind() else {
+            let Some(clicked) = pane.panels.iter().position(|panel| *panel == clicked_panel) else {
                 return vec![];
             };
-            let Some(clicked) = panels
-                .iter()
-                .position(|panel| Some(*panel) == self.panel_of(id))
-            else {
-                return vec![];
-            };
-            panels
-                .iter()
+            pane.panels
+                .into_iter()
                 .enumerate()
                 .filter(|(ix, _)| match scope {
                     TabCloseScope::Current => *ix == clicked,
@@ -46,17 +32,12 @@ impl Workspace {
                     TabCloseScope::Right => *ix > clicked,
                     TabCloseScope::All => true,
                 })
-                .map(|(_, panel)| *panel)
+                .map(|(_, panel)| panel)
                 .collect()
         };
         panels
             .into_iter()
-            .filter_map(|panel| {
-                self.items
-                    .iter()
-                    .find(|open| PanelId::from(open.dock_item.entity_id()) == panel)
-                    .map(|open| open.handle.item_id())
-            })
+            .filter_map(|panel| self.item_for_panel(panel).map(|open| open.handle.item_id()))
             .collect()
     }
     pub fn close_tabs(

@@ -2,12 +2,12 @@
 use super::*;
 
 impl Workspace {
-    /// Focused bottom terminal, focused central item, then the active central tab.
+    /// Focused visible user Item, then the last visible central context.
     /// An open menu retains its opening context while native popup focus moves.
     pub fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
         if let Some(open) = self.items.iter().find(|open| {
-            self.item_visible(open.handle.item_id(), cx)
-                && open.dock_item.read(cx).contains_focus(window, cx)
+            open.dock_item.read(cx).contains_focus(window, cx)
+                && self.item_visible(open.handle.item_id(), cx)
         }) {
             return Some(open.handle.clone());
         }

@@ -2,12 +2,6 @@
 use super::*;
 use gpui_kit::component::dock::NodeId;
 
-pub(super) const TAB_PLACEMENTS: [DockPlacement; 4] = [
-    DockPlacement::Center,
-    DockPlacement::Bottom,
-    DockPlacement::Left,
-    DockPlacement::Right,
-];
 impl Workspace {
     pub fn add_item<T: Item>(
         &mut self,
@@ -79,7 +73,7 @@ impl Workspace {
         let workspace = cx.weak_entity();
         let origin = self.local_header_click_origin.clone();
         let dock_item = cx.new(|cx| {
-            crate::dock_item::DockItem::new(handle.clone(), workspace, is_local, origin, window, cx)
+            crate::dock_item::DockItem::new(handle.clone(), workspace, is_local, origin, cx)
         });
         let focus = dock_item.read(cx).container_focus_handle();
         let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
@@ -202,38 +196,21 @@ impl Workspace {
             .command_item(window, cx)
             .is_some_and(|item| item.item_id() == id);
         let location = self.item_location(id, cx);
-        if let Some(height) = self.dock.read(cx).dock_size(DockPlacement::Bottom) {
-            self.local_terminal_height = Some(height);
-        }
+        // Detach ownership first so deferred native removal is idempotent.
         let closed = self.items.remove(index);
         self.tab_groups
             .leave(PanelId::from(closed.dock_item.entity_id()));
         self.dock.update(cx, |dock, cx| {
             dock.remove_panel(closed.dock_item.clone(), window, cx);
-            for placement in [
-                DockPlacement::Bottom,
-                DockPlacement::Left,
-                DockPlacement::Right,
-            ] {
-                if dock.has_dock(placement) && !region_has_panels(dock, placement) {
-                    dock.remove_dock(placement, window, cx);
-                }
-            }
         });
+        self.reconcile_empty_regions(window, cx);
         closed.handle.close(window, cx);
-        let replacement = location.and_then(|(placement, node)| {
-            let dock = self.dock.read(cx);
-            let PaneRef::Tabs { panels, active_ix } =
-                dock.layout(placement)?.find_node(node)?.kind()
-            else {
-                return None;
-            };
-            let panel = panels.get(active_ix)?;
-            self.items
-                .iter()
-                .find(|open| PanelId::from(open.dock_item.entity_id()) == *panel)
-                .map(|open| open.handle.item_id())
-        });
+        let replacement = location
+            .and_then(|(placement, node)| self.pane_at(placement, node, cx))
+            .and_then(|pane| pane.active_panel())
+            .and_then(|panel| self.item_for_panel(panel))
+            .map(|open| open.handle.item_id());
+        // Restore selection from the native pane after removal, then restore focus.
         if self.selected_local_id == Some(id) {
             self.selected_local_id = replacement
                 .filter(|id| self.local_entry(*id).is_some())
@@ -295,18 +272,6 @@ impl Workspace {
     ) {
         self.close_item_by_id(id, window, cx);
     }
-    pub(super) fn item_location(&self, id: EntityId, cx: &App) -> Option<(DockPlacement, NodeId)> {
-        let panel = self.panel_of(id)?;
-        let dock = self.dock.read(cx);
-        TAB_PLACEMENTS.into_iter().find_map(|placement| {
-            Some((placement, dock.layout(placement)?.find_panel_node(panel)?))
-        })
-    }
-    pub(super) fn item_visible(&self, id: EntityId, cx: &App) -> bool {
-        self.item_location(id, cx).is_some_and(|(placement, _)| {
-            placement == DockPlacement::Center || self.dock.read(cx).is_dock_open(placement)
-        })
-    }
     pub fn rename_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.command_item(window, cx).map(|item| item.item_id())
             && let Some(open) = self.items.iter().find(|open| open.handle.item_id() == id)
@@ -324,8 +289,4 @@ impl Workspace {
             cx,
         );
     }
-}
-
-pub(super) fn region_has_panels(dock: &DockArea, placement: DockPlacement) -> bool {
-    dock.layout(placement).is_some_and(|tree| tree.node_ids().into_iter().any(|node| matches!(tree.find_node(node).map(|node| node.kind()), Some(PaneRef::Tabs { panels, .. }) if !panels.is_empty())))
 }

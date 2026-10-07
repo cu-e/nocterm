@@ -1,5 +1,6 @@
 //! Native bottom header interactions and multi-session lifetime regressions.
 mod lifecycle;
+mod targets;
 
 use super::*;
 use gpui_kit::component::WindowExt as _;
@@ -71,9 +72,9 @@ fn fixture(
     let closes = Rc::new(Cell::new(0));
     let counts = closes.clone();
     workspace.update(cx, |workspace, _| {
-        workspace.set_local_terminal_opener(move |workspace, window, cx| {
+        workspace.set_local_terminal_opener(move |workspace, target, window, cx| {
             let item = probe(cx, "/new", counts.clone());
-            workspace.add_local_terminal(item, window, cx);
+            workspace.add_local_terminal_at(item, target, window, cx);
         })
     });
     (handle, workspace, closes)

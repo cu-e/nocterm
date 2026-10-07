@@ -4,14 +4,14 @@
 
 use gpui_kit::{
     App, Context, EntityId, SharedString, Window,
-    component::dock::{DockPlacement, InsertTarget, NodeId, PaneRef, PanelId},
+    component::dock::{DockPlacement, InsertTarget, NodeId, PanelId},
 };
 
 use super::{OpenItem, Workspace};
 use crate::{dock_item::GROUP_PALETTE, tab_groups::GroupId};
 
 /// The docks a tab can be dragged to.
-const PLACEMENTS: [DockPlacement; 4] = super::items::TAB_PLACEMENTS;
+const PLACEMENTS: [DockPlacement; 4] = super::docking::TAB_PLACEMENTS;
 
 impl Workspace {
     /// Puts the tab showing `item` in a group of its own.
@@ -184,31 +184,16 @@ impl Workspace {
         }
     }
 
-    pub(super) fn panel_of(&self, item: EntityId) -> Option<PanelId> {
-        self.items
-            .iter()
-            .find(|open| open.handle.item_id() == item)
-            .map(panel)
-    }
-
     fn group_of_item(&self, item: EntityId) -> Option<GroupId> {
         self.tab_groups.group_of(self.panel_of(item)?)
     }
 
     /// Every tab bar a tab can be in, with its tabs from left to right.
     fn tab_bars(&self, cx: &App) -> Vec<(NodeId, Vec<PanelId>)> {
-        let dock = self.dock.read(cx);
         PLACEMENTS
-            .iter()
-            .filter_map(|placement| dock.layout(*placement))
-            .flat_map(|tree| {
-                tree.node_ids()
-                    .into_iter()
-                    .filter_map(|node| match tree.find_node(node)?.kind() {
-                        PaneRef::Tabs { panels, .. } => Some((node, panels.to_vec())),
-                        PaneRef::Split { .. } => None,
-                    })
-            })
+            .into_iter()
+            .flat_map(|placement| self.panes_in(placement, cx))
+            .map(|pane| (pane.node, pane.panels))
             .collect()
     }
 }

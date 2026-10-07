@@ -1,9 +1,6 @@
 //! Pane actions use the focused tab and its actual native placement.
 use super::Workspace;
-use gpui_kit::{
-    App, Context, EntityId, Window,
-    component::dock::{InsertTarget, PaneRef},
-};
+use gpui_kit::{App, Context, EntityId, Window, component::dock::InsertTarget};
 impl Workspace {
     fn pane_command_id(&self, window: &Window, cx: &App) -> Option<EntityId> {
         self.command_item(window, cx).map(|item| item.item_id())
@@ -23,20 +20,13 @@ impl Workspace {
             .is_some_and(|item| self.can_split_item(item.item_id(), cx))
     }
     pub(crate) fn can_split_item(&self, id: EntityId, cx: &App) -> bool {
-        let Some((placement, node)) = self.item_location(id, cx) else {
-            return false;
-        };
         !self.dock.read(cx).is_locked()
             && self.item_visible(id, cx)
             && self
-                .dock
-                .read(cx)
-                .layout(placement)
-                .and_then(|tree| tree.find_node(node))
-                .is_some_and(
-                    |node| matches!(node.kind(), PaneRef::Tabs { panels, .. } if panels.len() > 1),
-                )
+                .pane_for_item(id, cx)
+                .is_some_and(|pane| pane.panels.len() > 1)
     }
+
     pub fn split_item(
         &mut self,
         id: EntityId,
@@ -75,59 +65,52 @@ impl Workspace {
         let Some((placement, current)) = self.item_location(id, cx) else {
             return;
         };
-        let target = self.dock.read(cx).layout(placement).and_then(|tree| {
-            let nodes: Vec<_> = tree
-                .node_ids()
-                .into_iter()
-                .filter_map(|node| match tree.find_node(node)?.kind() {
-                    PaneRef::Tabs { panels, active_ix } if !panels.is_empty() => {
-                        Some((node, panels[active_ix.min(panels.len() - 1)]))
-                    }
-                    _ => None,
-                })
-                .collect();
-            let index = nodes.iter().position(|(node, _)| *node == current)?;
-            Some(nodes[(index as isize + offset).rem_euclid(nodes.len() as isize) as usize].1)
-        });
-        if let Some(id) = target.and_then(|panel| {
-            self.items
-                .iter()
-                .find(|open| Some(panel) == self.panel_of(open.handle.item_id()))
-                .map(|open| open.handle.item_id())
-        }) {
+        let panes: Vec<_> = self
+            .panes_in(placement, cx)
+            .into_iter()
+            .filter(|pane| !pane.panels.is_empty())
+            .collect();
+        let Some(index) = panes.iter().position(|pane| pane.node == current) else {
+            return;
+        };
+        let target = panes[(index as isize + offset).rem_euclid(panes.len() as isize) as usize]
+            .active_panel();
+        if let Some(id) = target
+            .and_then(|panel| self.item_for_panel(panel))
+            .map(|open| open.handle.item_id())
+        {
             self.activate_item_by_id(id, window, cx);
         }
     }
+
     pub(super) fn cycle_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.pane_command_id(window, cx) else {
             return;
         };
-        let Some((placement, node)) = self.item_location(id, cx) else {
+        let Some(pane) = self.pane_for_item(id, cx) else {
             return;
         };
-        let target = self.dock.read(cx).layout(placement).and_then(|tree| {
-            let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                return None;
-            };
-            let ix = panels
-                .iter()
-                .position(|panel| Some(*panel) == self.panel_of(id))?;
-            Some(panels[(ix as isize + offset).rem_euclid(panels.len() as isize) as usize])
-        });
-        if let Some(id) = target.and_then(|panel| {
-            self.items
-                .iter()
-                .find(|open| Some(panel) == self.panel_of(open.handle.item_id()))
-                .map(|open| open.handle.item_id())
-        }) {
+        let Some(panel) = self.panel_of(id) else {
+            return;
+        };
+        let Some(index) = pane.panels.iter().position(|candidate| *candidate == panel) else {
+            return;
+        };
+        let target =
+            pane.panels[(index as isize + offset).rem_euclid(pane.panels.len() as isize) as usize];
+        if let Some(id) = self
+            .item_for_panel(target)
+            .map(|open| open.handle.item_id())
+        {
             self.activate_item_by_id(id, window, cx);
         }
     }
+
     pub fn move_active_tab(&mut self, offset: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.pane_command_id(window, cx) else {
             return;
         };
-        let Some((placement, node)) = self.item_location(id, cx) else {
+        let Some(pane) = self.pane_for_item(id, cx) else {
             return;
         };
         let Some(panel) = self.panel_of(id) else {
@@ -136,18 +119,17 @@ impl Workspace {
         if self.dock.read(cx).is_locked() {
             return;
         }
-        let target = self.dock.read(cx).layout(placement).and_then(|tree| {
-            let PaneRef::Tabs { panels, .. } = tree.find_node(node)?.kind() else {
-                return None;
-            };
-            let ix = panels.iter().position(|id| *id == panel)?;
-            let next = ix.checked_add_signed(offset)?;
-            (next < panels.len()).then_some(InsertTarget::Tabs {
-                node,
+        let target = pane
+            .panels
+            .iter()
+            .position(|candidate| *candidate == panel)
+            .and_then(|index| index.checked_add_signed(offset))
+            .filter(|next| *next < pane.panels.len())
+            .map(|next| InsertTarget::Tabs {
+                node: pane.node,
                 ix: Some(next),
                 activate: true,
-            })
-        });
+            });
         if let Some(target) = target {
             self.dock
                 .update(cx, |dock, cx| dock.move_panel(panel, target, window, cx));

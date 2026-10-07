@@ -46,7 +46,6 @@ pub(crate) struct DockItem {
     /// The color of the group of tabs this one is in, an index into
     /// [`GROUP_COLORS`].
     group_color: Option<usize>,
-    _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<PanelEvent> for DockItem {}
 impl DockItem {
@@ -63,15 +62,9 @@ impl DockItem {
         workspace: WeakEntity<Workspace>,
         local: bool,
         header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        let subscriptions = vec![cx.on_focus_in(&focus, window, |this, window, cx| {
-            if !this.local {
-                this.announce(window, cx);
-            }
-        })];
         Self {
             item,
             workspace,
@@ -83,15 +76,7 @@ impl DockItem {
             local,
             header_click_origin,
             group_color: None,
-            _subscriptions: subscriptions,
         }
-    }
-    fn announce(&self, window: &Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        let id = self.item.item_id();
-        cx.defer_in(window, move |_, _, cx| {
-            let _ = workspace.update(cx, |workspace, cx| workspace.mark_active(id, cx));
-        });
     }
     pub(crate) fn set_group_color(&mut self, color: Option<usize>, cx: &mut Context<Self>) {
         if self.group_color != color {
@@ -163,14 +148,9 @@ impl BasePanel for DockItem {
     fn on_removed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let id = self.item.item_id();
-        cx.defer_in(window, move |_, window, cx| {
+        window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| workspace.item_removed(id, window, cx));
         });
-    }
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active && !self.local && self.contains_focus(window, cx) {
-            self.announce(window, cx);
-        }
     }
 }
 impl Panel for DockItem {

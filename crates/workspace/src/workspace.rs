@@ -25,6 +25,7 @@ use nocterm_ui::ActiveDesign as _;
 mod background;
 mod chrome;
 mod commands;
+mod docking;
 mod groups;
 mod items;
 mod layout;
@@ -117,7 +118,6 @@ pub struct Workspace {
     _dock_observer: Subscription,
     selected_local_id: Option<EntityId>,
     local_terminal_height: Option<Pixels>,
-    local_open_target: Option<(DockPlacement, gpui_kit::component::dock::NodeId)>,
     local_opener: Option<LocalOpener>,
     local_header_click_origin: Rc<Cell<Option<EntityId>>>,
     items: Vec<OpenItem>,
@@ -190,7 +190,6 @@ impl Workspace {
             _dock_observer: observer,
             selected_local_id: None,
             local_terminal_height: None,
-            local_open_target: None,
             local_header_click_origin: Rc::default(),
             local_opener: None,
             focus_handle: cx.focus_handle(),

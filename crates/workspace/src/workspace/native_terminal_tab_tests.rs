@@ -1,4 +1,6 @@
 //! Independent native interaction checks shared by central and local terminal tabs.
+mod deferred_open;
+
 use super::*;
 use gpui_kit::{
     AnyWindowHandle, TestAppContext, component::Placement, px, test::TestWindowExt as _,
@@ -450,8 +452,8 @@ fn central_public_ordinals_survive_interleaved_local_registry_entries(cx: &mut T
 fn zoomed_nonfirst_header_plus_adds_into_clicked_pane_and_keeps_zoom(cx: &mut TestAppContext) {
     let (window, ws, tabs) = open_three(cx, true);
     with(cx, window, &ws, |ws, window, cx| {
-        ws.set_local_terminal_opener(|ws, window, cx| {
-            ws.add_local_terminal(tab(cx, "/new"), window, cx)
+        ws.set_local_terminal_opener(|ws, target, window, cx| {
+            ws.add_local_terminal_at(tab(cx, "/new"), target, window, cx);
         });
         ws.split_item(tabs[1].entity_id(), Placement::Right, window, cx);
         ws.activate_item_by_id(tabs[0].entity_id(), window, cx);

@@ -78,7 +78,12 @@ resolve the clicked tab's current native pane; Close All affects its dock placem
 Local shell capability is an optional Item contract, so mixed panes and moved local
 tabs retain identical ownership. Local focus preserves the last central remote
 context for Explorer; native group selection owns the local cwd target. Header
-add controls open into the clicked group, including local tabs moved to Center.
+add controls pass an explicit `LocalTerminalTarget::Beside(EntityId)` to the opener,
+resolving the live anchor pane when the new shell registers, including moves to
+Center. A stale anchor closes only the new shell; registered Items are never
+closed by a rejected registration. Native pane queries and empty-region cleanup
+belong to the shared workspace docking module. DockItem adapts presentation;
+the workspace owns focus subscriptions and active session selection.
 Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
 accepted topology changes clear it to reveal their result. Hiding Bottom leaves
 local tabs moved to Center visible. A region's last tab can be dragged to another

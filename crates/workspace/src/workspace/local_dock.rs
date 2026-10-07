@@ -1,16 +1,19 @@
 //! Local shell capability and native bottom visibility, sharing the tab registry.
 use super::*;
-pub(super) type LocalOpener = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
+use crate::LocalTerminalTarget;
+pub(super) type LocalOpener =
+    Rc<dyn Fn(&mut Workspace, LocalTerminalTarget, &mut Window, &mut Context<Workspace>)>;
 impl Workspace {
     pub fn set_local_terminal_opener(
         &mut self,
-        opener: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
+        opener: impl Fn(&mut Workspace, LocalTerminalTarget, &mut Window, &mut Context<Workspace>)
+        + 'static,
     ) {
         self.local_opener = Some(Rc::new(opener));
     }
     pub(crate) fn new_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(opener) = self.local_opener.clone() {
-            opener(self, window, cx);
+            opener(self, LocalTerminalTarget::Bottom, window, cx);
         }
     }
     pub(crate) fn new_local_terminal_from(
@@ -19,12 +22,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.item_location(id, cx) else {
+        if self.item_location(id, cx).is_none() {
             return;
-        };
-        let previous = self.local_open_target.replace(target);
-        self.new_local_terminal(window, cx);
-        self.local_open_target = previous;
+        }
+        if let Some(opener) = self.local_opener.clone() {
+            opener(self, LocalTerminalTarget::Beside(id), window, cx);
+        }
     }
     pub fn set_local_terminal<T: crate::LocalTerminal>(
         &mut self,
@@ -49,13 +52,41 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let target = self.local_open_target.or_else(|| {
-            self.selected_local(cx)
+        self.add_local_terminal_at(item, LocalTerminalTarget::Bottom, window, cx);
+    }
+    /// Registers an owned new shell in the requested live pane.
+    /// A stale anchor closes the new shell once and returns false. An already
+    /// registered Item returns false without changing or closing that Item.
+    pub fn add_local_terminal_at<T: crate::LocalTerminal>(
+        &mut self,
+        item: Entity<T>,
+        target: LocalTerminalTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.is_background(item.entity_id())
+            || self
+                .items
+                .iter()
+                .any(|open| open.handle.item_id() == item.entity_id())
+        {
+            return false;
+        }
+        let destination = match target {
+            LocalTerminalTarget::Bottom => self
+                .selected_local(cx)
                 .and_then(|open| self.item_location(open.handle.item_id(), cx))
-                .filter(|(placement, _)| *placement == DockPlacement::Bottom)
-        });
-        let placement = target.map_or(DockPlacement::Bottom, |(placement, _)| placement);
-        if placement == DockPlacement::Bottom
+                .filter(|(placement, _)| *placement == DockPlacement::Bottom),
+            LocalTerminalTarget::Beside(anchor) => {
+                let Some(destination) = self.item_location(anchor, cx) else {
+                    ItemHandle::close(&item, window, cx);
+                    return false;
+                };
+                Some(destination)
+            }
+        };
+        let placement = destination.map_or(DockPlacement::Bottom, |(placement, _)| placement);
+        if placement != DockPlacement::Center
             && self.dock.read(cx).has_dock(placement)
             && !self.dock.read(cx).is_dock_open(placement)
         {
@@ -67,10 +98,11 @@ impl Workspace {
             item,
             Some(local),
             placement,
-            target.map(|(_, node)| node),
+            destination.map(|(_, node)| node),
             window,
             cx,
         );
+        true
     }
     pub(super) fn local_entry(&self, id: EntityId) -> Option<&OpenItem> {
         self.items
@@ -79,18 +111,9 @@ impl Workspace {
     }
     pub(super) fn selected_local(&self, cx: &App) -> Option<&OpenItem> {
         let saved = self.local_entry(self.selected_local_id?)?;
-        let (placement, node) = self.item_location(saved.handle.item_id(), cx)?;
-        let dock = self.dock.read(cx);
-        let PaneRef::Tabs { panels, active_ix } = dock.layout(placement)?.find_node(node)?.kind()
-        else {
-            return Some(saved);
-        };
-        let active = panels.get(active_ix)?;
-        self.items
-            .iter()
-            .find(|open| {
-                PanelId::from(open.dock_item.entity_id()) == *active && open.local.is_some()
-            })
+        let pane = self.pane_for_item(saved.handle.item_id(), cx)?;
+        self.item_for_panel(pane.active_panel()?)
+            .filter(|open| open.local.is_some())
             .or(Some(saved))
     }
     pub fn toggle_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -134,26 +157,6 @@ impl Workspace {
         cx.emit(WorkspaceEvent::ItemsChanged);
         cx.notify();
     }
-    pub(super) fn reconcile_empty_regions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let empty: Vec<_> = [
-            DockPlacement::Bottom,
-            DockPlacement::Left,
-            DockPlacement::Right,
-        ]
-        .into_iter()
-        .filter(|placement| {
-            self.dock.read(cx).has_dock(*placement)
-                && !super::items::region_has_panels(self.dock.read(cx), *placement)
-        })
-        .collect();
-        for placement in empty {
-            if placement == DockPlacement::Bottom {
-                self.local_terminal_height = self.dock.read(cx).dock_size(placement);
-            }
-            self.dock
-                .update(cx, |dock, cx| dock.remove_dock(placement, window, cx));
-        }
-    }
     pub(super) fn reconcile_bottom_visibility(
         &mut self,
         window: &mut Window,
@@ -161,9 +164,10 @@ impl Workspace {
     ) {
         if !self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
             && self.items.iter().any(|open| {
-                self.item_location(open.handle.item_id(), cx)
-                    .is_some_and(|(placement, _)| placement == DockPlacement::Bottom)
-                    && open.dock_item.read(cx).contains_focus(window, cx)
+                open.dock_item.read(cx).contains_focus(window, cx)
+                    && self
+                        .item_location(open.handle.item_id(), cx)
+                        .is_some_and(|(placement, _)| placement == DockPlacement::Bottom)
             })
         {
             self.focus_central(window, cx);
