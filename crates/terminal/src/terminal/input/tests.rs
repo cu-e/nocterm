@@ -181,3 +181,41 @@ fn alternate_screen_transitions_publish_availability_changes_only_on_mode_flip(
         );
     }
 }
+
+#[gpui_kit::test]
+fn explorer_paste_is_atomic_bracketed_and_never_executes_even_in_alternate_screen(
+    cx: &mut TestAppContext,
+) {
+    let (terminal, driver) = fixture(cx, false);
+    terminal.update(cx, |terminal, cx| {
+        terminal.handle_event(Event::Output(b"\x1b[?1049h\x1b[?2004h".to_vec()), cx);
+        terminal.paste_paths("'/a b/資料' '/a'\\''b'", cx).unwrap();
+    });
+    assert_eq!(
+        sent(&driver),
+        "\x1b[200~'/a b/資料' '/a'\\''b'\x1b[201~".as_bytes()
+    );
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn explorer_paste_reports_queue_and_charset_rejection_without_partial_input(
+    cx: &mut TestAppContext,
+) {
+    let (terminal, driver) = fixture(cx, true);
+    terminal.update(cx, |terminal, cx| {
+        terminal.codec = crate::codec::TextCodec::new(Charset::Windows1252);
+        assert!(terminal.paste_paths("'/資料'", cx).is_err());
+    });
+    assert!(driver.next_command().now_or_never().is_none());
+    terminal.update(cx, |terminal, cx| {
+        while terminal.session.as_ref().unwrap().input(b"queued".to_vec()) {}
+        assert!(
+            terminal
+                .paste_paths("'/valid path'", cx)
+                .unwrap_err()
+                .contains("queue")
+        );
+    });
+    while driver.next_command().now_or_never().is_some() {}
+}

@@ -148,6 +148,7 @@ impl ContainersModel {
             title: title.into(),
             host: self.host.clone()?,
             program: program(self.engine?),
+            shell_syntax: None,
         })
     }
 

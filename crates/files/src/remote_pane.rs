@@ -222,7 +222,7 @@ impl FilesPanel {
                 }),
             )
             .when_some(download, |row, download| {
-                row.on_drag(download, move |_, _, _, cx| {
+                row.on_drag(FileDrag::Remote(download), move |_, _, _, cx| {
                     cx.stop_propagation();
                     let visual = visual.clone();
                     cx.new(|_| {
@@ -231,7 +231,11 @@ impl FilesPanel {
                 })
             })
             .when(directory && enabled, |row| {
-                row.drag_over::<LocalPaths>(|s, _, _, cx| {
+                row.can_drop(|drag, _, _| {
+                    matches!(drag.downcast_ref::<FileDrag>(), Some(FileDrag::Local(_)))
+                        || drag.is::<ExternalPaths>()
+                })
+                .drag_over::<FileDrag>(|s, _, _, cx| {
                     s.bg(cx.theme().accent)
                         .border_1()
                         .border_color(cx.theme().primary)
@@ -243,9 +247,11 @@ impl FilesPanel {
                 })
                 .on_drop(cx.listener({
                     let drop_path = drop_path.clone();
-                    move |this, files: &LocalPaths, window, cx| {
+                    move |this, files: &FileDrag, window, cx| {
                         cx.stop_propagation();
-                        this.enqueue(files.0.clone(), drop_path.clone(), window, cx);
+                        if let FileDrag::Local(paths) = files {
+                            this.enqueue(paths.clone(), drop_path.clone(), window, cx);
+                        }
                     }
                 }))
                 .on_drop(cx.listener(
@@ -445,7 +451,11 @@ impl FilesPanel {
                         }),
                     ),
             )
-            .drag_over::<LocalPaths>(|s, _, _, cx| {
+            .can_drop(|drag, _, _| {
+                matches!(drag.downcast_ref::<FileDrag>(), Some(FileDrag::Local(_)))
+                    || drag.is::<ExternalPaths>()
+            })
+            .drag_over::<FileDrag>(|s, _, _, cx| {
                 s.bg(cx.theme().accent)
                     .border_1()
                     .border_color(cx.theme().primary)
@@ -455,8 +465,10 @@ impl FilesPanel {
                     .border_1()
                     .border_color(cx.theme().primary)
             })
-            .on_drop(cx.listener(|this, files: &LocalPaths, window, cx| {
-                this.enqueue(files.0.clone(), None, window, cx)
+            .on_drop(cx.listener(|this, files: &FileDrag, window, cx| {
+                if let FileDrag::Local(paths) = files {
+                    this.enqueue(paths.clone(), None, window, cx);
+                }
             }))
             .on_drop(cx.listener(|this, files: &ExternalPaths, window, cx| {
                 this.enqueue(files.paths().to_vec(), None, window, cx)

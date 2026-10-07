@@ -204,22 +204,32 @@ impl FilesPanel {
                     }
                 }),
             )
-            .on_drag(LocalPaths(paths), move |_, _, _, cx| {
+            .on_drag(FileDrag::Local(paths), move |_, _, _, cx| {
                 cx.stop_propagation();
                 let visual = visual.clone();
                 cx.new(|_| source.preview(move |_, cx| visual.render(true, cx).into_any_element()))
             })
             .when(directory, |row| {
-                row.drag_over::<RemotePaths>(|style, _, _, cx| {
+                row.can_drop(|drag, _, _| {
+                    matches!(drag.downcast_ref::<FileDrag>(), Some(FileDrag::Remote(_)))
+                })
+                .drag_over::<FileDrag>(|style, _, _, cx| {
                     style
                         .bg(cx.theme().accent)
                         .border_1()
                         .border_color(cx.theme().primary)
                 })
                 .on_drop(cx.listener(
-                    move |this, files: &RemotePaths, window, cx| {
+                    move |this, files: &FileDrag, window, cx| {
                         cx.stop_propagation();
-                        this.enqueue_download(files.clone(), Some(destination.clone()), window, cx);
+                        if let FileDrag::Remote(files) = files {
+                            this.enqueue_download(
+                                files.clone(),
+                                Some(destination.clone()),
+                                window,
+                                cx,
+                            );
+                        }
                     },
                 ))
             })
@@ -409,15 +419,20 @@ impl FilesPanel {
                             ),
                     ),
             )
-            .drag_over::<RemotePaths>(|style, _, _, cx| {
+            .can_drop(|drag, _, _| {
+                matches!(drag.downcast_ref::<FileDrag>(), Some(FileDrag::Remote(_)))
+            })
+            .drag_over::<FileDrag>(|style, _, _, cx| {
                 style
                     .bg(cx.theme().accent)
                     .border_1()
                     .border_color(cx.theme().primary)
             })
-            .on_drop(cx.listener(|this, files: &RemotePaths, window, cx| {
+            .on_drop(cx.listener(|this, files: &FileDrag, window, cx| {
                 cx.stop_propagation();
-                this.enqueue_download(files.clone(), None, window, cx);
+                if let FileDrag::Remote(files) = files {
+                    this.enqueue_download(files.clone(), None, window, cx);
+                }
             }))
             .into_any_element()
     }

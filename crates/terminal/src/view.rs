@@ -10,6 +10,7 @@ use gpui_kit::{
     FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point, ScrollWheelEvent, SharedString, Subscription, Task,
     UTF16Selection, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -42,6 +43,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const MAX_WHEEL_REPORTS: i32 = 10;
 
 mod host_key;
+mod paste;
 #[path = "view_secret.rs"]
 mod secret;
 #[cfg(test)]
@@ -494,18 +496,6 @@ impl TerminalView {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         self.copy_selection(cx);
-    }
-
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
-        let modes = self.terminal.read(cx).emulator().modes();
-        self.type_text(
-            std::str::from_utf8(&encode_paste(&text, modes))
-                .expect("paste wrapping preserves UTF-8"),
-            cx,
-        );
     }
 
     fn scroll_page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -1090,6 +1080,8 @@ impl Render for TerminalView {
         };
 
         let grid = div()
+            .id("terminal-drop-target")
+            .test_support()
             .flex_1()
             .min_h_0()
             .key_context(KEY_CONTEXT)
@@ -1097,6 +1089,10 @@ impl Render for TerminalView {
             .size_full()
             .overflow_hidden()
             .bg(background)
+            .drag_over::<nocterm_workspace::FileDrag>(|style, _, _, cx| {
+                style.border_1().border_color(cx.theme().primary)
+            })
+            .on_drop(cx.listener(Self::drop_files))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::scroll_page_up))
             .on_action(cx.listener(Self::scroll_page_down))

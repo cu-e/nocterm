@@ -23,7 +23,7 @@ const EXITED: &str =
 
 /// A host whose `docker` lists `containers`, keeps `docker events` running
 /// until the test prints to it, and does every other command it is asked.
-struct FakeHost {
+pub(crate) struct FakeHost {
     docker: bool,
     containers: Mutex<&'static str>,
     ran: Mutex<Vec<String>>,
@@ -31,7 +31,7 @@ struct FakeHost {
 }
 
 impl FakeHost {
-    fn new(docker: bool) -> Arc<Self> {
+    pub(crate) fn new(docker: bool) -> Arc<Self> {
         Arc::new(Self {
             docker,
             containers: Mutex::new(RUNNING),
@@ -117,14 +117,14 @@ impl Item for SessionItem {
     }
 }
 
-struct Fixture {
-    window: gpui_kit::AnyWindowHandle,
-    workspace: Entity<Workspace>,
+pub(crate) struct Fixture {
+    pub(crate) window: gpui_kit::AnyWindowHandle,
+    pub(crate) workspace: Entity<Workspace>,
     model: Entity<ContainersModel>,
-    panel: Entity<ContainersPanel>,
+    pub(crate) panel: Entity<ContainersPanel>,
 }
 
-fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>) -> Fixture {
+pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>) -> Fixture {
     let fixture = cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(

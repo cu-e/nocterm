@@ -36,7 +36,9 @@ use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
 use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
-use nocterm_workspace::{Panel, SessionContext, Workspace, WorkspaceEvent};
+use nocterm_workspace::{
+    FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
+};
 use operations::FileTarget;
 use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
@@ -52,14 +54,6 @@ pub fn settings_page() -> nocterm_workspace::SettingsPageSpec {
     .with_icon(IconName::FolderTree)
 }
 
-#[derive(Clone)]
-struct LocalPaths(Vec<PathBuf>);
-#[derive(Clone)]
-struct RemotePaths {
-    sources: Vec<String>,
-    target: nocterm_session::Target,
-    fs: Arc<dyn RemoteFs>,
-}
 #[derive(Default)]
 struct LocalBrowser {
     generation: u64,
