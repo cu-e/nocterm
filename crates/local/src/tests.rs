@@ -1,3 +1,6 @@
+//! Real PTY fixtures use Unix shells, tools and process-group semantics.
+#![cfg(unix)]
+
 use super::*;
 fn request(launch: ShellLaunch) -> ConnectRequest {
     ConnectRequest {
