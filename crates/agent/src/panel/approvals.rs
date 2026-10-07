@@ -306,6 +306,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let call = thread.read(cx).tools[index].call.clone();
         let target = thread.update(cx, |thread, cx| thread.describe_target(&call, cx));
+        let reusable = thread.update(cx, |thread, cx| !thread.unsafe_live_input(&call, cx));
         let (heading, exact, grant) = match &call {
             TerminalCall::ReadTerminal(request) => (
                 "Read terminal output",
@@ -319,18 +320,45 @@ impl AgentPanel {
                     request.text,
                     if request.press_enter { " + Enter" } else { "" }
                 ),
-                "Allow for this terminal",
+                "Allow input at an empty prompt",
             ),
             TerminalCall::RunCommand(request) => (
                 "Run command",
                 format!("{target}: {}", request.command),
                 "Allow for this terminal",
             ),
+            TerminalCall::ExecCommand(request) => (
+                "Execute program",
+                format!(
+                    "{target}\nProgram: {}\nArguments: {:?}\nTimeout: {} ms · stdin: {} bytes{}",
+                    request.program,
+                    request.args,
+                    request.timeout_ms.unwrap_or(30_000),
+                    request.stdin.as_ref().map_or(0, String::len),
+                    request
+                        .stdin
+                        .as_ref()
+                        .map(|stdin| format!("\nStandard input:\n{stdin}"))
+                        .unwrap_or_default()
+                ),
+                "Allow execution on this terminal",
+            ),
+            TerminalCall::ReadCommand(request) => (
+                "Read command result",
+                format!("{target}: {}", request.command_id),
+                "Allow reading on this terminal",
+            ),
+            TerminalCall::CancelCommand(request) => (
+                "Cancel command",
+                format!("{target}: {}", request.command_id),
+                "Allow execution on this terminal",
+            ),
             TerminalCall::OpenTerminal(_) => {
                 ("Connect in the background", target, "Allow for this server")
             }
             TerminalCall::ListTerminals => ("List terminals", String::new(), "Allow"),
         };
+        let exact = nocterm_ai::redact::redact(&exact);
         card(cx)
             .child(div().min_w_0().truncate().text_sm().child(heading))
             .child(
@@ -341,6 +369,7 @@ impl AgentPanel {
                         (true, true, grant),
                     ]
                     .into_iter()
+                    .filter(|(_, grant, _)| !grant || reusable)
                     .map(|(allow, grant, label)| {
                         Button::new((SharedString::from(format!("tool-{label}")), index))
                             .custom(menu_variant(cx))

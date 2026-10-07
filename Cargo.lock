@@ -4980,6 +4980,7 @@ dependencies = [
  "image",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-session",
  "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",

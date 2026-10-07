@@ -12,12 +12,16 @@ use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
+mod execution;
 mod prompt;
 mod queue;
+mod tool_display;
 pub(crate) use queue::QueuedPrompt;
+mod live;
 mod restart;
 mod saved;
 mod session;
+mod tool_context;
 mod tools;
 #[cfg(test)]
 pub(crate) use saved::chat_title;
@@ -128,6 +132,9 @@ pub(crate) struct AgentThread {
     /// Ids of attached servers without a session, as agents see them.
     server_ids: OpaqueIds,
     grants: ApprovalGrants,
+    executions: execution::Jobs,
+    live_commands: std::collections::HashMap<String, Arc<nocterm_workspace::LiveCommandLease>>,
+    tool_displays: tool_display::ToolDisplays,
     _release: Subscription,
 }
 impl AgentThread {
@@ -138,6 +145,7 @@ impl AgentThread {
     ) -> Self {
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| {
+            this.cancel_execution();
             this.cancel_pending();
             if let (Some(commands), Some(session)) = (&this.commands, &this.session) {
                 commands.cancel(session.clone());
@@ -161,6 +169,26 @@ impl AgentThread {
                 });
             }
         });
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this
+                    .update(cx, |this, cx| {
+                        if !cx.ai_enabled() {
+                            this.cancel_execution();
+                        } else {
+                            this.revoke_executions(cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         let chat = nocterm_ai::history::SavedChat::new(agent_id.clone());
         Self {
             agent_id,
@@ -214,6 +242,9 @@ impl AgentThread {
             ids: Default::default(),
             server_ids: OpaqueIds::with_prefix("s"),
             grants: Default::default(),
+            executions: Default::default(),
+            live_commands: Default::default(),
+            tool_displays: Default::default(),
             _release: release,
         }
     }
@@ -231,6 +262,7 @@ impl AgentThread {
             && self.tools.is_empty()
     }
     pub(crate) fn fail(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.cancel_execution();
         self.finish_pending_tools();
         if !self.dormant {
             self.persist(cx);
@@ -252,6 +284,7 @@ impl AgentThread {
         cx.notify();
     }
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.cancel_execution();
         self.finish_pending_tools();
         self.queue_paused = true;
         self.auth_required = true;
@@ -492,6 +525,7 @@ impl AgentThread {
     /// Cancels the turn in progress. The session stays open for the next
     /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
+        self.cancel_execution();
         self.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
@@ -536,6 +570,7 @@ impl AgentThread {
                 }
                 self.grants.clear();
                 self.cancel_pending();
+                self.revoke_executions(cx);
                 if !self.generating {
                     self.prune_background(cx);
                 }

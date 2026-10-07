@@ -41,7 +41,9 @@ pub trait HostExec: Send + Sync + 'static {
     }
 }
 
-/// A program to run, with its arguments passed verbatim.
+/// A program to run with separate arguments. Native local execution passes
+/// arguments directly; SSH renders them as a POSIX command line, which requires
+/// a POSIX-compatible remote command shell for arbitrary arguments.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct ExecRequest {
     pub program: String,
@@ -74,8 +76,9 @@ impl ExecRequest {
     }
 
     /// The request as one POSIX command line, for transports that take a
-    /// string. Plain words stay bare so non-POSIX shells (`cmd.exe`) read
-    /// them the same way.
+    /// string. Plain words stay bare for compatibility with simple requests on
+    /// non-POSIX shells. Arbitrary arguments are not guaranteed there: shells
+    /// such as `cmd.exe` may interpret even unquoted characters like `%`.
     pub fn command_line(&self) -> String {
         let mut line = shell_word(&self.program);
         for arg in &self.args {

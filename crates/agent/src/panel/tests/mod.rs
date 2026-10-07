@@ -179,6 +179,8 @@ impl ToolBridge for Bridge {
     }
 }
 struct Access {
+    executor: std::cell::RefCell<Option<Arc<dyn nocterm_session::HostExec>>>,
+    lease: std::cell::RefCell<Option<Arc<AtomicBool>>>,
     sent: std::cell::RefCell<Vec<String>>,
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
     /// Shared by the sessions of a test.
@@ -236,6 +238,33 @@ impl TerminalAccess for Access {
     }
     fn run_command(&self, text: &str, cx: &mut App) -> Result<(), String> {
         self.send_text(text, cx)
+    }
+    fn executor(&self, _cx: &App) -> Result<Arc<dyn nocterm_session::HostExec>, String> {
+        if self.sign_in.asks.get() || self.sign_in.vault_locked.get() {
+            return Err("Terminal is waiting for authentication.".into());
+        }
+        self.executor
+            .borrow()
+            .clone()
+            .ok_or_else(|| "Structured execution unsupported.".into())
+    }
+    fn begin_live_command(
+        &self,
+        command: &str,
+        cx: &mut App,
+    ) -> Result<nocterm_workspace::LiveCommandLease, String> {
+        if self
+            .lease
+            .borrow()
+            .as_ref()
+            .is_some_and(|lease| lease.load(Ordering::Acquire))
+        {
+            return Err("Another chat owns this terminal.".into());
+        }
+        self.run_command(command, cx)?;
+        let lease = Arc::new(AtomicBool::new(true));
+        *self.lease.borrow_mut() = Some(lease.clone());
+        Ok(nocterm_workspace::LiveCommandLease::new(lease, None))
     }
     fn answer_sign_in(&self, answer: String, _: &mut App) -> Result<(), String> {
         self.sign_in.answers.borrow_mut().push(answer);
@@ -304,6 +333,8 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         (commands, bridge, connector, events, sender)
     };
     let access = Rc::new(Access {
+        executor: Default::default(),
+        lease: Default::default(),
         sent: Default::default(),
         profile: Default::default(),
         sign_in: Default::default(),
@@ -457,3 +488,4 @@ mod verification;
 mod commands;
 
 mod audit;
+mod execution;

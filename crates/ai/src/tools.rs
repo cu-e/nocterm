@@ -27,6 +27,38 @@ pub struct RunCommand {
     pub timeout_ms: Option<u64>,
     pub idle_ms: Option<u64>,
 }
+/// A fresh non-interactive program on this terminal's exact host connection.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecCommand {
+    pub terminal_id: String,
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub stdin: Option<String>,
+    pub timeout_ms: Option<u64>,
+    pub yield_ms: Option<u64>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReadCommand {
+    pub terminal_id: String,
+    pub command_id: String,
+    pub yield_ms: Option<u64>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CancelCommand {
+    pub terminal_id: String,
+    pub command_id: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ToolCapability {
+    Read,
+    LiveInput,
+    Execution,
+    Connection,
+}
 /// Connects to an attached offline server without opening a tab.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +73,9 @@ pub enum TerminalCall {
     SendInput(SendInput),
     RunCommand(RunCommand),
     OpenTerminal(OpenTerminal),
+    ExecCommand(ExecCommand),
+    ReadCommand(ReadCommand),
+    CancelCommand(CancelCommand),
 }
 impl TerminalCall {
     pub fn terminal_id(&self) -> Option<&str> {
@@ -49,6 +84,9 @@ impl TerminalCall {
             Self::ReadTerminal(v) => Some(&v.terminal_id),
             Self::SendInput(v) => Some(&v.terminal_id),
             Self::RunCommand(v) => Some(&v.terminal_id),
+            Self::ExecCommand(v) => Some(&v.terminal_id),
+            Self::ReadCommand(v) => Some(&v.terminal_id),
+            Self::CancelCommand(v) => Some(&v.terminal_id),
         }
     }
     pub fn server_id(&self) -> Option<&str> {
@@ -65,8 +103,22 @@ impl TerminalCall {
     pub fn writes(&self) -> bool {
         matches!(
             self,
-            Self::SendInput(_) | Self::RunCommand(_) | Self::OpenTerminal(_)
+            Self::SendInput(_)
+                | Self::RunCommand(_)
+                | Self::OpenTerminal(_)
+                | Self::ExecCommand(_)
+                | Self::CancelCommand(_)
         )
+    }
+    pub fn capability(&self) -> ToolCapability {
+        match self {
+            Self::SendInput(_) | Self::RunCommand(_) => ToolCapability::LiveInput,
+            Self::ExecCommand(_) | Self::CancelCommand(_) => ToolCapability::Execution,
+            Self::OpenTerminal(_) => ToolCapability::Connection,
+            Self::ListTerminals | Self::ReadTerminal(_) | Self::ReadCommand(_) => {
+                ToolCapability::Read
+            }
+        }
     }
     pub fn validate(&self) -> Result<(), String> {
         if self
@@ -94,6 +146,36 @@ impl TerminalCall {
                     || v.idle_ms.is_some_and(|n| !(100..=30_000).contains(&n)) =>
             {
                 Err("Invalid timeout or idle interval".into())
+            }
+            Self::ExecCommand(v) => {
+                let bytes = v.program.len() + v.args.iter().map(String::len).sum::<usize>();
+                if v.program.trim().is_empty()
+                    || v.program.contains('\0')
+                    || v.args.iter().any(|arg| arg.contains('\0'))
+                    || bytes > MAX_INPUT_BYTES
+                    || v.args.len() > 256
+                    || v.stdin
+                        .as_ref()
+                        .is_some_and(|input| input.len() > MAX_READ_BYTES || input.contains('\0'))
+                {
+                    return Err("Invalid program, arguments or stdin size".into());
+                }
+                if v.timeout_ms.is_some_and(|n| n == 0 || n > 300_000)
+                    || v.yield_ms.is_some_and(|n| n > 10_000)
+                {
+                    return Err("Invalid execution timeout or yield interval".into());
+                }
+                Ok(())
+            }
+            Self::ReadCommand(v)
+                if v.yield_ms.is_some_and(|n| n > 10_000)
+                    || v.command_id.is_empty()
+                    || v.command_id.len() > 128 =>
+            {
+                Err("Invalid command id or yield interval".into())
+            }
+            Self::CancelCommand(v) if v.command_id.is_empty() || v.command_id.len() > 128 => {
+                Err("Invalid command id".into())
             }
             _ => Ok(()),
         }
