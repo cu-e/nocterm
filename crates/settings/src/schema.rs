@@ -155,6 +155,8 @@ pub struct TerminalSettings {
     pub show_timestamps: bool,
     /// Show sequential logical line numbers outside the terminal grid.
     pub show_line_numbers: bool,
+    /// Highlight dates, addresses and important messages in otherwise unstyled output.
+    pub semantic_highlighting: bool,
 }
 
 impl Default for TerminalSettings {
@@ -172,6 +174,7 @@ impl Default for TerminalSettings {
             term: "xterm-256color".to_owned(),
             show_timestamps: false,
             show_line_numbers: false,
+            semantic_highlighting: true,
         }
     }
 }
@@ -349,6 +352,16 @@ mod tests {
         assert_eq!(settings.terminal.cursor_shape, CursorShape::Bar);
         assert_eq!(settings.terminal.scrollback_lines, 10_000);
         assert_eq!(settings.ssh, SshSettings::default());
+    }
+
+    #[test]
+    fn terminal_highlighting_defaults_on_and_explicit_disable_round_trips() {
+        let settings: Settings =
+            toml::from_str("[terminal]\nsemantic_highlighting = false\n").unwrap();
+        assert!(!settings.terminal.semantic_highlighting);
+        assert!(Settings::default().terminal.semantic_highlighting);
+        let saved = toml::to_string(&settings).unwrap();
+        assert_eq!(toml::from_str::<Settings>(&saved).unwrap(), settings);
     }
 
     #[test]

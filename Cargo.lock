@@ -5278,6 +5278,7 @@ dependencies = [
  "nocterm-vault",
  "nocterm-vt",
  "nocterm-workspace",
+ "regex",
  "tempfile",
  "tracing",
 ]

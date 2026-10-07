@@ -589,3 +589,59 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &mut TestAppContext) {
+    let (handle, view, transport) = fixture(cx);
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(b"Failed password from 192.0.2.1".to_vec()),
+    );
+    let assert_role = |expected, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let view = view.read(cx);
+            let frame = view.frame.borrow();
+            assert_eq!(frame.row_text(0), "Failed password from 192.0.2.1");
+            assert_eq!(
+                view.highlights.borrow().role_at(0, &frame.cells[0]),
+                expected
+            );
+        })
+        .unwrap();
+    };
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+    let scans = view.read_with(cx, |view, _| view.highlights.borrow().scan_count());
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| {
+            s.appearance.mode = nocterm_settings::AppearanceMode::Light;
+            s.appearance.detect_server_country = false;
+        })
+        .detach()
+    });
+    cx.run_until_parked();
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.highlights.borrow().scan_count()),
+        scans
+    );
+
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| s.terminal.semantic_highlighting = false).detach()
+    });
+    cx.run_until_parked();
+    assert_role(None, cx);
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |s| s.terminal.semantic_highlighting = true).detach()
+    });
+    cx.run_until_parked();
+    assert_role(Some(crate::highlighting::Role::Error), cx);
+}
+
+#[path = "view/keyboard_tests.rs"]
+mod keyboard_tests;
+
+#[path = "view/keyboard_transition_tests.rs"]
+mod keyboard_transition_tests;

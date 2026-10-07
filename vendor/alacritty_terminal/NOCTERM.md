@@ -12,7 +12,7 @@ tests remain intact; Nocterm's additional coverage lives beside the modified
 engine methods and in `crates/vt/src/emulator.rs`. This is an internal Cargo patch,
 not a new published terminal library.
 
-Only `src/term/cell.rs`, `src/term/mod.rs` and `src/tty/unix.rs` differ from the
+`src/term/cell.rs`, `src/term/mod.rs`, `src/term/keyboard.rs` and `src/tty/unix.rs` differ from the
 distribution's library sources. The Unix shell-user lookup uses equivalent `?`
 error propagation to satisfy current Clippy without changing environment-variable
 fallback behavior. Cargo uses the original normalized package dependencies.
@@ -62,6 +62,26 @@ The VT adapter exports metadata separately from the terminal text. Rendering
 uses UTC `HH:MM:SS`, with this machine's clock; it does not interpret network
 chunks as lines or use the remote host's clock. The gutter stays outside the
 PTY grid, clipboard text and selection, and is hidden in alternate screen.
+
+## Negotiated keyboard state
+
+Nocterm enables the existing VTE kitty keyboard handlers and maintains effective
+flags separately from the bounded saved-state stack for each screen. Direct
+replace/union/difference operations, queries and screen swaps use the effective
+state. Nested pops restore saved flags; a pop that empties the stack resets all
+flags, as required by the kitty protocol. Overflow evicts the oldest keyboard
+entry from the keyboard stack, correcting the upstream title-stack removal that
+could panic after 4096 pushes. Keyboard helpers live in `term/keyboard.rs`.
+A negotiation epoch changes on accepted keyboard operations, screen transitions
+and reset, even when the final flags are unchanged. Ordinary text and state
+queries leave it unchanged, allowing the host to invalidate held keys precisely.
+
+The existing VTE modifyOtherKeys handlers retain levels 0–2 and answer queries
+with `CSI >4;level m`. This xterm resource is shared across screens. RIS and
+changing kitty support clear negotiated state. Input encoding remains in
+`nocterm-vt`; this fork does not infer application names or inject key sequences
+into rendered output. The GPUI adapter uses only available logical/shifted key
+metadata and never invents physical layout, keypad or modifier handedness.
 
 ## Verification and updates
 

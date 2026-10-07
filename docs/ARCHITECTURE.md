@@ -104,7 +104,57 @@ required; SSH and local shells use the same terminal path.
 
 Features depend on shared contracts and never on other features or the SSH
 adapter. `nocterm-terminal` owns the terminal model/view and observes session
-and settings changes. `nocterm-connections` owns persisted profiles and recents,
+and settings changes. Its renderer decorates otherwise unstyled default-color
+output with semantic roles for timestamps, validated IP addresses, versions,
+process/user identifiers and important messages. ANSI colors and program styles,
+selection, search results and block cursors take precedence. This presentation
+never enters clipboard text, recordings or terminal transport. A per-view cache
+uses output generation, viewport size, scroll offset and screen identity; blink
+and selection repaint reuse roles, while palette colors resolve at paint time.
+Only visible rows are examined, joining soft wraps on either screen. Matches
+touching a clipped soft-wrap boundary are skipped without reading off-screen
+text; complete fields elsewhere in that visible group still receive decoration. Work is
+bounded to 64 KiB of text and 65536 examined cells per frame, 4 KiB per logical
+group, 512 field matches per group and 4096 retained compact spans. Oversized
+groups are left undecorated. Disabling `terminal.semantic_highlighting` releases
+the cache and skips parsing; the Terminal settings switch is enabled by default.
+Theme ANSI colors are used only when their normal or bright variant meets 4.5:1
+contrast against the terminal background, otherwise the original foreground is
+kept. Built-in field captures follow the bounded line decoration approach used
+by [iTerm2 triggers](https://iterm2.com/triggers.html) and the semantic log fields
+in [lnav formats](https://docs.lnav.org/en/latest/formats.html).
+
+
+Keyboard input is negotiated through the emulator rather than application-name
+heuristics. `Modes::keyboard` exposes kitty's five progressive flags and xterm's
+modifyOtherKeys level. The encoder separates legacy, kitty and xterm forms,
+returning encoded input, deferred composed text, or an ignored event. Without
+negotiation, Shift+Enter remains CR; kitty flags 7 distinguish it as
+`CSI 13;2u`, while plain Enter stays CR. Enhanced F3 uses `CSI 13~`, avoiding the
+cursor-position-report collision. Kitty takes priority when both protocols are
+requested. Modifier levels and query replies follow
+[kitty's keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+and [xterm's controls](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html).
+Kitty effective state and a bounded 4096-entry saved stack are independent on
+each screen; the xterm modifier resource is global and resets on RIS. A narrow
+keyboard negotiation epoch also identifies transitions that return to identical
+flags within one output chunk; ordinary text and queries preserve the epoch.
+
+The view forwards repeat and release events only for accepted terminal input,
+tracking at most 128 held keys. Deferred text acquires physical ownership only
+when its commit succeeds. Application bindings, platform keys, focus changes,
+composition, reconnects and negotiation changes discard stale ownership; key
+release does not scroll or clear selection. GPUI text preference leaves AltGr
+and dead-key composition to the input method without duplicating characters.
+Text-only commits use kitty's unknown key 0 when report-all is requested, with
+Unicode text codepoints only when associated-text reporting is enabled. GPUI
+supplies logical keys and produced text, but no reliable physical base-layout
+key, keypad identity, modifier handedness or lock state. These are never guessed:
+known shifted values can be reported, generic modifier names are ignored, and
+optional alternate identities are supported by the VT API for hosts that have
+them. Platform-key combinations remain application shortcuts.
+
+`nocterm-connections` owns persisted profiles and recents,
 the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
 global keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from

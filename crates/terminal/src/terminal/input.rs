@@ -54,18 +54,22 @@ impl Terminal {
     }
 
     /// Encodes only user text. Protocol replies and mouse messages use send unchanged.
-    pub fn send_text(&mut self, text: &str, cx: &mut Context<Self>) {
+    pub fn send_text(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         let previous = self.text_error();
-        match self.codec.encode(text) {
+        let accepted = match self.codec.encode(text) {
             Ok(bytes) => {
                 self.text_error = None;
-                self.send(bytes);
+                self.send(bytes)
             }
-            Err(error) => self.text_error = Some(error),
-        }
+            Err(error) => {
+                self.text_error = Some(error);
+                false
+            }
+        };
         if previous != self.text_error() {
             cx.emit(TerminalEvent::Changed);
         }
+        accepted
     }
 
     /// Paste a user-selected snippet in one transport submission. Shell integration

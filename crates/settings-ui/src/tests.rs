@@ -357,3 +357,19 @@ async fn a_failed_save_is_reported_and_keeps_the_active_settings(cx: &mut TestAp
         );
     });
 }
+
+#[gpui_kit::test]
+fn terminal_highlighting_switch_saves_and_can_be_reenabled(cx: &mut TestAppContext) {
+    let (handle, view) = open(cx);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.select_page(1, window, cx));
+        window.render_frame(cx);
+        assert!(cx.settings().terminal.semantic_highlighting);
+        window.click("semantic-highlighting", cx);
+        assert!(!cx.settings().terminal.semantic_highlighting);
+        window.render_frame(cx);
+        window.click("semantic-highlighting", cx);
+        assert!(cx.settings().terminal.semantic_highlighting);
+    })
+    .unwrap();
+}

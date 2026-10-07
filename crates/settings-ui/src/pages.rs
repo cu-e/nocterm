@@ -394,6 +394,18 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                     cx,
                 ),
                 form::row(
+                    "Highlight terminal output",
+                    "Color dates, addresses and important messages in plain output. Programs keep their own colors.",
+                    toggle(
+                        "semantic-highlighting",
+                        terminal.semantic_highlighting,
+                        false,
+                        |s, on| s.terminal.semantic_highlighting = on,
+                        cx,
+                    ),
+                    cx,
+                ),
+                form::row(
                     "Copy on selection",
                     "Copy text to the clipboard as soon as it is selected.",
                     toggle(

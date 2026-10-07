@@ -49,6 +49,7 @@ pub fn init_recording(directory: std::path::PathBuf, cx: &mut gpui_kit::App) {
     .detach();
 }
 mod element;
+mod highlighting;
 pub use credentials::init_credentials;
 mod integration;
 mod session_settings;

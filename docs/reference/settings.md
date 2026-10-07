@@ -65,6 +65,7 @@
 | `terminal.font_size` | ["number","null"]; 6.0–72.0 | `null` | Font size in pixels. Unset: the design tokens' terminal size. |
 | `terminal.line_height` | ["number","null"]; 1.0–3.0 | `null` | Line height as a multiple of the font size. Unset: the design tokens' value. |
 | `terminal.scrollback_lines` | "integer"; 0–1000000 | `10000` | Lines of history kept above the visible screen. |
+| `terminal.semantic_highlighting` | "boolean" | `true` | Highlight dates, addresses and important messages in otherwise unstyled output. |
 | `terminal.show_line_numbers` | "boolean" | `false` | Show sequential logical line numbers outside the terminal grid. |
 | `terminal.show_timestamps` | "boolean" | `false` | Show the timestamp of the first output on each logical line. Show each logical line's first output time in UTC (this machine's clock). |
 | `terminal.term` | "string" | `"xterm-256color"` | Terminal type announced to the remote host (its `TERM` variable). |
