@@ -1,5 +1,6 @@
 mod input;
 mod output;
+mod presentation;
 
 use std::{
     cell::RefCell,
@@ -80,6 +81,7 @@ pub struct Terminal {
     prompt_epoch: u64,
     connection_epoch: u64,
     emulator: Emulator,
+    display_revision: u64,
     find: FindState,
     find_task: Option<Task<()>>,
     /// What the running program called its window.
@@ -165,6 +167,7 @@ impl Terminal {
             prompt_epoch: 0,
             connection_epoch: 0,
             emulator: Emulator::new(TermSize::default(), options),
+            display_revision: 0,
             find: FindState::default(),
             find_task: None,
             program_title: None,
@@ -174,7 +177,7 @@ impl Terminal {
                 let options = emulator_options(&cx.settings().terminal);
                 this.emulator.set_options(options);
                 this.refresh_find(cx);
-                cx.emit(TerminalEvent::Output);
+                this.emit_output(cx);
             }),
         };
         this.connect(cx);
@@ -455,7 +458,7 @@ impl Terminal {
                         let effects = this.emulator.finish_sync();
                         this.apply(effects, cx);
                         this.refresh_find(cx);
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     // The program ended it, or began another one since.
                     _ => this.schedule_sync(cx),
@@ -627,7 +630,7 @@ impl Terminal {
             ..Default::default()
         };
         self.emulator.clear_search();
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
     }
 
     fn refresh_find(&mut self, cx: &mut Context<Self>) {
@@ -662,7 +665,7 @@ impl Terminal {
         if self.find.query.is_empty() {
             self.find.searching = false;
             self.find.result = SearchResult::default();
-            cx.emit(TerminalEvent::Output);
+            self.emit_output(cx);
             return;
         }
         let mut scan = match self.emulator.search_with_options(
@@ -675,12 +678,12 @@ impl Terminal {
             Err(error) => {
                 self.find.error = Some(error);
                 self.find.searching = false;
-                cx.emit(TerminalEvent::Output);
+                self.emit_output(cx);
                 return;
             }
         };
         self.find.searching = true;
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
         self.find_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let mut restart = delay != Duration::ZERO;
@@ -708,7 +711,7 @@ impl Terminal {
                         previewed = Some(found);
                         this.find.result.active = Some(found);
                         this.emulator.show_search_match(found);
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     if let SearchProgress::Failed(error) = &progress {
                         this.find.error = Some(error.clone());
@@ -716,7 +719,7 @@ impl Terminal {
                         this.find.searching = false;
                         this.find_task = None;
                         this.emulator.clear_search();
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     if let SearchProgress::Complete(result) = progress {
                         this.find.result = result;
@@ -727,7 +730,7 @@ impl Terminal {
                         {
                             this.emulator.show_search_match(active);
                         }
-                        cx.emit(TerminalEvent::Output);
+                        this.emit_output(cx);
                     }
                     progress
                 });
@@ -764,21 +767,6 @@ impl Terminal {
                 }
             }
         }));
-    }
-
-    /// Gives the emulator to `edit`, for selection and scrolling, and redraws.
-    pub fn update_emulator<R>(
-        &mut self,
-        cx: &mut Context<Self>,
-        edit: impl FnOnce(&mut Emulator) -> R,
-    ) -> R {
-        let result = edit(&mut self.emulator);
-        cx.emit(TerminalEvent::Output);
-        result
-    }
-
-    pub fn scroll(&mut self, scroll: Scroll, cx: &mut Context<Self>) {
-        self.update_emulator(cx, |emulator| emulator.scroll(scroll));
     }
 }
 

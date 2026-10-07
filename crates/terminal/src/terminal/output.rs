@@ -21,6 +21,6 @@ impl Terminal {
         }
         self.schedule_sync(cx);
         self.refresh_find(cx);
-        cx.emit(TerminalEvent::Output);
+        self.emit_output(cx);
     }
 }

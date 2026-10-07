@@ -37,8 +37,9 @@ impl EntityInputHandler for TerminalView {
     }
 
     fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.marked_text = None;
-        cx.notify();
+        if self.marked_text.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn replace_text_in_range(
@@ -48,11 +49,13 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.marked_text = None;
+        let composing = self.marked_text.take().is_some();
         if !text.is_empty() {
             self.commit_text(text, cx);
         }
-        cx.notify();
+        if composing {
+            cx.notify();
+        }
     }
 
     fn replace_and_mark_text_in_range(
@@ -64,8 +67,11 @@ impl EntityInputHandler for TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.keyboard.clear();
-        self.marked_text = Some(text.to_owned()).filter(|text| !text.is_empty());
-        cx.notify();
+        let marked = Some(text.to_owned()).filter(|text| !text.is_empty());
+        if self.marked_text != marked {
+            self.marked_text = marked;
+            cx.notify();
+        }
     }
 
     fn bounds_for_range(

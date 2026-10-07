@@ -352,6 +352,8 @@ impl Render for TerminalView {
             cursor_lit: self.cursor_lit,
             marked_text: self.marked_text.clone().map(SharedString::from),
             frame: self.frame.clone(),
+            frame_dirty: self.frame_dirty.clone(),
+            frame_version: self.frame_version.clone(),
             highlights: self.highlights.clone(),
             geometry: self.geometry.clone(),
         };

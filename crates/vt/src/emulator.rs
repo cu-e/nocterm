@@ -18,6 +18,8 @@ use alacritty_terminal::{
     },
 };
 
+mod input;
+
 /// Narrowest grid the emulator will lay out.
 const MIN_COLS: u16 = 2;
 /// Shortest grid the emulator will lay out.
@@ -442,22 +444,6 @@ impl Emulator {
         self.palette = palette;
     }
 
-    /// Moves the viewport through the scrollback.
-    pub fn scroll(&mut self, scroll: Scroll) {
-        self.term.scroll_display(match scroll {
-            Scroll::Lines(lines) => GridScroll::Delta(lines),
-            Scroll::PageUp => GridScroll::PageUp,
-            Scroll::PageDown => GridScroll::PageDown,
-            Scroll::Top => GridScroll::Top,
-            Scroll::Bottom => GridScroll::Bottom,
-        });
-    }
-
-    /// Lines the viewport is scrolled back by; 0 shows the live screen.
-    pub fn display_offset(&self) -> usize {
-        self.term.grid().display_offset()
-    }
-
     /// Begins a selection at a cell of the viewport, replacing any other.
     pub fn start_selection(&mut self, kind: SelectionKind, at: CellPoint, side: Side) {
         let kind = match kind {
@@ -475,10 +461,6 @@ impl Emulator {
         if let Some(selection) = &mut self.term.selection {
             selection.update(point, grid_side(side));
         }
-    }
-
-    pub fn clear_selection(&mut self) {
-        self.term.selection = None;
     }
 
     /// Selects retained history and the screen without touching search state.

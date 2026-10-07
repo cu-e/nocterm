@@ -651,3 +651,6 @@ mod keyboard_tests;
 
 #[path = "view/keyboard_transition_tests.rs"]
 mod keyboard_transition_tests;
+
+#[path = "view_input_tests.rs"]
+mod input;

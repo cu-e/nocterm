@@ -93,6 +93,8 @@ pub(crate) struct TerminalElement {
     /// Text an input method is composing, drawn at the cursor.
     pub(crate) marked_text: Option<SharedString>,
     pub(crate) frame: Rc<RefCell<Frame>>,
+    pub(crate) frame_dirty: Rc<Cell<bool>>,
+    pub(crate) frame_version: Rc<Cell<Option<(u64, u64)>>>,
     pub(crate) highlights: Rc<RefCell<crate::highlighting::Highlights>>,
     pub(crate) geometry: Rc<Cell<Option<Geometry>>>,
 }
@@ -155,10 +157,7 @@ impl TerminalElement {
 
         self.terminal
             .update(cx, |terminal, cx| terminal.resize(size, cx));
-        self.terminal
-            .read(cx)
-            .emulator()
-            .snapshot(&mut self.frame.borrow_mut());
+        self.refresh_frame(cx);
 
         self.highlights.borrow_mut().update(
             &self.frame.borrow(),
@@ -185,6 +184,23 @@ impl TerminalElement {
             colors: Colors::new(&self.style),
         };
         (self, layout)
+    }
+
+    /// Cursor and composition changes can paint the existing emulator snapshot.
+    pub(crate) fn refresh_frame(&self, cx: &App) -> bool {
+        let terminal = self.terminal.read(cx);
+        let emulator = terminal.emulator();
+        let version = (emulator.generation(), terminal.display_revision());
+        if !self.frame_dirty.get()
+            && self.frame_version.get() == Some(version)
+            && self.frame.borrow().size == emulator.size()
+        {
+            return false;
+        }
+        emulator.snapshot(&mut self.frame.borrow_mut());
+        self.frame_version.set(Some(version));
+        self.frame_dirty.set(false);
+        true
     }
 
     fn paint(self, bounds: Bounds<Pixels>, layout: Layout, window: &mut Window, cx: &mut App) {

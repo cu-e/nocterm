@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     ops::Range,
     rc::Rc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui_kit::{
@@ -42,6 +42,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const MAX_WHEEL_REPORTS: i32 = 10;
 
 mod commands;
+mod cursor;
 mod host_key;
 mod input;
 mod keyboard;
@@ -61,11 +62,14 @@ pub struct TerminalView {
     focused: bool,
     /// Shared with the element, which fills them in while painting.
     frame: Rc<RefCell<Frame>>,
+    frame_dirty: Rc<Cell<bool>>,
+    frame_version: Rc<Cell<Option<(u64, u64)>>>,
     highlights: Rc<RefCell<crate::highlighting::Highlights>>,
     geometry: Rc<Cell<Option<Geometry>>>,
     /// The palette last handed to the emulator.
     palette: Option<Palette>,
     cursor_lit: bool,
+    next_blink: Instant,
     _blink: Task<()>,
     /// Text an input method is composing.
     marked_text: Option<String>,
@@ -150,10 +154,13 @@ impl TerminalView {
             focus_handle,
             focused: false,
             frame: Rc::default(),
+            frame_dirty: Rc::new(Cell::new(true)),
+            frame_version: Rc::default(),
             highlights: Rc::default(),
             geometry: Rc::default(),
             palette: None,
             cursor_lit: true,
+            next_blink: cx.background_executor().now() + CURSOR_BLINK_INTERVAL,
             _blink: Self::blink(cx),
             marked_text: None,
             selecting: false,
@@ -181,12 +188,14 @@ impl TerminalView {
         self.sync_keyboard(cx);
         match event {
             TerminalEvent::Changed => {
+                self.frame_dirty.set(true);
                 self.sync_secret_field(window, cx);
                 self.sync_operational_notices(window, cx);
                 cx.emit(ItemEvent::Changed);
                 cx.notify();
             }
             TerminalEvent::Output => {
+                self.frame_dirty.set(true);
                 self.sync_operational_notices(window, cx);
                 cx.notify();
             }
@@ -279,41 +288,11 @@ impl TerminalView {
         self.wake_cursor(cx);
     }
 
-    // ── Cursor ───────────────────────────────────────────────────────────────
-
-    fn blink(cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
-                let alive = this.update(cx, |this, cx| {
-                    let blinking = this.frame.borrow().cursor.is_some_and(|c| c.blinking);
-                    if this.focused && blinking {
-                        this.cursor_lit = !this.cursor_lit;
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        })
-    }
-
-    /// Lights the cursor and restarts its blink, as after typing.
-    fn wake_cursor(&mut self, cx: &mut Context<Self>) {
-        self.cursor_lit = true;
-        self._blink = Self::blink(cx);
-        cx.notify();
-    }
-
     // ── Keyboard ─────────────────────────────────────────────────────────────
 
     fn type_text(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         let accepted = self.terminal.update(cx, |terminal, cx| {
-            terminal.update_emulator(cx, |emulator| {
-                emulator.scroll(Scroll::Bottom);
-                emulator.clear_selection();
-            });
+            terminal.prepare_input(cx);
             terminal.send_text(text, cx)
         });
         self.wake_cursor(cx);
@@ -686,6 +665,7 @@ impl TerminalView {
         };
         if self.palette != Some(palette) {
             self.palette = Some(palette);
+            self.frame_dirty.set(true);
             self.terminal
                 .update(cx, |terminal, _| terminal.set_palette(palette));
         }

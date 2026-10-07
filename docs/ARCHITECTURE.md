@@ -62,6 +62,13 @@ drag payloads remain independent of the visual snapshot, including multi-selecti
 Connections draw quiet insertion overlays and explicit append targets after every
 expanded group's last row. The toolkit shares tab/title presentation with passive
 previews and reports the actual source size and pointer offset to dock drop geometry.
+Terminal elements reuse the emulator snapshot until output, presentation state,
+size or palette changes. Selection, scrolling and search advance a presentation
+revision before event subscribers run. Input at an unchanged live screen waits
+for shell echo; cursor timing and IME overlays redraw only when their presentation
+changes. VT scroll boundaries preserve selection and avoid unnecessary output
+notifications, including selection recomputation in vi mode.
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
