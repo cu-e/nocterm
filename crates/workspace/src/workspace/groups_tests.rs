@@ -202,6 +202,7 @@ fn a_program_joins_the_session_on_its_host_it_was_opened_from(cx: &mut TestAppCo
             session: None,
         },
         program: ExecRequest::new("docker"),
+        shell_syntax: None,
     };
     let (other, parent) = cx
         .update_window(window, |_, window, cx| {

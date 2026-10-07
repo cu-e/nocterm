@@ -5,7 +5,7 @@ use nocterm_session::{ConnectRequest, Event, Session, SessionDriver, Transport};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
-struct Scripted {
+pub(super) struct Scripted {
     drivers: Mutex<Vec<Arc<SessionDriver>>>,
     requests: Mutex<Vec<ConnectRequest>>,
 }
@@ -27,7 +27,9 @@ impl Transport for Scripted {
     }
 }
 
-fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
+pub(super) fn fixture(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
     let transport = Arc::new(Scripted::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -65,7 +67,7 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TerminalView>, A
     emit(cx, &transport, 0, Event::Connected);
     (handle, view, transport)
 }
-fn emit(cx: &mut TestAppContext, transport: &Scripted, index: usize, event: Event) {
+pub(super) fn emit(cx: &mut TestAppContext, transport: &Scripted, index: usize, event: Event) {
     let driver = transport.drivers.lock().unwrap()[index].clone();
     cx.background_executor
         .spawn(async move {
@@ -84,7 +86,11 @@ fn complete(cx: &mut TestAppContext, view: &Entity<TerminalView>) {
     }
     panic!("search did not finish after output became quiet");
 }
-fn drain(driver: &SessionDriver) -> Vec<Vec<u8>> {
+pub(super) fn scripted_driver(transport: &Scripted, index: usize) -> Arc<SessionDriver> {
+    transport.drivers.lock().unwrap()[index].clone()
+}
+
+pub(super) fn drain(driver: &SessionDriver) -> Vec<Vec<u8>> {
     let mut inputs = vec![];
     while let Some(Some(command)) = driver.next_command().now_or_never() {
         if let nocterm_session::Command::Input(bytes) = command {

@@ -2,8 +2,56 @@
 use super::{Terminal, TerminalEvent};
 use gpui_kit::Context;
 use nocterm_vt::encode_paste;
+use std::path::Path;
 
 impl Terminal {
+    /// Changes a known idle, empty local prompt. Otherwise returns a prepared command.
+    pub fn change_directory(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<(), String> {
+        if !self.local || !self.is_connected() {
+            return Err("Open a connected local terminal first.".into());
+        }
+        let _ = cx;
+        let stem = Path::new(&self.shell_program)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let path = path
+            .to_str()
+            .ok_or("The shell cannot represent this directory path.")?;
+        if path.contains(['\0', '\r', '\n']) {
+            return Err(
+                "Directory paths with control characters require manual navigation.".into(),
+            );
+        }
+        let command=match stem {
+            "bash"|"zsh"|"fish"=>format!("cd -- {}",nocterm_session::quote_posix(path)),
+            "pwsh"|"powershell"=>format!("Set-Location -LiteralPath {}",nocterm_session::quote_powershell(path)),
+            _=>return Err("Directory synchronization needs Bash, Zsh, fish or PowerShell with shell integration enabled.".into()),
+        };
+        let integration = self.integration.borrow();
+        if !integration.at_prompt || integration.dirty_input || self.emulator.modes().alt_screen {
+            return Err(format!(
+                "The shell is busy or has unfinished input. Run at an empty prompt: {command}"
+            ));
+        }
+        drop(integration);
+        let bytes = self.codec.encode(&format!("{command}\r"))?;
+        if !self.send(bytes) {
+            return Err(
+                "Directory change was not sent because the terminal input queue is full.".into(),
+            );
+        }
+        Ok(())
+    }
+    pub(crate) fn drop_syntax(&self) -> Option<nocterm_workspace::ShellSyntax> {
+        self.shell_syntax
+    }
+
+    /// Effective program for the running connection, including per-tab overrides.
+    pub(crate) fn drop_shell(&self) -> &str {
+        &self.shell_program
+    }
+
     // ── Input ────────────────────────────────────────────────────────────────
 
     pub(crate) fn agent_prompt_state(&self) -> (Option<bool>, bool) {
@@ -100,16 +148,36 @@ impl Terminal {
         } else {
             text
         };
+        self.send_paste(text, execute, cx)
+    }
+
+    /// Explorer drops follow native paste, including programs in the alternate screen.
+    pub(crate) fn paste_paths(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        if !self.is_connected() || self.prompt.is_some() || self.awaiting_vault() {
+            return Err("Connect and finish authentication before dropping paths.".into());
+        }
+        if text.is_empty() || text.len() > 256 * 1024 || text.chars().any(char::is_control) {
+            return Err("The selected paths cannot be inserted safely.".into());
+        }
+        self.send_paste(text, false, cx)
+    }
+
+    fn send_paste(
+        &mut self,
+        text: &str,
+        execute: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let mut paste = encode_paste(text, self.emulator.modes());
         // Enter must follow the bracketed-paste closing marker, never occur inside it.
         if execute {
             paste.push(b'\r');
         }
         let text =
-            std::str::from_utf8(&paste).map_err(|_| "Snippet could not be encoded as text.")?;
+            std::str::from_utf8(&paste).map_err(|_| "Paste could not be encoded as text.")?;
         let bytes = self.codec.encode(text)?;
         if !self.send(bytes) {
-            return Err("Terminal input queue rejected the snippet. Wait and retry.".into());
+            return Err("Terminal input queue rejected the paste. Wait and retry.".into());
         }
         cx.emit(TerminalEvent::Changed);
         Ok(())

@@ -45,6 +45,7 @@ mod commands;
 mod host_key;
 mod input;
 mod keyboard;
+mod paste;
 mod render;
 #[path = "view_secret.rs"]
 mod secret;
@@ -488,18 +489,6 @@ impl TerminalView {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         self.copy_selection(cx);
-    }
-
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
-            return;
-        };
-        let modes = self.terminal.read(cx).emulator().modes();
-        self.type_text(
-            std::str::from_utf8(&encode_paste(&text, modes))
-                .expect("paste wrapping preserves UTF-8"),
-            cx,
-        );
     }
 
     fn scroll_page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {

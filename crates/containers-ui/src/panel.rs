@@ -1,6 +1,8 @@
 //! The sidebar panel: the active host's containers, grouped by Compose
 //! project, and its images.
 
+#[cfg(test)]
+mod program_tests;
 mod rows;
 
 use std::collections::HashSet;
@@ -18,7 +20,7 @@ use gpui_kit::{
 };
 use nocterm_containers::{Action, ContainersError};
 use nocterm_ui::IconName;
-use nocterm_workspace::{Panel, Workspace};
+use nocterm_workspace::{Panel, ShellSyntax, Workspace};
 
 use crate::{
     model::{ContainersModel, Status},
@@ -101,44 +103,33 @@ impl ContainersPanel {
         cx: &mut Context<Self>,
     ) {
         match op {
-            Op::Logs => self.open(
-                format!("Logs: {}", subject.name),
-                subject,
-                window,
-                cx,
-                |engine, id| engine.logs(id),
-            ),
-            Op::Shell => self.open(
-                format!("Shell: {}", subject.name),
-                subject,
-                window,
-                cx,
-                |engine, id| engine.shell(id),
-            ),
+            Op::Logs | Op::Shell => self.open(op, subject, window, cx),
             Op::Act(action) if op.destructive() => self.confirm(action, subject, window, cx),
             Op::Act(action) => self.perform(action, subject.ids, window, cx),
         }
     }
 
     /// Opens a tab running a program about the subject's container.
-    fn open(
-        &mut self,
-        title: String,
-        subject: Subject,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        program: impl FnOnce(nocterm_containers::Engine, &str) -> nocterm_session::ExecRequest,
-    ) {
+    fn open(&mut self, op: Op, subject: Subject, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = subject.ids.first() else {
             return;
         };
-        let Some(spec) = self
-            .model
-            .read(cx)
-            .program(title, |engine| program(engine, id))
+        let (label, shell_syntax) = match op {
+            Op::Shell => ("Shell", Some(ShellSyntax::Posix)),
+            Op::Logs => ("Logs", None),
+            Op::Act(_) => return,
+        };
+        let Some(mut spec) =
+            self.model
+                .read(cx)
+                .program(format!("{label}: {}", subject.name), |engine| match op {
+                    Op::Shell => engine.shell(id),
+                    _ => engine.logs(id),
+                })
         else {
             return;
         };
+        spec.shell_syntax = shell_syntax;
         let _ = self
             .workspace
             .update(cx, |workspace, cx| workspace.open_program(spec, window, cx));

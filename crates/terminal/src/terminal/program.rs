@@ -12,6 +12,11 @@ use nocterm_workspace::{ProgramSpec, SessionContext, SessionSpec};
 use super::{Status, Terminal};
 
 impl Terminal {
+    /// Whether this terminal runs a one-shot host command.
+    pub fn is_command(&self) -> bool {
+        self.local_transport.is_some()
+    }
+
     /// A tab running `spec`'s program over its host's own connection, or on
     /// this computer when the host has no session.
     pub fn new_program(spec: ProgramSpec, cx: &mut Context<Self>) -> Self {
@@ -19,6 +24,7 @@ impl Terminal {
             title,
             host,
             program,
+            shell_syntax,
         } = spec;
         let session = host.session;
         let target = session.as_ref().map_or_else(
@@ -42,7 +48,9 @@ impl Terminal {
             launch: Some(launch),
             credential: None,
         };
-        Self::new_kind(spec, session.is_none(), Some(transport), None, cx)
+        let mut terminal = Self::new_kind(spec, session.is_none(), Some(transport), None, cx);
+        terminal.shell_syntax = shell_syntax;
+        terminal
     }
 
     /// The session, as the workspace shows it to panels.

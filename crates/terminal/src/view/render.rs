@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::base::TestSupportExt as _;
 
 impl TerminalView {
     pub(super) fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -356,6 +357,8 @@ impl Render for TerminalView {
         };
 
         let grid = div()
+            .id("terminal-drop-target")
+            .test_support()
             .flex_1()
             .min_h_0()
             .key_context(KEY_CONTEXT)
@@ -363,6 +366,10 @@ impl Render for TerminalView {
             .size_full()
             .overflow_hidden()
             .bg(background)
+            .drag_over::<nocterm_workspace::FileDrag>(|style, _, _, cx| {
+                style.border_1().border_color(cx.theme().primary)
+            })
+            .on_drop(cx.listener(Self::drop_files))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_key_up(cx.listener(Self::on_key_up))
             .on_action(cx.listener(Self::scroll_page_up))

@@ -193,6 +193,20 @@ cancellable background logical-size scan. Request tasks are dropped when
 superseded, and generations reject stale replies. The local cwd bridge goes
 through Workspace's `LocalTerminal` contract, without Files depending on Terminal.
 
+Explorer location editors own native input and asynchronous, bounded directory
+completion. Suggestions use a viewport-constrained popup anchored below the input,
+flipping above it when needed, so minimum-height split panes retain usable rows.
+Tab and Shift+Tab cycle files and folders from one cached directory;
+editing, blur, navigation and session changes invalidate pending generations.
+Enter resolves a literal absolute, relative or home path through the existing
+browser loader, retaining the draft on failure. A shared Workspace `FileDrag`
+contract preserves local paths or pinned remote filesystem/host data. Explorer
+uses it for transfers; Terminal quotes its literal paths for the receiving shell
+and submits one checked native paste without Enter, independently of the source
+host. Wrapper programs can carry a typed receiving-shell syntax through
+`ProgramSpec`; Container Shell marks its known Bash/sh launch as POSIX, while log
+tabs retain unsupported-program handling. No feature depends on its sibling crate.
+
 Explorer context menus snapshot typed local/remote targets. A mutation dialog runs
 I/O on the background executor; completion refreshes only a matching navigation
 generation and filesystem instance. New metadata/rename/remove/permission methods

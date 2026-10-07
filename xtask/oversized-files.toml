@@ -8,7 +8,7 @@
 "crates/files/src/operations_ui_tests.rs" = 833
 "crates/files/src/tests.rs" = 1125
 "crates/ssh/src/sftp.rs" = 1362
-"crates/terminal/src/terminal.rs" = 1194
+"crates/terminal/src/terminal.rs" = 1156
 "crates/vault/src/lib.rs" = 826
 "crates/vt/src/search.rs" = 994
 "crates/workspace/src/tests.rs" = 1201
