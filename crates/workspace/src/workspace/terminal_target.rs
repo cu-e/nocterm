@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 impl Workspace {
     pub fn local_terminal_cwd(&self, cx: &App) -> Option<PathBuf> {
-        self.local_terminal
-            .as_ref()
+        self.selected_local(cx)
             .and_then(|local| local.local.cwd(cx))
     }
 
@@ -32,12 +31,15 @@ impl Workspace {
             self.activate_item(index, window, cx);
             return true;
         }
-        if self.local_terminal_is_visible(cx)
-            && let Some(local) = self.local_terminal.as_ref().filter(|local| {
-                local.handle.item_id() == id && local.handle.terminal_access(cx).is_some()
-            })
+        if self.local_entry_visible(id, cx)
+            && let Some(local) = self
+                .local_entry(id)
+                .filter(|local| local.handle.terminal_access(cx).is_some())
         {
             let focus = local.handle.focus_handle(cx);
+            let panel = gpui_kit::component::dock::PanelId::from(local.item.entity_id());
+            self.dock
+                .update(cx, |dock, cx| dock.select_panel(panel, window, cx));
             self.last_command_item = Some(id);
             window.focus(&focus, cx);
             cx.notify();
@@ -77,13 +79,24 @@ impl Workspace {
                 })
             })
             .collect();
-        if let Some(local) = &self.local_terminal
-            && let Some(access) = local.handle.terminal_access(cx)
+        for local in self
+            .local_terminal
+            .as_ref()
+            .into_iter()
+            .flat_map(|dock| &dock.entries)
         {
+            let Some(access) = local.handle.terminal_access(cx) else {
+                continue;
+            };
             entries.push(crate::TerminalEntry {
                 item: local.handle.item_id(),
                 access,
-                title: local.handle.tab_title(cx),
+                title: local
+                    .item
+                    .read(cx)
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| local.handle.tab_title(cx)),
                 active: false,
                 bottom: true,
                 background: false,

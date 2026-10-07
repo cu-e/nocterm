@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc};
+use std::{cell::Cell, path::PathBuf, rc::Rc};
 
 use gpui_kit::{
     Action, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
@@ -22,8 +22,11 @@ use nocterm_ui::ActiveDesign as _;
 
 mod background;
 mod chrome;
+mod commands;
 mod groups;
 mod layout;
+mod local_dock;
+use local_dock::{BottomTerminal, LocalOpener};
 mod openers;
 mod panels;
 mod panes;
@@ -102,19 +105,6 @@ struct OpenItem {
     _focus_subscription: Subscription,
 }
 
-/// The main window's content.
-type LocalOpener = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
-
-struct BottomTerminal {
-    item: Entity<crate::dock_item::DockItem>,
-    handle: Rc<dyn ItemHandle>,
-    local: Box<dyn crate::local_terminal::LocalTerminalHandle>,
-    attached: bool,
-    height: Pixels,
-    _subscription: Subscription,
-    _focus_subscription: Subscription,
-}
-
 pub struct Workspace {
     focus_handle: FocusHandle,
     dock: Entity<DockArea>,
@@ -123,6 +113,7 @@ pub struct Workspace {
     dock_hide_queued: bool,
     local_terminal: Option<BottomTerminal>,
     local_opener: Option<LocalOpener>,
+    local_header_click_origin: Rc<Cell<Option<EntityId>>>,
     items: Vec<OpenItem>,
     tab_groups: crate::tab_groups::TabGroups<PanelId, gpui_kit::component::dock::NodeId>,
     active_item: Option<usize>,
@@ -189,6 +180,7 @@ impl Workspace {
             _dock_observer: observer,
             dock_hide_queued: false,
             local_terminal: None,
+            local_header_click_origin: Rc::default(),
             local_opener: None,
             focus_handle: cx.focus_handle(),
             items: Vec::new(),
@@ -309,8 +301,16 @@ impl Workspace {
         let session = item.read(cx).session(cx);
         let handle: Rc<dyn ItemHandle> = Rc::new(item);
         let workspace = cx.weak_entity();
+        let header_origin = self.local_header_click_origin.clone();
         let dock_item = cx.new(|item_cx| {
-            crate::dock_item::DockItem::new(handle.clone(), workspace, false, window, item_cx)
+            crate::dock_item::DockItem::new(
+                handle.clone(),
+                workspace,
+                false,
+                header_origin,
+                window,
+                item_cx,
+            )
         });
         let focus = dock_item.read(cx).container_focus_handle();
         let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
@@ -578,13 +578,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if bottom {
-            if self
-                .local_terminal
-                .as_ref()
-                .is_some_and(|local| local.handle.item_id() == id)
-            {
-                self.close_local_terminal(window, cx);
-            }
+            self.close_local_terminal_by_id(id, window, cx);
         } else if let Some(ix) = self
             .items
             .iter()
@@ -592,217 +586,6 @@ impl Workspace {
         {
             self.close_item(ix, window, cx);
         }
-    }
-
-    pub fn set_local_terminal_opener(
-        &mut self,
-        opener: impl Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
-    ) {
-        self.local_opener = Some(Rc::new(opener));
-    }
-
-    pub fn set_local_terminal<T: crate::LocalTerminal>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.close_local_terminal(window, cx);
-        let mut cwd = item.read(cx).cwd(cx);
-        let subscription =
-            cx.subscribe_in(
-                &item,
-                window,
-                move |this, item, event, window, cx| match event {
-                    ItemEvent::Changed => {
-                        if let Some(local) = &this.local_terminal {
-                            local.item.update(cx, |_, cx| cx.notify());
-                        }
-                        let now = item.read(cx).cwd(cx);
-                        if now != cwd {
-                            cwd = now;
-                            cx.emit(WorkspaceEvent::LocalDirectoryChanged);
-                        }
-                        cx.emit(WorkspaceEvent::ItemsChanged);
-                        cx.notify();
-                    }
-                    ItemEvent::CloseRequested => this.close_local_terminal(window, cx),
-                },
-            );
-        let handle: Rc<dyn ItemHandle> = Rc::new(item.clone());
-        let id = item.entity_id();
-        let workspace = cx.weak_entity();
-        let dock_item = cx.new(|item_cx| {
-            crate::dock_item::DockItem::new(handle.clone(), workspace, true, window, item_cx)
-        });
-        let focus = dock_item.read(cx).container_focus_handle();
-        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
-            if this.last_command_item != Some(id) {
-                this.last_command_item = Some(id);
-                cx.emit(WorkspaceEvent::ItemsChanged);
-            }
-        });
-        let height = rems(cx.design().layout.local_terminal_height).to_pixels(window.rem_size());
-        self.dock.update(cx, |dock, cx| {
-            dock.add_panel_view(
-                panel_handle(dock_item.clone()),
-                DockPlacement::Bottom,
-                Some(height),
-                window,
-                cx,
-            )
-        });
-        self.last_command_item = Some(id);
-        window.focus(&handle.focus_handle(cx), cx);
-        self.local_terminal = Some(BottomTerminal {
-            item: dock_item,
-            handle,
-            local: Box::new(item),
-            attached: true,
-            height,
-            _subscription: subscription,
-            _focus_subscription: focus_subscription,
-        });
-        cx.emit(WorkspaceEvent::ItemsChanged);
-        cx.notify();
-    }
-
-    pub fn toggle_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        if self
-            .local_terminal
-            .as_ref()
-            .is_some_and(|local| local.attached)
-        {
-            self.hide_local_terminal(window, cx);
-        } else if self.local_terminal.is_some() {
-            self.show_local_terminal(window, cx);
-        } else if let Some(opener) = self.local_opener.clone() {
-            opener(self, window, cx);
-        }
-        cx.notify();
-    }
-
-    fn schedule_hidden_dock_detach(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.dock_hide_queued
-            || !self
-                .local_terminal
-                .as_ref()
-                .is_some_and(|local| local.attached)
-            || self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
-        {
-            return;
-        }
-        self.dock_hide_queued = true;
-        let workspace = cx.weak_entity();
-        cx.defer_in(window, move |_, window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace.dock_hide_queued = false;
-                if workspace
-                    .local_terminal
-                    .as_ref()
-                    .is_some_and(|local| local.attached)
-                    && !workspace.dock.read(cx).is_dock_open(DockPlacement::Bottom)
-                {
-                    workspace.hide_local_terminal(window, cx);
-                }
-            });
-        });
-    }
-
-    fn hide_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(local) = self.local_terminal.as_mut().filter(|local| local.attached) else {
-            return;
-        };
-        local.attached = false;
-        local.height = self
-            .dock
-            .read(cx)
-            .dock_size(DockPlacement::Bottom)
-            .unwrap_or(local.height);
-        local
-            .item
-            .update(cx, |item, _| item.detach_without_closing());
-        let item = local.item.clone();
-        self.dock.update(cx, |dock, cx| {
-            dock.remove_panel(item, window, cx);
-            if dock.is_empty(DockPlacement::Bottom, cx) {
-                dock.remove_dock(DockPlacement::Bottom, window, cx);
-            }
-        });
-        if let Some(item) = self.active_item() {
-            window.focus(&item.focus_handle(cx), cx);
-        } else {
-            window.focus(&self.focus_handle, cx);
-        }
-        cx.emit(WorkspaceEvent::ItemsChanged);
-        cx.notify();
-    }
-
-    fn show_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(local) = self.local_terminal.as_mut().filter(|local| !local.attached) else {
-            return;
-        };
-        local.attached = true;
-        let item = local.item.clone();
-        let height = local.height;
-        let focus = local.handle.focus_handle(cx);
-        self.last_command_item = Some(local.handle.item_id());
-        self.dock.update(cx, |dock, cx| {
-            dock.add_panel_view(
-                panel_handle(item),
-                DockPlacement::Bottom,
-                Some(height),
-                window,
-                cx,
-            )
-        });
-        window.focus(&focus, cx);
-        cx.emit(WorkspaceEvent::ItemsChanged);
-        cx.notify();
-    }
-
-    pub fn close_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(local) = self.local_terminal.take() {
-            self.dock.update(cx, |dock, cx| {
-                dock.remove_panel(local.item, window, cx);
-                if dock.is_empty(DockPlacement::Bottom, cx) {
-                    dock.remove_dock(DockPlacement::Bottom, window, cx);
-                }
-            });
-            local.handle.close(window, cx);
-            if let Some(item) = self.active_item() {
-                window.focus(&item.focus_handle(cx), cx);
-            } else {
-                window.focus(&self.focus_handle, cx);
-            }
-            cx.emit(WorkspaceEvent::LocalDirectoryChanged);
-            cx.emit(WorkspaceEvent::ItemsChanged);
-            cx.notify();
-        }
-    }
-
-    pub fn change_local_directory(
-        &mut self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        if self.local_terminal.is_none() {
-            self.toggle_local_terminal(window, cx);
-        }
-        if self
-            .local_terminal
-            .as_ref()
-            .is_some_and(|local| !local.attached)
-        {
-            self.show_local_terminal(window, cx);
-        }
-        self.local_terminal
-            .as_ref()
-            .ok_or("Local terminal is unavailable")?
-            .local
-            .change_directory(path, window, cx)
     }
 
     pub fn rename_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -836,160 +619,6 @@ impl Workspace {
     }
 
     // ── Actions ──────────────────────────────────────────────────────────────
-
-    /// Focused bottom terminal, focused central item, then the active central tab.
-    /// An open menu retains its opening context while native popup focus moves.
-    pub fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
-        if let Some(local) = &self.local_terminal
-            && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
-            && local.item.read(cx).contains_focus(window, cx)
-        {
-            return Some(local.handle.clone());
-        }
-        if let Some(item) = self
-            .items
-            .iter()
-            .find(|item| item.dock_item.read(cx).contains_focus(window, cx))
-        {
-            return Some(item.handle.clone());
-        }
-        if self.menu_focus.contains_focused(window, cx)
-            && let Some(id) = self.menu_item.or(self.last_command_item)
-        {
-            if let Some(local) = &self.local_terminal
-                && local.handle.item_id() == id
-                && self.dock.read(cx).is_dock_open(DockPlacement::Bottom)
-            {
-                return Some(local.handle.clone());
-            }
-            if let Some(item) = self.items.iter().find(|item| item.handle.item_id() == id) {
-                return Some(item.handle.clone());
-            }
-            return None;
-        }
-        self.active_item
-            .and_then(|ix| self.items.get(ix))
-            .map(|item| item.handle.clone())
-    }
-
-    pub fn item_command_enabled(&self, command: ItemCommand, window: &Window, cx: &App) -> bool {
-        self.command_item(window, cx)
-            .is_some_and(|item| item.command_enabled(command, cx))
-    }
-
-    pub fn execute_item_command(
-        &mut self,
-        command: ItemCommand,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(item) = self.command_item(window, cx)
-            && item.command_enabled(command, cx)
-        {
-            item.execute(command, window, cx);
-        }
-    }
-
-    fn dispatch_item_command(
-        &mut self,
-        command: ItemCommand,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(item) = self.command_item(window, cx)
-            && item.command_enabled(command, cx)
-        {
-            if matches!(
-                command,
-                ItemCommand::Find | ItemCommand::FindNextSelection | ItemCommand::SessionSettings
-            ) {
-                let workspace = cx.weak_entity();
-                window.defer(cx, move |window, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        let still_open = this
-                            .items
-                            .iter()
-                            .any(|open| open.handle.item_id() == item.item_id())
-                            || this
-                                .local_terminal
-                                .as_ref()
-                                .is_some_and(|local| local.handle.item_id() == item.item_id());
-                        if still_open && item.command_enabled(command, cx) {
-                            item.execute(command, window, cx);
-                        }
-                    });
-                });
-            } else {
-                item.execute(command, window, cx);
-            }
-        }
-    }
-
-    /// The displayed tab label, including its user-defined alias.
-    pub fn command_title(&self, window: &Window, cx: &App) -> Option<SharedString> {
-        let item = self.command_item(window, cx)?;
-        let dock = self
-            .items
-            .iter()
-            .find(|open| open.handle.item_id() == item.item_id())
-            .map(|open| &open.dock_item)
-            .or_else(|| {
-                self.local_terminal
-                    .as_ref()
-                    .filter(|local| local.handle.item_id() == item.item_id())
-                    .map(|local| &local.item)
-            });
-        Some(
-            dock.and_then(|dock| dock.read(cx).alias.clone())
-                .unwrap_or_else(|| item.tab_title(cx)),
-        )
-    }
-
-    pub fn sidebar_is_open(&self) -> bool {
-        self.sidebar_open
-    }
-    /// Supplies window-specific menus to the toolkit's standard menu bar.
-    pub fn set_menu_builder(
-        &mut self,
-        builder: impl Fn(&Workspace, &Window, &App) -> Vec<Menu> + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.menu_builder = Some(Rc::new(builder));
-        self.reload_menu_bar(window, cx);
-    }
-
-    fn reload_menu_bar(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let Some(builder) = self.menu_builder.clone() else {
-            return;
-        };
-        self.menu_item = self.command_item(window, cx).map(|item| item.item_id());
-        let menus = builder(self, window, cx)
-            .into_iter()
-            .map(Menu::owned)
-            .collect();
-        if let Some(bar) = &self.app_menu_bar {
-            bar.update(cx, |bar, cx| bar.set_menus(menus, cx));
-        } else {
-            // Construction reads GlobalState once; restore it immediately so
-            // other windows and OS menus never inherit this snapshot.
-            let previous = GlobalState::global(cx).app_menus().to_vec();
-            GlobalState::global_mut(cx).set_app_menus(menus);
-            self.app_menu_bar = Some(AppMenuBar::new(cx));
-            GlobalState::global_mut(cx).set_app_menus(previous);
-        }
-    }
-
-    fn prepare_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if !self
-            .app_menu_bar
-            .as_ref()
-            .is_some_and(|bar| bar.read(cx).is_open())
-        {
-            self.menu_item = None;
-            self.reload_menu_bar(window, cx);
-        }
-    }
 
     /// Handles action `A` whenever focus is inside the workspace.
     ///

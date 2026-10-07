@@ -109,7 +109,7 @@ pub fn init_local(factory: LocalFactory, cx: &mut App) {
 /// Opens the independent bottom shell; Workspace owns its visibility and lifetime.
 pub fn open_local(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     let view = cx.new(|cx| TerminalView::new_local(window, cx));
-    workspace.set_local_terminal(view, window, cx);
+    workspace.add_local_terminal(view, window, cx);
 }
 
 /// Opens `spec` without a tab. Install it with

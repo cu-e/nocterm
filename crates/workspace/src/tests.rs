@@ -603,13 +603,13 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
             assert!(!workspace.local_terminal_is_visible(cx));
             assert_eq!(closes.get(), 0);
             assert_eq!(
-                workspace.local_terminal.as_ref().unwrap().handle.item_id(),
+                workspace.selected_local(cx).unwrap().handle.item_id(),
                 local.entity_id()
             );
             workspace.toggle_local_terminal(window, cx);
             assert!(workspace.local_terminal_is_visible(cx));
             assert_eq!(
-                workspace.local_terminal.as_ref().unwrap().handle.item_id(),
+                workspace.selected_local(cx).unwrap().handle.item_id(),
                 local.entity_id()
             );
             assert_eq!(closes.get(), 0);

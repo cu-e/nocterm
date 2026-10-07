@@ -71,9 +71,12 @@ closures snapshot the clicked Item and resolve its current pane order at executi
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
 footer owns section switches and status views. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
-detaches its panel without closing the Item; showing it restores the same Item
-and dock height. Bottom local
-terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
+detaches all local Items without closing their processes; showing it restores
+their tab order, selected Item and dock height. The toolkit's actual group
+selection owns the local cwd target, while focus owns command routing. Bottom
+local terminal tabs share direct add/zoom controls; double-clicking only the free
+header area opens another local Item. Closing by identity affects one process,
+and bottom local terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
 opener connect requests from the connections feature to the terminal feature.

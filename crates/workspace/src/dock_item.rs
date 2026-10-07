@@ -9,7 +9,7 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Icon, Sizable as _, Theme,
         button::{Button, ButtonVariants as _},
-        dock::{BasePanel, Panel, PanelEvent},
+        dock::{BasePanel, Panel, PanelControl, PanelEvent},
         h_flex,
         input::{Input, InputEvent, InputState},
         menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
@@ -42,6 +42,7 @@ pub(crate) struct DockItem {
     editing_blur: Option<Subscription>,
     focus: FocusHandle,
     bottom: bool,
+    header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
     /// The color of the group of tabs this one is in, an index into
     /// [`GROUP_COLORS`].
     group_color: Option<usize>,
@@ -63,6 +64,7 @@ impl DockItem {
         item: Rc<dyn ItemHandle>,
         workspace: WeakEntity<Workspace>,
         bottom: bool,
+        header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -81,6 +83,7 @@ impl DockItem {
             editing_blur: None,
             focus,
             bottom,
+            header_click_origin,
             group_color: None,
             suppress_next_removal: false,
             _subscriptions: subscriptions,
@@ -182,6 +185,79 @@ impl BasePanel for DockItem {
     }
 }
 impl Panel for DockItem {
+    fn zoom_control(&self, _: &App) -> Option<PanelControl> {
+        Some(if self.bottom {
+            PanelControl::Toolbar
+        } else {
+            PanelControl::Menu
+        })
+    }
+    fn menu_visible(&self, _: &App) -> bool {
+        !self.bottom
+    }
+    fn toolbar_buttons(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<Vec<Button>> {
+        if !self.bottom {
+            return None;
+        }
+        let workspace = self.workspace.clone();
+        Some(vec![
+            Button::new("local-terminal-new")
+                .icon(nocterm_ui::IconName::Plus)
+                .tooltip("New Local Terminal")
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    let _ = workspace
+                        .update(cx, |workspace, cx| workspace.new_local_terminal(window, cx));
+                }),
+        ])
+    }
+    fn free_header_content(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        self.bottom.then(|| {
+            let origin = self.header_click_origin.clone();
+            let id = self.item.item_id();
+            div()
+                .id("local-terminal-free-header")
+                .test_support()
+                .size_full()
+                .on_mouse_down(gpui_kit::MouseButton::Left, {
+                    let origin = origin.clone();
+                    move |event, _, _| {
+                        if event.click_count == 1 {
+                            origin.set(Some(id));
+                        }
+                    }
+                })
+                .on_mouse_down_out({
+                    let origin = origin.clone();
+                    move |event, _, _| {
+                        if event.button == gpui_kit::MouseButton::Left
+                            && event.click_count == 1
+                            && origin.get() == Some(id)
+                        {
+                            origin.set(None);
+                        }
+                    }
+                })
+                .on_click({
+                    let workspace = self.workspace.clone();
+                    move |event: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+                        // Closing a tab can expose blank space under the next
+                        // click. Both presses must start in this free region.
+                        if event.click_count() == 2 && origin.get() == Some(id) {
+                            origin.set(None);
+                            cx.stop_propagation();
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.new_local_terminal(window, cx)
+                            });
+                        }
+                    }
+                })
+        })
+    }
     fn inner_padding(&self, _: &App) -> bool {
         false
     }
@@ -256,7 +332,7 @@ impl Panel for DockItem {
                         cx.stop_propagation();
                         let _ = workspace.update(cx, |this, cx| {
                             if bottom {
-                                this.close_local_terminal(window, cx);
+                                this.close_local_terminal_by_id(id, window, cx);
                             } else {
                                 let ix = this.items().position(|item| item.item_id() == id);
                                 if let Some(ix) = ix {
@@ -274,7 +350,7 @@ impl Panel for DockItem {
                         .item(PopupMenuItem::new("Close Terminal").on_click(
                             move |_, window, cx| {
                                 let _ = workspace.update(cx, |workspace, cx| {
-                                    workspace.close_local_terminal(window, cx)
+                                    workspace.close_local_terminal_by_id(id, window, cx)
                                 });
                             },
                         ))
