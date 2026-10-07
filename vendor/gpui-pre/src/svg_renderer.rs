@@ -1,3 +1,4 @@
+// Modified by Nocterm: use packaged, licensed font fixtures in renderer tests.
 use crate::{
     AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
     swap_rgba_pa_to_bgra,
