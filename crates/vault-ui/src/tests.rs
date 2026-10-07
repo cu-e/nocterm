@@ -317,7 +317,10 @@ fn switching_tabs_clears_master_password_drafts(cx: &mut TestAppContext) {
 
 /// A device that is enrolled and releases the stored key without a prompt.
 #[derive(Default)]
-struct EnrolledDevice(std::sync::Mutex<Option<nocterm_vault::VaultKey>>);
+struct EnrolledDevice(
+    std::sync::Mutex<Option<nocterm_vault::VaultKey>>,
+    std::sync::Mutex<Option<String>>,
+);
 impl DeviceUnlockProvider for EnrolledDevice {
     fn probe(&self) -> Result<DeviceCapability, nocterm_vault::DeviceUnlockError> {
         Ok(DeviceCapability {
@@ -344,6 +347,9 @@ impl DeviceUnlockProvider for EnrolledDevice {
         _: &[u8],
         _: &nocterm_vault::DeviceCancellation,
     ) -> Result<nocterm_vault::VaultKey, nocterm_vault::DeviceUnlockError> {
+        if let Some(error) = self.1.lock().unwrap().as_ref() {
+            return Err(nocterm_vault::DeviceUnlockError::Platform(error.clone()));
+        }
         self.0
             .lock()
             .unwrap()
@@ -434,4 +440,44 @@ fn enter_in_the_unlock_dialog_submits_the_password_and_keeps_errors_visible(
         assert!(window.try_find("vault-unlock-prompt").is_none());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn fingerprint_failure_shows_its_reason_and_allows_password_unlock(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let device = Arc::new(EnrolledDevice::default());
+    let (_, _, service) =
+        setup_with_device(cx, directory.path().join("vault"), Some(device.clone()));
+    block_on(service.create(Secret::new("portable master password"))).unwrap();
+    block_on(service.enable_device_unlock()).unwrap();
+    *device.1.lock().unwrap() = Some("Fingerprint reader disconnected".into());
+    service.lock();
+    let (handle, prompt) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| crate::unlock::UnlockPrompt::new(service.clone(), window, cx))
+        })
+        .unwrap()
+    });
+    drain(&service, cx);
+    assert!(!service.is_unlocked());
+    cx.update(|cx| {
+        assert!(!prompt.read(cx).scanning);
+        assert_eq!(
+            prompt.read(cx).error.as_deref(),
+            Some("Device unlock failed: Fingerprint reader disconnected")
+        );
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.focus(&prompt.read(cx).focus_handle(cx), cx);
+    })
+    .unwrap();
+    cx.simulate_input(handle, "portable master password");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("vault-unlock-submit", cx)
+    })
+    .unwrap();
+    drain(&service, cx);
+    assert!(service.is_unlocked());
+    cx.update(|cx| assert!(prompt.read(cx).error.is_none()));
 }

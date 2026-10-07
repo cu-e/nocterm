@@ -23,9 +23,31 @@ struct Broker {
     connection: Connection,
     #[cfg(test)]
     fingerprint_uid: u32,
+    #[cfg(test)]
+    scan_timeout: Duration,
 }
 fn denied(error: impl std::fmt::Display) -> fdo::Error {
     fdo::Error::AccessDenied(error.to_string())
+}
+enum ScanStatus {
+    Pending,
+    Match,
+    NoMatch,
+}
+fn verification_status(status: &str, done: bool) -> fdo::Result<ScanStatus> {
+    match status {
+        "verify-match" if done => Ok(ScanStatus::Match),
+        "verify-no-match" if done => Ok(ScanStatus::NoMatch),
+        "verify-disconnected" => Err(denied("Fingerprint reader disconnected")),
+        "verify-unknown-error" => Err(denied("Fingerprint reader reported an unknown error")),
+        _ if !done => Ok(ScanStatus::Pending),
+        "verify-retry-scan" => Err(denied("Fingerprint scan must be retried")),
+        "verify-swipe-too-short" => Err(denied("Fingerprint swipe was too short")),
+        "verify-finger-not-centered" => Err(denied("Finger was not centered on the reader")),
+        "verify-remove-and-retry" => Err(denied("Remove your finger and try again")),
+        "verify-too-fast" => Err(denied("Finger moved too quickly")),
+        _ => Err(denied(format!("Fingerprint verification failed: {status}"))),
+    }
 }
 impl Broker {
     fn fingerprint_uid(&self) -> u32 {
@@ -53,12 +75,23 @@ impl Broker {
             connection: sender.to_string(),
         })
     }
+    fn scan_timeout(&self) -> Duration {
+        #[cfg(test)]
+        {
+            self.scan_timeout
+        }
+        #[cfg(not(test))]
+        {
+            Duration::from_secs(30)
+        }
+    }
     async fn verify(&self, owner: &Owner, cancel: Arc<AtomicBool>) -> fdo::Result<()> {
         let _scanner = self
             .scanner
             .try_lock()
             .map_err(|_| fdo::Error::Failed("Fingerprint reader is busy".into()))?;
         let mut claimed = None;
+        let mut disconnected = false;
         let result = tokio::time::timeout(Duration::from_secs(35), async {
             let dbus = DBusProxy::new(&self.connection).await.map_err(denied)?;
             let _ = dbus.start_service_by_name(zbus::names::WellKnownName::try_from(FPRINT).map_err(denied)?, 0).await;
@@ -114,54 +147,70 @@ impl Broker {
                 .await
                 .map_err(denied)?;
             claimed = Some(device.clone());
-            // Claim is the exclusive boundary between verification owners.
-            // Subscribe afterwards to exclude a previous owner's completion,
-            // but before VerifyStart to retain synchronous fresh results.
-            let mut statuses = device
-                .receive_signal("VerifyStatus")
-                .await
-                .map_err(denied)?;
-            if cancel.load(Ordering::SeqCst) {
-                return Err(denied("Authentication cancelled"));
-            }
-            let _: () = device.call("VerifyStart", &("any",)).await.map_err(denied)?;
-            let deadline = tokio::time::sleep(Duration::from_secs(30));
+            // One deadline covers all scans and retry setup. Claim separates owners;
+            // each new subscription separates completed attempts.
+            let deadline = tokio::time::sleep(self.scan_timeout());
             tokio::pin!(deadline);
-            loop {
+            for attempt in 1..=3 {
+                let scan = async {
+                    if cancel.load(Ordering::SeqCst) {
+                        return Err(denied("Authentication cancelled"));
+                    }
+                    let mut statuses = device.receive_signal("VerifyStatus").await.map_err(denied)?;
+                    let _: () = device.call("VerifyStart", &("any",)).await.map_err(denied)?;
+                    loop {
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                                if cancel.load(Ordering::SeqCst) {
+                                    return Err(denied("Authentication cancelled"));
+                                }
+                                let client = BusName::try_from(owner.connection.as_str()).map_err(denied)?;
+                                if dbus.get_connection_unix_user(client).await.is_err() {
+                                    return Err(denied("Client disconnected"));
+                                }
+                            }
+                            message = statuses.next() => {
+                                let message = message.ok_or_else(|| denied("Fingerprint service disconnected"))?;
+                                if message.header().sender() != Some(&name) {
+                                    return Err(denied("Untrusted fingerprint signal"));
+                                }
+                                let (status, done): (String, bool) = message.body().deserialize().map_err(denied)?;
+                                if cancel.load(Ordering::SeqCst) {
+                                    return Err(denied("Authentication cancelled"));
+                                }
+                                disconnected |= status == "verify-disconnected";
+                                match verification_status(&status, done)? {
+                                    ScanStatus::Pending => {}
+                                    ScanStatus::Match => return Ok(true),
+                                    ScanStatus::NoMatch => return Ok(false),
+                                }
+                            }
+                        }
+                    }
+                };
+                let matched = tokio::select! {
+                    _ = &mut deadline => return Err(denied("Fingerprint authentication timed out")),
+                    result = scan => result?,
+                };
+                if matched {
+                    return Ok(());
+                }
+                if attempt == 3 {
+                    return Err(denied("Fingerprint was not recognized after 3 attempts"));
+                }
+                // The old stream is dropped before stopping. Subscribe afresh only
+                // after VerifyStop finishes, excluding stale completion signals.
                 tokio::select! {
                     _ = &mut deadline => return Err(denied("Fingerprint authentication timed out")),
-                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                        if cancel.load(Ordering::SeqCst) {
-                            return Err(denied("Authentication cancelled"));
-                        }
-                        let client = BusName::try_from(owner.connection.as_str()).map_err(denied)?;
-                        if dbus.get_connection_unix_user(client).await.is_err() {
-                            return Err(denied("Client disconnected"));
-                        }
-                    }
-                    message = statuses.next() => {
-                        let message = message.ok_or_else(|| denied("Fingerprint service disconnected"))?;
-                        if message.header().sender() != Some(&name) {
-                            return Err(denied("Untrusted fingerprint signal"));
-                        }
-                        let (status, done): (String, bool) = message.body().deserialize().map_err(denied)?;
-                        if cancel.load(Ordering::SeqCst) {
-                            return Err(denied("Authentication cancelled"));
-                        }
-                        if status == "verify-match" && done {
-                            return Ok(());
-                        }
-                        if done {
-                            return Err(denied("Fingerprint was not recognized"));
-                        }
-                    }
+                    result = device.call::<_, _, ()>("VerifyStop", &()) => result.map_err(denied)?,
                 }
             }
+            unreachable!("three unsuccessful attempts return an error")
         })
         .await
         .unwrap_or_else(|_| Err(denied("Fingerprint service timed out")));
         // Cleanup is also bounded when a service disconnects during verification.
-        if let Some(device) = claimed {
+        if let Some(device) = claimed.filter(|_| !disconnected) {
             let _: Result<Result<(), zbus::Error>, _> =
                 tokio::time::timeout(Duration::from_secs(1), device.call("VerifyStop", &())).await;
             let _: Result<Result<(), zbus::Error>, _> =
@@ -284,6 +333,8 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 connection: connection.clone(),
                 #[cfg(test)]
                 fingerprint_uid: 0,
+                #[cfg(test)]
+                scan_timeout: Duration::from_secs(30),
             },
         )
         .await?;
@@ -315,293 +366,4 @@ async fn observe_connections(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        io::{BufRead as _, BufReader},
-        process::{Child, Command, Stdio},
-        sync::atomic::AtomicUsize,
-    };
-    use zbus::{connection::Builder, object_server::SignalEmitter, zvariant::OwnedObjectPath};
-    struct Bus {
-        _config: std::path::PathBuf,
-        child: Child,
-        address: String,
-    }
-    impl Bus {
-        fn new() -> Self {
-            static NEXT_BUS: AtomicUsize = AtomicUsize::new(0);
-            let config = std::env::temp_dir().join(format!(
-                "nocterm-broker-test-{}-{}.conf",
-                std::process::id(),
-                NEXT_BUS.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::write(&config, r#"<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth><policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>"#).unwrap();
-            let mut child = Command::new("dbus-daemon")
-                .arg(format!("--config-file={}", config.display()))
-                .args(["--nofork", "--print-address=1"])
-                .stdout(Stdio::piped())
-                .spawn()
-                .expect("dbus-daemon is required for broker protocol tests");
-            let mut address = String::new();
-            BufReader::new(child.stdout.take().unwrap())
-                .read_line(&mut address)
-                .unwrap();
-            assert!(
-                !address.trim().is_empty(),
-                "private dbus-daemon did not start"
-            );
-            Self {
-                _config: config,
-                child,
-                address: address.trim().into(),
-            }
-        }
-    }
-    impl Drop for Bus {
-        fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            let _ = std::fs::remove_file(&self._config);
-        }
-    }
-    struct Manager;
-    #[zbus::interface(name = "net.reactivated.Fprint.Manager")]
-    impl Manager {
-        fn get_devices(&self) -> Vec<OwnedObjectPath> {
-            vec![OwnedObjectPath::try_from("/net/reactivated/Fprint/Device/0").unwrap()]
-        }
-    }
-    struct Device {
-        calls: Arc<AtomicUsize>,
-        mode: Arc<AtomicUsize>,
-    }
-    #[zbus::interface(name = "net.reactivated.Fprint.Device")]
-    impl Device {
-        fn list_enrolled_fingers(&self, username: &str) -> Vec<String> {
-            if username.is_empty() {
-                vec![]
-            } else {
-                vec!["left-index-finger".into()]
-            }
-        }
-        async fn claim(
-            &self,
-            _username: &str,
-            #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-        ) -> zbus::fdo::Result<()> {
-            // A completion from a previous claim can still arrive while a new
-            // caller is claiming the reader. It is not proof of this scan.
-            if self.mode.load(Ordering::SeqCst) == 3 {
-                Self::verify_status(&emitter, "verify-match", true)
-                    .await
-                    .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
-            }
-            Ok(())
-        }
-        fn release(&self) {}
-        fn verify_stop(&self) {}
-        async fn verify_start(
-            &self,
-            _finger: &str,
-            #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-        ) -> zbus::fdo::Result<()> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let result = match self.mode.load(Ordering::SeqCst) {
-                0 => Self::verify_status(&emitter, "verify-match", true).await,
-                1 | 3 => Self::verify_status(&emitter, "verify-no-match", true).await,
-                _ => Ok(()),
-            };
-            result.map_err(|error| zbus::fdo::Error::Failed(error.to_string()))
-        }
-        #[zbus(signal)]
-        async fn verify_status(
-            emitter: &SignalEmitter<'_>,
-            status: &str,
-            done: bool,
-        ) -> zbus::Result<()>;
-    }
-    async fn connect(bus: &Bus) -> Connection {
-        Builder::address(bus.address.as_str())
-            .unwrap()
-            .build()
-            .await
-            .unwrap()
-    }
-    #[tokio::test]
-    async fn key_expiry_runs_while_unrelated_name_ownership_keeps_changing() {
-        let bus = Bus::new();
-        let service = connect(&bus).await;
-        let client = connect(&bus).await;
-        let churner = connect(&bus).await;
-        let owner = Owner {
-            uid: nix::unistd::getuid().as_raw(),
-            connection: client.unique_name().unwrap().to_string(),
-        };
-        let binding = "a".repeat(64);
-        let store = Arc::new(Mutex::new(Store::default()));
-        let token = store
-            .lock()
-            .await
-            .enroll(
-                owner.clone(),
-                binding.clone(),
-                zeroize::Zeroizing::new([42; 32]),
-            )
-            .unwrap();
-        let observe_store = store.clone();
-        let observer = tokio::spawn(async move {
-            observe_connections(service, observe_store, Duration::from_millis(30))
-                .await
-                .unwrap();
-        });
-        let events = Arc::new(AtomicUsize::new(0));
-        let produced = events.clone();
-        let traffic = tokio::spawn(async move {
-            loop {
-                churner
-                    .request_name("dev.nocterm.ExpiryChurn")
-                    .await
-                    .unwrap();
-                churner
-                    .release_name("dev.nocterm.ExpiryChurn")
-                    .await
-                    .unwrap();
-                produced.fetch_add(1, Ordering::SeqCst);
-                tokio::time::sleep(Duration::from_millis(3)).await;
-            }
-        });
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while events.load(Ordering::SeqCst) < 5 {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .unwrap();
-        // Age the registration after the observer and real bus traffic started.
-        // No further Store::entry call can perform opportunistic expiration.
-        let cancelled = {
-            let mut store = store.lock().await;
-            let entry = store.entry(&owner, &binding, &token).unwrap();
-            entry.touched -= Duration::from_secs(9 * 60 * 60);
-            entry.cancel.clone()
-        };
-        let expired = tokio::time::timeout(Duration::from_millis(750), async {
-            while !cancelled.load(Ordering::SeqCst) || events.load(Ordering::SeqCst) <= 5 {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await;
-        let observed_events = events.load(Ordering::SeqCst);
-        traffic.abort();
-        observer.abort();
-        let _ = traffic.await;
-        let _ = observer.await;
-        assert!(expired.is_ok(), "bus traffic prevented expired key erasure");
-        assert!(
-            observed_events > 5,
-            "the bus stopped changing before key expiry"
-        );
-    }
-    #[tokio::test]
-    async fn private_bus_requires_actual_verification_before_key_release() {
-        let bus = Bus::new();
-        let service = connect(&bus).await;
-        let fake = connect(&bus).await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mode = Arc::new(AtomicUsize::new(0));
-        fake.object_server()
-            .at("/net/reactivated/Fprint/Manager", Manager)
-            .await
-            .unwrap();
-        fake.object_server()
-            .at(
-                "/net/reactivated/Fprint/Device/0",
-                Device {
-                    calls: calls.clone(),
-                    mode: mode.clone(),
-                },
-            )
-            .await
-            .unwrap();
-        fake.request_name(FPRINT).await.unwrap();
-        let store = Arc::new(Mutex::new(Store::default()));
-        service
-            .object_server()
-            .at(
-                PATH,
-                Broker {
-                    store: store.clone(),
-                    scanner: Mutex::new(()),
-                    connection: service.clone(),
-                    fingerprint_uid: nix::unistd::getuid().as_raw(),
-                },
-            )
-            .await
-            .unwrap();
-        service.request_name(NAME).await.unwrap();
-        let client = connect(&bus).await;
-        let other = connect(&bus).await;
-        let owner = Proxy::new(&client, NAME, PATH, NAME).await.unwrap();
-        let restarted = Proxy::new(&other, NAME, PATH, NAME).await.unwrap();
-        let binding = "a".repeat(64);
-        let key = [42u8; 32];
-        let token: String = owner
-            .call("Enroll", &(binding.as_str(), key.as_slice()))
-            .await
-            .unwrap();
-        // A restarted Nocterm (another connection of the same user) still
-        // finds the key, but only fingerprint verification releases it.
-        let registered: bool = restarted
-            .call("Registered", &(binding.as_str(), token.as_str()))
-            .await
-            .unwrap();
-        assert!(registered);
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-        let actual: Vec<u8> = owner
-            .call("Release", &(binding.as_str(), token.as_str()))
-            .await
-            .unwrap();
-        assert_eq!(actual, key);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        mode.store(1, Ordering::SeqCst);
-        let attempt: Result<Vec<u8>, _> = owner
-            .call("Release", &(binding.as_str(), token.as_str()))
-            .await;
-        assert!(attempt.is_err());
-        mode.store(3, Ordering::SeqCst);
-        let attempt: Result<Vec<u8>, _> = owner
-            .call("Release", &(binding.as_str(), token.as_str()))
-            .await;
-        assert!(
-            attempt.is_err(),
-            "a previous claim's successful signal cannot authorize a failed fresh scan"
-        );
-        mode.store(2, Ordering::SeqCst);
-        let args = (binding.as_str(), token.as_str());
-        let pending = owner.call::<_, _, Vec<u8>>("Release", &args);
-        tokio::pin!(pending);
-        tokio::select! {_=&mut pending=>panic!("verification released without fingerprint"),_=tokio::time::sleep(Duration::from_millis(100))=>{}}
-        other
-            .emit_signal(
-                None::<&str>,
-                "/net/reactivated/Fprint/Device/0",
-                "net.reactivated.Fprint.Device",
-                "VerifyStatus",
-                &("verify-match", true),
-            )
-            .await
-            .unwrap();
-        tokio::select! {_=&mut pending=>panic!("forged fingerprint signal released the key"),_=tokio::time::sleep(Duration::from_millis(100))=>{}}
-        let _: () = owner.call("Cancel", &args).await.unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), pending)
-                .await
-                .unwrap()
-                .is_err()
-        );
-        let _: () = owner.call("Remove", &args).await.unwrap();
-        let registered: bool = owner.call("Registered", &args).await.unwrap();
-        assert!(!registered);
-    }
-}
+mod tests;
