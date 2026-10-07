@@ -112,12 +112,13 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["vendor/alacritty_terminal", "vendor/gpui-component", "vendor/tid-rs"]
+exclude = ["vendor/alacritty_terminal", "vendor/gpui-component", "vendor/gpui-base", "vendor/tid-rs"]
 resolver = "3"
 
 [patch.crates-io]
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
 gpui-component = { path = "vendor/gpui-component" }
+gpui-base = { path = "vendor/gpui-base" }
 tid-rs = { path = "vendor/tid-rs" }
 
 [workspace.package]
