@@ -145,6 +145,11 @@ version = "1.10"
 [dependencies.wgpu]
 version = "29.0.4"
 
+# Nocterm: restore the benchmark dependency from the pinned upstream workspace.
+[dev-dependencies.criterion]
+version = "0.8.2"
+features = ["html_reports"]
+
 [target.'cfg(target_family = "wasm")'.dependencies.web-sys]
 version = "0.3"
 features = ["HtmlCanvasElement"]

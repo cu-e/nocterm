@@ -1770,6 +1770,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "cosmic-text",
+ "criterion",
  "etagere",
  "gpui-pre",
  "gpui-pre-collections",

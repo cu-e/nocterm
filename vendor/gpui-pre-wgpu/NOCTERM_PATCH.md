@@ -56,6 +56,13 @@ application lock. The CLI patch selects Nocterm's shared scene damage API withou
 changing the upstream fork dependency declaration. Shipping builds use the
 application lock.
 
+The normalized manifest restores Criterion 0.8.2 with `html_reports`, matching
+the [pinned upstream workspace](https://github.com/zed-industries/zed/blob/1a28cff4b409169bac058bca40dfbfeb7621d19b/Cargo.toml).
+The packaged `layout_line` benchmark uses the same licensed local font fixtures
+as the text tests, so standalone all-target checks do not need an upstream Zed
+checkout. These dependencies and fixtures are for tests and benchmarks; the
+original `Cargo.toml.orig` remains intact.
+
 Native tests assert whole-image equality against original full rendering,
 including alpha, clipping, transformed fallback, path pass scissor restoration,
 atlas mutations, target formats, allocation scopes and poisoned presentation
