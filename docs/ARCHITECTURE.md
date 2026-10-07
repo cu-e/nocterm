@@ -78,6 +78,26 @@ frame. Unsupported partial-clear devices and retained-allocation failures keep
 the full-render path. The [renderer patch notes](../vendor/gpui-pre-windows/NOCTERM_PATCH.md)
 describe the resource lifecycle and pixel-equivalence tests.
 
+Linux uses original full rendering by default. Experimental incremental painting
+requires `NOCTERM_EXPERIMENTAL_LINUX_RETAINED_RENDERER=1` and stays inside the
+pinned WGPU renderer. Supported
+surfaces receive a complete copy of a same-format retained image on every
+presentation, including unchanged scenes. Partial updates overwrite the damaged
+rectangle without blending and replay intersecting batches in order; reopened
+path passes restore the scissor. Atlas content revisions and renderer lifecycle
+changes invalidate the image. Capability, allocation and bounded-memory
+fallbacks preserve the original full renderer, which remains the pixel oracle.
+Two bounded snapshots reuse storage; an exact record-pair memo resets for each
+comparison. Snapshots rotate only after successful submission with an unchanged
+atlas revision, and invalidation releases their storage.
+The [WGPU patch notes](../vendor/gpui-pre-wgpu/NOCTERM_PATCH.md) record the Linux
+scope, provenance and tests. Linux scroll-copy is not enabled.
+Measured retained scrolling still increased CPU per event by about 3.3–3.8%
+on the tested Radeon/Vulkan system, so it is not enabled by default.
+The shared GPUI Div scroll handler uses the same snapped and rounded bounds as
+prepaint to clamp a wheel offset before comparing and notifying. Events keep
+bubbling; fitting containers and scroll boundaries avoid transient invalidation.
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as

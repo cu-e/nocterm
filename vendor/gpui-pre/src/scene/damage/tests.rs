@@ -3,20 +3,20 @@
 use super::*;
 use crate::{DevicePixels, TileId, bounds, size};
 
-fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
+pub(super) fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
     bounds(
         point(ScaledPixels(x), ScaledPixels(y)),
         size(ScaledPixels(width), ScaledPixels(height)),
     )
 }
 
-fn mask() -> ContentMask<ScaledPixels> {
+pub(super) fn mask() -> ContentMask<ScaledPixels> {
     ContentMask {
         bounds: rect(0.0, 0.0, 1024.0, 1024.0),
     }
 }
 
-fn quad(x: f32, y: f32, hue: f32) -> Quad {
+pub(super) fn quad(x: f32, y: f32, hue: f32) -> Quad {
     Quad {
         bounds: rect(x, y, 10.0, 10.0),
         content_mask: mask(),
@@ -43,7 +43,7 @@ fn changed_rect(current: &SceneSnapshot, old: &SceneSnapshot) -> SceneDamageRect
     }
 }
 
-fn path(x: f32, order: u32) -> Path<ScaledPixels> {
+pub(super) fn path(x: f32, order: u32) -> Path<ScaledPixels> {
     let mut p = Path::new(point(Pixels::from(x), Pixels::from(20.0))).scale(1.0);
     p.order = order;
     p.bounds = rect(x, 20.0, 10.0, 10.0);
@@ -344,7 +344,24 @@ fn excessive_primitive_storage_falls_back_before_copying_records() {
     let mut scene = Scene::default();
     let old = snapshot(&mut scene);
     scene.quads = vec![quad(20.0, 20.0, 0.1); 50_001];
-    assert_eq!(snapshot(&mut scene).damage_since(&old), SceneDamage::Full);
+    let excessive = snapshot(&mut scene);
+    assert!(!excessive.supports_partial_updates());
+    assert_eq!(excessive.damage_since(&old), SceneDamage::Full);
+}
+
+#[test]
+fn capture_support_is_distinct_from_supported_full_damage() {
+    let mut scene = Scene::default();
+    let previous = snapshot(&mut scene);
+    assert!(previous.supports_partial_updates());
+    let resized = SceneSnapshot::capture(&scene, [128, 128]);
+    assert!(resized.supports_partial_updates());
+    assert_eq!(resized.damage_since(&previous), SceneDamage::Full);
+    scene.quads.push(quad(f32::NAN, 20.0, 0.1));
+    assert!(!snapshot(&mut scene).supports_partial_updates());
+    let empty = Scene::default();
+    assert!(!SceneSnapshot::capture(&empty, [0, 128]).supports_partial_updates());
+    assert!(!SceneSnapshot::capture(&empty, [u32::MAX, u32::MAX]).supports_partial_updates());
 }
 
 #[test]

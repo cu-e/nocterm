@@ -4,6 +4,9 @@
 
 use super::*;
 
+mod reuse;
+pub use reuse::{ReusableSceneSnapshot, SceneComparisonMemo};
+
 mod scroll;
 pub use scroll::SceneScrollPlan;
 
@@ -268,6 +271,13 @@ impl SceneSnapshot {
         }
         snapshot.supported = true;
         snapshot
+    }
+
+    /// Whether capture established bounded, conservative coverage for this scene.
+    /// A supported scene can still require full damage after resize or appearance
+    /// changes. Unsupported geometry or exhausted capture budgets return false.
+    pub fn supports_partial_updates(&self) -> bool {
+        self.supported
     }
 
     /// Compare exact visible signatures with the previous retained frame.

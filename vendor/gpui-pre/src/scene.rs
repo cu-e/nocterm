@@ -3,7 +3,10 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod damage;
-pub use damage::{SceneDamage, SceneDamageRect, SceneScrollPlan, SceneSnapshot};
+pub use damage::{
+    ReusableSceneSnapshot, SceneComparisonMemo, SceneDamage, SceneDamageRect, SceneScrollPlan,
+    SceneSnapshot,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

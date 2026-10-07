@@ -1,0 +1,42 @@
+{
+  "upstream": "zed-industries/zed",
+  "revision": "1a28cff4b409169bac058bca40dfbfeb7621d19b",
+  "files": [
+    {
+      "path": "assets/fonts/lilex/Lilex-Bold.ttf",
+      "url": "https://raw.githubusercontent.com/zed-industries/zed/1a28cff4b409169bac058bca40dfbfeb7621d19b/assets/fonts/lilex/Lilex-Bold.ttf",
+      "bytes": 192992,
+      "sha256": "3369214e2ecddb45ae5024b11d45dd637e99e9d2127ab729817d41d72b8a9c68",
+      "git_blob": "45930ee30b81a78e964c3ff494e05ea45147ed9b"
+    },
+    {
+      "path": "assets/fonts/lilex/Lilex-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/zed-industries/zed/1a28cff4b409169bac058bca40dfbfeb7621d19b/assets/fonts/lilex/Lilex-Regular.ttf",
+      "bytes": 194308,
+      "sha256": "8a467ad5a1941dc7c9cebaee34e3ed9364a73b48393034e363e4b528bd711d04",
+      "git_blob": "cb98a69b0ffb1976805bf5af3047307fe2422b1d"
+    },
+    {
+      "path": "assets/fonts/lilex/OFL.txt",
+      "url": "https://raw.githubusercontent.com/zed-industries/zed/1a28cff4b409169bac058bca40dfbfeb7621d19b/assets/fonts/lilex/OFL.txt",
+      "bytes": 4382,
+      "sha256": "a356708a399e3f54b937ec7d9b722c26dabba21365b60f95c56eb7ebca0dee40",
+      "git_blob": "156240bc907aa14571afb18b4b1bde62d3ea33e0"
+    },
+    {
+      "path": "assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/zed-industries/zed/1a28cff4b409169bac058bca40dfbfeb7621d19b/assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+      "bytes": 200500,
+      "sha256": "975dcda37d80f038dcd143c22e33ca2d97a0cc5a929aace1c749153b0fe1afa5",
+      "git_blob": "bd6817d5202895da5ac4fad88de3da71e652881a"
+    },
+    {
+      "path": "assets/fonts/ibm-plex-sans/license.txt",
+      "url": "https://raw.githubusercontent.com/zed-industries/zed/1a28cff4b409169bac058bca40dfbfeb7621d19b/assets/fonts/ibm-plex-sans/license.txt",
+      "bytes": 4360,
+      "sha256": "91c25c350d3cac39da2736d74f7ba37ef648f5237a4e330a240615bc8d8c4360",
+      "git_blob": "f72f76504cd73cf2c00b140b2743c138320597b6"
+    }
+  ],
+  "purpose": "upstream test fixtures only; no runtime font change"
+}

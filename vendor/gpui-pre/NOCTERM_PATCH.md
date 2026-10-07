@@ -115,3 +115,27 @@ The separate integration suite avoids upstream test-only font assets:
 ```sh
 cargo test -p gpui-pre --test nocterm_scroll
 ```
+
+Generic Div wheel input clamps the proposed offset before comparing it with the
+current drawable offset and notifying. Prepaint and input share the same full
+element bounds, device-snapped padding and two-decimal scroll limit. Fitting
+content and scroll boundaries avoid transient invalidation; event propagation,
+axis routing and precise-gesture filtering remain unchanged. The scrolling
+methods are extracted into `elements/div/scrolling.rs` and tests assert raw
+offsets and window invalidation immediately after dispatch, before prepaint.
+Upstream SVG font test fixtures are exact pinned bytes under `test-fixtures/`,
+with original licenses and provenance; production font loading is unchanged.
+Spring elements read the executor clock, matching scheduled animation frames and
+deterministic test clock advancement; production executors retain their normal
+monotonic clock.
+
+Linux opts into `ReusableSceneSnapshot` and `SceneComparisonMemo`; classic
+`SceneSnapshot::capture` and `damage_since` remain unchanged. Two snapshots reuse
+outer record/tile storage and tile-index vectors. Actual capacities are bounded
+per snapshot at 50,000 records, 65,536 tiles and 500,000 tile references; nested
+path/vertex capacities use the existing 50,000/500,000 limits. The memo is bounded
+at 50,000 entries and resets before each comparison. Each entry remembers only
+the last old record index and its exact equality result, including false results.
+Viewport shape changes or capacity failure release storage. Reserved-byte limits
+derive from these capacities and Rust type sizes, including both snapshots and
+the memo; storage cannot grow indefinitely as content moves between tiles.
