@@ -273,7 +273,7 @@ async fn private_bus_requires_actual_verification_before_key_release() {
     let restarted = Proxy::new(&other, NAME, PATH, NAME).await.unwrap();
     let binding = "a".repeat(64);
     let key = [42u8; 32];
-    let token: String = owner
+    let mut token: String = owner
         .call("Enroll", &(binding.as_str(), key.as_slice()))
         .await
         .unwrap();
@@ -296,6 +296,27 @@ async fn private_bus_requires_actual_verification_before_key_release() {
         .call("Release", &(binding.as_str(), token.as_str()))
         .await;
     assert!(attempt.is_err());
+    let remaining: u8 = restarted
+        .call("AttemptsRemaining", &(binding.as_str(), token.as_str()))
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0);
+    let calls_before = calls.load(Ordering::SeqCst);
+    let attempt: Result<Vec<u8>, _> = restarted
+        .call("Release", &(binding.as_str(), token.as_str()))
+        .await;
+    assert!(
+        matches!(attempt, Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == "dev.nocterm.VaultBroker1.Error.Locked")
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), calls_before);
+    let unauthorized: Result<u8, _> = owner
+        .call("AttemptsRemaining", &(binding.as_str(), "b".repeat(64)))
+        .await;
+    assert!(unauthorized.is_err());
+    token = owner
+        .call("Enroll", &(binding.as_str(), key.as_slice()))
+        .await
+        .unwrap();
     mode.store(3, Ordering::SeqCst);
     let attempt: Result<Vec<u8>, _> = owner
         .call("Release", &(binding.as_str(), token.as_str()))
@@ -304,6 +325,10 @@ async fn private_bus_requires_actual_verification_before_key_release() {
         attempt.is_err(),
         "a previous claim's successful signal cannot authorize a failed fresh scan"
     );
+    token = owner
+        .call("Enroll", &(binding.as_str(), key.as_slice()))
+        .await
+        .unwrap();
     mode.store(2, Ordering::SeqCst);
     let args = (binding.as_str(), token.as_str());
     let pending = owner.call::<_, _, Vec<u8>>("Release", &args);

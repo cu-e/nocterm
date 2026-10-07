@@ -1,4 +1,4 @@
-use crate::store::{Owner, Store};
+use crate::store::{MAX_ATTEMPTS, Owner, Store};
 use futures::StreamExt as _;
 use std::{
     sync::{
@@ -28,6 +28,47 @@ struct Broker {
 }
 fn denied(error: impl std::fmt::Display) -> fdo::Error {
     fdo::Error::AccessDenied(error.to_string())
+}
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "dev.nocterm.VaultBroker1.Error")]
+enum LockoutError {
+    Locked(String),
+}
+#[derive(Debug)]
+enum ReleaseError {
+    Fdo(fdo::Error),
+    Locked(LockoutError),
+}
+impl From<fdo::Error> for ReleaseError {
+    fn from(error: fdo::Error) -> Self {
+        Self::Fdo(error)
+    }
+}
+impl zbus::DBusError for ReleaseError {
+    fn create_reply(&self, header: &Header<'_>) -> zbus::Result<zbus::Message> {
+        match self {
+            Self::Fdo(error) => error.create_reply(header),
+            Self::Locked(error) => error.create_reply(header),
+        }
+    }
+    fn name(&self) -> zbus::names::ErrorName<'_> {
+        match self {
+            Self::Fdo(error) => error.name(),
+            Self::Locked(error) => error.name(),
+        }
+    }
+    fn description(&self) -> Option<&str> {
+        match self {
+            Self::Fdo(error) => error.description(),
+            Self::Locked(error) => error.description(),
+        }
+    }
+}
+fn locked() -> ReleaseError {
+    ReleaseError::Locked(LockoutError::Locked(
+        "Fingerprint unlock is locked after 3 failed attempts. Unlock with the master password."
+            .into(),
+    ))
 }
 enum ScanStatus {
     Pending,
@@ -85,7 +126,26 @@ impl Broker {
             Duration::from_secs(30)
         }
     }
-    async fn verify(&self, owner: &Owner, cancel: Arc<AtomicBool>) -> fdo::Result<()> {
+    async fn verify(
+        &self,
+        owner: &Owner,
+        binding: &str,
+        token: &str,
+        cancel: Arc<AtomicBool>,
+    ) -> fdo::Result<()> {
+        if self
+            .store
+            .lock()
+            .await
+            .entry(owner, binding, token)
+            .map_err(denied)?
+            .attempts_remaining
+            == 0
+        {
+            return Err(denied(
+                "Fingerprint unlock is locked after 3 failed attempts",
+            ));
+        }
         let _scanner = self
             .scanner
             .try_lock()
@@ -151,7 +211,7 @@ impl Broker {
             // each new subscription separates completed attempts.
             let deadline = tokio::time::sleep(self.scan_timeout());
             tokio::pin!(deadline);
-            for attempt in 1..=3 {
+            loop {
                 let scan = async {
                     if cancel.load(Ordering::SeqCst) {
                         return Err(denied("Authentication cancelled"));
@@ -192,11 +252,17 @@ impl Broker {
                     _ = &mut deadline => return Err(denied("Fingerprint authentication timed out")),
                     result = scan => result?,
                 };
+                let remaining = {
+                    let mut store = self.store.lock().await;
+                    let entry = store.entry(owner, binding, token).map_err(denied)?;
+                    entry.attempts_remaining = if matched { MAX_ATTEMPTS } else { entry.attempts_remaining.saturating_sub(1) };
+                    entry.attempts_remaining
+                };
                 if matched {
                     return Ok(());
                 }
-                if attempt == 3 {
-                    return Err(denied("Fingerprint was not recognized after 3 attempts"));
+                if remaining == 0 {
+                    return Err(denied("Fingerprint unlock is locked after 3 failed attempts"));
                 }
                 // The old stream is dropped before stopping. Subscribe afresh only
                 // after VerifyStop finishes, excluding stale completion signals.
@@ -205,7 +271,6 @@ impl Broker {
                     result = device.call::<_, _, ()>("VerifyStop", &()) => result.map_err(denied)?,
                 }
             }
-            unreachable!("three unsuccessful attempts return an error")
         })
         .await
         .unwrap_or_else(|_| Err(denied("Fingerprint service timed out")));
@@ -254,18 +319,36 @@ impl Broker {
             .entry(&owner, &binding, &token)
             .is_ok())
     }
+    async fn attempts_remaining(
+        &self,
+        binding: String,
+        token: String,
+        #[zbus(header)] header: Header<'_>,
+    ) -> fdo::Result<u8> {
+        let owner = self.owner(&header).await?;
+        Ok(self
+            .store
+            .lock()
+            .await
+            .entry(&owner, &binding, &token)
+            .map_err(denied)?
+            .attempts_remaining)
+    }
     async fn release(
         &self,
         binding: String,
         token: String,
         #[zbus(header)] header: Header<'_>,
-    ) -> fdo::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>, ReleaseError> {
         let owner = self.owner(&header).await?;
         let cancel = {
             let mut store = self.store.lock().await;
             let entry = store.entry(&owner, &binding, &token).map_err(denied)?;
+            if entry.attempts_remaining == 0 {
+                return Err(locked());
+            }
             if entry.busy {
-                return Err(denied("Authentication is already in progress"));
+                return Err(denied("Authentication is already in progress").into());
             }
             entry.busy = true;
             // A disconnecting caller cancels only its own authentication.
@@ -273,13 +356,16 @@ impl Broker {
             entry.cancel = Arc::new(AtomicBool::new(false));
             entry.cancel.clone()
         };
-        let result = self.verify(&owner, cancel.clone()).await;
+        let result = self.verify(&owner, &binding, &token, cancel.clone()).await;
         let mut store = self.store.lock().await;
         let entry = store.entry(&owner, &binding, &token).map_err(denied)?;
         entry.busy = false;
+        if result.is_err() && entry.attempts_remaining == 0 {
+            return Err(locked());
+        }
         result?;
         if cancel.load(Ordering::SeqCst) {
-            return Err(denied("Authentication cancelled"));
+            return Err(denied("Authentication cancelled").into());
         }
         entry.touched = std::time::Instant::now();
         Ok(entry.key.to_vec())
