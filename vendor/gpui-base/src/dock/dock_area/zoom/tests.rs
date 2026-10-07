@@ -272,3 +272,5 @@ fn panel_becoming_unzoomable_before_delivery_clears_pending_zoom(cx: &mut TestAp
     assert!(callbacks.contains(&("a", PanelSignal::Zoomed(true))));
     assert!(callbacks.contains(&("a", PanelSignal::Zoomed(false))));
 }
+
+mod mutations;

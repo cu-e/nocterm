@@ -111,6 +111,8 @@ pub struct DockArea {
     panels: HashMap<PanelId, Arc<dyn PanelView>>,
 
     locked: bool,
+    closed_bottom_strip_visible: bool,
+    last_panel_drag_between_regions: bool,
     zoomed: Option<Zoomed>,
     focus_handle: FocusHandle,
     renderer: Rc<dyn DockAreaRenderer>,
@@ -143,6 +145,8 @@ impl DockArea {
             splits: HashMap::new(),
             panels: HashMap::new(),
             locked: false,
+            closed_bottom_strip_visible: true,
+            last_panel_drag_between_regions: false,
             zoomed: None,
             focus_handle: cx.focus_handle(),
             renderer: Rc::new(BareDockArea),
@@ -297,29 +301,6 @@ impl DockArea {
             .is_some_and(|pane| pane.dock.is_open())
     }
 
-    /// Open a closed dock or close an open one. A dock that is not
-    /// collapsible refuses to close; there is nothing to refuse when opening.
-    pub fn toggle_dock(
-        &mut self,
-        placement: DockPlacement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pane) = self.docks.get_mut(&placement) else {
-            return;
-        };
-        if !pane.dock.is_collapsible() && pane.dock.is_open() {
-            return;
-        }
-        let open = pane.dock.is_open();
-        pane.dock.set_open(!open);
-        // A closed dock takes its displayed panel off screen, which the
-        // active-state contract counts as no panel being displayed — that is
-        // what `TabGroupConstraints::collapsed` carries.
-        self.reconcile(window, cx);
-        cx.emit(DockEvent::LayoutChanged);
-    }
-
     /// Whether a dock may be collapsed at all. A skin drawing a collapse
     /// affordance in a tab bar reads this to decide whether to offer one.
     pub fn is_dock_collapsible(&self, placement: DockPlacement) -> bool {
@@ -378,7 +359,7 @@ impl DockArea {
         cx: &mut Context<Self>,
     ) {
         let id = PanelId::from(panel.entity_id());
-        self.add_panel_inner(id, Arc::new(panel), placement, size, window, cx);
+        self.add_panel_inner(id, Arc::new(panel), (placement, None), size, window, cx);
     }
 
     /// Add an already-wrapped panel handle to a region.
@@ -396,65 +377,7 @@ impl DockArea {
         cx: &mut Context<Self>,
     ) {
         let id = panel.panel_id(cx);
-        self.add_panel_inner(id, panel, placement, size, window, cx);
-    }
-
-    fn add_panel_inner(
-        &mut self,
-        id: PanelId,
-        panel: Arc<dyn PanelView>,
-        placement: DockPlacement,
-        size: Option<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // The registration is written before the target is resolved, because
-        // both want `&mut self`, so an add that finds nowhere to put the panel
-        // has to undo it. *Undo*, not remove: adding a panel the dock already
-        // holds is a legitimate call — a host re-placing one it owns — and
-        // dropping its view would strand it in a tree with no entity, which is
-        // what `reconcile`'s `views_of` asserts against.
-        let previous = self.panels.insert(id, panel);
-
-        // A dock is created to hold the panel; `size` seeds it.
-        if placement != DockPlacement::Center && !self.docks.contains_key(&placement) {
-            self.docks.insert(
-                placement,
-                DockRegion {
-                    tree: PaneTree::new(RootKind::Any),
-                    dock: Dock::new(size.unwrap_or(PANEL_MIN_SIZE * 2.)),
-                },
-            );
-        }
-
-        let Some(tree) = self.tree_mut(placement) else {
-            self.restore_registration(id, previous);
-            return;
-        };
-        let target = match first_tab_group(tree.root()) {
-            Some(node) => InsertTarget::Tabs {
-                node,
-                ix: None,
-                activate: true,
-            },
-            // An empty region has no container to merge into, so the panel
-            // makes one beside the root. `normalize` then removes the emptied
-            // root and, for a dock, collapses the wrapper away again.
-            None => InsertTarget::Split {
-                node: tree.root().id(),
-                placement: Placement::Right,
-                size,
-            },
-        };
-        let result = tree.insert_panel(id, target);
-        if !result.changed() {
-            // Nothing took the panel, so a newly registered one must not
-            // linger in the view map and be told `on_removed` by the next
-            // reconcile.
-            self.restore_registration(id, previous);
-            return;
-        }
-        self.commit(result, window, cx);
+        self.add_panel_inner(id, panel, (placement, None), size, window, cx);
     }
 
     /// Put the view map back the way an add found it, for one that placed
@@ -474,83 +397,6 @@ impl DockArea {
         cx: &mut Context<Self>,
     ) {
         self.remove_panel_id(PanelId::from(panel.entity_id()), window, cx);
-    }
-
-    /// Move a panel to a new home. The panel never leaves the dock, so it is
-    /// never told it was removed.
-    pub fn move_panel(
-        &mut self,
-        panel: PanelId,
-        target: InsertTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // A panel this area does not own (e.g. dropped from a nested dock) has
-        // no backing entity here; inserting it would strand a ghost tab.
-        if self.panel(panel).is_none() {
-            return;
-        }
-        let Some(destination) = self.placement_of_node(target_node(&target)) else {
-            return;
-        };
-        let source = self.placement_of_panel(panel);
-
-        // A split target divides an existing slot, so the tree needs real
-        // pixels to divide.
-        if matches!(target, InsertTarget::Split { .. }) {
-            self.adopt_measured_sizes(destination, cx);
-        }
-
-        // Read what the source group last told the panel *before* the edit,
-        // so the destination can be seeded with it. Without this a panel
-        // dragged between groups while displayed is told `true` twice.
-        let was_active = self
-            .layout(source.unwrap_or(destination))
-            .and_then(|tree| tree.find_panel_node(panel))
-            .and_then(|node| self.groups.get(&node))
-            .and_then(|cached| cached.entity.read(cx).last_notified_active(panel));
-
-        let changed = match source {
-            Some(source) if source == destination => {
-                let Some(tree) = self.tree_mut(destination) else {
-                    return;
-                };
-                tree.move_panel(panel, target).changed()
-            }
-            source => {
-                // Across trees a move is a detach plus an insert. The detach's
-                // `removed_panels` is deliberately dropped on the floor: the
-                // panel is still in the dock, so it must not hear `on_removed`.
-                //
-                // Both halves are committed on, not just the insert. A target
-                // whose node kind does not match the insert is a silent no-op
-                // in `apply_insert`, and committing on the insert alone would
-                // early-return with the panel already gone from the source —
-                // stranded in `self.panels`, belonging to no tree, for the
-                // next reconcile to prune and destroy.
-                let detached = source
-                    .and_then(|source| self.tree_mut(source))
-                    .is_some_and(|tree| tree.remove_panel(panel).changed());
-                let Some(tree) = self.tree_mut(destination) else {
-                    return;
-                };
-                let inserted = tree.insert_panel(panel, target).changed();
-                detached || inserted
-            }
-        };
-
-        self.commit_changed(changed, window, cx);
-
-        if let Some(active) = was_active {
-            if let Some(cached) = self
-                .layout(destination)
-                .and_then(|tree| tree.find_panel_node(panel))
-                .and_then(|node| self.groups.get(&node))
-            {
-                let group = cached.entity.clone();
-                group.update(cx, |group, _| group.seed_active(panel, active));
-            }
-        }
     }
 
     /// Display `panel` in the tab group that holds it, wherever that is.
@@ -579,26 +425,6 @@ impl DockArea {
             return;
         };
         let result = tree.set_active(node, ix);
-        self.commit(result, window, cx);
-    }
-
-    /// Put `panel` in a new tab group beside `node`.
-    pub fn split_at(
-        &mut self,
-        node: NodeId,
-        panel: PanelId,
-        placement: Placement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(region) = self.placement_of_node(node) else {
-            return;
-        };
-        self.adopt_measured_sizes(region, cx);
-        let Some(tree) = self.tree_mut(region) else {
-            return;
-        };
-        let result = tree.split(node, panel, placement, None);
         self.commit(result, window, cx);
     }
 
@@ -868,7 +694,13 @@ impl DockArea {
                         // Every group must be told this. A group nobody has
                         // constrained stays `sealed()` and silently declines
                         // drags, drops and closes.
-                        group.set_constraints(constraints, window, cx);
+                        group.set_constraints(
+                            constraints.last_panel_drag_between_regions(
+                                self.can_drag_last_panel_from(node, cx),
+                            ),
+                            window,
+                            cx,
+                        );
                         group.sync_from_tree(views, active_ix, window, cx);
                     });
                 }
@@ -1091,78 +923,6 @@ impl DockArea {
             .find(|(_, pane)| pane.tree.find_panel_node(panel).is_some())
             .map(|(placement, _)| *placement)
     }
-
-    /// Resize one dock from a pointer position, clamped so neither this dock
-    /// nor the one opposite is squeezed below its minimum.
-    ///
-    /// A collapsible bottom dock is the exception: it follows the pointer
-    /// below the minimum down to its closed strip, so closing it by drag is
-    /// one continuous motion. That size is only shown, and
-    /// [`Self::end_dock_resize`] settles it on release.
-    fn resize_dock(
-        &mut self,
-        placement: DockPlacement,
-        pointer: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let opposite = match placement {
-            DockPlacement::Left => self.dock_size(DockPlacement::Right),
-            DockPlacement::Right => self.dock_size(DockPlacement::Left),
-            _ => None,
-        };
-        let sizing = DockSizing::new(placement)
-            .with_area_bounds(self.bounds)
-            .with_opposite_dock_size(opposite.unwrap_or(px(0.)));
-        let size = sizing
-            .size_from_pointer(pointer)
-            .min(sizing.clamp(Pixels::MAX));
-
-        let Some(pane) = self.docks.get_mut(&placement) else {
-            return;
-        };
-        let was_open = pane.dock.is_open();
-        if placement == DockPlacement::Bottom && pane.dock.is_collapsible() && size < PANEL_MIN_SIZE
-        {
-            pane.dock.set_open(size > CLOSED_BOTTOM_STRIP);
-            pane.dock.set_live_size(Some(size.max(CLOSED_BOTTOM_STRIP)));
-        } else {
-            pane.dock.set_open(true);
-            pane.dock.set_live_size(None);
-            pane.dock.set_size(size);
-        }
-        if pane.dock.is_open() != was_open {
-            self.reconcile(window, cx);
-        }
-        cx.notify();
-    }
-
-    /// Settle a drag that ended below the minimum: nearer the closed strip it
-    /// closes, nearer the minimum it opens at the minimum.
-    fn end_dock_resize(
-        &mut self,
-        placement: DockPlacement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(pane) = self.docks.get_mut(&placement) else {
-            return;
-        };
-        let Some(size) = pane.dock.live_size() else {
-            return;
-        };
-        pane.dock.set_live_size(None);
-
-        let open = size >= (CLOSED_BOTTOM_STRIP + PANEL_MIN_SIZE) / 2.;
-        if open {
-            pane.dock.set_size(PANEL_MIN_SIZE);
-        }
-        if pane.dock.is_open() != open {
-            pane.dock.set_open(open);
-            self.reconcile(window, cx);
-        }
-        cx.notify();
-    }
 }
 
 /// Rendering.
@@ -1282,7 +1042,14 @@ impl DockArea {
         // dock keeps a strip so its tab bar stays clickable. Nothing is drawn
         // for a dock with no extent, and the renderer is not asked for chrome
         // nobody can see.
-        let size = dock_extent(&dock);
+        let size = if !dock.is_open()
+            && placement == DockPlacement::Bottom
+            && !self.closed_bottom_strip_visible
+        {
+            px(0.)
+        } else {
+            dock_extent(&dock)
+        };
         if size <= px(0.) {
             return Some(div().into_any_element());
         }
@@ -3967,3 +3734,8 @@ mod tests {
 }
 
 mod zoom;
+
+mod mutations;
+mod visibility;
+
+mod drag_policy;

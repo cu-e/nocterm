@@ -65,6 +65,7 @@ pub struct TabGroupConstraints {
     dock_locked: bool,
     collapsed: bool,
     closable: bool,
+    last_panel_drag_between_regions: bool,
 }
 
 impl TabGroupConstraints {
@@ -76,6 +77,7 @@ impl TabGroupConstraints {
             dock_locked: true,
             collapsed: false,
             closable: false,
+            last_panel_drag_between_regions: false,
         }
     }
 
@@ -88,6 +90,7 @@ impl TabGroupConstraints {
             dock_locked: false,
             collapsed: false,
             closable: true,
+            last_panel_drag_between_regions: false,
         }
     }
 
@@ -225,7 +228,7 @@ impl TabGroup {
     /// closable.
     pub fn is_closable(&self, cx: &App) -> bool {
         self.constraints.is_closable()
-            && self.draggable(cx)
+            && self.closable_panels(cx)
             && self
                 .active_panel(cx)
                 .is_some_and(|panel| panel.closable(cx))
@@ -251,7 +254,7 @@ impl TabGroup {
             return;
         }
         // A dock's last group has nowhere to go and must stay.
-        if !self.draggable(cx) {
+        if !self.closable_panels(cx) {
             return;
         }
 
@@ -284,6 +287,7 @@ impl TabGroup {
             constraints: self.constraints,
             active_panel_closable: self.is_closable(cx),
             draggable: self.draggable(cx),
+            panel_close_allowed: self.closable_panels(cx),
             droppable: self.droppable(),
             // A stale indicator would otherwise outlive a drag that was
             // cancelled while hovering this group.
@@ -397,27 +401,6 @@ impl TabGroup {
             .iter()
             .filter(|panel| panel.visible(cx))
             .cloned()
-    }
-
-    /// A locked group cannot be rearranged. Zooming locks it too: a zoomed
-    /// group is the only thing on screen, so there is nowhere to drop.
-    fn is_locked(&self) -> bool {
-        self.constraints.is_locked() || self.zoomed
-    }
-
-    /// True when this group holds the last visible panel that anything could
-    /// be rearranged around. Only visible panels count, so a hidden panel does
-    /// not keep the last visible one draggable and leave the dock empty.
-    fn is_last_panel(&self, cx: &App) -> bool {
-        self.constraints.is_alone() && self.visible_panels(cx).count() <= 1
-    }
-
-    fn draggable(&self, cx: &App) -> bool {
-        !self.is_locked() && !self.is_last_panel(cx)
-    }
-
-    fn droppable(&self) -> bool {
-        !self.is_locked()
     }
 
     fn focus_active_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -734,6 +717,7 @@ pub struct TabGroupContext {
     zoomed: bool,
     constraints: TabGroupConstraints,
     draggable: bool,
+    panel_close_allowed: bool,
     droppable: bool,
     active_panel_closable: bool,
     drop_indicator: Option<DropIndicator>,
@@ -788,7 +772,7 @@ impl TabGroupContext {
     /// as [`TabGroup::close_panel`], including the panel's own `closable` flag.
     pub fn is_panel_closable(&self, panel: PanelId, cx: &App) -> bool {
         self.constraints.is_closable()
-            && self.draggable
+            && self.panel_close_allowed
             && self
                 .panels
                 .iter()
@@ -796,7 +780,7 @@ impl TabGroupContext {
     }
 
     pub fn is_locked(&self) -> bool {
-        self.constraints.is_locked() || self.zoomed
+        self.constraints.is_locked()
     }
 
     pub fn is_draggable(&self) -> bool {
@@ -1149,10 +1133,9 @@ mod tests {
         assert_eq!(locked, (false, false));
     }
 
-    /// Zooming is a lock of its own: a zoomed group fills the dock, so there
-    /// is nothing beside it to drop against.
+    /// Zoom retains the same native reorder and drop affordances.
     #[gpui::test]
-    fn a_zoomed_group_takes_no_drops(cx: &mut TestAppContext) {
+    fn a_zoomed_group_keeps_tab_drag_and_drop(cx: &mut TestAppContext) {
         let log = log_of();
         let (group, _panels, cx) = build_group(&log, &["a", "b"], cx);
 
@@ -1163,7 +1146,9 @@ mod tests {
             })
         });
 
-        assert!(!cx.update(|_, cx| group.read(cx).context(cx).is_droppable()));
+        assert!(cx.update(|_, cx| group.read(cx).context(cx).is_droppable()));
+        assert!(cx.update(|_, cx| group.read(cx).context(cx).is_draggable()));
+        assert!(!cx.update(|_, cx| group.read(cx).context(cx).is_locked()));
     }
 
     /// Dragging the last visible panel out of the only group would leave the
@@ -1776,3 +1761,5 @@ mod tests {
 }
 
 mod zoom;
+
+mod constraints;
