@@ -5,11 +5,20 @@ use row::ExplorerRow;
 
 impl FilesPanel {
     pub(super) fn load(&mut self, directory: Option<String>, cx: &mut Context<Self>) {
+        self.load_with_navigation(directory, path_input::NavigationMode::CloseEditor, cx);
+    }
+
+    pub(super) fn load_with_navigation(
+        &mut self,
+        directory: Option<String>,
+        mode: path_input::NavigationMode,
+        cx: &mut Context<Self>,
+    ) {
         let Some(fs) = self.filesystem() else {
             return;
         };
         self.remote_path
-            .update(cx, |input, cx| input.begin_navigation(cx));
+            .update(cx, |input, cx| input.begin_navigation_with_mode(mode, cx));
         let generation = self.browser.begin();
         self.remote_selected.clear();
         self.remote_anchor = None;

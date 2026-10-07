@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 type Reply = oneshot::Sender<Result<Vec<DirEntry>, FsError>>;
 #[derive(Default)]
-struct PendingFs(Mutex<Vec<(String, Reply)>>);
+pub(super) struct PendingFs(Mutex<Vec<(String, Reply)>>);
 impl RemoteFs for PendingFs {
     fn home(&self) -> FsFuture<String> {
         async { Ok("/home/test".into()) }.boxed()
@@ -19,13 +19,17 @@ impl RemoteFs for PendingFs {
     }
 }
 impl PendingFs {
-    fn take(&self, expected: &str) -> Reply {
+    pub(super) fn has_requests(&self) -> bool {
+        !self.0.lock().unwrap().is_empty()
+    }
+
+    pub(super) fn take(&self, expected: &str) -> Reply {
         let (path, reply) = self.0.lock().unwrap().remove(0);
         assert_eq!(path, expected);
         reply
     }
 }
-fn entry(name: &str, directory: bool) -> DirEntry {
+pub(super) fn entry(name: &str, directory: bool) -> DirEntry {
     DirEntry {
         name: name.into(),
         kind: if directory {
@@ -37,7 +41,9 @@ fn entry(name: &str, directory: bool) -> DirEntry {
         size: None,
     }
 }
-fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<PathInput>, Arc<PendingFs>) {
+pub(super) fn fixture(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<PathInput>, Arc<PendingFs>) {
     let fs = Arc::new(PendingFs::default());
     let (window, input) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -61,7 +67,12 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<PathInput>, Arc<
     });
     (window, input, fs)
 }
-fn start(value: &str, handle: AnyWindowHandle, input: &Entity<PathInput>, cx: &mut TestAppContext) {
+pub(super) fn start(
+    value: &str,
+    handle: AnyWindowHandle,
+    input: &Entity<PathInput>,
+    cx: &mut TestAppContext,
+) {
     cx.update_window(handle, |_, window, cx| {
         input.update(cx, |this, cx| this.edit(window, cx));
         window.render_frame(cx);
@@ -75,35 +86,38 @@ fn start(value: &str, handle: AnyWindowHandle, input: &Entity<PathInput>, cx: &m
     .unwrap();
     cx.run_until_parked();
 }
-fn value(input: &Entity<PathInput>, cx: &mut TestAppContext) -> String {
+pub(super) fn value(input: &Entity<PathInput>, cx: &mut TestAppContext) -> String {
     input.read_with(cx, |input, cx| input.input.read(cx).value().to_string())
 }
 
 #[gpui_kit::test]
-fn native_tab_cycles_files_and_folders_and_enter_emits_only_navigation(cx: &mut TestAppContext) {
+fn native_tab_excludes_files_cycles_folders_and_enter_emits_only_navigation(
+    cx: &mut TestAppContext,
+) {
     let (window, input, fs) = fixture(cx);
     let navigations = Arc::new(Mutex::new(Vec::new()));
     let observed = navigations.clone();
     let _subscription = cx.update(|cx| {
         cx.subscribe(&input, move |_, event: &Navigate, _| {
-            observed.lock().unwrap().push(event.0.clone())
+            observed.lock().unwrap().push(event.directory.clone())
         })
     });
     start("/etc/s", window, &input, cx);
     fs.take("/etc/")
         .send(Ok(vec![
             entry("ssh", true),
+            entry("settings", true),
             entry("settings.json", false),
             entry("other", true),
         ]))
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(value(&input, cx), "/etc/ssh/");
+    assert_eq!(value(&input, cx), "/etc/settings/");
     cx.update_window(window, |_, window, cx| {
         window.press("tab", cx);
     })
     .unwrap();
-    assert_eq!(value(&input, cx), "/etc/settings.json");
+    assert_eq!(value(&input, cx), "/etc/ssh/");
     cx.update_window(window, |_, window, cx| {
         window.press("shift-tab", cx);
         window.press("enter", cx);
@@ -111,7 +125,7 @@ fn native_tab_cycles_files_and_folders_and_enter_emits_only_navigation(cx: &mut 
     .unwrap();
     assert_eq!(
         *navigations.lock().unwrap(),
-        [Directory::Remote("/etc/ssh/".into())]
+        [Directory::Remote("/etc/settings/".into())]
     );
     assert!(
         fs.0.lock().unwrap().is_empty(),
@@ -144,12 +158,12 @@ fn pending_tabs_are_applied_and_editing_discards_stale_remote_response(cx: &mut 
     reply
         .send(Ok(vec![
             entry("a", true),
-            entry("b", false),
-            entry("c", false),
+            entry("b", true),
+            entry("c", true),
         ]))
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(value(&input, cx), "~/c");
+    assert_eq!(value(&input, cx), "~/c/");
 }
 
 #[gpui_kit::test]
@@ -186,22 +200,34 @@ fn error_preserves_draft_escape_cancels_and_session_reset_releases_completion(
 }
 
 #[gpui_kit::test]
-fn native_local_completion_includes_hidden_names_unicode_and_files(cx: &mut TestAppContext) {
+fn native_local_completion_includes_hidden_unicode_directories_and_excludes_files(
+    cx: &mut TestAppContext,
+) {
     let (window, input, _) = fixture(cx);
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir(directory.path().join("資料")).unwrap();
+    std::fs::create_dir(directory.path().join(".hidden folder")).unwrap();
     std::fs::write(directory.path().join(".hidden file"), b"a").unwrap();
     input.update(cx, |input, cx| {
         input.accept(Directory::Local(directory.path().into()), None, cx)
     });
     start("", window, &input, cx);
     cx.run_until_parked();
-    assert_eq!(value(&input, cx), "資料/");
+    assert_eq!(value(&input, cx), ".hidden folder/");
+    assert_eq!(
+        input.read_with(cx, |input, _| input
+            .cycle
+            .as_ref()
+            .unwrap()
+            .candidates
+            .len()),
+        2
+    );
     cx.update_window(window, |_, window, cx| {
         window.press("tab", cx);
     })
     .unwrap();
-    assert_eq!(value(&input, cx), ".hidden file");
+    assert_eq!(value(&input, cx), "資料/");
 }
 
 #[gpui_kit::test]
@@ -224,7 +250,11 @@ fn path_and_suggestion_are_clickable_and_single_folder_tab_descends(cx: &mut Tes
     .unwrap();
     cx.run_until_parked();
     fs.take("/etc/ssh/")
-        .send(Ok(vec![entry("config", false), entry("keys", true)]))
+        .send(Ok(vec![
+            entry("config", false),
+            entry("keys", true),
+            entry("logs", true),
+        ]))
         .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
@@ -232,7 +262,7 @@ fn path_and_suggestion_are_clickable_and_single_folder_tab_descends(cx: &mut Tes
         window.click(("path-suggestion", 1usize), cx);
     })
     .unwrap();
-    assert_eq!(value(&input, cx), "/etc/ssh/config");
+    assert_eq!(value(&input, cx), "/etc/ssh/logs/");
     cx.update_window(handle, |_, window, cx| {
         window.press("ctrl-z", cx);
     })
@@ -294,31 +324,29 @@ fn navigation_failure_keeps_draft_and_success_restores_display_focus(cx: &mut Te
 fn directory_refresh_invalidates_cache_and_cancels_pending_completion(cx: &mut TestAppContext) {
     let (handle, input, fs) = fixture(cx);
     start("/etc/", handle, &input, cx);
-    fs.take("/etc/")
-        .send(Ok(vec![entry("old", false)]))
-        .unwrap();
+    fs.take("/etc/").send(Ok(vec![entry("old", true)])).unwrap();
     cx.run_until_parked();
-    assert_eq!(value(&input, cx), "/etc/old");
+    assert_eq!(value(&input, cx), "/etc/old/");
     input.update(cx, |input, cx| {
-        input.begin_navigation(cx);
+        input.begin_navigation_with_mode(NavigationMode::CloseEditor, cx);
         input.accept(Directory::Remote("/work".into()), None, cx);
     });
     start("/etc/", handle, &input, cx);
     let pending = fs.take("/etc/");
     input.update(cx, |input, cx| {
-        input.begin_navigation(cx);
+        input.begin_navigation_with_mode(NavigationMode::CloseEditor, cx);
         input.accept(Directory::Remote("/new".into()), None, cx);
     });
-    let _ = pending.send(Ok(vec![entry("late", false)]));
+    let _ = pending.send(Ok(vec![entry("late", true)]));
     cx.run_until_parked();
     assert!(input.read_with(cx, |input, _| input.cycle.is_none()
         && input.cache.is_none()));
     start("/etc/", handle, &input, cx);
     fs.take("/etc/")
-        .send(Ok(vec![entry("fresh", false)]))
+        .send(Ok(vec![entry("fresh", true)]))
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(value(&input, cx), "/etc/fresh");
+    assert_eq!(value(&input, cx), "/etc/fresh/");
 }
 
 #[gpui_kit::test]
@@ -335,7 +363,7 @@ fn narrow_light_and_dark_location_keeps_selected_suggestion_visible(cx: &mut Tes
         start("/etc/", handle, &input, cx);
         fs.take("/etc/")
             .send(Ok((0..30)
-                .map(|index| entry(&format!("folder-{index:02}"), false))
+                .map(|index| entry(&format!("folder-{index:02}"), true))
                 .collect()))
             .unwrap();
         cx.run_until_parked();

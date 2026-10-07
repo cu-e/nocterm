@@ -5,8 +5,17 @@ use row::ExplorerRow;
 
 impl FilesPanel {
     pub(super) fn load_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
+        self.load_local_with_navigation(directory, path_input::NavigationMode::CloseEditor, cx);
+    }
+
+    pub(super) fn load_local_with_navigation(
+        &mut self,
+        directory: PathBuf,
+        mode: path_input::NavigationMode,
+        cx: &mut Context<Self>,
+    ) {
         self.local_path
-            .update(cx, |input, cx| input.begin_navigation(cx));
+            .update(cx, |input, cx| input.begin_navigation_with_mode(mode, cx));
         let (cancel, progress) = self.local.counter.restart();
         self.local.generation = self.local.generation.wrapping_add(1);
         let generation = self.local.generation;

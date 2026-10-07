@@ -137,6 +137,7 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
     use gpui_kit::component::{Theme, ThemeMode};
     let directory = tempfile::tempdir().unwrap();
     for index in 0..20 {
+        std::fs::create_dir(directory.path().join(format!("folder-{index:02}"))).unwrap();
         std::fs::write(
             directory.path().join(format!("file-{index:02}")),
             b"content",
@@ -190,7 +191,12 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
             if index == 0 {
                 fs.take_request("/home/test/")
                     .send(Ok((0..20)
-                        .map(|index| entry(&format!("file-{index:02}"), EntryKind::File))
+                        .flat_map(|index| {
+                            [
+                                entry(&format!("folder-{index:02}"), EntryKind::Directory),
+                                entry(&format!("file-{index:02}"), EntryKind::File),
+                            ]
+                        })
                         .collect()))
                     .unwrap();
                 cx.run_until_parked();
@@ -204,6 +210,7 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
                     .within(pane)
                     .try_find(("path-suggestion", 14usize))
                     .unwrap_or_else(|| panic!("Tab-selected candidate disappeared from {pane} at {minimum:?} in {mode:?}"));
+                assert_eq!(selected.label(), Some("folder-14"));
                 assert!(selected.visible(), "{pane} at minimum height in {mode:?}");
                 let bounds = selected.bounds();
                 // Completion floats below the field and can flip above it in
@@ -226,6 +233,24 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
                 assert!(popup_bounds.origin.x >= px(0.) && popup_bounds.origin.y >= px(0.));
                 assert!(popup_bounds.right() <= window.viewport_size().width);
                 assert!(popup_bounds.bottom() <= window.viewport_size().height);
+                for _ in 0..5 {
+                    window.press("down", cx);
+                    window.render_frame(cx);
+                }
+                let last = window.within(pane).find(("path-suggestion", 19usize));
+                assert_eq!(last.label(), Some("folder-19"));
+                assert!(last.visible());
+                assert!(last.bounds().bottom() <= window.viewport_size().height);
+                window.press("down", cx);
+                window.render_frame(cx);
+                assert!(window.within(pane).find(("path-suggestion", 0usize)).visible());
+                window.press("up", cx);
+                window.render_frame(cx);
+                assert!(window.within(pane).find(("path-suggestion", 19usize)).visible());
+                for _ in 0..5 {
+                    window.press("up", cx);
+                    window.render_frame(cx);
+                }
                 window.within(pane).click(("path-suggestion", 14usize), cx);
                 window.press("escape", cx);
             })
@@ -233,4 +258,150 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
             cx.run_until_parked();
         }
     }
+}
+
+#[gpui_kit::test]
+fn local_popup_enter_keeps_editor_and_plain_enter_or_external_navigation_closes(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let child = directory.path().join("資料 folder");
+    std::fs::create_dir(&child).unwrap();
+    let fs = Arc::new(PendingFs::default());
+    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    show_panel(handle, &workspace, &panel, cx);
+    panel.update(cx, |panel, cx| {
+        panel.load_local(directory.path().into(), cx)
+    });
+    cx.run_until_parked();
+    fs.take_request("/home/test").send(Ok(vec![])).unwrap();
+    cx.run_until_parked();
+    for close_by_enter in [true, false] {
+        panel.update(cx, |panel, cx| {
+            panel.load_local(directory.path().into(), cx)
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .within("local-browser")
+                .click("explorer-path-display", cx);
+            window.render_frame(cx);
+            window.input("資料", cx);
+            window.press("tab", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            panel.read_with(cx, |panel, _| panel.local.path.clone()),
+            Some(child.clone())
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .within("local-browser")
+                    .try_find("explorer-path-display")
+                    .is_none()
+            );
+            if close_by_enter {
+                window.press("enter", cx);
+            }
+        })
+        .unwrap();
+        if !close_by_enter {
+            panel.update(cx, |panel, cx| {
+                panel.load_local(directory.path().into(), cx)
+            });
+        }
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .within("local-browser")
+                    .find("explorer-path-display")
+                    .visible()
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn remote_popup_enter_keeps_editor_and_plain_enter_closes_through_real_loader(
+    cx: &mut TestAppContext,
+) {
+    let fs = Arc::new(PendingFs::default());
+    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    show_panel(handle, &workspace, &panel, cx);
+    cx.run_until_parked();
+    fs.take_request("/home/test").send(Ok(vec![])).unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .within("remote-browser")
+            .click("explorer-path-display", cx);
+        window.render_frame(cx);
+        window.input("~/資", cx);
+        window.press("tab", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    fs.take_request("/home/test/")
+        .send(Ok(vec![
+            entry("資料 folder", EntryKind::Directory),
+            entry("資料 file", EntryKind::File),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    cx.run_until_parked();
+    fs.take_request("/home/test/資料 folder/")
+        .send(Ok(vec![]))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.browser.path.clone()),
+        Some("/home/test/資料 folder/".into())
+    );
+    fs.take_request("/home/test/資料 folder/")
+        .send(Ok(vec![]))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .within("remote-browser")
+                .try_find("explorer-path-display")
+                .is_none()
+        );
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    fs.take_request("/home/test/資料 folder/")
+        .send(Ok(vec![]))
+        .unwrap();
+    cx.run_until_parked();
+    fs.take_request("/home/test/資料 folder/")
+        .send(Ok(vec![]))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .within("remote-browser")
+                .find("explorer-path-display")
+                .visible()
+        );
+    })
+    .unwrap();
 }

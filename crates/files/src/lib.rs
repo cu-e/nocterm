@@ -245,9 +245,13 @@ impl FilesPanel {
             .map(|input| {
                 cx.subscribe(
                     input,
-                    |this, _, event: &path_input::Navigate, cx| match &event.0 {
-                        path_input::Directory::Local(path) => this.load_local(path.clone(), cx),
-                        path_input::Directory::Remote(path) => this.load(Some(path.clone()), cx),
+                    |this, _, event: &path_input::Navigate, cx| match &event.directory {
+                        path_input::Directory::Local(path) => {
+                            this.load_local_with_navigation(path.clone(), event.mode, cx)
+                        }
+                        path_input::Directory::Remote(path) => {
+                            this.load_with_navigation(Some(path.clone()), event.mode, cx)
+                        }
                     },
                 )
             })

@@ -91,7 +91,7 @@ impl Cycle {
         Self {
             candidates: entries
                 .iter()
-                .filter(|entry| entry.name.starts_with(&query.prefix))
+                .filter(|entry| entry.directory && entry.name.starts_with(&query.prefix))
                 .cloned()
                 .collect(),
             head: query.head,
@@ -174,7 +174,7 @@ mod tests {
         }
     }
     #[test]
-    fn candidates_include_files_and_cycle_both_ways_without_narrowing() {
+    fn candidates_exclude_files_and_cycle_directories_both_ways_without_narrowing() {
         let entries = vec![
             Candidate {
                 name: "abc".into(),
@@ -182,16 +182,21 @@ mod tests {
             },
             Candidate {
                 name: "abd".into(),
+                directory: true,
+            },
+            Candidate {
+                name: "ab-file".into(),
                 directory: false,
             },
         ];
         let mut cycle = Cycle::new(query("ab", &base(), None).unwrap(), &entries);
+        assert_eq!(cycle.candidates.len(), 2);
         assert_eq!(cycle.step(false).as_deref(), Some("abc/"));
-        assert_eq!(cycle.step(false).as_deref(), Some("abd"));
+        assert_eq!(cycle.step(false).as_deref(), Some("abd/"));
         assert_eq!(cycle.step(false).as_deref(), Some("abc/"));
-        assert_eq!(cycle.step(true).as_deref(), Some("abd"));
+        assert_eq!(cycle.step(true).as_deref(), Some("abd/"));
         let mut reverse = Cycle::new(query("ab", &base(), None).unwrap(), &entries);
-        assert_eq!(reverse.step(true).as_deref(), Some("abd"));
+        assert_eq!(reverse.step(true).as_deref(), Some("abd/"));
         assert!(
             Cycle::new(query("z", &base(), None).unwrap(), &entries)
                 .step(false)

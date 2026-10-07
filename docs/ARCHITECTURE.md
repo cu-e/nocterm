@@ -196,10 +196,14 @@ through Workspace's `LocalTerminal` contract, without Files depending on Termina
 Explorer location editors own native input and asynchronous, bounded directory
 completion. Suggestions use a viewport-constrained popup anchored below the input,
 flipping above it when needed, so minimum-height split panes retain usable rows.
-Tab and Shift+Tab cycle files and folders from one cached directory;
-editing, blur, navigation and session changes invalidate pending generations.
+Tab and Shift+Tab complete directories from one cached listing; Up and Down
+cycle the plain-text popup without descending into a single match.
+Editing, blur, navigation and session changes invalidate pending generations.
 Enter resolves a literal absolute, relative or home path through the existing
-browser loader, retaining the draft on failure. A shared Workspace `FileDrag`
+browser loader, retaining the draft on failure. With the popup open, successful
+navigation preserves editing and synchronizes its absolute path while retaining
+the current focus; a second Enter without the popup closes editing. A shared
+Workspace `FileDrag`
 contract preserves local paths or pinned remote filesystem/host data. Explorer
 uses it for transfers; Terminal quotes its literal paths for the receiving shell
 and submits one checked native paste without Enter, independently of the source

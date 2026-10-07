@@ -13,7 +13,7 @@ impl PathInput {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.editing || (self.pending.is_none() && self.cycle.is_none()) {
+        if !self.popup_visible() {
             return None;
         }
         let bounds = self.input.read(cx).input_bounds();
@@ -51,29 +51,42 @@ impl PathInput {
                                     let cycle =
                                         this.cycle.as_ref().expect("suggestions have a cycle");
                                     let candidate = &cycle.candidates[index];
-                                    super::super::row::ExplorerRow {
-                                        name: candidate.name.clone(),
-                                        directory: candidate.directory,
-                                        symlink: false,
-                                        selected: cycle.selected == Some(index),
-                                        font_size: cx
+                                    div()
+                                        .h(px(32.))
+                                        .px_2()
+                                        .flex()
+                                        .items_center()
+                                        .text_size(px(cx
                                             .design()
                                             .typography
                                             .explorer_size
-                                            .unwrap_or(12.),
-                                    }
-                                    .render(false, cx)
-                                    .id(("path-suggestion", index))
-                                    .test_support()
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        gpui_kit::MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.choose(index, window, cx);
-                                        }),
-                                    )
-                                    .into_any_element()
+                                            .unwrap_or(12.)))
+                                        .when(cycle.selected == Some(index), |row| {
+                                            row.bg(cx.theme().accent)
+                                                .text_color(cx.theme().accent_foreground)
+                                        })
+                                        .hover(|row| {
+                                            row.bg(cx.theme().accent)
+                                                .text_color(cx.theme().accent_foreground)
+                                        })
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .child(candidate.name.clone()),
+                                        )
+                                        .id(("path-suggestion", index))
+                                        .aria_label(candidate.name.clone())
+                                        .test_support()
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            gpui_kit::MouseButton::Left,
+                                            cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.choose(index, window, cx);
+                                            }),
+                                        )
+                                        .into_any_element()
                                 })
                                 .collect::<Vec<_>>()
                         }),
@@ -93,9 +106,9 @@ impl PathInput {
                     .child(if self.pending.is_some() {
                         "Loading suggestions…".to_owned()
                     } else if suggestions == 0 {
-                        "No matching files or folders. Edit the path and press Tab.".to_owned()
+                        "No matching folders. Edit the path and press Tab.".to_owned()
                     } else {
-                        format!("{suggestions} matches · Tab / Shift+Tab · Enter to open")
+                        format!("{suggestions} folders · ↑ / ↓ · Tab · Enter to open")
                     }),
             )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {

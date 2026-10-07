@@ -2,6 +2,8 @@
 mod completion;
 mod popup;
 #[cfg(test)]
+mod refinement_tests;
+#[cfg(test)]
 mod tests;
 
 pub(super) use completion::Directory;
@@ -28,7 +30,26 @@ const KEY_CONTEXT: &str = "ExplorerPathInput";
 struct Bindings;
 impl Global for Bindings {}
 
-pub(super) struct Navigate(pub Directory);
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(super) enum NavigationMode {
+    #[default]
+    CloseEditor,
+    KeepEditing,
+}
+pub(super) struct Navigate {
+    pub directory: Directory,
+    pub mode: NavigationMode,
+}
+
+// The display and native editor share actual pixel metrics, including border space.
+fn path_metrics<T: Styled>(element: T) -> T {
+    element
+        .text_size(gpui_kit::px(12.))
+        .line_height(gpui_kit::px(18.))
+        .h(gpui_kit::px(28.))
+        .px(gpui_kit::px(8.))
+        .py(gpui_kit::px(4.))
+}
 
 pub(super) struct PathInput {
     input: Entity<InputState>,
@@ -39,6 +60,7 @@ pub(super) struct PathInput {
     fs: Option<Arc<dyn RemoteFs>>,
     editing: bool,
     navigating: bool,
+    navigation_mode: NavigationMode,
     generation: u64,
     cycle: Option<Cycle>,
     cache: Option<(Directory, Vec<Candidate>)>,
@@ -67,6 +89,8 @@ impl PathInput {
                     Some(KEY_CONTEXT),
                 ),
                 KeyBinding::new("escape", input::Escape, Some(KEY_CONTEXT)),
+                KeyBinding::new("up", input::MoveUp, Some(KEY_CONTEXT)),
+                KeyBinding::new("down", input::MoveDown, Some(KEY_CONTEXT)),
             ]);
             cx.set_global(Bindings);
         }
@@ -82,9 +106,10 @@ impl PathInput {
                 this.error = None;
                 cx.notify();
             }
-            InputEvent::Blur if !this.navigating => {
+            InputEvent::Blur => {
                 this.invalidate(false);
                 this.editing = false;
+                this.navigation_mode = NavigationMode::CloseEditor;
                 this.error = None;
                 cx.notify();
             }
@@ -99,6 +124,7 @@ impl PathInput {
             fs: None,
             editing: false,
             navigating: false,
+            navigation_mode: NavigationMode::CloseEditor,
             generation: 0,
             cycle: None,
             cache: None,
@@ -120,14 +146,20 @@ impl PathInput {
         self.fs = fs;
         self.editing = false;
         self.navigating = false;
+        self.navigation_mode = NavigationMode::CloseEditor;
         self.error = None;
         self.encoding_error = None;
         cx.notify();
     }
 
     /// Called for every listing, including refresh and other navigation controls.
-    pub(super) fn begin_navigation(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn begin_navigation_with_mode(
+        &mut self,
+        mode: NavigationMode,
+        cx: &mut Context<Self>,
+    ) {
         self.invalidate(true);
+        self.navigation_mode = mode;
         self.navigating = true;
         self.error = None;
         self.encoding_error = None;
@@ -141,29 +173,46 @@ impl PathInput {
         cx: &mut Context<Self>,
     ) {
         self.invalidate(true);
+        let keep = self.editing && self.navigation_mode == NavigationMode::KeepEditing;
+        let value = match &directory {
+            Directory::Local(path) => path.to_str().map(str::to_owned),
+            Directory::Remote(path) => Some(path.clone()),
+        };
+        self.directory = Some(directory);
+        self.home = home;
+        self.editing = keep && value.is_some();
+        self.navigating = false;
+        self.navigation_mode = NavigationMode::CloseEditor;
+        self.error = None;
+        self.encoding_error = None;
+        let generation = self.generation;
+        let entity = cx.entity().downgrade();
+        let handle = self.window;
         if self.editing {
-            let field = self.input.read(cx).focus_handle(cx);
-            let display = self.focus.clone();
-            let handle = self.window;
-            cx.defer(move |cx| {
-                let _ = handle.update(cx, |_, window, cx| {
-                    if field.is_focused(window) {
-                        window.focus(&display, cx);
+            self.observed_value = value.clone().unwrap();
+        }
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    if this.generation != generation {
+                        return;
+                    }
+                    if this.editing {
+                        this.input.update(cx, |input, cx| {
+                            input.replace_all(value.unwrap(), window, cx)
+                        });
+                    } else if this.input.read(cx).focus_handle(cx).is_focused(window) {
+                        window.focus(&this.focus, cx);
                     }
                 });
             });
-        }
-        self.directory = Some(directory);
-        self.home = home;
-        self.editing = false;
-        self.navigating = false;
-        self.error = None;
-        self.encoding_error = None;
+        });
         cx.notify();
     }
 
     pub(super) fn navigation_failed(&mut self, error: String, cx: &mut Context<Self>) {
         self.navigating = false;
+        self.navigation_mode = NavigationMode::CloseEditor;
         self.error = Some(error);
         cx.notify();
     }
@@ -213,6 +262,7 @@ impl PathInput {
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        self.synchronize_draft(cx);
         if self.navigating {
             return;
         }
@@ -225,8 +275,13 @@ impl PathInput {
             self.home.as_ref(),
         ) {
             Ok(directory) => {
-                self.begin_navigation(cx);
-                cx.emit(Navigate(directory));
+                let mode = if self.popup_visible() {
+                    NavigationMode::KeepEditing
+                } else {
+                    NavigationMode::CloseEditor
+                };
+                self.begin_navigation_with_mode(mode, cx);
+                cx.emit(Navigate { directory, mode });
             }
             Err(error) => {
                 self.error = Some(error);
@@ -240,9 +295,22 @@ impl PathInput {
         cx.stop_propagation();
         self.invalidate(false);
         self.editing = false;
+        self.navigation_mode = NavigationMode::CloseEditor;
         self.error = None;
         window.focus(&self.focus, cx);
         cx.notify();
+    }
+
+    /// Native Change may arrive after the next keyboard action in the same update.
+    /// Invalidate stale suggestions before that action can replace or submit a draft.
+    fn synchronize_draft(&mut self, cx: &mut Context<Self>) {
+        let value = self.input.read(cx).value().to_string();
+        if value != self.observed_value {
+            self.invalidate(false);
+            self.observed_value = value;
+            self.error = None;
+            cx.notify();
+        }
     }
 
     fn complete(&mut self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -250,13 +318,7 @@ impl PathInput {
         if self.navigating {
             return;
         }
-        let value = self.input.read(cx).value().to_string();
-        // Change notifications may be deferred until after this action. Synchronize
-        // the draft so an earlier Change cannot cancel the newly started request.
-        if value != self.observed_value {
-            self.invalidate(false);
-            self.observed_value = value;
-        }
+        self.synchronize_draft(cx);
         if let Some(cycle) = &self.cycle {
             if cycle.candidates.len() == 1 && cycle.candidates[0].directory {
                 self.cycle = None;
@@ -332,6 +394,24 @@ impl PathInput {
             });
         }));
         cx.notify();
+    }
+
+    fn popup_visible(&self) -> bool {
+        self.editing && (self.pending.is_some() || self.cycle.is_some())
+    }
+
+    fn arrow(&mut self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.synchronize_draft(cx);
+        if !self.popup_visible() || self.navigating {
+            cx.propagate();
+            return;
+        }
+        cx.stop_propagation();
+        if let Some((_, position)) = &mut self.pending {
+            *position = position.saturating_add(if reverse { -1 } else { 1 });
+        } else {
+            self.advance(reverse, window, cx);
+        }
     }
 
     fn advance(&mut self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -414,24 +494,29 @@ impl Render for PathInput {
                             .capture_action(cx.listener(|this, _: &input::Escape, window, cx| {
                                 this.escape(window, cx)
                             }))
-                            .child(Input::new(&self.input).small().disabled(self.navigating)),
+                            .capture_action(cx.listener(|this, _: &input::MoveUp, window, cx| {
+                                this.arrow(true, window, cx)
+                            }))
+                            .capture_action(cx.listener(|this, _: &input::MoveDown, window, cx| {
+                                this.arrow(false, window, cx)
+                            }))
+                            .child(path_metrics(
+                                Input::new(&self.input).small().readonly(self.navigating),
+                            )),
                     )
                 } else {
                     view.child(
-                        div()
+                        path_metrics(div())
                             .id("explorer-path-display")
                             .test_support()
                             .w_full()
                             .min_w_0()
-                            .px_2()
-                            .py_1()
+                            .border_1()
+                            .border_color(cx.theme().transparent)
                             .rounded_sm()
                             .when(self.focus.is_focused(window), |path| {
-                                path.bg(cx.theme().accent)
-                                    .border_1()
-                                    .border_color(cx.theme().primary)
+                                path.bg(cx.theme().accent).border_color(cx.theme().primary)
                             })
-                            .text_xs()
                             .text_color(cx.theme().foreground)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -478,15 +563,15 @@ async fn read_candidates(
                         .is_some_and(|name| name.to_str().is_some())
                 })
                 .filter(|entry| valid_name(&entry.name, true))
-                .map(|entry| {
-                    let directory = entry.kind == EntryKind::Directory
+                .filter(|entry| {
+                    entry.kind == EntryKind::Directory
                         || (entry.symlink
                             && std::fs::metadata(&entry.path)
-                                .is_ok_and(|metadata| metadata.is_dir()));
-                    Candidate {
-                        name: entry.name,
-                        directory,
-                    }
+                                .is_ok_and(|metadata| metadata.is_dir()))
+                })
+                .map(|entry| Candidate {
+                    name: entry.name,
+                    directory: true,
                 })
                 .collect()
         }),
@@ -497,10 +582,12 @@ async fn read_candidates(
                 .map(|(_, entries)| {
                     entries
                         .into_iter()
-                        .filter(|entry| valid_name(&entry.name, false))
+                        .filter(|entry| {
+                            entry.kind == EntryKind::Directory && valid_name(&entry.name, false)
+                        })
                         .map(|entry| Candidate {
                             name: entry.name,
-                            directory: entry.kind == EntryKind::Directory,
+                            directory: true,
                         })
                         .collect()
                 })
