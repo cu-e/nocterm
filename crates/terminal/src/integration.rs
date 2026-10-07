@@ -8,6 +8,7 @@ pub(crate) struct ShellIntegration {
     payload: Vec<u8>,
     pub cwd: Option<PathBuf>,
     pub at_prompt: bool,
+    pub known: bool,
     pub dirty_input: bool,
 }
 
@@ -50,6 +51,9 @@ impl ShellIntegration {
         let Ok(text) = std::str::from_utf8(&self.payload) else {
             return;
         };
+        if matches!(text, "133;A" | "133;B" | "133;C" | "133;D") {
+            self.known = true;
+        }
         match text {
             "133;A" => {
                 self.at_prompt = true;

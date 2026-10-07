@@ -70,6 +70,7 @@ pub struct Terminal {
     local_transport: Option<Arc<dyn Transport>>,
     command_completion: Option<CommandCompletion>,
     integration: RefCell<ShellIntegration>,
+    agent_input: RefCell<input::AgentInput>,
     shell_program: String,
     shell_syntax: Option<nocterm_workspace::ShellSyntax>,
     session: Option<Session>,
@@ -154,6 +155,7 @@ impl Terminal {
             local_transport,
             command_completion,
             integration: RefCell::default(),
+            agent_input: RefCell::default(),
             shell_program: String::new(),
             shell_syntax: None,
             session: None,
@@ -337,6 +339,8 @@ impl Terminal {
 
     /// Ends the session.
     pub fn close(&mut self) {
+        self.agent_input.borrow_mut().revoke();
+        *self.integration.borrow_mut() = ShellIntegration::default();
         self.connection_epoch = self.connection_epoch.wrapping_add(1);
         self._pump = None;
         self.sync_timer = None;
@@ -412,7 +416,7 @@ impl Terminal {
         for effect in effects {
             match effect {
                 Effect::Reply(bytes) => {
-                    self.send(bytes);
+                    self.send_protocol(bytes);
                 }
                 Effect::Title(title) => {
                     if self.program_title != title {
@@ -551,30 +555,6 @@ impl Terminal {
             Err(error) => self.text_error = Some(format!("Could not start recording: {error}")),
         }
         cx.emit(TerminalEvent::Changed);
-    }
-
-    /// Delivers bytes to the remote program, if it is running.
-    pub fn send(&self, bytes: impl Into<Vec<u8>>) -> bool {
-        if let (Some(session), Status::Connected) = (&self.session, &self.status) {
-            let bytes = bytes.into();
-            let accepted = if self.local {
-                let accepted = session.input(bytes.clone());
-                if accepted {
-                    self.integration.borrow_mut().input(&bytes);
-                }
-                accepted
-            } else {
-                session.input(bytes)
-            };
-            *self.input_error.borrow_mut() = if accepted {
-                None
-            } else {
-                Some("Input was not sent: the connection's input queue is full or the paste exceeds 4 MiB. Wait and retry with a smaller selection.".into())
-            };
-            accepted
-        } else {
-            false
-        }
     }
 
     /// Lays the grid out anew, and tells the remote program.

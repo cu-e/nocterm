@@ -2,7 +2,32 @@
 use super::{Terminal, TerminalEvent};
 use gpui_kit::Context;
 use nocterm_vt::encode_paste;
-use std::path::Path;
+use nocterm_workspace::LiveCommandLease;
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+#[derive(Default)]
+pub(super) struct AgentInput {
+    lease: Option<Arc<AtomicBool>>,
+    submitting: bool,
+}
+impl AgentInput {
+    pub(super) fn revoke(&mut self) {
+        if let Some(lease) = self.lease.take() {
+            lease.store(false, Ordering::Release);
+        }
+    }
+    fn active(&self) -> bool {
+        self.lease
+            .as_ref()
+            .is_some_and(|lease| lease.load(Ordering::Acquire))
+    }
+}
 
 impl Terminal {
     /// Changes a known idle, empty local prompt. Otherwise returns a prepared command.
@@ -57,7 +82,7 @@ impl Terminal {
     pub(crate) fn agent_prompt_state(&self) -> (Option<bool>, bool) {
         let integration = self.integration.borrow();
         (
-            self.local.then_some(integration.at_prompt),
+            integration.known.then_some(integration.at_prompt),
             integration.dirty_input,
         )
     }
@@ -80,7 +105,9 @@ impl Terminal {
             }
             let integration = self.integration.borrow();
             if self.emulator.modes().alt_screen
-                || (self.local && (!integration.at_prompt || integration.dirty_input))
+                || !integration.known
+                || !integration.at_prompt
+                || integration.dirty_input
             {
                 return Err(
                     "The terminal is busy, has unfinished input, or is in an alternate screen."
@@ -88,17 +115,71 @@ impl Terminal {
                 );
             }
         }
+        if self.agent_input.borrow().active() && !self.agent_input.borrow().submitting {
+            return Err("Another chat is observing a command in this terminal.".into());
+        }
         let text = if command {
             format!("{text}\r")
         } else {
             text.to_owned()
         };
         let bytes = self.codec.encode(&text)?;
-        if !self.send(bytes) {
+        self.agent_input.borrow_mut().submitting = true;
+        let accepted = self.send(bytes);
+        self.agent_input.borrow_mut().submitting = false;
+        if !accepted {
             return Err("Terminal input queue rejected the input.".into());
         }
         cx.emit(TerminalEvent::Changed);
         Ok(())
+    }
+
+    pub(crate) fn agent_executor(&self) -> Option<Arc<dyn nocterm_session::HostExec>> {
+        self.session
+            .as_ref()
+            .and_then(nocterm_session::Session::exec)
+    }
+
+    pub(crate) fn begin_live_command(
+        &mut self,
+        command: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<LiveCommandLease, String> {
+        if self.agent_input.borrow().active() {
+            return Err("Another chat is observing a command in this terminal.".into());
+        }
+        self.agent_send(command, true, cx)?;
+        let active = Arc::new(AtomicBool::new(true));
+        self.agent_input.borrow_mut().lease = Some(active.clone());
+        Ok(LiveCommandLease::new(active, self.session.clone()))
+    }
+
+    /// Delivers user bytes and revokes any live agent ownership on accepted input.
+    pub fn send(&self, bytes: impl Into<Vec<u8>>) -> bool {
+        self.send_bytes(bytes.into(), true)
+    }
+    pub(crate) fn send_protocol(&self, bytes: impl Into<Vec<u8>>) -> bool {
+        self.send_bytes(bytes.into(), false)
+    }
+    fn send_bytes(&self, bytes: Vec<u8>, user: bool) -> bool {
+        if let (Some(session), super::Status::Connected) = (&self.session, &self.status) {
+            let accepted = session.input(bytes.clone());
+            if accepted && user {
+                self.integration.borrow_mut().input(&bytes);
+                let mut input = self.agent_input.borrow_mut();
+                if !input.submitting {
+                    input.revoke();
+                }
+            }
+            *self.input_error.borrow_mut() = if accepted {
+                None
+            } else {
+                Some("Input was not sent: the connection's input queue is full or the paste exceeds 4 MiB. Wait and retry with a smaller selection.".into())
+            };
+            accepted
+        } else {
+            false
+        }
     }
 
     /// Encodes only user text. Protocol replies and mouse messages use send unchanged.

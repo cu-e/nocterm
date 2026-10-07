@@ -264,7 +264,7 @@ impl TerminalView {
         }
         let terminal = self.terminal.read(cx);
         if let Some(report) = encode_focus(focused, terminal.emulator().modes()) {
-            terminal.send(report);
+            terminal.send_protocol(report);
         }
         if focused
             && self
