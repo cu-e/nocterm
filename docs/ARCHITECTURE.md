@@ -71,12 +71,19 @@ closures snapshot the clicked Item and resolve its current pane order at executi
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
 footer owns section switches and status views. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
-detaches all local Items without closing their processes; showing it restores
-their tab order, selected Item and dock height. The toolkit's actual group
-selection owns the local cwd target, while focus owns command routing. Bottom
-local terminal tabs share direct add/zoom controls; double-clicking only the free
-header area opens another local Item. Closing by identity affects one process,
-and bottom local terminal focus preserves the last central remote context. An `Item` supplies tab content, focus and an
+uses native dock visibility, preserving its pane tree, sizes, tab order,
+selections, groups and running processes. Every user tab shares one Item registry
+and the same close, split, grouping, rename and keyboard operations. Close scopes
+resolve the clicked tab's current native pane; Close All affects its dock placement.
+Local shell capability is an optional Item contract, so mixed panes and moved local
+tabs retain identical ownership. Local focus preserves the last central remote
+context for Explorer; native group selection owns the local cwd target. Header
+add controls open into the clicked group, including local tabs moved to Center.
+Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
+accepted topology changes clear it to reveal their result. Hiding Bottom leaves
+local tabs moved to Center visible. A region's last tab can be dragged to another
+open visible region; the final visible workspace tab and explicit locks remain
+protected. Empty noncentral regions disappear after moves without closing Items. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
 opener connect requests from the connections feature to the terminal feature.

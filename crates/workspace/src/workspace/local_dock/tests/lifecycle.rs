@@ -27,7 +27,7 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
         let state = workspace.read(cx);
         assert_eq!(count(&workspace, cx), 2);
         assert!(!state.local_terminal_is_visible(cx));
-        assert!(!state.dock.read(cx).has_dock(DockPlacement::Bottom));
+        assert!(state.dock.read(cx).has_dock(DockPlacement::Bottom));
         assert!(state.dock.read(cx).zoomed_group().is_none());
         assert_eq!(closes.get(), 0);
         workspace.update(cx, |workspace, cx| {
@@ -59,7 +59,7 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
     .unwrap();
     cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
-        assert!(workspace.local_terminal.is_none());
+        assert!(workspace.selected_local_id.is_none());
         assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
         assert!(workspace.dock.read(cx).zoomed_group().is_none());
     });
@@ -198,7 +198,7 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
                 workspace
                     .local_entry(b.entity_id())
                     .unwrap()
-                    .item
+                    .dock_item
                     .entity_id(),
             );
             let central_panel = PanelId::from(workspace.items[0].dock_item.entity_id());
@@ -220,7 +220,9 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
                 );
             });
             assert_eq!(
-                workspace.local_placement(workspace.local_entry(b.entity_id()).unwrap(), cx),
+                workspace
+                    .item_location(b.entity_id(), cx)
+                    .map(|(placement, _)| placement),
                 Some(DockPlacement::Center)
             );
             assert!(workspace.focus_terminal(b.entity_id(), window, cx));
@@ -244,8 +246,8 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
             assert_eq!(workspace.terminals(cx).len(), 2);
             assert_eq!(workspace.local_terminal_cwd(cx), Some("/b".into()));
             assert!(!workspace.focus_terminal(a.entity_id(), window, cx));
-            assert!(!workspace.focus_terminal(b.entity_id(), window, cx));
-            assert!(central.read(cx).focus_handle(cx).is_focused(window));
+            assert!(workspace.focus_terminal(b.entity_id(), window, cx));
+            assert!(b.read(cx).focus_handle(cx).is_focused(window));
         });
     })
     .unwrap();

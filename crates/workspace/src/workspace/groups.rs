@@ -11,11 +11,14 @@ use super::{OpenItem, Workspace};
 use crate::{dock_item::GROUP_PALETTE, tab_groups::GroupId};
 
 /// The docks a tab can be dragged to.
-const PLACEMENTS: [DockPlacement; 2] = [DockPlacement::Center, DockPlacement::Bottom];
+const PLACEMENTS: [DockPlacement; 4] = super::items::TAB_PLACEMENTS;
 
 impl Workspace {
     /// Puts the tab showing `item` in a group of its own.
     pub fn new_tab_group(&mut self, item: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dock.read(cx).is_locked() {
+            return;
+        }
         let Some(panel) = self.panel_of(item) else {
             return;
         };
@@ -32,22 +35,31 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.dock.read(cx).is_locked() {
+            return;
+        }
         let (Some(panel), Some(other)) = (self.panel_of(item), self.panel_of(other)) else {
             return;
         };
         if panel == other {
             return;
         }
-        let group = self
-            .tab_groups
-            .group_of(other)
-            .unwrap_or_else(|| self.tab_groups.create(other, GROUP_PALETTE));
+        let group = self.tab_groups.group_of(other).unwrap_or_else(|| {
+            let group = self.tab_groups.create(other, GROUP_PALETTE);
+            // Record the target before the newcomer joins, so an existing
+            // tab in another placement follows the requested group.
+            self.regroup(window, cx);
+            group
+        });
         self.tab_groups.join(panel, group);
         self.regroup(window, cx);
     }
 
     /// Takes the tab showing `item` out of its group.
     pub fn ungroup_tab(&mut self, item: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dock.read(cx).is_locked() {
+            return;
+        }
         if let Some(panel) = self.panel_of(item) {
             self.tab_groups.leave(panel);
             self.regroup(window, cx);
@@ -61,6 +73,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.dock.read(cx).is_locked() {
+            return;
+        }
         if let Some(group) = self.group_of_item(item) {
             self.tab_groups.dissolve(group);
             self.regroup(window, cx);
@@ -83,13 +98,7 @@ impl Workspace {
     /// Closes every tab in `item`'s group.
     pub fn close_tab_group(&mut self, item: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         for id in self.tab_group_items(item) {
-            if let Some(ix) = self
-                .items
-                .iter()
-                .position(|open| open.handle.item_id() == id)
-            {
-                self.close_item(ix, window, cx);
-            }
+            self.close_item_by_id(id, window, cx);
         }
     }
 
@@ -175,7 +184,7 @@ impl Workspace {
         }
     }
 
-    fn panel_of(&self, item: EntityId) -> Option<PanelId> {
+    pub(super) fn panel_of(&self, item: EntityId) -> Option<PanelId> {
         self.items
             .iter()
             .find(|open| open.handle.item_id() == item)

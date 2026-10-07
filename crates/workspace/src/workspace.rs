@@ -1,5 +1,7 @@
 use std::{cell::Cell, path::PathBuf, rc::Rc};
 
+#[cfg(test)]
+use gpui_kit::component::dock::InsertTarget;
 use gpui_kit::{
     Action, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Menu, Pixels, SharedString, Subscription, Window,
@@ -7,8 +9,8 @@ use gpui_kit::{
     component::{
         ActiveTheme as _,
         dock::{
-            DockArea, DockEvent, DockPlacement, DockSkin, InsertTarget, PaneRef, PanelId,
-            PanelStyle, panel_handle,
+            DockArea, DockEvent, DockPlacement, DockSkin, PaneRef, PanelId, PanelStyle,
+            panel_handle,
         },
         menu::AppMenuBar,
         v_flex,
@@ -24,9 +26,11 @@ mod background;
 mod chrome;
 mod commands;
 mod groups;
+mod items;
 mod layout;
 mod local_dock;
-use local_dock::{BottomTerminal, LocalOpener};
+mod tabs;
+use local_dock::LocalOpener;
 mod openers;
 mod panels;
 mod panes;
@@ -83,7 +87,7 @@ pub enum TabCloseScope {
     Others,
     Left,
     Right,
-    /// All central tabs; the independent local terminal is left running.
+    /// All registered tabs across panes in the clicked tab's dock placement.
     All,
 }
 
@@ -101,6 +105,7 @@ struct OpenItem {
     /// Updated on ItemEvent::Changed; safe to query while any Item renders.
     session: Option<SessionContext>,
     dock_item: Entity<crate::dock_item::DockItem>,
+    local: Option<Box<dyn crate::local_terminal::LocalTerminalHandle>>,
     _subscription: Subscription,
     _focus_subscription: Subscription,
 }
@@ -110,8 +115,9 @@ pub struct Workspace {
     dock: Entity<DockArea>,
     _dock_subscription: Subscription,
     _dock_observer: Subscription,
-    dock_hide_queued: bool,
-    local_terminal: Option<BottomTerminal>,
+    selected_local_id: Option<EntityId>,
+    local_terminal_height: Option<Pixels>,
+    local_open_target: Option<(DockPlacement, gpui_kit::component::dock::NodeId)>,
     local_opener: Option<LocalOpener>,
     local_header_click_origin: Rc<Cell<Option<EntityId>>>,
     items: Vec<OpenItem>,
@@ -156,8 +162,12 @@ impl Workspace {
         // Adapter-owned buttons provide that lifecycle policy using native controls.
         skin.set_close_button_visible(false, cx);
         skin.set_toggle_button_visible(false, cx);
+        dock.update(cx, |dock, cx| {
+            dock.set_closed_bottom_strip_visible(false, cx);
+            dock.set_last_panel_drag_between_regions(true, window, cx);
+        });
         let subscription = cx.subscribe_in(&dock, window, |this, _, _: &DockEvent, window, cx| {
-            this.schedule_hidden_dock_detach(window, cx);
+            this.reconcile_empty_regions(window, cx);
             this.regroup(window, cx);
             let focused = this
                 .items
@@ -172,14 +182,15 @@ impl Workspace {
         // Dock resizing changes its open state with `notify`, without emitting
         // DockEvent. Observe both paths so a closed bottom strip disappears.
         let observer = cx.observe_in(&dock, window, |this, _, window, cx| {
-            this.schedule_hidden_dock_detach(window, cx);
+            this.reconcile_bottom_visibility(window, cx);
         });
         let mut this = Self {
             dock,
             _dock_subscription: subscription,
             _dock_observer: observer,
-            dock_hide_queued: false,
-            local_terminal: None,
+            selected_local_id: None,
+            local_terminal_height: None,
+            local_open_target: None,
             local_header_click_origin: Rc::default(),
             local_opener: None,
             focus_handle: cx.focus_handle(),
@@ -249,352 +260,6 @@ impl Workspace {
         this
     }
 
-    // ── Items ────────────────────────────────────────────────────────────────
-
-    /// Opens `item` in a new tab and switches to it.
-    pub fn add_item<T: Item>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let id = item.entity_id();
-        let subscription =
-            cx.subscribe_in(
-                &item,
-                window,
-                move |this, item, event, window, cx| match event {
-                    ItemEvent::Changed => {
-                        if let Some(open) = this
-                            .items
-                            .iter_mut()
-                            .find(|open| open.handle.item_id() == id)
-                        {
-                            open.session = item.read(cx).session(cx);
-                            open.dock_item.update(cx, |_, cx| cx.notify());
-                        }
-                        this.announce_session(cx);
-                        cx.emit(WorkspaceEvent::ItemsChanged);
-                        cx.notify();
-                    }
-                    ItemEvent::CloseRequested => {
-                        if let Some(ix) = this
-                            .items
-                            .iter()
-                            .position(|open| open.handle.item_id() == id)
-                        {
-                            this.close_item(ix, window, cx);
-                        }
-                    }
-                },
-            );
-
-        let destination = self
-            .active_item
-            .and_then(|ix| self.items.get(ix))
-            .and_then(|open| {
-                self.dock
-                    .read(cx)
-                    .layout(DockPlacement::Center)?
-                    .find_panel_node(PanelId::from(open.dock_item.entity_id()))
-            });
-        let session = item.read(cx).session(cx);
-        let handle: Rc<dyn ItemHandle> = Rc::new(item);
-        let workspace = cx.weak_entity();
-        let header_origin = self.local_header_click_origin.clone();
-        let dock_item = cx.new(|item_cx| {
-            crate::dock_item::DockItem::new(
-                handle.clone(),
-                workspace,
-                false,
-                header_origin,
-                window,
-                item_cx,
-            )
-        });
-        let focus = dock_item.read(cx).container_focus_handle();
-        let focus_subscription = cx.on_focus_in(&focus, window, move |this, _, cx| {
-            if this.last_command_item != Some(id) {
-                this.last_command_item = Some(id);
-                cx.emit(WorkspaceEvent::ItemsChanged);
-            }
-            this.mark_active(id, cx);
-        });
-        self.dock.update(cx, |dock, cx| {
-            dock.add_panel_view(
-                panel_handle(dock_item.clone()),
-                DockPlacement::Center,
-                None,
-                window,
-                cx,
-            )
-        });
-        if let Some(node) = destination {
-            self.dock.update(cx, |dock, cx| {
-                dock.move_panel(
-                    PanelId::from(dock_item.entity_id()),
-                    InsertTarget::Tabs {
-                        node,
-                        ix: None,
-                        activate: true,
-                    },
-                    window,
-                    cx,
-                )
-            });
-        }
-        self.items.push(OpenItem {
-            handle,
-            session,
-            dock_item,
-            _subscription: subscription,
-            _focus_subscription: focus_subscription,
-        });
-        self.activate_item(self.items.len() - 1, window, cx);
-        cx.emit(WorkspaceEvent::ItemsChanged);
-    }
-
-    /// Open items in stable registration order. The native dock owns their display order.
-    pub fn items(&self) -> impl Iterator<Item = &dyn ItemHandle> {
-        self.items.iter().map(|open| open.handle.as_ref())
-    }
-
-    pub fn set_connection_directory(&mut self, directory: Rc<dyn crate::ConnectionDirectory>) {
-        self.connection_directory = Some(directory);
-    }
-    pub fn connection_directory(&self) -> Option<Rc<dyn crate::ConnectionDirectory>> {
-        self.connection_directory.clone()
-    }
-
-    pub fn active_item(&self) -> Option<&dyn ItemHandle> {
-        self.active_item
-            .and_then(|ix| self.items.get(ix))
-            .map(|open| open.handle.as_ref())
-    }
-
-    /// The first open tab showing a `T`.
-    pub fn find_item<T: Item>(&self) -> Option<Entity<T>> {
-        self.items
-            .iter()
-            .find_map(|open| open.handle.view().downcast::<T>().ok())
-    }
-
-    pub fn activate_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        let Some(open) = self.items.get(ix) else {
-            return;
-        };
-        let panel = PanelId::from(open.dock_item.entity_id());
-        self.dock
-            .update(cx, |dock, cx| dock.select_panel(panel, window, cx));
-        let focus = open.handle.focus_handle(cx);
-        let changed = self.active_item != Some(ix);
-        self.active_item = Some(ix);
-        window.focus(&focus, cx);
-        if changed {
-            cx.emit(WorkspaceEvent::ActiveItemChanged);
-            self.announce_session(cx);
-        }
-        cx.notify();
-    }
-
-    /// Switches to the tab showing `item`, if it is open.
-    pub fn activate_item_by_id(
-        &mut self,
-        item: gpui_kit::EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        match self
-            .items
-            .iter()
-            .position(|open| open.handle.item_id() == item)
-        {
-            Some(ix) => {
-                self.activate_item(ix, window, cx);
-                true
-            }
-            None => false,
-        }
-    }
-
-    pub(crate) fn tabs_to_close(
-        &self,
-        id: gpui_kit::EntityId,
-        scope: TabCloseScope,
-        cx: &App,
-    ) -> Vec<gpui_kit::EntityId> {
-        let Some(clicked) = self.items.iter().find(|item| item.handle.item_id() == id) else {
-            return Vec::new();
-        };
-        if scope == TabCloseScope::All {
-            return self
-                .items
-                .iter()
-                .map(|item| item.handle.item_id())
-                .collect();
-        }
-        let panel = PanelId::from(clicked.dock_item.entity_id());
-        let dock = self.dock.read(cx);
-        let Some(tree) = dock.layout(DockPlacement::Center) else {
-            return Vec::new();
-        };
-        let Some(node) = tree
-            .find_panel_node(panel)
-            .and_then(|node| tree.find_node(node))
-        else {
-            return Vec::new();
-        };
-        let PaneRef::Tabs { panels, .. } = node.kind() else {
-            return Vec::new();
-        };
-        let Some(clicked_ix) = panels.iter().position(|candidate| *candidate == panel) else {
-            return Vec::new();
-        };
-        panels
-            .iter()
-            .enumerate()
-            .filter(|(ix, _)| match scope {
-                TabCloseScope::Current => *ix == clicked_ix,
-                TabCloseScope::Others => *ix != clicked_ix,
-                TabCloseScope::Left => *ix < clicked_ix,
-                TabCloseScope::Right => *ix > clicked_ix,
-                TabCloseScope::All => true,
-            })
-            .filter_map(|(_, panel)| {
-                self.items
-                    .iter()
-                    .find(|item| PanelId::from(item.dock_item.entity_id()) == *panel)
-                    .map(|item| item.handle.item_id())
-            })
-            .collect()
-    }
-
-    pub fn close_tabs(
-        &mut self,
-        id: gpui_kit::EntityId,
-        scope: TabCloseScope,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Resolve visual order before mutations collapse or renumber native panes.
-        let ids = self.tabs_to_close(id, scope, cx);
-        for id in ids {
-            if let Some(ix) = self
-                .items
-                .iter()
-                .position(|item| item.handle.item_id() == id)
-            {
-                self.close_item(ix, window, cx);
-            }
-        }
-    }
-
-    fn close_active_tabs(
-        &mut self,
-        scope: TabCloseScope,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(id) = self.active_item().map(|item| item.item_id()) {
-            self.close_tabs(id, scope, window, cx);
-        }
-    }
-
-    pub fn close_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if ix >= self.items.len() {
-            return;
-        }
-        let previous_active = self.active_item().map(|item| item.item_id());
-        let closed = self.items.remove(ix);
-        cx.emit(WorkspaceEvent::ItemsChanged);
-        let closed_id = closed.handle.item_id();
-        let node = self
-            .dock
-            .read(cx)
-            .layout(DockPlacement::Center)
-            .and_then(|tree| tree.find_panel_node(PanelId::from(closed.dock_item.entity_id())));
-        self.dock.update(cx, |dock, cx| {
-            dock.remove_panel(closed.dock_item.clone(), window, cx)
-        });
-        closed.handle.close(window, cx);
-        if previous_active == Some(closed_id) {
-            let replacement = node
-                .and_then(|node| {
-                    let dock = self.dock.read(cx);
-                    let PaneRef::Tabs { panels, active_ix } =
-                        dock.layout(DockPlacement::Center)?.find_node(node)?.kind()
-                    else {
-                        return None;
-                    };
-                    panels.get(active_ix).copied()
-                })
-                .and_then(|panel| {
-                    self.items
-                        .iter()
-                        .position(|open| PanelId::from(open.dock_item.entity_id()) == panel)
-                });
-            self.active_item = replacement
-                .or_else(|| (!self.items.is_empty()).then(|| ix.min(self.items.len() - 1)));
-            match self.active_item {
-                Some(active) => {
-                    let focus = self.items[active].handle.focus_handle(cx);
-                    window.focus(&focus, cx);
-                }
-                None => window.focus(&self.focus_handle, cx),
-            }
-            cx.emit(WorkspaceEvent::ActiveItemChanged);
-            self.announce_session(cx);
-        } else {
-            self.active_item = previous_active.and_then(|id| {
-                self.items
-                    .iter()
-                    .position(|open| open.handle.item_id() == id)
-            });
-        }
-        cx.notify();
-    }
-
-    /// Record focus without changing the toolkit's layout or stealing focus.
-    pub(crate) fn mark_active(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
-        let ix = self
-            .items
-            .iter()
-            .position(|open| open.handle.item_id() == id);
-        if ix.is_some() && ix != self.active_item {
-            self.active_item = ix;
-            cx.emit(WorkspaceEvent::ActiveItemChanged);
-            self.announce_session(cx);
-            cx.notify();
-        }
-    }
-
-    /// The toolkit calls this only for a true removal, never for a tab move.
-    pub(crate) fn item_removed(
-        &mut self,
-        id: gpui_kit::EntityId,
-        bottom: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if bottom {
-            self.close_local_terminal_by_id(id, window, cx);
-        } else if let Some(ix) = self
-            .items
-            .iter()
-            .position(|open| open.handle.item_id() == id)
-        {
-            self.close_item(ix, window, cx);
-        }
-    }
-
-    pub fn rename_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = self.active_item.and_then(|ix| self.items.get(ix)) {
-            item.dock_item
-                .update(cx, |item, cx| item.start_alias(window, cx));
-        }
-    }
-
     // ── New tabs and sessions ────────────────────────────────────────────────
 
     /// The view shown by the tab strip's "+" button. It receives focus
@@ -647,8 +312,8 @@ impl Workspace {
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.active_item {
-            self.close_item(ix, window, cx);
+        if let Some(id) = self.command_item(window, cx).map(|item| item.item_id()) {
+            self.close_item_by_id(id, window, cx);
         }
     }
 
@@ -781,3 +446,6 @@ impl Render for Workspace {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod native_terminal_tab_tests;

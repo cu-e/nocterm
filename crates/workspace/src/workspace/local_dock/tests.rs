@@ -81,9 +81,10 @@ fn fixture(
 fn count(workspace: &Entity<Workspace>, cx: &App) -> usize {
     workspace
         .read(cx)
-        .local_terminal
-        .as_ref()
-        .map_or(0, |local| local.entries.len())
+        .items
+        .iter()
+        .filter(|open| open.local.is_some())
+        .count()
 }
 
 #[gpui_kit::test]
@@ -156,8 +157,16 @@ fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            let first = workspace.local_entry(a.entity_id()).unwrap().item.clone();
-            let second = workspace.local_entry(b.entity_id()).unwrap().item.clone();
+            let first = workspace
+                .local_entry(a.entity_id())
+                .unwrap()
+                .dock_item
+                .clone();
+            let second = workspace
+                .local_entry(b.entity_id())
+                .unwrap()
+                .dock_item
+                .clone();
             let first_id = PanelId::from(first.entity_id());
             let second_id = PanelId::from(second.entity_id());
             workspace.dock.update(cx, |dock, cx| {
@@ -193,15 +202,39 @@ fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
                 .change_local_directory("/changed".into(), window, cx)
                 .unwrap();
             workspace.toggle_local_terminal(window, cx);
-            let local = workspace.local_terminal.as_ref().unwrap();
-            assert_eq!(local.selected, a.entity_id());
+            assert_eq!(workspace.selected_local_id, Some(a.entity_id()));
+            let dock = workspace.dock.read(cx);
+            let tree = dock.layout(DockPlacement::Bottom).unwrap();
+            let node = tree
+                .find_panel_node(PanelId::from(
+                    workspace
+                        .local_entry(a.entity_id())
+                        .unwrap()
+                        .dock_item
+                        .entity_id(),
+                ))
+                .unwrap();
+            let PaneRef::Tabs { panels, .. } = tree.find_node(node).unwrap().kind() else {
+                panic!("expected retained pane");
+            };
             assert_eq!(
-                local
-                    .entries
-                    .iter()
-                    .map(|entry| entry.handle.item_id())
-                    .collect::<Vec<_>>(),
-                vec![b.entity_id(), a.entity_id()]
+                panels,
+                &[
+                    PanelId::from(
+                        workspace
+                            .local_entry(b.entity_id())
+                            .unwrap()
+                            .dock_item
+                            .entity_id()
+                    ),
+                    PanelId::from(
+                        workspace
+                            .local_entry(a.entity_id())
+                            .unwrap()
+                            .dock_item
+                            .entity_id()
+                    )
+                ]
             );
             workspace.toggle_local_terminal(window, cx);
             assert_eq!(
@@ -209,14 +242,14 @@ fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
                 Some(px(260.))
             );
             assert_eq!(workspace.local_terminal_cwd(cx), Some("/changed".into()));
-            workspace.close_local_terminal_by_id(b.entity_id(), window, cx);
+            workspace.close_item_by_id(b.entity_id(), window, cx);
             assert_eq!(
                 workspace.selected_local(cx).unwrap().handle.item_id(),
                 a.entity_id()
             );
             assert_eq!(workspace.local_terminal_cwd(cx), Some("/changed".into()));
             workspace.close_local_terminal(window, cx);
-            assert!(workspace.local_terminal.is_none());
+            assert!(workspace.selected_local_id.is_none());
         });
         window.render_frame(cx);
     })
@@ -238,7 +271,7 @@ fn native_alias_zoom_and_close_double_clicks_do_not_open_extra_local_tabs(cx: &m
             workspace.update(cx, |workspace, cx| {
                 workspace.new_local_terminal(window, cx);
                 workspace.new_local_terminal(window, cx);
-                workspace.local_terminal.as_ref().unwrap().selected
+                workspace.selected_local_id.unwrap()
             })
         })
         .unwrap();
@@ -259,11 +292,10 @@ fn native_alias_zoom_and_close_double_clicks_do_not_open_extra_local_tabs(cx: &m
     cx.run_until_parked();
     assert_eq!(
         workspace.read_with(cx, |workspace, _| workspace
-            .local_terminal
-            .as_ref()
-            .unwrap()
-            .entries
-            .len()),
+            .items
+            .iter()
+            .filter(|open| open.local.is_some())
+            .count()),
         2
     );
     cx.update_window(handle, |_, window, cx| {
@@ -274,11 +306,10 @@ fn native_alias_zoom_and_close_double_clicks_do_not_open_extra_local_tabs(cx: &m
     cx.run_until_parked();
     assert_eq!(
         workspace.read_with(cx, |workspace, _| workspace
-            .local_terminal
-            .as_ref()
-            .unwrap()
-            .entries
-            .len()),
+            .items
+            .iter()
+            .filter(|open| open.local.is_some())
+            .count()),
         1
     );
     assert_eq!(closes.get(), 1);
@@ -293,7 +324,7 @@ fn native_drag_to_free_header_reorders_without_opening_or_closing_sessions(
         .update_window(handle, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
                 workspace.new_local_terminal(window, cx);
-                let first = workspace.local_terminal.as_ref().unwrap().selected;
+                let first = workspace.selected_local_id.unwrap();
                 workspace.new_local_terminal(window, cx);
                 first
             })
@@ -311,8 +342,15 @@ fn native_drag_to_free_header_reorders_without_opening_or_closing_sessions(
     .unwrap();
     cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
-        assert_eq!(workspace.local_terminal.as_ref().unwrap().entries.len(), 2);
-        let panel = PanelId::from(workspace.local_entry(first).unwrap().item.entity_id());
+        assert_eq!(
+            workspace
+                .items
+                .iter()
+                .filter(|open| open.local.is_some())
+                .count(),
+            2
+        );
+        let panel = PanelId::from(workspace.local_entry(first).unwrap().dock_item.entity_id());
         let tree = workspace
             .dock
             .read(cx)
@@ -345,7 +383,7 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
                     workspace
                         .local_entry(b.entity_id())
                         .unwrap()
-                        .item
+                        .dock_item
                         .entity_id(),
                 );
                 workspace.dock.update(cx, |dock, cx| {
@@ -379,7 +417,7 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
                 workspace
                     .local_entry(b.entity_id())
                     .unwrap()
-                    .item
+                    .dock_item
                     .entity_id(),
             );
             let node = workspace
@@ -392,13 +430,11 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
             workspace.new_local_terminal(window, cx);
             let new_panel = PanelId::from(
                 workspace
-                    .local_terminal
-                    .as_ref()
+                    .items
+                    .iter()
+                    .rfind(|open| open.local.is_some())
                     .unwrap()
-                    .entries
-                    .last()
-                    .unwrap()
-                    .item
+                    .dock_item
                     .entity_id(),
             );
             assert_eq!(
@@ -410,7 +446,11 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
                     .find_panel_node(new_panel),
                 Some(node)
             );
-            let item = workspace.local_entry(b.entity_id()).unwrap().item.clone();
+            let item = workspace
+                .local_entry(b.entity_id())
+                .unwrap()
+                .dock_item
+                .clone();
             workspace
                 .dock
                 .update(cx, |dock, cx| dock.remove_panel(item, window, cx));
@@ -423,6 +463,13 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
     workspace.read_with(cx, |workspace, _| {
         assert!(workspace.local_entry(a.entity_id()).is_some());
         assert!(workspace.local_entry(b.entity_id()).is_none());
-        assert_eq!(workspace.local_terminal.as_ref().unwrap().entries.len(), 2);
+        assert_eq!(
+            workspace
+                .items
+                .iter()
+                .filter(|open| open.local.is_some())
+                .count(),
+            2
+        );
     });
 }

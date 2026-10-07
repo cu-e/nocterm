@@ -599,7 +599,7 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
                 Some(PathBuf::from("/tmp"))
             );
             workspace.toggle_local_terminal(window, cx);
-            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
             assert!(!workspace.local_terminal_is_visible(cx));
             assert_eq!(closes.get(), 0);
             assert_eq!(
@@ -640,7 +640,7 @@ fn hidden_local_terminal_keeps_height_and_closes_exactly_once(cx: &mut TestAppCo
                 dock.set_dock_size(DockPlacement::Bottom, px(260.), window, cx);
             });
             workspace.toggle_local_terminal(window, cx);
-            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
             assert_eq!(
                 workspace.local_terminal_cwd(cx),
                 Some(PathBuf::from("/tmp"))
@@ -653,7 +653,7 @@ fn hidden_local_terminal_keeps_height_and_closes_exactly_once(cx: &mut TestAppCo
             workspace.toggle_local_terminal(window, cx);
             workspace.close_local_terminal(window, cx);
             assert_eq!(closes.get(), 1);
-            assert!(workspace.local_terminal.is_none());
+            assert!(workspace.selected_local_id.is_none());
             assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
         });
         window.render_frame(cx);
@@ -704,8 +704,8 @@ fn close_scopes_follow_reordered_pane_tabs_and_do_not_close_other_panes(cx: &mut
             let local = probe(cx, Rc::new(Cell::new(0)));
             workspace.set_local_terminal(local, window, cx);
             workspace.close_tabs(c.entity_id(), TabCloseScope::All, window, cx);
-            assert!(workspace.items.is_empty());
-            assert!(workspace.local_terminal.is_some());
+            assert!(workspace.items().next().is_none());
+            assert!(workspace.selected_local_id.is_some());
             assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
             assert_eq!(closes.get(), 4);
         });

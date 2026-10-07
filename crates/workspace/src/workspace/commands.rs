@@ -5,36 +5,24 @@ impl Workspace {
     /// Focused bottom terminal, focused central item, then the active central tab.
     /// An open menu retains its opening context while native popup focus moves.
     pub fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
-        if let Some(local) = self.local_terminal.as_ref().and_then(|local| {
-            local.entries.iter().find(|entry| {
-                self.local_entry_visible(entry.handle.item_id(), cx)
-                    && entry.item.read(cx).contains_focus(window, cx)
-            })
+        if let Some(open) = self.items.iter().find(|open| {
+            self.item_visible(open.handle.item_id(), cx)
+                && open.dock_item.read(cx).contains_focus(window, cx)
         }) {
-            return Some(local.handle.clone());
-        }
-        if let Some(item) = self
-            .items
-            .iter()
-            .find(|item| item.dock_item.read(cx).contains_focus(window, cx))
-        {
-            return Some(item.handle.clone());
+            return Some(open.handle.clone());
         }
         if self.menu_focus.contains_focused(window, cx)
             && let Some(id) = self.menu_item.or(self.last_command_item)
         {
-            if self.local_entry_visible(id, cx)
-                && let Some(local) = self.local_entry(id)
-            {
-                return Some(local.handle.clone());
-            }
-            if let Some(item) = self.items.iter().find(|item| item.handle.item_id() == id) {
-                return Some(item.handle.clone());
-            }
-            return None;
+            return self
+                .items
+                .iter()
+                .find(|open| open.handle.item_id() == id && self.item_visible(id, cx))
+                .map(|open| open.handle.clone());
         }
         self.active_item
             .and_then(|ix| self.items.get(ix))
+            .filter(|item| self.item_visible(item.handle.item_id(), cx))
             .map(|item| item.handle.clone())
     }
 
@@ -75,9 +63,11 @@ impl Workspace {
                         let still_open = this
                             .items
                             .iter()
-                            .any(|open| open.handle.item_id() == item.item_id())
-                            || this.local_entry(item.item_id()).is_some();
-                        if still_open && item.command_enabled(command, cx) {
+                            .any(|open| open.handle.item_id() == item.item_id());
+                        if still_open
+                            && this.item_visible(item.item_id(), cx)
+                            && item.command_enabled(command, cx)
+                        {
                             item.execute(command, window, cx);
                         }
                     });
@@ -95,8 +85,7 @@ impl Workspace {
             .items
             .iter()
             .find(|open| open.handle.item_id() == item.item_id())
-            .map(|open| &open.dock_item)
-            .or_else(|| self.local_entry(item.item_id()).map(|local| &local.item));
+            .map(|open| &open.dock_item);
         Some(
             dock.and_then(|dock| dock.read(cx).alias.clone())
                 .unwrap_or_else(|| item.tab_title(cx)),

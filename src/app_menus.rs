@@ -11,9 +11,8 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
     // During initial window construction no dispatch tree exists yet. State is
     // refreshed again from the rendered tree when the user opens a menu.
     let editing = window.focused(cx).is_some() && window.is_action_available(&input::Cut, cx);
-    let has_tabs = in_workspace && workspace.items().next().is_some();
-    let can_split = in_workspace && workspace.can_split_active(cx);
-    let has_title = in_workspace && workspace.command_title(window, cx).is_some();
+    let has_target = in_workspace && workspace.command_title(window, cx).is_some();
+    let can_split = in_workspace && workspace.can_split_active(window, cx);
 
     vec![
         Menu::new("Session").items([
@@ -49,8 +48,8 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
                 ]),
             ),
             MenuItem::separator(),
-            MenuItem::action("Close View", CloseTab).disabled(!has_tabs),
-            MenuItem::action("Close All Views", CloseAllTabs).disabled(!has_tabs),
+            MenuItem::action("Close View", CloseTab).disabled(!has_target),
+            MenuItem::action("Close All Views", CloseAllTabs).disabled(!has_target),
             MenuItem::action("Close Window", CloseWindow),
             MenuItem::action("Exit", Quit),
         ]),
@@ -68,8 +67,8 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::action("Clear Selection", ClearSelection)
                 .disabled(!enabled(ItemCommand::ClearSelection)),
             MenuItem::separator(),
-            MenuItem::action("Copy Connection Name", CopyConnectionName).disabled(!has_title),
-            MenuItem::action("Rename Tab", RenameTab).disabled(!has_tabs),
+            MenuItem::action("Copy Connection Name", CopyConnectionName).disabled(!has_target),
+            MenuItem::action("Rename Tab", RenameTab).disabled(!has_target),
         ]),
         Menu::new("Search").items([
             MenuItem::action("Find", Find).disabled(!enabled(ItemCommand::Find)),
@@ -85,12 +84,12 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::action("Split to the Left", SplitLeft).disabled(!can_split),
             MenuItem::action("Split Above", SplitUp).disabled(!can_split),
             MenuItem::separator(),
-            MenuItem::action("Next Pane", NextPane).disabled(!has_tabs),
-            MenuItem::action("Previous Pane", PreviousPane).disabled(!has_tabs),
-            MenuItem::action("Next Tab", NextTab).disabled(!has_tabs),
-            MenuItem::action("Previous Tab", PreviousTab).disabled(!has_tabs),
-            MenuItem::action("Move Tab Left", MoveTabLeft).disabled(!has_tabs),
-            MenuItem::action("Move Tab Right", MoveTabRight).disabled(!has_tabs),
+            MenuItem::action("Next Pane", NextPane).disabled(!has_target),
+            MenuItem::action("Previous Pane", PreviousPane).disabled(!has_target),
+            MenuItem::action("Next Tab", NextTab).disabled(!has_target),
+            MenuItem::action("Previous Tab", PreviousTab).disabled(!has_target),
+            MenuItem::action("Move Tab Left", MoveTabLeft).disabled(!has_target),
+            MenuItem::action("Move Tab Right", MoveTabRight).disabled(!has_target),
             MenuItem::separator(),
             MenuItem::action("Sidebar", ToggleSidebar)
                 .checked(workspace.sidebar_is_open())
