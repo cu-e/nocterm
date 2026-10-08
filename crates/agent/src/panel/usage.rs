@@ -120,6 +120,7 @@ impl AgentPanel {
         })
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(report) = self.usage_report(cx) else {
             return div().into_any_element();

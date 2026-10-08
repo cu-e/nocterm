@@ -103,6 +103,7 @@ fn selected_languages_have_real_bundled_parsers() {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) {
     let (handle, workspace) = workspace(cx);
     let editor = cx

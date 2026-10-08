@@ -109,6 +109,7 @@ pub(in crate::panel) fn source(call: &acp::ToolCall) -> Option<Source> {
         .then(|| Source::plain("Tool details", call.title.clone(), None))
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn request_source(call: TerminalCall) -> Source {
     match call {
         TerminalCall::RunCommand(v) => {
@@ -275,6 +276,7 @@ fn section(
     )
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) fn literal_section(
     index: usize,
     part: Option<usize>,

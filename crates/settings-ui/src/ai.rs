@@ -253,6 +253,7 @@ fn save_checked(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
     let ai = cx.settings().ai.clone();
     let off = !ai.enabled;
@@ -435,6 +436,7 @@ fn isolation(
     )
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn agent(
     view: &SettingsView,
     id: &str,

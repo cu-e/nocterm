@@ -20,6 +20,7 @@ use super::{ConnectionEditor, ICON_ROWS_HEIGHT};
 impl ConnectionEditor {
     /// "Automatic" and every system in the catalog, then the colour and the
     /// country.
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn appearance_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = cx.theme();
         let (muted, border, accent, radius) = (

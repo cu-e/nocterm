@@ -157,6 +157,7 @@ pub(crate) struct AgentThread {
     _release: Subscription,
 }
 impl AgentThread {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         agent_id: String,
         workspace: WeakEntity<Workspace>,
@@ -328,6 +329,7 @@ impl AgentThread {
         self.cancel_pending();
         cx.notify();
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn authenticate(
         &mut self,
         method: acp::AuthMethodId,

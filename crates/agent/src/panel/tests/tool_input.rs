@@ -19,6 +19,11 @@ fn verified_call(tool: &str, input: Value) -> acp::ToolCall {
 }
 
 #[test]
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "predates the limit"
+)]
 fn verified_inputs_show_operations_with_literal_arguments_and_separate_options() {
     let command = r#"printf '%s\n' '```literal```' "$HOME""#;
     let call = verified_call(
@@ -524,6 +529,7 @@ impl TerminalAccess for ConnectedAccess {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_reconnect(
     cx: &mut TestAppContext,
 ) {

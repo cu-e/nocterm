@@ -282,6 +282,7 @@ impl AgentThread {
 
 /// Waits for background session `item` to connect. A sign-in prompt moves it
 /// into a tab, so the user can answer it.
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn wait_until_connected(
     this: &WeakEntity<AgentThread>,
     workspace: &WeakEntity<nocterm_workspace::Workspace>,

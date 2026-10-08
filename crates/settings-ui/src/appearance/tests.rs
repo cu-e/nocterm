@@ -44,6 +44,7 @@ impl ThemeRegistry for FakeRegistry {
     }
 }
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn browser_explicit_actions_install_pick_and_uninstall(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let dirs = ThemeDirs {

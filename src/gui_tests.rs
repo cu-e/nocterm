@@ -62,6 +62,7 @@ fn fixture(
     fixture_with_vault(cx, false)
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_vault(
     cx: &mut TestAppContext,
     vault_ready: bool,
@@ -242,6 +243,7 @@ fn secret_prompt_keeps_tab_navigation(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn delayed_secret_prompt_preserves_other_tab_focus_and_restores_input_on_activation(
     cx: &mut TestAppContext,
 ) {

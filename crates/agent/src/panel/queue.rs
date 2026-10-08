@@ -135,6 +135,7 @@ impl AgentPanel {
         });
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn edit_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         if self.composer.edit.is_some() || self.preparing_images() {
             return;
@@ -236,6 +237,7 @@ impl AgentPanel {
         self.input
             .update(cx, |input, cx| input.set_value(draft, window, cx));
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_queue(
         &mut self,
         thread: &Entity<AgentThread>,

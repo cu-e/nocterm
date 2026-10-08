@@ -78,6 +78,7 @@ impl Terminal {
         );
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn scan_find(
         &mut self,
         direction: SearchDirection,

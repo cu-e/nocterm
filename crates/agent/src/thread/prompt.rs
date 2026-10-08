@@ -13,6 +13,7 @@ impl AgentThread {
             cx.notify();
         }
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn start_prompt(
         &mut self,
         text: String,

@@ -241,6 +241,7 @@ fn description(metric: MonitorMetric) -> &'static str {
 }
 
 impl Render for MonitorPage {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let monitor = cx.settings().monitor.clone();
         let general = [

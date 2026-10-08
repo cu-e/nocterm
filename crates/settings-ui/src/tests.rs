@@ -239,6 +239,7 @@ impl SettingsPage for GuestPage {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppContext) {
     let creations = Rc::new(Cell::new(0));
     let deactivations = Rc::new(Cell::new(0));

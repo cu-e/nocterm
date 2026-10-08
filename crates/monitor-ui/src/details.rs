@@ -239,6 +239,7 @@ fn strong(text: String) -> impl IntoElement {
     div().text_sm().font_semibold().child(text)
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn section(
     metric: MonitorMetric,
     snapshot: &Snapshot,

@@ -216,6 +216,11 @@ print_stderr = "deny"
 # GPUI views and delegates routinely exceed the default thresholds.
 type_complexity = "allow"
 too_many_arguments = "allow"
+# Thresholds are in clippy.toml. Functions already over them carry
+# `#[expect(..., reason = "...")]`, which fails once they are split; `allow`
+# is rejected by `cargo xtask architecture`.
+too_many_lines = "warn"
+cognitive_complexity = "warn"
 
 [profile.dev]
 debug = "limited"

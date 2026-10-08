@@ -104,6 +104,7 @@ impl Runtime {
     pub(crate) fn global(cx: &App) -> Entity<Self> {
         cx.global::<RuntimeGlobal>().0.clone()
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(services: AgentServices, cx: &mut Context<Self>) -> Self {
         for warning in nocterm_ai::AgentRegistry::new(&cx.settings().ai).warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
@@ -362,6 +363,7 @@ impl Runtime {
             title: format!("Sign in: {}", method.name),
         })
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn connect(
         &mut self,
         thread: Entity<AgentThread>,

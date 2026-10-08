@@ -103,6 +103,7 @@ impl AgentPanel {
         }
         self.image_view(key)
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_entry(
         &mut self,
         index: usize,

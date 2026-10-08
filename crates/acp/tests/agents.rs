@@ -12,6 +12,7 @@ use std::{
 
 #[test]
 #[ignore = "requires an installed and authenticated real ACP agent"]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn real_agent_initialize_and_session() {
     futures::executor::block_on(async {
         let id =

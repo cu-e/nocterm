@@ -130,6 +130,7 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
     cx: &mut TestAppContext,
 ) {

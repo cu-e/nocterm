@@ -243,6 +243,7 @@ fn copy_connection_name_uses_the_display_alias_without_editing_it(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn menu_snapshots_are_window_local_and_refresh_only_on_opening(cx: &mut TestAppContext) {
     let (first, workspace) = fixture(cx);
     let (second, other) = cx.update(|cx| {

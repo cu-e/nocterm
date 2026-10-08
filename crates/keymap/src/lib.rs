@@ -196,6 +196,7 @@ impl Keymap {
 /// `file`'s bindings for this platform as GPUI bindings. Entries that do
 /// not resolve are logged and skipped: one stale binding must not cost the
 /// others.
+#[expect(clippy::cognitive_complexity, reason = "predates the limit")]
 fn bindings_of(file: &KeymapFile, cx: &App) -> Vec<KeyBinding> {
     let mut bindings = Vec::new();
     for section in file

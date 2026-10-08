@@ -8,6 +8,7 @@ impl FilesPanel {
         self.load_local_with_navigation(directory, path_input::NavigationMode::CloseEditor, cx);
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn load_local_with_navigation(
         &mut self,
         directory: PathBuf,
@@ -166,6 +167,7 @@ impl FilesPanel {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_local_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.local.entries[ix];
         let paths = self.local_paths(ix);
@@ -255,6 +257,7 @@ impl FilesPanel {
             .into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_local(&self, cx: &mut Context<Self>) -> AnyElement {
         let cwd = self
             .workspace

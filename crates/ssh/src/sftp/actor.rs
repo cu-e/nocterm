@@ -52,6 +52,11 @@ pub(crate) async fn serve(
         let _ = sftp.raw.close_session();
     }
 }
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "predates the limit"
+)]
 pub(super) async fn dispatch(
     request: FsRequest,
     result: Result<Arc<Sftp>, FsError>,

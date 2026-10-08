@@ -255,6 +255,7 @@ async fn download_closes_handle_when_fstat_rejects_object_changed_after_lstat() 
 }
 
 #[tokio::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn batch_sends_full_window_drains_failure_and_never_publishes_partial_file() {
     let (client, mut peer) = tokio::io::duplex(64 * 1024);
     let raw = RawSftpSession::new(client);

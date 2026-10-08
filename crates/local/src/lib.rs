@@ -68,6 +68,7 @@ fn size(s: PtySize) -> NativeSize {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn start(
     launch: ShellLaunch,
     isolated: bool,

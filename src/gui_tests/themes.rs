@@ -65,6 +65,7 @@ fn install_catalog(cx: &mut TestAppContext) -> tempfile::TempDir {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_terminal(
     cx: &mut TestAppContext,
 ) {

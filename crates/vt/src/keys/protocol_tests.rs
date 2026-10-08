@@ -211,6 +211,7 @@ fn alternate_keys_use_only_supplied_values_and_associated_text_never_contains_co
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn xterm_levels_preserve_level_one_exceptions_and_encode_level_two_modified_text() {
     for (mode, key, modifiers, text, expected) in [
         (

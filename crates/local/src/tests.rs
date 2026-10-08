@@ -408,6 +408,7 @@ fn close_interrupts_output_backpressure_before_listener_drains_events() {
 }
 #[cfg(target_os = "linux")]
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn close_kills_current_foreground_job_even_when_it_ignores_hangup() {
     use std::time::{Duration, Instant};
     let launch = ShellLaunch {

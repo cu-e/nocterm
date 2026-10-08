@@ -132,6 +132,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let chats = f._directory.path().join("chats");

@@ -51,6 +51,7 @@ impl Runtime {
         }
         self.maintain_sessions(cx);
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down || !cx.ai_enabled() {
             self.pending_activation.clear();

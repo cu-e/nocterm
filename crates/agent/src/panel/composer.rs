@@ -26,6 +26,7 @@ use crate::{
 };
 
 impl AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_composer(
         &mut self,
         thread: &Entity<AgentThread>,

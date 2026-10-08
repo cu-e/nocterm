@@ -137,6 +137,7 @@ fn native_header_plus_precedes_zoom_and_blank_double_click_adds_exactly_one(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
     cx: &mut TestAppContext,
 ) {
@@ -369,6 +370,7 @@ fn native_drag_to_free_header_reorders_without_opening_or_closing_sessions(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
     cx: &mut TestAppContext,
 ) {

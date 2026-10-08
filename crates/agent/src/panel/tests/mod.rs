@@ -344,6 +344,7 @@ struct Fixture {
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     fixture_with_width(cx, 26.)
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let (commands, bridge, connector, events, sender) = {

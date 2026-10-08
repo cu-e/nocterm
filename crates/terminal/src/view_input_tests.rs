@@ -296,6 +296,7 @@ fn composition_commit_and_cancel_redraw_only_when_overlay_changes(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn scrolling_notifies_and_revises_only_when_display_changes(cx: &mut TestAppContext) {
     let (_, view, transport) = fixture(cx);
     let terminal = view.read_with(cx, |v, _| v.terminal.clone());

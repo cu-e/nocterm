@@ -65,6 +65,7 @@ fn update(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &mut TestAppContext) {
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);

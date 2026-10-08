@@ -76,6 +76,11 @@ Files that were already longer are listed in `xtask/oversized-files.toml`; they 
 shrink, and their entry is lowered or removed as they do. Never raise an entry to make a
 check pass.
 
+A function may have at most 80 lines and a cognitive complexity of 20 (`clippy.toml`).
+Functions that were already over carry `#[expect(clippy::too_many_lines, reason = "...")]`;
+once one is split, the unfulfilled expectation fails clippy, so remove the attribute.
+`#[allow]` for these lints is rejected by `cargo xtask architecture`.
+
 ## Pull requests
 
 - Title: Conventional Commit, as above.

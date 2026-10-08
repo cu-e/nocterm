@@ -576,6 +576,7 @@ impl nocterm_session::RemoteFs for MarkerFs {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mut TestAppContext) {
     use std::sync::Arc;
     let (window, workspace) = fixture(cx);

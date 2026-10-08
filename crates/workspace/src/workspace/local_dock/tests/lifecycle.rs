@@ -126,6 +126,7 @@ impl crate::LocalTerminal for AccessProbe {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hidden(
     cx: &mut TestAppContext,
 ) {

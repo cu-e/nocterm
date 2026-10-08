@@ -305,6 +305,7 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {

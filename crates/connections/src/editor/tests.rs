@@ -73,6 +73,7 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut TestAppContext) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
     let editor = cx
@@ -164,6 +165,7 @@ fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn hidden_invalid_fields_open_their_section_and_footer_stays_visible(cx: &mut TestAppContext) {
     let (handle, workspace, _) = crate::test_support::workspace(cx);
     cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(560.)));
@@ -313,6 +315,7 @@ fn minimum_window_keeps_footer_in_view_for_every_section_and_wrapped_error(
     .unwrap();
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
     use futures::FutureExt as _;
     let (handle, workspace, opened) = crate::test_support::workspace(cx);

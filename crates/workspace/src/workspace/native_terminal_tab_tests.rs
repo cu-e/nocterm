@@ -316,6 +316,7 @@ fn native_zoom_drag_reorders_and_close_all_leaves_other_placement_alive(cx: &mut
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn hidden_split_dock_preserves_topology_selection_sizes_and_center_local(cx: &mut TestAppContext) {
     let (window, ws, tabs) = open_three(cx, true);
     let moved = cx

@@ -2,6 +2,7 @@
 //! unless the application explicitly requests reporting every key.
 use super::*;
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) fn encode(event: &KeyEvent<'_>, modes: Modes) -> KeyEncoding {
     let state = modes.keyboard;
     let press = &event.press;

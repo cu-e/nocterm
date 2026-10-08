@@ -184,6 +184,7 @@ fn publish(settings: Settings, cx: &mut App) -> u64 {
     })
 }
 impl Writer {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn push(&mut self, change: Change, cx: &mut Context<Self>) -> Task<Result<u64, String>> {
         if self.closing {
             return Task::ready(Err(

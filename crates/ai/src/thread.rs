@@ -51,6 +51,7 @@ impl ThreadState {
         self.entries.truncate(len);
         self.times.truncate(len);
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn apply(&mut self, update: acp::SessionUpdate) -> ThreadChange {
         match update {
             acp::SessionUpdate::AgentMessageChunk(chunk) => {

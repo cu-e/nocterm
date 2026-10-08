@@ -50,6 +50,7 @@ pub(crate) fn apply_session_options(settings: &mut Settings, options: SessionOpt
     settings.logging = options.logging.unwrap_or_default();
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn add_fields(
     view: &mut SettingsView,
     window: &mut Window,
@@ -319,6 +320,7 @@ pub(crate) fn short_row(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
     let terminal = cx.settings().terminal.clone();
     vec![

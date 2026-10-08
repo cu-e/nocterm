@@ -37,6 +37,7 @@ use tracing_subscriber::EnvFilter;
 /// Used by Linux desktops to match the window to its `.desktop` entry.
 const APP_ID: &str = "dev.nocterm.Nocterm";
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     if std::env::args_os()

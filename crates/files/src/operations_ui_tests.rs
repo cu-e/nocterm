@@ -216,6 +216,7 @@ fn clipboard(cx: &TestAppContext) -> String {
 }
 
 #[gpui_kit::test(iterations = 20)]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn dismissed_pending_rename_cannot_close_a_new_dialog(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let (release, gate) = oneshot::channel();

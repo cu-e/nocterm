@@ -42,6 +42,7 @@ impl Drop for ConnectingGuard {
 }
 
 impl AgentConnector for AcpConnector {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(
         &self,
         request: ConnectRequest,

@@ -98,6 +98,7 @@ pub(crate) struct AgentPanel {
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -423,6 +424,7 @@ impl RightPanel for AgentPanel {
     }
 }
 impl Render for AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         if self.history && !self.threads.is_empty() {

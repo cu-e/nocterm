@@ -227,6 +227,7 @@ async fn key_expiry_runs_while_unrelated_name_ownership_keeps_changing() {
     );
 }
 #[tokio::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn private_bus_requires_actual_verification_before_key_release() {
     let bus = Bus::new();
     let service = connect(&bus).await;

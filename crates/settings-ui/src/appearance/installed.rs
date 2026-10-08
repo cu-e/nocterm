@@ -93,6 +93,7 @@ pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<Setti
     .detach();
     cx.notify();
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) fn render(view: &SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
     let Some(themes) = cx.themes() else {
         return form::section(

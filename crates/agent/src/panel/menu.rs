@@ -57,6 +57,7 @@ impl AgentPanel {
                     .unwrap_or_else(|_| div().into_any_element())
             })
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_menu(
         &mut self,
         window: &gpui_kit::Window,

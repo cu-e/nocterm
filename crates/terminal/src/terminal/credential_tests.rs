@@ -10,6 +10,7 @@ fn prompt(request: SecretRequest) -> Prompt {
     Prompt::Secret { request, reply }
 }
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
     cx: &mut TestAppContext,
 ) {
@@ -144,6 +145,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAppContext) {
     // The vault worker is a real thread; let its completions wake the test scheduler.
     cx.executor().allow_parking();

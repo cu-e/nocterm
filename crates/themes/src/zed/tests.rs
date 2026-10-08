@@ -51,6 +51,7 @@ fn tolerant_values_aliases_and_invalid_families() {
     assert!(parse_family(&vec![b' '; FILE_LIMIT + 1]).is_err());
 }
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn mapping_sources_fallbacks_contrast_and_translucency() {
     let source = br##"{"themes":[{"name":"Synthetic","appearance":"dark","style":{"editor.background":"#000","background":"#111","text":"#fff","border":"#222","border.variant":"#333","border.focused":"#444","element.background":"#555","surface.background":"#666","text.muted":"#777","text.accent":"#eee","element.hover":"#888","element.active":"#999","ghost_element.hover":"#aaa","ghost_element.selected":"#bbb","elevated_surface.background":"#ccc","panel.background":"#ddd","title_bar.background":"#123","status_bar.background":"#234","tab_bar.background":"#345","tab.inactive_background":"#456","tab.active_background":"#567","scrollbar.track.background":"#678","scrollbar.thumb.background":"#789","scrollbar.thumb.hover_background":"#89a","link_text.hover":"#9ab","drop_target.background":"#abc","error":"#bcd","success":"#cde","warning":"#def","info":"#ef0","terminal.ansi.red":"#f00","players":[{"cursor":"#0f0","selection":"#00f8"}],"terminal.foreground":"#ffffff80","terminal.ansi.blue":"#ffffff80"}}]}"##;
     let theme = parse_family(source).unwrap().themes.remove(0);

@@ -27,6 +27,7 @@ pub struct SessionOptionsEditor {
     _subscriptions: Vec<Subscription>,
 }
 impl SessionOptionsEditor {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn new(
         options: SessionOptions,
         inherit: bool,

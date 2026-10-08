@@ -110,6 +110,7 @@ fn script(metrics: MetricSet, interval: Duration) -> String {
 }
 
 /// Turns a frame's lines into a reading.
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn parse(lines: &[String]) -> Reading {
     let mut reading = Reading::default();
     let mut host = HostInfo::default();

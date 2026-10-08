@@ -2,6 +2,7 @@ use super::*;
 use gpui_kit::base::TestSupportExt as _;
 
 impl TerminalView {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let field = self.find.as_ref()?;
         let find = self.terminal.read(cx).find();
@@ -221,6 +222,7 @@ impl TerminalView {
             .child(div().font_semibold().child(title.into()))
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let terminal = self.terminal.read(cx);
         if terminal.prompt().is_some() {
@@ -338,6 +340,7 @@ fn capitalize(text: &str) -> String {
 }
 
 impl Render for TerminalView {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let style = TerminalStyle::current(cx);
         self.sync_palette(&style, cx);

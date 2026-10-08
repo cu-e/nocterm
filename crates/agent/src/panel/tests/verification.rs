@@ -86,6 +86,7 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);

@@ -115,6 +115,7 @@ fn titlebar_about_and_new_window_use_application_actions(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn titlebar_commands_follow_bottom_screen_focus_while_find_remains_open(cx: &mut TestAppContext) {
     let (handle, workspace, central, transport) = fixture(cx);
     let bottom = cx

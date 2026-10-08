@@ -435,6 +435,7 @@ fn presets(
 }
 
 impl Render for ExplorerPage {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let explorer = explorer(cx);
         let indexing = &explorer.indexing;

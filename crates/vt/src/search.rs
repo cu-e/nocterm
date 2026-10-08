@@ -482,6 +482,11 @@ impl SearchScan {
         SearchProgress::Searching
     }
     /// Visits at most budget grid inspections or Unicode scalars on this thread.
+    #[expect(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "predates the limit"
+    )]
     pub fn step(&mut self, e: &Emulator, budget: usize) -> SearchProgress {
         if e.generation() != self.generation {
             return SearchProgress::Invalidated;

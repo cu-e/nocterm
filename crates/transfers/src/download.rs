@@ -122,6 +122,7 @@ pub(super) async fn discover(batch: Arc<Batch>, send: mpsc::Sender<Job>) {
     batch.progress.lock().discovery_complete = true;
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn discover_one(
     batch: &Batch,
     send: &mpsc::Sender<Job>,
@@ -275,6 +276,7 @@ fn renamed(name: &str, number: u32) -> String {
         .map_or((name, String::new()), |(s, e)| (s, format!(".{e}")));
     format!("{stem} ({number}){extension}")
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) async fn download_file(batch: &Batch, job: FileJob) -> Result<bool, FsError> {
     let Some((mut name, mut reservation)) = reserve(batch, &job).await? else {
         return Ok(false);

@@ -114,6 +114,7 @@ async fn a_superseded_reload_cannot_publish_the_previous_catalogue(cx: &mut Test
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn sparse_imports_composite_over_the_component_background_without_override_leaks(
     cx: &mut TestAppContext,
 ) {

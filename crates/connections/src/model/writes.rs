@@ -75,6 +75,7 @@ impl Connections {
         }
         Ok(profiles)
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn enqueue(
         &mut self,
         mutation: Mutation,

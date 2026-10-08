@@ -165,6 +165,7 @@ impl Item for TransfersView {
     }
 }
 impl Render for TransfersView {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.upgrade();
         v_flex()

@@ -137,6 +137,7 @@ impl SnippetsPanel {
                 })
         });
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn row(&self, snippet: &Snippet, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let edit = snippet.clone();
         let delete = snippet.clone();

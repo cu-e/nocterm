@@ -175,6 +175,7 @@ impl FilesPanel {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_remote_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.browser.entries[ix];
         let directory = entry.kind == EntryKind::Directory;
@@ -286,6 +287,7 @@ impl FilesPanel {
             .into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_remote(&self, cx: &mut Context<Self>) -> AnyElement {
         let enabled = self.filesystem().is_some() && !self.browser.loading;
         let hint = match &self.session {

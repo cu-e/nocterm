@@ -18,6 +18,7 @@ fn description_preview_and_tooltip_are_bounded_without_losing_unicode() {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &mut TestAppContext) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
     let profile = |name: &str, group: &str| Profile {

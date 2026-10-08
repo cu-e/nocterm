@@ -155,6 +155,7 @@ pub struct Workspace {
 impl EventEmitter<WorkspaceEvent> for Workspace {}
 
 impl Workspace {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (dock, skin) = DockSkin::dock_area("workspace", None, window, cx);
         skin.set_panel_style(PanelStyle::TabBar, cx);
@@ -353,6 +354,7 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 

@@ -7,6 +7,7 @@ impl ZedTheme {
     /// Refine missing ANSI colours from the supplied appearance palette.
     /// Its background is the opaque interface baseline used for compositing;
     /// the UI supplies the component default rather than theme.toml colours.
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn palette(&self, base: &Palette) -> Palette {
         let get = |keys: &[&str]| keys.iter().find_map(|key| self.colors.get(*key).copied());
         let player = self.players.first();

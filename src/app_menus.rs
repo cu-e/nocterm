@@ -3,6 +3,7 @@
 use gpui_kit::{App, Focusable as _, Menu, MenuItem, Window, component::input};
 use nocterm_workspace::{ItemCommand, Workspace, *};
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Menu> {
     let in_workspace = workspace.focus_handle(cx).contains_focused(window, cx);
     let enabled = |command| in_workspace && workspace.item_command_enabled(command, window, cx);

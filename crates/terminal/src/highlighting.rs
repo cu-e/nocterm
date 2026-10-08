@@ -83,6 +83,11 @@ impl Highlights {
         self.spans = Vec::new();
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        clippy::too_many_lines,
+        reason = "predates the limit"
+    )]
     pub(crate) fn update(&mut self, frame: &Frame, generation: u64, enabled: bool) {
         if !enabled {
             self.clear();

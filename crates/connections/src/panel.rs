@@ -454,6 +454,7 @@ impl ConnectionsPanel {
         .detach();
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_group_header(
         &self,
         group: &str,

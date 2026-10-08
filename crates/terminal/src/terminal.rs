@@ -233,6 +233,7 @@ impl Terminal {
     // ── Session ──────────────────────────────────────────────────────────────
 
     /// Opens a new session, replacing the current one.
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(&mut self, cx: &mut Context<Self>) {
         self.close();
         if let Err(error) = self.spec.options.validate() {

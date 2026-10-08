@@ -223,6 +223,7 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     cx: &mut TestAppContext,
 ) {

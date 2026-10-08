@@ -2,6 +2,7 @@
 use super::*;
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works(
     cx: &mut TestAppContext,
 ) {
@@ -142,6 +143,7 @@ fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remote_selection_download_button_pins_context_and_disconnected_access_is_disabled(
     cx: &mut TestAppContext,
 ) {
@@ -286,6 +288,7 @@ fn remote_selection_download_button_pins_context_and_disconnected_access_is_disa
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remote_drag_to_local_folder_and_area_queues_once_and_collision_buttons_apply(
     cx: &mut TestAppContext,
 ) {
@@ -376,6 +379,7 @@ fn remote_drag_to_local_folder_and_area_queues_once_and_collision_buttons_apply(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remote_drag_captures_source_before_switching_tabs_and_destination_when_dropped(
     cx: &mut TestAppContext,
 ) {

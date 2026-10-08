@@ -53,6 +53,7 @@ pub struct VaultView {
     _subscriptions: Vec<Subscription>,
 }
 impl VaultView {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let password = cx.new(|cx| {
             InputState::new(window, cx)

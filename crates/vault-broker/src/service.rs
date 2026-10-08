@@ -126,6 +126,7 @@ impl Broker {
             Duration::from_secs(30)
         }
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     async fn verify(
         &self,
         owner: &Owner,
