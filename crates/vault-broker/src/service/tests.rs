@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::atomic::AtomicUsize,
 };
-use zbus::{connection::Builder, object_server::SignalEmitter, zvariant::OwnedObjectPath};
+use zbus::{Proxy, connection::Builder, object_server::SignalEmitter, zvariant::OwnedObjectPath};
 struct Bus {
     _config: std::path::PathBuf,
     child: Child,

@@ -1,4 +1,11 @@
-use crate::store::{MAX_ATTEMPTS, Owner, Store};
+mod fingerprint;
+mod fprintd;
+mod verify;
+
+#[cfg(test)]
+use self::fprintd::FPRINT;
+use self::fprintd::FprintdBackend;
+use crate::store::{Owner, Store};
 use futures::StreamExt as _;
 use std::{
     sync::{
@@ -9,14 +16,13 @@ use std::{
 };
 use tokio::sync::Mutex;
 use zbus::{
-    Connection, Proxy,
+    Connection,
     fdo::{self, DBusProxy},
     message::Header,
     names::BusName,
 };
 const NAME: &str = "dev.nocterm.VaultBroker1";
 const PATH: &str = "/dev/nocterm/VaultBroker1";
-const FPRINT: &str = "net.reactivated.Fprint";
 struct Broker {
     store: Arc<Mutex<Store>>,
     scanner: Mutex<()>,
@@ -70,26 +76,6 @@ fn locked() -> ReleaseError {
             .into(),
     ))
 }
-enum ScanStatus {
-    Pending,
-    Match,
-    NoMatch,
-}
-fn verification_status(status: &str, done: bool) -> fdo::Result<ScanStatus> {
-    match status {
-        "verify-match" if done => Ok(ScanStatus::Match),
-        "verify-no-match" if done => Ok(ScanStatus::NoMatch),
-        "verify-disconnected" => Err(denied("Fingerprint reader disconnected")),
-        "verify-unknown-error" => Err(denied("Fingerprint reader reported an unknown error")),
-        _ if !done => Ok(ScanStatus::Pending),
-        "verify-retry-scan" => Err(denied("Fingerprint scan must be retried")),
-        "verify-swipe-too-short" => Err(denied("Fingerprint swipe was too short")),
-        "verify-finger-not-centered" => Err(denied("Finger was not centered on the reader")),
-        "verify-remove-and-retry" => Err(denied("Remove your finger and try again")),
-        "verify-too-fast" => Err(denied("Finger moved too quickly")),
-        _ => Err(denied(format!("Fingerprint verification failed: {status}"))),
-    }
-}
 impl Broker {
     fn fingerprint_uid(&self) -> u32 {
         #[cfg(test)]
@@ -126,7 +112,6 @@ impl Broker {
             Duration::from_secs(30)
         }
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     async fn verify(
         &self,
         owner: &Owner,
@@ -134,155 +119,19 @@ impl Broker {
         token: &str,
         cancel: Arc<AtomicBool>,
     ) -> fdo::Result<()> {
-        if self
-            .store
-            .lock()
-            .await
-            .entry(owner, binding, token)
-            .map_err(denied)?
-            .attempts_remaining
-            == 0
-        {
-            return Err(denied(
-                "Fingerprint unlock is locked after 3 failed attempts",
-            ));
-        }
-        let _scanner = self
-            .scanner
-            .try_lock()
-            .map_err(|_| fdo::Error::Failed("Fingerprint reader is busy".into()))?;
-        let mut claimed = None;
-        let mut disconnected = false;
-        let result = tokio::time::timeout(Duration::from_secs(35), async {
-            let dbus = DBusProxy::new(&self.connection).await.map_err(denied)?;
-            let _ = dbus.start_service_by_name(zbus::names::WellKnownName::try_from(FPRINT).map_err(denied)?, 0).await;
-            let name = dbus
-                .get_name_owner(BusName::try_from(FPRINT).map_err(denied)?)
-                .await
-                .map_err(denied)?;
-            if dbus
-                .get_connection_unix_user(BusName::from(name.clone()))
-                .await
-                .map_err(denied)?
-                != self.fingerprint_uid()
-            {
-                return Err(denied("Untrusted fingerprint service"));
-            }
-            let user = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(owner.uid))
-                .map_err(denied)?
-                .ok_or_else(|| denied("Unknown desktop user"))?;
-            let manager = Proxy::new(
-                &self.connection,
-                name.clone(),
-                "/net/reactivated/Fprint/Manager",
-                "net.reactivated.Fprint.Manager",
-            )
-            .await
-            .map_err(denied)?;
-            let devices: Vec<zbus::zvariant::OwnedObjectPath> =
-                manager.call("GetDevices", &()).await.map_err(denied)?;
-            let mut chosen = None;
-            if devices.len() > 16 {
-                return Err(denied("Too many fingerprint devices"));
-            }
-            for path in devices {
-                let device = Proxy::new(
-                    &self.connection,
-                    name.clone(),
-                    path,
-                    "net.reactivated.Fprint.Device",
-                )
-                .await
-                .map_err(denied)?;
-                let fingers: Result<Vec<String>, _> = device
-                    .call("ListEnrolledFingers", &(user.name.as_str(),))
-                    .await;
-                if fingers.is_ok_and(|f| !f.is_empty() && f.len() <= 10) {
-                    chosen = Some(device);
-                    break;
-                }
-            }
-            let device = chosen.ok_or_else(|| denied("No enrolled fingerprint reader"))?;
-            let _: () = device
-                .call("Claim", &(user.name.as_str(),))
-                .await
-                .map_err(denied)?;
-            claimed = Some(device.clone());
-            // One deadline covers all scans and retry setup. Claim separates owners;
-            // each new subscription separates completed attempts.
-            let deadline = tokio::time::sleep(self.scan_timeout());
-            tokio::pin!(deadline);
-            loop {
-                let scan = async {
-                    if cancel.load(Ordering::SeqCst) {
-                        return Err(denied("Authentication cancelled"));
-                    }
-                    let mut statuses = device.receive_signal("VerifyStatus").await.map_err(denied)?;
-                    let _: () = device.call("VerifyStart", &("any",)).await.map_err(denied)?;
-                    loop {
-                        tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                                if cancel.load(Ordering::SeqCst) {
-                                    return Err(denied("Authentication cancelled"));
-                                }
-                                let client = BusName::try_from(owner.connection.as_str()).map_err(denied)?;
-                                if dbus.get_connection_unix_user(client).await.is_err() {
-                                    return Err(denied("Client disconnected"));
-                                }
-                            }
-                            message = statuses.next() => {
-                                let message = message.ok_or_else(|| denied("Fingerprint service disconnected"))?;
-                                if message.header().sender() != Some(&name) {
-                                    return Err(denied("Untrusted fingerprint signal"));
-                                }
-                                let (status, done): (String, bool) = message.body().deserialize().map_err(denied)?;
-                                if cancel.load(Ordering::SeqCst) {
-                                    return Err(denied("Authentication cancelled"));
-                                }
-                                disconnected |= status == "verify-disconnected";
-                                match verification_status(&status, done)? {
-                                    ScanStatus::Pending => {}
-                                    ScanStatus::Match => return Ok(true),
-                                    ScanStatus::NoMatch => return Ok(false),
-                                }
-                            }
-                        }
-                    }
-                };
-                let matched = tokio::select! {
-                    _ = &mut deadline => return Err(denied("Fingerprint authentication timed out")),
-                    result = scan => result?,
-                };
-                let remaining = {
-                    let mut store = self.store.lock().await;
-                    let entry = store.entry(owner, binding, token).map_err(denied)?;
-                    entry.attempts_remaining = if matched { MAX_ATTEMPTS } else { entry.attempts_remaining.saturating_sub(1) };
-                    entry.attempts_remaining
-                };
-                if matched {
-                    return Ok(());
-                }
-                if remaining == 0 {
-                    return Err(denied("Fingerprint unlock is locked after 3 failed attempts"));
-                }
-                // The old stream is dropped before stopping. Subscribe afresh only
-                // after VerifyStop finishes, excluding stale completion signals.
-                tokio::select! {
-                    _ = &mut deadline => return Err(denied("Fingerprint authentication timed out")),
-                    result = device.call::<_, _, ()>("VerifyStop", &()) => result.map_err(denied)?,
-                }
-            }
-        })
-        .await
-        .unwrap_or_else(|_| Err(denied("Fingerprint service timed out")));
-        // Cleanup is also bounded when a service disconnects during verification.
-        if let Some(device) = claimed.filter(|_| !disconnected) {
-            let _: Result<Result<(), zbus::Error>, _> =
-                tokio::time::timeout(Duration::from_secs(1), device.call("VerifyStop", &())).await;
-            let _: Result<Result<(), zbus::Error>, _> =
-                tokio::time::timeout(Duration::from_secs(1), device.call("Release", &())).await;
-        }
-        result
+        let backend = FprintdBackend::new(&self.connection, self.fingerprint_uid()).await?;
+        let request = verify::Request {
+            attempts: verify::Attempts {
+                store: &self.store,
+                owner,
+                binding,
+                token,
+            },
+            scanner: &self.scanner,
+            cancel: &cancel,
+            scan_timeout: self.scan_timeout(),
+        };
+        verify::verify(&backend, &request).await
     }
 }
 #[zbus::interface(name = "dev.nocterm.VaultBroker1")]
