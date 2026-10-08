@@ -518,7 +518,7 @@ mod osc_limit_tests {
                 guarded_effects.extend(guarded.advance_at(&[byte], 0));
                 native.term.set_output_timestamp_ms(0);
                 native.parser.advance(&mut native.term, &[byte]);
-                native_effects.extend(native.take_effects());
+                native_effects.extend(native.take_effects(0));
             }
             assert_eq!(guarded_effects, native_effects, "escape follower {byte:#x}");
             let (mut left, mut right) = (Frame::default(), Frame::default());

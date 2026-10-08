@@ -357,6 +357,7 @@ pub struct Emulator {
     palette: Palette,
     options: EmulatorOptions,
     generation: u64,
+    mouse_tracking_epoch: u64,
     search_match: Option<(u64, crate::SearchMatch)>,
 }
 
@@ -372,6 +373,7 @@ impl Emulator {
             palette: Palette::default(),
             options,
             generation: 0,
+            mouse_tracking_epoch: 0,
             search_match: None,
         }
     }
@@ -391,10 +393,11 @@ impl Emulator {
         if !bytes.is_empty() {
             self.generation = self.generation.wrapping_add(1);
         }
+        let queued_events = self.queued_events();
         self.term.set_output_timestamp_ms(timestamp_ms);
         self.osc_guard
             .advance(bytes, |bytes| self.parser.advance(&mut self.term, bytes));
-        self.take_effects()
+        self.take_effects(queued_events)
     }
 
     /// When a synchronized update the program began must be force-finished.
@@ -409,8 +412,9 @@ impl Emulator {
     /// Ends a synchronized update and applies everything it held back.
     pub fn finish_sync(&mut self) -> Vec<Effect> {
         self.generation = self.generation.wrapping_add(1);
+        let queued_events = self.queued_events();
         self.parser.stop_sync(&mut self.term);
-        self.take_effects()
+        self.take_effects(queued_events)
     }
 
     /// Highest allocated logical output line, independent of scrollback trimming.
@@ -611,12 +615,20 @@ impl Emulator {
         }
     }
 
-    fn take_effects(&mut self) -> Vec<Effect> {
+    fn queued_events(&self) -> usize {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    fn take_effects(&mut self, queued_events: usize) -> Vec<Effect> {
         let events =
             std::mem::take(&mut *self.events.lock().unwrap_or_else(PoisonError::into_inner));
         events
             .into_iter()
-            .filter_map(|event| match event {
+            .enumerate()
+            .filter_map(|(index, event)| match event {
                 Event::PtyWrite(text) => Some(Effect::Reply(text.into_bytes())),
                 Event::Title(title) => Some(Effect::Title(Some(title))),
                 Event::ResetTitle => Some(Effect::Title(None)),
@@ -641,10 +653,17 @@ impl Emulator {
                     })
                     .into_bytes(),
                 )),
+                Event::MouseCursorDirty => {
+                    // Host viewport scrolling also emits this event. Only new
+                    // events from this parser feed change protocol ownership.
+                    if index >= queued_events {
+                        self.mouse_tracking_epoch = self.mouse_tracking_epoch.wrapping_add(1);
+                    }
+                    None
+                }
                 // Letting a remote program read the local clipboard is a
                 // deliberate non-feature; the rest needs no host action.
                 Event::ClipboardLoad(..)
-                | Event::MouseCursorDirty
                 | Event::CursorBlinkingChange
                 | Event::Wakeup
                 | Event::Exit
@@ -700,6 +719,8 @@ fn indexed_color(index: u8) -> Rgb {
     }
 }
 
+#[cfg(test)]
+mod pointer_tests;
 mod snapshot;
 #[cfg(test)]
 mod tests;
