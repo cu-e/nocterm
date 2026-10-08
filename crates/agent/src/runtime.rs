@@ -1,4 +1,6 @@
 use crate::thread::AgentThread;
+mod documents;
+mod lifecycle;
 use gpui_kit::{App, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity, Window};
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
@@ -50,6 +52,7 @@ pub struct AgentServices {
 pub(crate) struct RuntimeGlobal(pub Entity<Runtime>);
 impl Global for RuntimeGlobal {}
 struct Connection {
+    chat_id: String,
     launch: AgentLaunch,
     workdir: PathBuf,
     /// Whether the process runs isolated; a changed setting restarts it.
@@ -60,6 +63,8 @@ struct Connection {
     serial: u64,
     _events: Option<Task<()>>,
     _connecting: Option<Task<()>>,
+    cancellation: nocterm_ai::ConnectionCancellation,
+    startup_completion: Option<futures::channel::oneshot::Receiver<Result<(), String>>>,
 }
 pub(crate) struct Runtime {
     pub services: AgentServices,
@@ -68,12 +73,22 @@ pub(crate) struct Runtime {
     favorites_revision: u64,
     favorites_writer: Option<Task<()>>,
     connections: HashMap<u64, Connection>,
+    documents: HashMap<EntityId, WeakEntity<AgentThread>>,
+    document_owners: HashMap<String, EntityId>,
+    pending_activation: std::collections::VecDeque<WeakEntity<AgentThread>>,
+    closing: HashMap<u64, String>,
+    idle_since: HashMap<u64, std::time::Instant>,
+    _lifecycle: Option<Task<()>>,
+    shutting_down: bool,
+    chat_revisions: HashMap<String, (EntityId, u64)>,
     pub registrations: HashMap<u64, WeakEntity<AgentThread>>,
     /// Chats read from disk and not yet shown by a panel; `None` while reading.
     pub(crate) saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
     /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
     chat_writes: HashMap<String, Option<Arc<nocterm_ai::history::SharedChat>>>,
     chat_writer: Option<Task<()>>,
+    chat_in_flight: Option<documents::PendingChatWrite>,
+    chat_io: Arc<std::sync::Mutex<documents::ChatIoGate>>,
     /// Deleted chats, never written again by a late save.
     deleted_chats: std::collections::HashSet<String>,
     _loading_chats: Option<Task<()>>,
@@ -94,6 +109,10 @@ impl Runtime {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
         let settings = cx.observe_global::<SettingsStore>(|this, cx| {
+            if !cx.ai_enabled() {
+                let ids = this.documents.keys().copied().collect::<Vec<_>>();
+                for id in ids { this.capture_and_detach_document(id, cx); }
+            }
             let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
             for warning in &registry.warnings{tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");}
             let keys: Vec<_> = this
@@ -129,6 +148,13 @@ impl Runtime {
                 this.registrations.clear();
                 this.services.bridge.stop();
             }
+            let threads: Vec<_> = this.connections.values()
+                .flat_map(|connection| connection.users.values())
+                .filter_map(WeakEntity::upgrade)
+                .collect();
+            for thread in threads {
+                thread.update(cx, |thread, cx| thread.apply_permission_policy(cx));
+            }
         });
         let favorites =
             nocterm_ai::favorites::AgentStateFile::load(&services.state_file).unwrap_or_default();
@@ -147,6 +173,8 @@ impl Runtime {
             saved_chats: None,
             chat_writes: HashMap::new(),
             chat_writer: None,
+            chat_in_flight: None,
+            chat_io: Default::default(),
             deleted_chats: Default::default(),
             _loading_chats: Some(loading_chats),
             limits: HashMap::new(),
@@ -157,6 +185,14 @@ impl Runtime {
             favorites_writer: None,
             services,
             connections: HashMap::new(),
+            documents: HashMap::new(),
+            document_owners: HashMap::new(),
+            pending_activation: Default::default(),
+            closing: Default::default(),
+            idle_since: Default::default(),
+            _lifecycle: None,
+            shutting_down: false,
+            chat_revisions: Default::default(),
             registrations: HashMap::new(),
             serial: 0,
             _settings: settings,
@@ -258,108 +294,6 @@ impl Runtime {
         })
         .detach();
     }
-    /// Saved chats for the first panel that asks once they are read; later
-    /// panels get none, so two windows never write the same chat.
-    pub(crate) fn take_saved_chats(&mut self) -> Option<Vec<nocterm_ai::history::SavedChat>> {
-        self.saved_chats.as_mut().map(std::mem::take)
-    }
-    /// Queues `chat` to be written, replacing an older queued snapshot.
-    pub(crate) fn save_chat(
-        &mut self,
-        chat: Arc<nocterm_ai::history::SharedChat>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.deleted_chats.contains(&chat.id) {
-            return;
-        }
-        self.chat_writes.insert(chat.id.clone(), Some(chat));
-        self.write_chats(cx);
-    }
-    /// Queues the removal of chat `id`.
-    pub(crate) fn delete_chat(&mut self, id: String, cx: &mut Context<Self>) {
-        self.deleted_chats.insert(id.clone());
-        self.chat_writes.insert(id, None);
-        self.write_chats(cx);
-    }
-    /// Writes every open chat and queued change now, before the application
-    /// exits.
-    fn flush_chats(&mut self, cx: &mut Context<Self>) {
-        let mut writes = std::mem::take(&mut self.chat_writes);
-        for thread in self
-            .connections
-            .values()
-            .flat_map(|connection| connection.users.values())
-            .filter_map(WeakEntity::upgrade)
-        {
-            if let Some(chat) = thread.read(cx).shared_snapshot(cx)
-                && !self.deleted_chats.contains(&chat.id)
-            {
-                writes.insert(chat.id.clone(), Some(chat));
-            }
-        }
-        for (id, chat) in writes {
-            let result = match chat {
-                Some(chat) => nocterm_ai::history::save_shared(&self.services.chats_dir, &chat),
-                None => nocterm_ai::history::delete(&self.services.chats_dir, &id),
-            };
-            if let Err(error) = result {
-                tracing::warn!(%error, "could not save agent chat");
-            }
-        }
-    }
-    fn write_chats(&mut self, cx: &mut Context<Self>) {
-        if self.chat_writer.is_some() {
-            return;
-        }
-        let dir = self.services.chats_dir.clone();
-        self.chat_writer = Some(cx.spawn(async move |this, cx| {
-            loop {
-                let next = this.update(cx, |this, _| {
-                    let id = this.chat_writes.keys().next().cloned();
-                    match id {
-                        Some(id) => this.chat_writes.remove_entry(&id),
-                        None => {
-                            this.chat_writer = None;
-                            None
-                        }
-                    }
-                });
-                let Ok(Some((id, chat))) = next else {
-                    return;
-                };
-                let dir = dir.clone();
-                let write_id = id.clone();
-                let retry = chat.clone();
-                let result = cx
-                    .background_executor()
-                    .spawn(async move {
-                        match chat {
-                            Some(chat) => nocterm_ai::history::save_shared(&dir, &chat),
-                            None => nocterm_ai::history::delete(&dir, &id),
-                        }
-                    })
-                    .await;
-                if let Err(error) = result {
-                    tracing::warn!(%error, "could not save agent chat");
-                    let _ = this.update(cx, |this, cx| {
-                        this.chat_writes.entry(write_id.clone()).or_insert(retry);
-                        this.chat_writer = None;
-                        for thread in this.connections.values().flat_map(|connection| connection.users.values()).filter_map(WeakEntity::upgrade) {
-                            thread.update(cx, |thread, cx| {
-                                if thread.chat_id == write_id {
-                                    thread.queue_paused = true;
-                                    thread.status = format!("Could not save chat: {error}. Queued messages are retained; check disk space before continuing.");
-                                    thread.status_error = true;
-                                    cx.notify();
-                                }
-                            });
-                        }
-                    });
-                    return;
-                }
-            }
-        }));
-    }
     pub(crate) fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self._bridge.is_some() {
             return;
@@ -432,7 +366,7 @@ impl Runtime {
         &mut self,
         thread: Entity<AgentThread>,
         launch: AgentLaunch,
-        fresh: bool,
+        _fresh: bool,
         cx: &mut Context<Self>,
     ) {
         if !cx.ai_enabled() {
@@ -450,28 +384,25 @@ impl Runtime {
         launch.hash(&mut hasher);
         workdir.hash(&mut hasher);
         isolated.hash(&mut hasher);
-        if fresh {
-            self.serial += 1;
-            self.serial.hash(&mut hasher);
-        }
+        self.serial += 1;
+        self.serial.hash(&mut hasher);
         let key = hasher.finish();
-        thread.update(cx, |thread, _| thread.connection_key = Some(key));
-        if let Some(connection) = self.connections.get_mut(&key) {
-            connection
-                .users
-                .insert(thread.entity_id(), thread.downgrade());
-            if let (Some(commands), Some(info)) = (&connection.commands, &connection.info) {
-                thread.update(cx, |thread, cx| {
-                    thread.create_session(commands.clone(), info.clone(), workdir, cx)
-                });
+        let registration = match self.register_bridge(&thread, cx) {
+            Ok(registration) => registration,
+            Err(error) => {
+                thread.update(cx, |thread, cx| thread.fail(&error, cx));
+                return;
             }
-            return;
-        }
+        };
+        thread.update(cx, |thread, _| thread.begin_lease(key, registration));
         self.serial += 1;
         let serial = self.serial;
+        let cancellation = nocterm_ai::ConnectionCancellation::default();
+        let (startup_ack, startup_completion) = futures::channel::oneshot::channel();
         self.connections.insert(
             key,
             Connection {
+                chat_id: thread.read(cx).chat_id.clone(),
                 launch: launch.clone(),
                 workdir: workdir.clone(),
                 isolated,
@@ -481,6 +412,8 @@ impl Runtime {
                 serial,
                 _events: None,
                 _connecting: None,
+                cancellation: cancellation.clone(),
+                startup_completion: Some(startup_completion),
             },
         );
         let connector = self.services.connector.clone();
@@ -494,6 +427,7 @@ impl Runtime {
                 &self.services.shared_dirs,
             )
         });
+        let resources = cx.settings().ai.resources.clone();
         let future = cx.background_executor().spawn(async move {
             if private_workdir {
                 nocterm_core::paths::ensure_private_dir(&workdir)
@@ -509,62 +443,87 @@ impl Runtime {
                     working_directory: workdir,
                     terminal_auth,
                     sandbox,
+                    resources,
+                    cancellation,
                 })
                 .await
         });
         let connecting = cx.spawn(async move |this, cx| {
             let result = future.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this
-                    .connections
-                    .get(&key)
-                    .is_some_and(|connection| connection.serial == serial)
-                    || !cx.ai_enabled()
-                {
-                    if let Ok(connection) = result {
-                        connection.commands.shutdown();
+            let uncertain = match &result {
+                Err(nocterm_ai::AgentError::CleanupUnconfirmed(error)) => Some(error.clone()),
+                _ => None,
+            };
+            let orphan = result
+                .as_ref()
+                .ok()
+                .map(|connection| connection.commands.clone());
+            let accepted = this
+                .update(cx, |this, cx| {
+                    if !this
+                        .connections
+                        .get(&key)
+                        .is_some_and(|connection| connection.serial == serial)
+                        || !cx.ai_enabled()
+                    {
+                        return false;
                     }
-                    return;
-                }
-                match result {
-                    Ok(connection) => {
-                        let slot = this.connections.get_mut(&key).expect("checked connection");
-                        slot.commands = Some(connection.commands.clone());
-                        slot.info = Some(connection.info.clone());
-                        for thread in slot.users.values().filter_map(WeakEntity::upgrade) {
-                            thread.update(cx, |thread, cx| {
-                                thread.create_session(
-                                    connection.commands.clone(),
-                                    connection.info.clone(),
-                                    slot.workdir.clone(),
-                                    cx,
-                                )
-                            });
-                        }
-                        slot._events = Some(cx.spawn(async move |this, cx| {
-                            while let Ok(event) = connection.events.recv().await {
-                                if this
-                                    .update(cx, |this, cx| this.event(key, serial, event, cx))
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                    match result {
+                        Ok(connection) => {
+                            let slot = this.connections.get_mut(&key).expect("checked connection");
+                            slot.commands = Some(connection.commands.clone());
+                            slot.info = Some(connection.info.clone());
+                            for thread in slot.users.values().filter_map(WeakEntity::upgrade) {
+                                thread.update(cx, |thread, cx| {
+                                    thread.create_session(
+                                        connection.commands.clone(),
+                                        connection.info.clone(),
+                                        slot.workdir.clone(),
+                                        cx,
+                                    )
+                                });
                             }
-                        }));
+                            slot._events = Some(cx.spawn(async move |this, cx| {
+                                while let Ok(event) = connection.events.recv().await {
+                                    if this
+                                        .update(cx, |this, cx| this.event(key, serial, event, cx))
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }));
+                        }
+                        Err(error) => this.stop_connection(
+                            key,
+                            &nocterm_ai::redact::redact(&error.to_string()),
+                            cx,
+                        ),
                     }
-                    Err(error) => this.stop_connection(
-                        key,
-                        &nocterm_ai::redact::redact(&error.to_string()),
-                        cx,
-                    ),
-                }
-            });
+                    true
+                })
+                .unwrap_or(false);
+            let cleanup = if let Some(error) = uncertain {
+                Err(error)
+            } else if !accepted && let Some(commands) = orphan {
+                commands
+                    .shutdown_gracefully()
+                    .await
+                    .map_err(|error| error.to_string())
+            } else {
+                Ok(())
+            };
+            let _ = startup_ack.send(cleanup);
         });
         if let Some(connection) = self.connections.get_mut(&key) {
             connection._connecting = Some(connecting);
         }
     }
     fn event(&mut self, key: u64, serial: u64, event: AgentEvent, cx: &mut Context<Self>) {
+        if let AgentEvent::Barrier(ack) = event {
+            let _ = ack.send(());
+            return;
+        }
         let Some(connection) = self
             .connections
             .get(&key)
@@ -573,6 +532,7 @@ impl Runtime {
             return;
         };
         match event {
+            AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
                 if let acp::SessionUpdate::UsageUpdate(update) = &notification.update
                     && let Some(limit) = nocterm_ai::usage::claude_limit(update)
@@ -586,14 +546,14 @@ impl Runtime {
                 };
                 for thread in connection.users.values().filter_map(WeakEntity::upgrade) {
                     thread.update(cx, |thread, cx| {
-                        if thread.connecting_session && thread.session.is_none() && matches!(notification.update,
+                        if thread.connecting_session && thread.session().is_none() && matches!(notification.update,
                             acp::SessionUpdate::AvailableCommandsUpdate(_) | acp::SessionUpdate::CurrentModeUpdate(_) | acp::SessionUpdate::ConfigOptionUpdate(_)) {
                             // Keep the latest control of each kind for each session, without replaying transcript chunks.
                             thread.pending_controls.retain(|(id, update)| id != &notification.session_id || std::mem::discriminant(update) != std::mem::discriminant(&notification.update));
                             if thread.pending_controls.len() == 64 { thread.pending_controls.remove(0); }
                             thread.pending_controls.push((notification.session_id.clone(), notification.update.clone()));
                         }
-                        if thread.session.as_ref() == Some(&notification.session_id)
+                        if thread.session().as_ref() == Some(&notification.session_id)
                             && thread.accept_updates
                             && !matches!(
                                 notification.update,
@@ -622,7 +582,7 @@ impl Runtime {
                     .users
                     .values()
                     .filter_map(WeakEntity::upgrade)
-                    .find(|thread| thread.read(cx).session.as_ref() == Some(&request.session_id));
+                    .find(|thread| thread.read(cx).session().as_ref() == Some(&request.session_id));
                 if let Some(thread) = thread {
                     thread.update(cx, |thread, cx| thread.permission(request, respond, cx));
                 } else {
@@ -640,45 +600,57 @@ impl Runtime {
         }
     }
     fn stop_connection(&mut self, key: u64, message: &str, cx: &mut Context<Self>) {
-        if let Some(connection) = self.connections.remove(&key) {
-            if let Some(commands) = connection.commands {
-                commands.shutdown();
-            }
-            for thread in connection.users.values().filter_map(WeakEntity::upgrade) {
-                thread.update(cx, |thread, cx| {
-                    thread.fail(message, cx);
-                    if !cx.ai_enabled() {
-                        thread.state = Default::default();
-                        thread.attachments.clear();
-                        thread.images.clear();
-                    }
-                });
-            }
+        let Some(connection) = self.connections.get(&key) else {
+            return;
+        };
+        connection.cancellation.cancel();
+        let threads: Vec<_> = connection
+            .users
+            .values()
+            .filter_map(WeakEntity::upgrade)
+            .collect();
+        for thread in threads {
+            thread.update(cx, |thread, cx| {
+                thread.fail(message, cx);
+                if !cx.ai_enabled() {
+                    thread.state = Default::default();
+                    thread.attachments.clear();
+                    thread.images.clear();
+                }
+            });
         }
     }
-    pub(crate) fn release(&mut self, id: EntityId, key: Option<u64>, registration: Option<u64>) {
-        if let Some(registration) = registration {
-            self.registrations.remove(&registration);
+    pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.shutting_down = true;
+        self.pending_activation.clear();
+        let threads: Vec<_> = self
+            .documents
+            .values()
+            .filter_map(WeakEntity::upgrade)
+            .collect();
+        for thread in threads {
+            thread.update(cx, |thread, cx| thread.release_resources(cx));
         }
-        if let Some(key) = key
-            && let Some(connection) = self.connections.get_mut(&key)
-        {
-            connection.users.remove(&id);
-            if connection.users.is_empty()
-                && let Some(connection) = self.connections.remove(&key)
-                && let Some(commands) = connection.commands
-            {
-                commands.shutdown();
-            }
-        }
-    }
-    pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
+        // GPUI allows quit futures only 200 ms. Durable state must be flushed before returning.
         self.flush_chats(cx);
-        let keys: Vec<_> = self.connections.keys().copied().collect();
-        for key in keys {
-            self.stop_connection(key, "Application is closing.", cx);
-        }
+        self.chat_writer.take();
         self.registrations.clear();
         self.services.bridge.stop();
+        cx.spawn(async move |this, cx| {
+            for _ in 0..100 {
+                if this
+                    .read_with(cx, |this, _| {
+                        this.closing.is_empty() && this.connections.is_empty()
+                    })
+                    .unwrap_or(true)
+                {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+            }
+            tracing::warn!("Agent cleanup did not complete before application exit");
+        })
     }
 }

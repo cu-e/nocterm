@@ -1,7 +1,7 @@
 use crate::runtime::Runtime;
 use futures::{FutureExt as _, channel::oneshot};
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, WeakEntity, Window,
+    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
 };
 use nocterm_ai::{
     AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, acp, approval::ApprovalGrants,
@@ -13,10 +13,12 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
 mod execution;
+mod permissions;
 mod prompt;
 mod queue;
 mod tool_display;
 pub(crate) use queue::QueuedPrompt;
+mod lifecycle;
 mod live;
 mod restart;
 mod saved;
@@ -47,6 +49,8 @@ pub(crate) struct SignInWait {
 pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
     pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+    pub generation: u64,
+    pub explanation: Option<&'static str>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PromptMetadata {
@@ -66,7 +70,22 @@ pub(crate) struct Fork {
     restore: Option<Restore>,
     attachments: Vec<Attachment>,
 }
+pub(crate) struct SessionLease {
+    pub session: Option<acp::SessionId>,
+    pub commands: Option<Arc<dyn AgentCommands>>,
+    pub registration: Option<BridgeRegistration>,
+    pub connection_key: u64,
+    pub workdir: Option<PathBuf>,
+}
+
 pub(crate) struct AgentThread {
+    pub lease: Option<SessionLease>,
+    pub activation_pending: bool,
+    pub closing_session: bool,
+    pub document_revision: u64,
+    pub persisted_revision: u64,
+    pub persistence_error: Option<String>,
+    pub operation_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub agent_id: String,
     /// Names the chat's file in the saved history.
     pub chat_id: String,
@@ -78,6 +97,11 @@ pub(crate) struct AgentThread {
     /// The name the user gave the chat.
     pub name: Option<String>,
     pub pinned: bool,
+    pub draft: Option<String>,
+    draft_changed: bool,
+    /// A snapshot was queued for history, or this chat was restored.
+    history_queued: bool,
+    draft_save: Option<Task<()>>,
     pub state: ThreadState,
     pub last_prompt: Option<PromptMetadata>,
     /// The model of a saved chat's last prompt.
@@ -90,13 +114,8 @@ pub(crate) struct AgentThread {
     pub stopped: bool,
     pub auth_required: bool,
     pub authenticating: bool,
-    session_workdir: Option<PathBuf>,
     pub accept_updates: bool,
-    pub session: Option<acp::SessionId>,
-    pub commands: Option<Arc<dyn AgentCommands>>,
     pub info: Option<AgentInfo>,
-    pub connection_key: Option<u64>,
-    pub registration: Option<BridgeRegistration>,
     pub workspace: WeakEntity<Workspace>,
     /// The window of the panel showing this chat; background sessions open
     /// there.
@@ -145,15 +164,22 @@ impl AgentThread {
     ) -> Self {
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| {
+            let snapshot = cx.ai_enabled().then(|| this.flush_snapshot(cx)).flatten();
+            this.document_revision += 1;
+            let revision = this.document_revision;
             this.cancel_execution();
             this.cancel_pending();
-            if let (Some(commands), Some(session)) = (&this.commands, &this.session) {
-                commands.cancel(session.clone());
-                commands.close_session(session.clone());
-            }
-            let registration = this.registration.take().map(|registration| registration.id);
-            Runtime::global(cx).update(cx, |runtime, _| {
-                runtime.release(id, this.connection_key, registration)
+            let lease = this.lease.take();
+            cx.defer(move |cx| {
+                Runtime::global(cx).update(cx, |runtime, cx| {
+                    if let Some(chat) = snapshot {
+                        runtime.save_chat(chat, id, revision, cx);
+                    }
+                    runtime.unregister_document(id);
+                    if let Some(lease) = lease {
+                        runtime.release_lease(id, lease, cx);
+                    }
+                });
             });
             if let Some(window) = this.window {
                 let workspace = this.workspace.clone();
@@ -191,29 +217,35 @@ impl AgentThread {
         .detach();
         let chat = nocterm_ai::history::SavedChat::new(agent_id.clone());
         Self {
+            lease: None,
+            activation_pending: false,
+            closing_session: false,
+            document_revision: 0,
+            persisted_revision: 0,
+            persistence_error: None,
+            operation_count: Default::default(),
             agent_id,
             chat_id: chat.id,
             updated: chat.updated,
-            dormant: false,
+            dormant: true,
             restore: None,
             name: None,
             pinned: false,
+            draft: None,
+            draft_changed: false,
+            history_queued: false,
+            draft_save: None,
             state: Default::default(),
             last_prompt: None,
             last_model: None,
-            status: "Connecting…".into(),
+            status: "Ready — send a message to start the agent".into(),
             status_error: false,
             generating: false,
             stopped: false,
             auth_required: false,
             authenticating: false,
-            session_workdir: None,
             accept_updates: true,
-            session: None,
-            commands: None,
             info: None,
-            connection_key: None,
-            registration: None,
             workspace,
             window: None,
             attachments: Vec::new(),
@@ -256,6 +288,7 @@ impl AgentThread {
     pub(crate) fn is_draft(&self) -> bool {
         self.state.entries.is_empty()
             && self.queue.is_empty()
+            && self.draft.is_none()
             && self.name.is_none()
             && !self.generating
             && self.permissions.is_empty()
@@ -280,7 +313,7 @@ impl AgentThread {
         self.cancel_pending();
         // A grant belongs to this session; a restarted chat asks again.
         self.grants.clear();
-        self.registration.take();
+        self.detach_session(cx);
         cx.notify();
     }
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
@@ -304,7 +337,7 @@ impl AgentThread {
         if !cx.ai_enabled() || !self.auth_required || self.authenticating {
             return;
         }
-        let Some(commands) = self.commands.clone() else {
+        let Some(commands) = self.commands().clone() else {
             return;
         };
         let Some(method) = self
@@ -327,7 +360,7 @@ impl AgentThread {
                     return;
                 };
                 let Some(request) = self
-                    .connection_key
+                    .connection_key()
                     .and_then(|key| runtime.read(cx).terminal_auth_request(key, &method))
                 else {
                     return;
@@ -347,7 +380,11 @@ impl AgentThread {
         self.status = "Signing in…".into();
         self.status_error = false;
         let epoch = self.epoch;
-        let future = cx.background_executor().spawn(auth);
+        let guard = self.hold_operation();
+        let future = cx.background_executor().spawn(async move {
+            let _guard = guard;
+            auth.await
+        });
         cx.spawn(async move |this, cx| {
             let result = future.await;
             let _ = this.update(cx, |this, cx| {
@@ -359,11 +396,11 @@ impl AgentThread {
                     Ok(()) => {
                         this.auth_required = false;
                         this.status_error = false;
-                        if this.session.is_some() {
+                        if this.session().is_some() {
                             this.status = "Ready".into();
                             cx.notify();
                         } else if let (Some(info), Some(workdir)) =
-                            (this.info.clone(), this.session_workdir.clone())
+                            (this.info.clone(), this.session_workdir().clone())
                         {
                             this.create_session(commands, info, workdir, cx);
                         }
@@ -411,48 +448,6 @@ impl AgentThread {
             let _ = call.respond.send(Err("Request cancelled.".into()));
         }
     }
-    pub(crate) fn permission(
-        &mut self,
-        request: acp::RequestPermissionRequest,
-        respond: oneshot::Sender<acp::RequestPermissionOutcome>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.accept_updates || !cx.ai_enabled() {
-            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
-            return;
-        }
-        self.approval_generation = self.approval_generation.wrapping_add(1);
-        self.permissions
-            .push(PendingPermission { request, respond });
-        cx.notify();
-    }
-    pub(crate) fn choose_permission(
-        &mut self,
-        index: usize,
-        option: Option<acp::PermissionOptionId>,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.permissions.len() {
-            return;
-        }
-        let permission = self.permissions.remove(index);
-        let outcome = option
-            .filter(|option| {
-                cx.ai_enabled()
-                    && self.accept_updates
-                    && permission
-                        .request
-                        .options
-                        .iter()
-                        .any(|candidate| candidate.option_id == *option)
-            })
-            .map(|option| {
-                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(option))
-            })
-            .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
-        let _ = permission.respond.send(outcome);
-        cx.notify();
-    }
     pub(crate) fn set_config(
         &mut self,
         id: acp::SessionConfigId,
@@ -462,13 +457,18 @@ impl AgentThread {
         if self.generating || !cx.ai_enabled() {
             return;
         }
-        let (Some(commands), Some(session)) = (self.commands.clone(), self.session.clone()) else {
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
             return;
         };
         let epoch = self.epoch;
-        let future = cx.background_executor().spawn(
-            commands.set_config_option(acp::SetSessionConfigOptionRequest::new(session, id, value)),
-        );
+        let guard = self.hold_operation();
+        let future = cx.background_executor().spawn(async move {
+            let _guard = guard;
+            commands
+                .set_config_option(acp::SetSessionConfigOptionRequest::new(session, id, value))
+                .await
+        });
         cx.spawn(async move |this, cx| {
             let result = future.await;
             let _ = this.update(cx, |this, cx| {
@@ -494,13 +494,19 @@ impl AgentThread {
         if self.generating || !cx.ai_enabled() {
             return;
         }
-        let (Some(commands), Some(session)) = (self.commands.clone(), self.session.clone()) else {
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
             return;
         };
         let epoch = self.epoch;
-        let future = cx
-            .background_executor()
-            .spawn(commands.set_mode(acp::SetSessionModeRequest::new(session, id.clone())));
+        let guard = self.hold_operation();
+        let request_id = id.clone();
+        let future = cx.background_executor().spawn(async move {
+            let _guard = guard;
+            commands
+                .set_mode(acp::SetSessionModeRequest::new(session, request_id))
+                .await
+        });
         cx.spawn(async move |this, cx| {
             let result = future.await;
             let _ = this.update(cx, |this, cx| {
@@ -529,15 +535,15 @@ impl AgentThread {
         self.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
+        self.stopped = true;
         if !self.generating {
             cx.notify();
             return;
         }
-        if let (Some(commands), Some(session)) = (&self.commands, &self.session) {
+        if let (Some(commands), Some(session)) = (&self.commands(), &self.session()) {
             commands.cancel(session.clone());
         }
         self.accept_updates = false;
-        self.stopped = true;
         self.status = "Stopping…".into();
         let epoch = self.epoch;
         let turn = self.turn;
@@ -619,3 +625,5 @@ pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
         _ => String::new(),
     }
 }
+
+mod drafts;

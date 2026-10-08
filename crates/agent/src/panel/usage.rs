@@ -2,9 +2,10 @@
 //! the context window is, the session's tokens and the plan's limits.
 
 use gpui_kit::{
-    App, Context, PathBuilder, TestSupportExt as _, canvas,
+    App, ClickEvent, Context, Focusable as _, MouseButton, PathBuilder, TestSupportExt as _,
+    Window, canvas,
     component::{
-        ActiveTheme as _, Sizable as _, StyledExt as _,
+        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex, v_flex,
     },
@@ -15,7 +16,7 @@ use gpui_kit::{
 use nocterm_ai::acp;
 use nocterm_ui::IconName;
 
-use super::AgentPanel;
+use super::{AgentPanel, MenuKind};
 use crate::runtime::Runtime;
 use nocterm_ai::usage::{Breakdown, RateLimit};
 
@@ -30,6 +31,60 @@ struct Report {
 }
 
 impl AgentPanel {
+    pub(super) fn dismiss_usage(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.menu != Some(MenuKind::Usage) {
+            return false;
+        }
+        self.menu = None;
+        cx.notify();
+        true
+    }
+
+    pub(super) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let restore = self.usage_focus.contains_focused(window, cx);
+        self.dismiss_usage(cx);
+        if restore {
+            window.focus(&self.input.read(cx).focus_handle(cx), cx);
+        }
+    }
+
+    pub(super) fn usage_button(
+        &self,
+        usage: Option<&acp::UsageUpdate>,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        // Match native popovers: toggle on mouse-down, using the rendered state.
+        // Outside dismissal may already have run in this event's capture phase.
+        let open = self.menu == Some(MenuKind::Usage);
+        context_ring(usage, cx)
+            .selected(open)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.toggle_usage(open, window, cx);
+                }),
+            )
+            .on_click(cx.listener(move |this, event, window, cx| {
+                if !matches!(event, ClickEvent::Mouse(_)) {
+                    this.toggle_usage(open, window, cx);
+                }
+            }))
+    }
+
+    fn toggle_usage(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if open {
+            self.close_usage(window, cx);
+        } else {
+            self.refresh_usage(cx);
+            self.menu = Some(MenuKind::Usage);
+            // Read-only information must not interrupt composing.
+            if !self.input.read(cx).focus_handle(cx).is_focused(window) {
+                window.focus(&self.usage_focus, cx);
+            }
+            cx.notify();
+        }
+    }
+
     /// Reads the plan limits again when the card opens.
     pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.current() {
@@ -73,6 +128,17 @@ impl AgentPanel {
         let mut card = v_flex()
             .id("agent-usage")
             .test_support()
+            .track_focus(&self.usage_focus)
+            .tab_group()
+            .key_context("Popover")
+            .on_action(
+                cx.listener(|this, _: &gpui_kit::base::actions::Cancel, window, cx| {
+                    this.close_usage(window, cx);
+                }),
+            )
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.dismiss_usage(cx);
+            }))
             .occlude()
             .w_full()
             .p_3()
@@ -94,9 +160,8 @@ impl AgentPanel {
                             .xsmall()
                             .icon(IconName::X)
                             .tooltip("Close")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.menu = None;
-                                cx.notify();
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_usage(window, cx);
                             })),
                     ),
             );

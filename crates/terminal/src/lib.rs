@@ -58,7 +58,9 @@ mod view;
 
 use std::sync::Arc;
 
-use gpui_kit::{App, Context, Global, KeyBinding, NoAction, Window, prelude::*};
+use gpui_kit::{
+    Action as _, App, Context, Global, KeyBinding, NoAction, Unbind, Window, prelude::*,
+};
 use nocterm_session::{ShellLaunch, Transport};
 use nocterm_workspace::{ProgramSpec, SessionSpec, Workspace};
 
@@ -162,11 +164,16 @@ pub fn open_program(
 
 /// Installs the transport terminals open their sessions with.
 pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
-    // Root binds Tab to focus traversal before on_key_down runs. Suppress that
-    // binding only for the screen so the emulator can encode Tab and Backtab.
+    // Keep inherited focus traversal and native Copy shortcuts off the screen.
+    // Target only native Copy so explicit terminal actions retain precedence.
     cx.bind_keys([
         KeyBinding::new("tab", NoAction, Some(SCREEN_KEY_CONTEXT)),
         KeyBinding::new("shift-tab", NoAction, Some(SCREEN_KEY_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-c",
+            Unbind(gpui_kit::component::input::Copy.name().into()),
+            Some(SCREEN_KEY_CONTEXT),
+        ),
     ]);
     cx.set_global(ActiveTransport(transport));
 }

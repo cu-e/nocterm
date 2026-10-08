@@ -17,7 +17,7 @@ fn pending_permission(thread: &Entity<crate::thread::AgentThread>, cx: &mut Test
     let (send, _) = oneshot::channel();
     thread.update(cx, |thread, cx| {
         let request = serde_json::from_value(serde_json::json!({
-            "sessionId":thread.session.as_ref().unwrap(),
+            "sessionId":thread.session().as_ref().unwrap(),
             "toolCall":{"toolCallId":"pending","title":"Needs approval"},
             "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
         }))
@@ -99,7 +99,12 @@ fn delete_edit_owner_then_review_does_not_keep_dangling_edit(cx: &mut TestAppCon
     cx.update(|cx| {
         let panel = f.panel.read(cx);
         assert!(panel.composer.edit.is_none());
-        assert!(!panel.composer.drafts.contains_key(&editing.entity_id()));
+        assert!(
+            !panel
+                .threads
+                .iter()
+                .any(|thread| thread.entity_id() == editing.entity_id())
+        );
         assert_eq!(panel.current().unwrap().entity_id(), owner.entity_id());
         assert!(!editing.read(cx).queue_editing);
     });
@@ -132,7 +137,12 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
         assert_ne!(current.entity_id(), old.entity_id());
         assert_eq!(panel.input.read(cx).value().as_ref(), "original draft");
         assert!(panel.composer.edit.is_none());
-        assert!(!panel.composer.drafts.contains_key(&old.entity_id()));
+        assert!(
+            !panel
+                .threads
+                .iter()
+                .any(|thread| thread.entity_id() == old.entity_id())
+        );
         assert_eq!(
             current.read(cx).attachments,
             vec![Attachment::Group("default".into())]
@@ -295,7 +305,7 @@ fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAp
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     let full = "Ответ 👨‍👩‍👧‍👦 世界 ".repeat(1000);
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
         .try_send(AgentEvent::Session(acp::SessionNotification::new(
             session,
@@ -581,10 +591,6 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
             panel
                 .queue_heights
                 .insert(owner.entity_id(), gpui_kit::px(99.));
-            panel
-                .composer
-                .drafts
-                .insert(owner.entity_id(), "retained draft".into());
         });
     })
     .unwrap();
@@ -597,7 +603,7 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
         let panel = f.panel.read(cx);
         assert!(panel.threads.is_empty());
         assert!(panel.composer.edit.is_none());
-        assert!(panel.composer.drafts.is_empty());
+
         assert!(panel.queue_heights.is_empty());
         assert!(!panel.stream.pending());
         assert!(panel.stream_tick.is_none());

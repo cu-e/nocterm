@@ -11,11 +11,8 @@ pub fn init(services: AgentServices, cx: &mut App) {
     panel::commands::init(cx);
     let runtime = cx.new(|cx| runtime::Runtime::new(services, cx));
     cx.set_global(runtime::RuntimeGlobal(runtime.clone()));
-    cx.on_app_quit(move |cx| {
-        runtime.update(cx, |runtime, cx| runtime.shutdown(cx));
-        async {}
-    })
-    .detach();
+    cx.on_app_quit(move |cx| runtime.update(cx, |runtime, cx| runtime.shutdown(cx)))
+        .detach();
 }
 
 gpui_kit::actions!(

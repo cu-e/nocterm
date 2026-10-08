@@ -94,7 +94,7 @@ impl AgentThread {
         replace: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<bool, String> {
-        if !cx.ai_enabled() || self.auth_required || self.ended() || self.session.is_none() {
+        if !cx.ai_enabled() || self.auth_required || self.ended() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.images.is_empty() {
@@ -127,10 +127,19 @@ impl AgentThread {
             queue.push(prompt);
         }
         self.refresh_storage_budget()?;
-        let metadata = self.history_metadata(cx);
+        let mut metadata = self.history_metadata(cx);
+        // Sending moves ordinary text into the queue: budget it once.
+        if replace.is_none() {
+            metadata.draft = None;
+        }
         self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
         self.queue = queue;
+        if replace.is_none() {
+            self.draft = None;
+            self.draft_save = None;
+            self.draft_changed = false;
+        }
         if replace.is_none() {
             self.next_queue_id += 1;
         }
@@ -151,8 +160,16 @@ impl AgentThread {
             || self.queue.is_empty()
             || self.auth_required
             || self.ended()
-            || self.session.is_none()
         {
+            return;
+        }
+        if self.persistence_error.is_some()
+            || (self.lease.is_none() && self.persisted_revision < self.document_revision)
+        {
+            return;
+        }
+        if self.session().is_none() {
+            self.request_activation(cx);
             return;
         }
         let prompt = self.queue.remove(0);

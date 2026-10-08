@@ -132,7 +132,18 @@ fn request_source(call: TerminalCall) -> Source {
             source
         }
         TerminalCall::ExecCommand(v) => {
-            let mut source = Source::plain("Program", v.program, None);
+            let script = shell_script(&v.program, &v.args);
+            let mut source = if let Some(script) = script {
+                let mut source = Source::plain("Command", script.to_owned(), Some("bash"));
+                source.extra.push(Section {
+                    label: "Program",
+                    text: v.program,
+                    language: None,
+                });
+                source
+            } else {
+                Source::plain("Program", v.program, None)
+            };
             source.extra.push(Section {
                 label: "Arguments",
                 text: serde_json::to_string_pretty(&v.args).unwrap_or_default(),
@@ -181,6 +192,14 @@ fn request_source(call: TerminalCall) -> Source {
             Source::plain("Scope", "Terminals attached to this chat".into(), None)
         }
     }
+}
+
+fn shell_script<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {
+    let program = program.rsplit('/').next()?;
+    if !matches!(program, "bash" | "sh") || !matches!(args.first()?.as_str(), "-c" | "-lc") {
+        return None;
+    }
+    args.get(1).map(String::as_str)
 }
 
 pub(super) fn render(index: usize, source: Source, cx: &App) -> impl IntoElement {
@@ -233,7 +252,6 @@ fn section(
     language: Option<&'static str>,
     cx: &App,
 ) -> impl IntoElement {
-    let copied = text.clone();
     let copy_label = match label {
         "Command" | "Requested command" => "Copy command",
         "Input" | "Requested input" => "Copy input",
@@ -242,14 +260,53 @@ fn section(
         "Standard input" => "Copy standard input",
         _ => "Copy tool input",
     };
-    let key = |name: &str| -> (SharedString, usize) {
+    literal_section(
+        index,
+        part,
+        "tool-input",
+        Section {
+            label,
+            text,
+            language,
+        },
+        copy_label,
+        None,
+        cx,
+    )
+}
+
+pub(super) fn literal_section(
+    index: usize,
+    part: Option<usize>,
+    namespace: &'static str,
+    section: Section,
+    copy_label: &'static str,
+    limit: Option<usize>,
+    cx: &App,
+) -> impl IntoElement {
+    let key = |name: String| -> (SharedString, usize) {
         (
             part.map(|part| format!("{name}-extra-{part}"))
-                .unwrap_or_else(|| name.into())
+                .unwrap_or(name)
                 .into(),
             index,
         )
     };
+    let scroll_id = key(format!("{namespace}-scroll"));
+    let code_id = key(format!("{namespace}-code"));
+    let copy_id = key(format!("copy-{namespace}"));
+    let Section {
+        label,
+        text,
+        language,
+    } = section;
+    let copied = text.clone();
+    let mut end = limit.unwrap_or(text.len()).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = end < text.len();
+    let text = text[..end].to_owned();
     let mut highlighter = language
         .filter(|_| text.len() <= 64 * 1024)
         .map(SyntaxHighlighter::new);
@@ -271,7 +328,7 @@ fn section(
                 .text_xs()
                 .child(label)
                 .child(
-                    Button::new(key("copy-tool-input"))
+                    Button::new(copy_id)
                         .ghost()
                         .xsmall()
                         .icon(IconName::Copy)
@@ -284,7 +341,7 @@ fn section(
         )
         .child(
             div()
-                .id(key("tool-input-scroll"))
+                .id(scroll_id)
                 .test_support()
                 .w_full()
                 .min_w_0()
@@ -295,7 +352,7 @@ fn section(
                 .items_start()
                 .child(
                     div()
-                        .id(key("tool-input-code"))
+                        .id(code_id)
                         .test_support()
                         .flex_shrink_0()
                         .font_family(cx.theme().mono_font_family.clone())
@@ -305,4 +362,7 @@ fn section(
                         .child(StyledText::new(text).with_highlights(highlights)),
                 ),
         )
+        .when(truncated, |section| {
+            section.child("Preview limited to 200 KiB. Copy includes the full text.")
+        })
 }

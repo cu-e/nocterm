@@ -35,6 +35,7 @@ impl OpeningDirectory {
         let access = Rc::new(Access {
             executor: Default::default(),
             lease: Default::default(),
+            at_prompt: Cell::new(true),
             sent: Default::default(),
             profile: RefCell::new(Some(id.to_owned().into())),
             sign_in: self.sign_in.clone(),
@@ -145,7 +146,7 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
     let (respond, response) = oneshot::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            let registration = thread.registration.as_ref().unwrap().id;
+            let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
                     registration_id: registration,
@@ -224,7 +225,7 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            let registration = thread.registration.as_ref().unwrap().id;
+            let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
                     registration_id: registration,
@@ -288,7 +289,7 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            let registration = thread.registration.as_ref().unwrap().id;
+            let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
                     registration_id: registration,

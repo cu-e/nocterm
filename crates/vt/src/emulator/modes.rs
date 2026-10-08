@@ -23,6 +23,8 @@ pub struct Modes {
     pub mouse_sgr: bool,
     /// Mouse reports use the UTF-8 extension of the legacy encoding.
     pub mouse_utf8: bool,
+    /// Mouse tracking negotiation identity, independent of host viewport scrolling.
+    pub mouse_tracking_epoch: u64,
     /// Keyboard protocol features negotiated by the running application.
     pub keyboard: crate::KeyboardState,
     /// Negotiation/reset identity, independent of ordinary terminal output.
@@ -50,6 +52,7 @@ impl Emulator {
             mouse_motion: mode.contains(TermMode::MOUSE_MOTION),
             mouse_sgr: mode.contains(TermMode::SGR_MOUSE),
             mouse_utf8: mode.contains(TermMode::UTF8_MOUSE),
+            mouse_tracking_epoch: self.mouse_tracking_epoch,
             keyboard_protocol_epoch: self.term.keyboard_protocol_epoch(),
             keyboard: crate::KeyboardState {
                 disambiguate: mode.contains(TermMode::DISAMBIGUATE_ESC_CODES),

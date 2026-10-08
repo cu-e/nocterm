@@ -90,7 +90,9 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let epoch = self.epoch;
+        let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
+            let _guard = guard;
             let until = Instant::now() + Duration::from_millis(yield_ms);
             loop {
                 let result = this.update(cx, |this, cx| {

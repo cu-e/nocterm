@@ -15,7 +15,7 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
-        thread.read(cx).session.clone().unwrap()
+        thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
     f.events

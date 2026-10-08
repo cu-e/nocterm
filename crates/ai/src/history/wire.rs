@@ -23,6 +23,8 @@ pub(super) struct Wire<'a, Q: Serialize + ?Sized> {
     model: &'a Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pending_history: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draft: &'a Option<String>,
     updated: u64,
     entries: Entries<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +48,7 @@ impl<'a, Q: Serialize + ?Sized> Wire<'a, Q> {
             workdir: &chat.workdir,
             model: &chat.model,
             pending_history: chat.pending_history,
+            draft: &chat.draft,
             updated: chat.updated,
             entries: Entries(&chat.entries[skip..]),
             queue,

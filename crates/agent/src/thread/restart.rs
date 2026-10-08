@@ -7,6 +7,8 @@ pub(crate) struct RestartData {
     updated: u64,
     name: Option<String>,
     pinned: bool,
+    draft: Option<String>,
+    history_queued: bool,
     state: ThreadState,
     attachments: Vec<Attachment>,
     images: Vec<nocterm_ai::images::PromptImage>,
@@ -25,6 +27,8 @@ impl AgentThread {
             updated: self.updated,
             name: self.name.clone(),
             pinned: self.pinned,
+            draft: self.draft.clone(),
+            history_queued: self.history_queued,
             state: self.state.clone(),
             attachments: self.default_attachments().to_vec(),
             images: self.images.clone(),
@@ -41,6 +45,8 @@ impl AgentThread {
         self.updated = data.updated;
         self.name = data.name;
         self.pinned = data.pinned;
+        self.draft = data.draft;
+        self.history_queued = data.history_queued;
         self.state = data.state;
         self.attachments = data.attachments;
         self.images = data.images;

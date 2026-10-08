@@ -38,6 +38,14 @@ use tracing_subscriber::EnvFilter;
 const APP_ID: &str = "dev.nocterm.Nocterm";
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "agent-host")
+    {
+        return nocterm_acp::run_agent_host(std::env::args_os().skip(2))
+            .map_err(anyhow::Error::msg);
+    }
     if std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "agent-bridge")
@@ -51,6 +59,7 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
+    let agent_helper = std::env::current_exe().context("locating the agent process helper")?;
     let paths = Paths::discover()?;
     let tokens = load_tokens(&paths);
     let settings = load_settings(&paths);
@@ -82,7 +91,7 @@ fn main() -> anyhow::Result<()> {
             nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
             nocterm_agent::init(
                 nocterm_agent::AgentServices {
-                    connector: Arc::new(nocterm_acp::AcpConnector),
+                    connector: Arc::new(nocterm_acp::AcpConnector::managed(agent_helper)),
                     terminal_auth: Some(Arc::new(agent_auth::open)),
                     bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
                     state_file: paths.state_dir().join("agents.toml"),

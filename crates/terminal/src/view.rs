@@ -47,6 +47,7 @@ mod host_key;
 mod input;
 mod keyboard;
 mod paste;
+mod pointer;
 mod render;
 #[path = "view_secret.rs"]
 mod secret;
@@ -73,13 +74,7 @@ pub struct TerminalView {
     _blink: Task<()>,
     /// Text an input method is composing.
     marked_text: Option<String>,
-    /// A drag is extending the selection.
-    selecting: bool,
-    /// A button press the running program was told about.
-    reported_button: Option<nocterm_vt::MouseButton>,
-    last_reported_cell: Option<CellPoint>,
-    /// Wheel movement too small to make a whole line yet.
-    scroll_remainder: f32,
+    pointer: pointer::PointerState,
     secret: Option<SecretField>,
     find: Option<FindField>,
     notice_messages: [Option<String>; 3],
@@ -163,10 +158,7 @@ impl TerminalView {
             next_blink: cx.background_executor().now() + CURSOR_BLINK_INTERVAL,
             _blink: Self::blink(cx),
             marked_text: None,
-            selecting: false,
-            reported_button: None,
-            last_reported_cell: None,
-            scroll_remainder: 0.0,
+            pointer: Default::default(),
             secret: None,
             find: None,
             notice_messages: Default::default(),
@@ -186,6 +178,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.sync_keyboard(cx);
+        self.sync_pointer(cx);
         match event {
             TerminalEvent::Changed => {
                 self.frame_dirty.set(true);
@@ -269,6 +262,7 @@ impl TerminalView {
     fn focus_changed(&mut self, focused: bool, cx: &mut Context<Self>) {
         self.focused = focused;
         if !focused {
+            self.pointer = Default::default();
             self.keyboard.clear();
         }
         let terminal = self.terminal.read(cx);
@@ -301,161 +295,6 @@ impl TerminalView {
     fn toggle_recording(&mut self, _: &ToggleRecording, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal
             .update(cx, |terminal, cx| terminal.toggle_recording(cx));
-    }
-
-    // ── Pointer ──────────────────────────────────────────────────────────────
-
-    pub(crate) fn mouse_down(
-        &mut self,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.focus_handle, cx);
-        let Some(geometry) = self.geometry.get() else {
-            return;
-        };
-        let (at, side) = geometry.cell_at(event.position);
-        let modes = self.terminal.read(cx).emulator().modes();
-
-        // Shift reaches past a program's mouse handling to the selection.
-        if modes.reports_mouse() && !event.modifiers.shift {
-            if let Some(button) = vt_button(event.button) {
-                self.reported_button = Some(button);
-                self.report_mouse(MouseEventKind::Press(button), at, &event.modifiers, cx);
-            }
-            return;
-        }
-
-        match event.button {
-            MouseButton::Left => {
-                let extend = event.modifiers.shift
-                    && event.click_count <= 1
-                    && self.terminal.read(cx).emulator().selection_text().is_some();
-                let kind = match event.click_count {
-                    0 | 1 => SelectionKind::Cells,
-                    2 => SelectionKind::Words,
-                    _ => SelectionKind::Lines,
-                };
-                self.terminal.update(cx, |terminal, cx| {
-                    terminal.update_emulator(cx, |emulator| {
-                        if extend {
-                            emulator.update_selection(at, side);
-                        } else {
-                            emulator.start_selection(kind, at, side);
-                        }
-                    });
-                });
-                self.selecting = true;
-            }
-            MouseButton::Middle => self.paste(&Paste, window, cx),
-            _ => {}
-        }
-    }
-
-    pub(crate) fn mouse_move(
-        &mut self,
-        event: &MouseMoveEvent,
-        hovered: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(geometry) = self.geometry.get() else {
-            return;
-        };
-        let (at, side) = geometry.cell_at(event.position);
-
-        if self.selecting && event.pressed_button == Some(MouseButton::Left) {
-            self.terminal.update(cx, |terminal, cx| {
-                terminal.update_emulator(cx, |emulator| emulator.update_selection(at, side));
-            });
-            return;
-        }
-
-        let held = self
-            .reported_button
-            .filter(|_| event.pressed_button.is_some());
-        let modes = self.terminal.read(cx).emulator().modes();
-        let wanted = held.is_some() || (hovered && modes.mouse_motion);
-        if wanted && self.last_reported_cell != Some(at) {
-            self.report_mouse(MouseEventKind::Move(held), at, &event.modifiers, cx);
-        }
-    }
-
-    pub(crate) fn mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        if self.selecting && event.button == MouseButton::Left {
-            self.selecting = false;
-            if cx.settings().terminal.copy_on_select {
-                self.copy_selection(cx);
-            }
-        }
-        if let Some(button) = self.reported_button.take()
-            && let Some(geometry) = self.geometry.get()
-        {
-            let (at, _) = geometry.cell_at(event.position);
-            self.report_mouse(MouseEventKind::Release(button), at, &event.modifiers, cx);
-        }
-    }
-
-    pub(crate) fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let Some(geometry) = self.geometry.get() else {
-            return;
-        };
-        let delta = event.delta.pixel_delta(geometry.line_height).y;
-        self.scroll_remainder += f32::from(delta) / f32::from(geometry.line_height);
-        let lines = self.scroll_remainder.trunc() as i32;
-        if lines == 0 {
-            return;
-        }
-        self.scroll_remainder -= lines as f32;
-
-        let modes = self.terminal.read(cx).emulator().modes();
-        if modes.reports_mouse() {
-            let (at, _) = geometry.cell_at(event.position);
-            let kind = if lines > 0 {
-                MouseEventKind::WheelUp
-            } else {
-                MouseEventKind::WheelDown
-            };
-            for _ in 0..lines.abs().min(MAX_WHEEL_REPORTS) {
-                self.report_mouse(kind, at, &event.modifiers, cx);
-            }
-        } else if modes.alt_screen && modes.alternate_scroll {
-            // A full-screen program without mouse support scrolls with arrows.
-            let key = if lines > 0 { "up" } else { "down" };
-            let press = KeyPress {
-                key,
-                modifiers: Modifiers::default(),
-                text: None,
-            };
-            if let Some(bytes) = encode_key(&press, modes) {
-                let terminal = self.terminal.read(cx);
-                for _ in 0..lines.abs() {
-                    terminal.send(bytes.clone());
-                }
-            }
-        } else {
-            self.terminal
-                .update(cx, |terminal, cx| terminal.scroll(Scroll::Lines(lines), cx));
-        }
-    }
-
-    fn report_mouse(
-        &mut self,
-        kind: MouseEventKind,
-        at: CellPoint,
-        modifiers: &gpui_kit::Modifiers,
-        cx: &mut Context<Self>,
-    ) {
-        self.last_reported_cell = Some(at);
-        let terminal = self.terminal.read(cx);
-        let event = MouseEvent {
-            kind,
-            at,
-            modifiers: self::modifiers(modifiers),
-        };
-        if let Some(report) = encode_mouse(&event, terminal.emulator().modes()) {
-            terminal.send(report);
-        }
     }
 
     // ── Actions ──────────────────────────────────────────────────────────────
@@ -709,14 +548,5 @@ fn modifiers(modifiers: &gpui_kit::Modifiers) -> Modifiers {
         ctrl: modifiers.control,
         alt: modifiers.alt,
         shift: modifiers.shift,
-    }
-}
-
-fn vt_button(button: MouseButton) -> Option<nocterm_vt::MouseButton> {
-    match button {
-        MouseButton::Left => Some(nocterm_vt::MouseButton::Left),
-        MouseButton::Middle => Some(nocterm_vt::MouseButton::Middle),
-        MouseButton::Right => Some(nocterm_vt::MouseButton::Right),
-        _ => None,
     }
 }

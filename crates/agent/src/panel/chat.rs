@@ -40,9 +40,13 @@ impl AgentPanel {
         }
         let dirty = thread.update(cx, |thread, _| std::mem::take(&mut thread.dirty_rows));
         let dirty = dirty.into_iter().collect::<Vec<_>>();
+        self.navigation
+            .observe(thread.entity_id(), &thread.read(cx).state.entries, &dirty);
         self.sync_stream(&dirty, cx);
         body = body.child(
             div()
+                .id("agent-transcript-area")
+                .test_support()
                 .relative()
                 .w_full()
                 .min_w_0()
@@ -54,11 +58,19 @@ impl AgentPanel {
                         self.list.clone(),
                         cx.processor(|this, index, _, cx| this.render_entry(index, cx)),
                     )
-                    .with_row_style(gpui_kit::StyleRefinement::default().px_0().pb_0())
+                    // Reserve the navigation gutter even at the live edge so
+                    // showing its controls never changes message wrapping.
+                    .with_row_style(
+                        gpui_kit::StyleRefinement::default()
+                            .px_0()
+                            .pr(gpui_kit::px(48.))
+                            .pb_0(),
+                    )
                     .with_bottom_fade(cx.theme().background)
                     .size_full(),
                 )
-                // The usage card lies over the chat, just above the composer.
+                .children(self.render_message_navigation(cx))
+                // The usage card retains its original full-width chat overlay.
                 .when(self.menu == Some(MenuKind::Usage), |area| {
                     area.child(
                         div()
@@ -91,7 +103,7 @@ impl AgentPanel {
         body = body
             .when(
                 thread.read(cx).generating
-                    || thread.read(cx).session.is_none()
+                    || thread.read(cx).session().is_none()
                     || thread.read(cx).auth_required
                     || thread.read(cx).fallback_history
                     || thread.read(cx).status_error

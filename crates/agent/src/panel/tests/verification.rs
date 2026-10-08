@@ -226,7 +226,7 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| thread.send("new question".into(), cx));
     cx.run_until_parked();
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
         .try_send(AgentEvent::Session(acp::SessionNotification::new(
             session,
@@ -337,6 +337,14 @@ fn reopen(
     saved: nocterm_ai::history::SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
+    f.panel.update(cx, |panel, cx| {
+        for thread in &panel.threads {
+            if thread.read(cx).chat_id == saved.id {
+                thread.update(cx, |thread, cx| thread.release_resources(cx));
+            }
+        }
+    });
+    cx.run_until_parked();
     let thread =
         cx.new(|cx| crate::thread::AgentThread::restored(saved, f.workspace.downgrade(), cx));
     f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));

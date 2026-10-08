@@ -20,10 +20,12 @@ fn real_agent_initialize_and_session() {
         let registry = AgentRegistry::new(&settings);
         let launch = registry.get(&id).expect("Known agent").clone();
         let directory = tempfile::tempdir().unwrap();
-        let connection = AcpConnector
+        let connection = AcpConnector::unmanaged()
             .connect(ConnectRequest {
                 terminal_auth: false,
                 sandbox: None,
+                resources: Default::default(),
+                cancellation: Default::default(),
                 launch,
                 working_directory: directory.path().to_owned(),
             })

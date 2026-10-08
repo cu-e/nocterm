@@ -3,7 +3,7 @@
 use gpui_kit::{
     Anchor, AnyElement, Context, Entity, Focusable as _, SharedString, TestSupportExt as _,
     component::{
-        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::Textarea,
@@ -17,7 +17,7 @@ use nocterm_ai::{acp, thread::ThreadState};
 use nocterm_ui::IconName;
 
 use super::{
-    AgentPanel, MenuKind, usage,
+    AgentPanel, MenuKind,
     widgets::{attachment_icon, menu_variant, mode_label, running_dot},
 };
 use crate::{
@@ -266,16 +266,7 @@ impl AgentPanel {
                         .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
                 )
                 .child(div().flex_1().min_w_0().child(controls))
-                .child(
-                    usage::context_ring(state.usage.as_ref(), cx)
-                        .selected(self.menu == Some(MenuKind::Usage))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if this.menu != Some(MenuKind::Usage) {
-                                this.refresh_usage(cx);
-                            }
-                            this.toggle_menu(MenuKind::Usage, cx);
-                        })),
-                )
+                .child(self.usage_button(state.usage.as_ref(), cx))
                 .child(
                     Button::new("agent-send")
                         .primary()
@@ -293,11 +284,7 @@ impl AgentPanel {
                         })
                         .flex_shrink_0()
                         .tooltip(if stop_button { "Stop" } else { "Send" })
-                        .disabled(
-                            thread.read(cx).session.is_none()
-                                || thread.read(cx).auth_required
-                                || self.preparing_images(),
-                        )
+                        .disabled(thread.read(cx).auth_required || self.preparing_images())
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.current().is_some_and(|thread| {
                                 thread.read(cx).generating

@@ -7,12 +7,20 @@
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
 | `ai.agents` | "object" | `{}` | Agents by id. An entry named like a built-in agent (`claude`, `codex`, `hermes`) changes it; any other id adds a custom agent. |
+| `ai.approval.agent_permissions` | ["allow","ask"] | `"ask"` | Whether an action runs straight away or waits for the user. |
 | `ai.approval.redact_secrets` | "boolean" | `true` | Hide private keys, access tokens, passwords and credentials in URLs in terminal output before an agent reads it. This is best effort; do not attach terminals that show secrets. |
 | `ai.approval.terminal_read` | ["allow","ask"] | `"allow"` | Whether an action runs straight away or waits for the user. |
 | `ai.approval.terminal_write` | ["allow","ask"] | `"ask"` | Whether an action runs straight away or waits for the user. |
 | `ai.default_agent` | ["string","null"] | `null` | Agent id that new threads start with. Unset: ask each time. |
 | `ai.enabled` | "boolean" | `true` | Master switch. Off: the AI panel is hidden and every agent is stopped. |
+| `ai.resources.memory_high_mb` | "integer"; 64–1048576 | `2048` | Memory pressure threshold for each agent tree, in MiB. |
+| `ai.resources.memory_max_mb` | "integer"; 64–1048576 | `4096` | Hard memory limit for each agent tree, in MiB. |
+| `ai.resources.memory_swap_max_mb` | "integer"; 0–1048576 | `1024` | Maximum swap used by each agent tree, in MiB. Zero disables swap. |
+| `ai.resources.tasks_max` | "integer"; 16–65536 | `512` | Maximum processes and threads in each agent tree. |
 | `ai.sandbox` | "off", "workspace" | `"off"` | How agent processes are isolated from the rest of the system. |
+| `ai.sessions.idle_timeout_secs` | "integer"; 1–3600 | `90` | Release a session after this many idle seconds. |
+| `ai.sessions.max_idle` | "integer"; 0–64 | `2` | Maximum warm idle sessions. Zero releases every idle session. |
+| `ai.sessions.max_live` | "integer"; 1–64 | `4` | Maximum starting, live and closing sessions, shared by every window. |
 | `ai.working_directory` | ["string","null"] | `null` | Folder agents start in. Unset: a private folder in the application's state directory. Without isolation, agents can read and change any of your files. |
 | `appearance.card_gap` | "number"; 0.0–24.0 | `4.0` | Space between floating cards and around the window's edge, in pixels. |
 | `appearance.card_radius` | "number"; 0.0–24.0 | `10.0` | Corner radius of floating cards, in pixels. |

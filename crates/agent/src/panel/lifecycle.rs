@@ -13,6 +13,7 @@ impl AgentPanel {
         self.stream = Default::default();
         self.list.update(cx, |list, cx| list.reset(0, cx));
         self.list_count = 0;
+        self.navigation.clear();
         self.expanded.clear();
         self.image_cache.clear();
         self.reset_commands();
@@ -28,7 +29,16 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = self.original_composer_text(cx);
+        if let Some(thread) = self.current() {
+            thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
+        }
         self.leave_composer_with(true, cx);
+        for thread in &self.threads {
+            Runtime::global(cx).update(cx, |runtime, cx| {
+                runtime.capture_and_detach_document(thread.entity_id(), cx);
+            });
+        }
         self.threads.clear();
         self.active = None;
         self.composer = Default::default();
@@ -49,11 +59,11 @@ impl AgentPanel {
     pub(super) fn new_thread_connection(
         &mut self,
         id: String,
-        fresh: bool,
+        _fresh: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(launch) = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
+        let Some(_launch) = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
             .get(&id)
             .cloned()
         else {
@@ -74,7 +84,7 @@ impl AgentPanel {
             });
         }
         self.track(&thread, window, cx);
-        self.connect_thread(&thread, launch, fresh, cx);
+
         self.threads.push(thread);
         let id = self.threads.last().unwrap().entity_id();
         self.select_thread(id, cx);
@@ -88,42 +98,29 @@ impl AgentPanel {
             return;
         };
         let draft = self.original_composer_text(cx);
+        old.update(cx, |thread, cx| thread.set_draft(draft, cx));
         self.leave_composer_with(true, cx);
-        // Edits were restored before taking the model-owned restart snapshot.
+        // Release ACP even if another observer still holds the old document entity.
+        old.update(cx, |thread, cx| thread.release_resources(cx));
+        // Edits and provider tool statuses are final before taking the restart snapshot.
         let data = old.read(cx).restart_data();
         self.new_thread_connection(data.agent.clone(), true, window, cx);
-        if let Some(thread) = self.current() {
-            thread.update(cx, |thread, cx| {
-                thread.apply_restart(data);
-                cx.notify();
-            });
-            self.composer.drafts.insert(thread.entity_id(), draft);
-            self.load_composer(cx);
-        }
-        let old = old.entity_id();
-        self.retain_threads(|thread, _| thread.entity_id() != old, cx);
-    }
-    /// Registers `thread` with the terminal bridge and connects its agent.
-    pub(super) fn connect_thread(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        launch: nocterm_ai::AgentLaunch,
-        fresh: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let runtime = Runtime::global(cx);
-        let registration = runtime.update(cx, |runtime, cx| runtime.register_bridge(thread, cx));
-        match registration {
-            Ok(registration) => {
-                thread.update(cx, |thread, _| thread.registration = Some(registration))
-            }
-            Err(error) => thread.update(cx, |thread, cx| thread.fail(&error, cx)),
+        let Some(thread) = self
+            .current()
+            .filter(|thread| thread.entity_id() != old.entity_id())
+        else {
+            return;
         };
-        if thread.read(cx).registration.is_some() {
-            runtime.update(cx, |runtime, cx| {
-                runtime.connect(thread.clone(), launch, fresh, cx)
-            });
-        }
+        thread.update(cx, |thread, _| thread.apply_restart(data));
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(&thread, cx));
+        thread.update(cx, |thread, cx| {
+            thread.save(cx);
+            cx.notify();
+        });
+        self.load_composer(cx);
+        let old = old.entity_id();
+        Runtime::global(cx).update(cx, |runtime, _| runtime.unregister_document(old));
+        self.retain_threads(|thread, _| thread.entity_id() != old, cx);
     }
     /// Shows the chats saved in earlier runs, oldest first, before the
     /// chats of this run.
@@ -153,25 +150,11 @@ impl AgentPanel {
         self.active = self.active.map(|active| active + count);
         cx.notify();
     }
-    /// Connects a chat restored from history when it is opened.
+    /// Explicit activation is reserved for work, never for opening history.
+    #[cfg(test)]
     pub(super) fn wake(&mut self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) {
-        if !thread.read(cx).dormant {
-            return;
-        }
-        thread.update(cx, |thread, _| thread.dormant = false);
-        let agent = thread.read(cx).agent_id.clone();
-        match nocterm_ai::AgentRegistry::new(&cx.settings().ai)
-            .get(&agent)
-            .cloned()
-        {
-            Some(launch) => self.connect_thread(thread, launch, false, cx),
-            None => thread.update(cx, |thread, cx| {
-                thread.fail(
-                    &format!("The agent `{agent}` is no longer configured. Start a new chat."),
-                    cx,
-                )
-            }),
-        }
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
+        thread.update(cx, |thread, cx| thread.request_activation(cx));
     }
     pub(super) fn track(
         &mut self,
@@ -179,6 +162,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.window = Some(handle));
