@@ -207,7 +207,7 @@ impl AgentThread {
     }
     /// Marks the chat as changed now and saves it.
     pub(crate) fn persist(&mut self, cx: &mut Context<Self>) {
-        self.updated = nocterm_ai::history::now();
+        self.updated = nocterm_ai::time::now();
         self.save(cx);
     }
     /// Saves transcript, queued prompts or an unsent draft to history.

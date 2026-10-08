@@ -11,7 +11,7 @@ impl AgentThread {
         }
         self.draft = draft;
         self.draft_changed = true;
-        self.updated = nocterm_ai::history::now();
+        self.updated = nocterm_ai::time::now();
         if self.draft_save.is_none() {
             self.draft_save = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor()

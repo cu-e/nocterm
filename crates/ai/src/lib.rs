@@ -15,6 +15,7 @@ pub mod sandbox;
 #[cfg(feature = "test-support")]
 pub mod testing;
 pub mod thread;
+pub mod time;
 pub mod tool_display;
 pub mod tools;
 pub mod usage;

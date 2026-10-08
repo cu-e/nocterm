@@ -295,7 +295,7 @@ impl AgentPanel {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
-                nocterm_ai::history::now().saturating_sub(chat.updated),
+                nocterm_ai::time::now().saturating_sub(chat.updated),
             )))
         };
         let model = chat.model().unwrap_or_default();
