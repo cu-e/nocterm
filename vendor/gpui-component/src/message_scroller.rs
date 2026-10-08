@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::{ops::Range, time::Duration};
 
 use gpui::{
@@ -64,6 +65,13 @@ impl MessageScrollerState {
     /// Return whether the list is actively following its tail.
     pub fn is_following_tail(&self) -> bool {
         self.list_state.is_following_tail()
+    }
+
+    /// Return the first visible row and the pixel offset into it.
+    ///
+    /// This read-only query preserves the list's scroll position and follow mode.
+    pub fn logical_scroll_top(&self) -> ListOffset {
+        self.list_state.logical_scroll_top()
     }
 
     /// Reset the list to `item_count` rows.
@@ -472,6 +480,8 @@ mod tests {
                 assert!(state.remeasure_items(0..6, cx));
                 assert!(!state.remeasure_items(6..7, cx));
                 assert!(state.scroll_to_item(2, cx));
+                assert_eq!(state.logical_scroll_top().item_ix, 2);
+                assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
                 assert!(!state.is_scrolled_up());
                 assert!(!state.is_following_tail());
                 state.scroll_to_end(cx);

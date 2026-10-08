@@ -36,6 +36,7 @@ mod images;
 mod lifecycle;
 mod menu;
 mod message_actions;
+mod navigation;
 mod queue;
 mod servers;
 mod split;
@@ -85,6 +86,7 @@ pub(crate) struct AgentPanel {
     composer: queue::ComposerState,
     commands: commands::CommandState,
     list_count: usize,
+    navigation: navigation::MessageNavigation,
     expanded: HashSet<usize>,
     error: Option<String>,
     subscriptions: Vec<Subscription>,
@@ -126,6 +128,7 @@ impl AgentPanel {
             if this.menu == Some(MenuKind::Usage) {
                 this.close_usage(window, cx);
             }
+            this.sync_composer_draft(cx);
             this.commands.input_value = value;
             if !this
                 .commands
@@ -171,6 +174,16 @@ impl AgentPanel {
                     | WorkspaceEvent::LocalDirectoryChanged
                     | WorkspaceEvent::ConnectionsChanged => cx.notify(),
                     WorkspaceEvent::RightPanelVisibilityChanged => {
+                        if !this
+                            .workspace
+                            .upgrade()
+                            .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+                        {
+                            this.sync_composer_draft(cx);
+                            if let Some(thread) = this.current() {
+                                thread.update(cx, |thread, cx| thread.flush_draft(cx));
+                            }
+                        }
                         this.sync_approval_attention(window, cx);
                         cx.notify();
                     }
@@ -226,6 +239,7 @@ impl AgentPanel {
             composer: Default::default(),
             commands: Default::default(),
             list_count: 0,
+            navigation: Default::default(),
             expanded: HashSet::new(),
             error: None,
             subscriptions: [
@@ -276,7 +290,11 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        let text = self.input.read(cx).value().to_string();
+        let text = if self.composer.edit.is_some() {
+            self.input.read(cx).value().to_string()
+        } else {
+            self.original_composer_text(cx)
+        };
         let replace = self
             .composer
             .edit

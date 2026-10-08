@@ -719,3 +719,68 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     );
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
+
+#[gpui_kit::test]
+async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.update(|cx| {
+        nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.idle_timeout_secs = 2)
+    })
+    .await
+    .unwrap();
+    let thread = draft(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        let input = f.panel.read(cx).input.clone();
+        input.update(cx, |input, cx| {
+            input.set_value("draft before activation", window, cx)
+        });
+    })
+    .unwrap();
+    tick(cx, 1);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    let chats = f._directory.path().join("chats");
+    assert_eq!(
+        nocterm_ai::history::load_all(&chats)[0].draft.as_deref(),
+        Some("draft before activation")
+    );
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| panel.send(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    complete_active(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        let input = f.panel.read(cx).input.clone();
+        input.update(cx, |input, cx| {
+            input.set_value("draft retained after idle", window, cx)
+        });
+    })
+    .unwrap();
+    tick(cx, 1);
+    tick(cx, 3);
+    cx.update(|cx| {
+        assert!(thread.read(cx).lease.is_none());
+        assert_eq!(
+            thread.read(cx).draft.as_deref(),
+            Some("draft retained after idle")
+        );
+        assert_eq!(thread.read(cx).state.entries.len(), 1);
+        assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
+    });
+    assert_eq!(
+        nocterm_ai::history::load_all(&chats)[0].draft.as_deref(),
+        Some("draft retained after idle")
+    );
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
+    cx.run_until_parked();
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).input.read(cx).value().as_ref(),
+            "draft retained after idle"
+        )
+    });
+    assert!(f.access.sent.borrow().is_empty());
+}

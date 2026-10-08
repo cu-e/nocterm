@@ -127,10 +127,19 @@ impl AgentThread {
             queue.push(prompt);
         }
         self.refresh_storage_budget()?;
-        let metadata = self.history_metadata(cx);
+        let mut metadata = self.history_metadata(cx);
+        // Sending moves ordinary text into the queue: budget it once.
+        if replace.is_none() {
+            metadata.draft = None;
+        }
         self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
         self.queue = queue;
+        if replace.is_none() {
+            self.draft = None;
+            self.draft_save = None;
+            self.draft_changed = false;
+        }
         if replace.is_none() {
             self.next_queue_id += 1;
         }

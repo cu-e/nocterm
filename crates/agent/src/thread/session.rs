@@ -53,7 +53,7 @@ impl AgentThread {
         let restore = self
             .restore
             .clone()
-            .filter(|restore| restore.workdir.is_absolute());
+            .filter(|restore| !self.state.entries.is_empty() && restore.workdir.is_absolute());
         self.lease.as_mut().expect("starting lease").workdir = Some(
             restore
                 .as_ref()

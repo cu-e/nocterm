@@ -19,6 +19,20 @@ impl Runtime {
     pub(crate) fn take_saved_chats(&mut self) -> Option<Vec<nocterm_ai::history::SavedChat>> {
         self.saved_chats.as_mut().map(std::mem::take)
     }
+    /// Captures durable state before disabling AI or dropping a panel's documents.
+    pub(crate) fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        if let Some(thread) = self.documents.get(&id).and_then(WeakEntity::upgrade) {
+            let snapshot = thread.update(cx, |thread, cx| {
+                let chat = thread.flush_snapshot(cx)?;
+                thread.document_revision += 1;
+                Some((chat, thread.document_revision))
+            });
+            if let Some((chat, revision)) = snapshot {
+                self.save_chat(chat, id, revision, cx);
+            }
+        }
+        self.unregister_document(id);
+    }
     /// Queues `chat` to be written, replacing an older queued snapshot.
     pub(crate) fn save_chat(
         &mut self,
@@ -54,7 +68,7 @@ impl Runtime {
         writes.extend(std::mem::take(&mut self.chat_writes));
         for thread in self.documents.values().filter_map(WeakEntity::upgrade) {
             if self.document_owners.get(&thread.read(cx).chat_id) == Some(&thread.entity_id())
-                && let Some(chat) = thread.read(cx).shared_snapshot(cx)
+                && let Some(chat) = thread.read(cx).flush_snapshot(cx)
                 && !self.deleted_chats.contains(&chat.id)
             {
                 writes.insert(chat.id.clone(), Some(chat));
@@ -173,3 +187,6 @@ impl Runtime {
         }));
     }
 }
+
+#[cfg(test)]
+mod history_tests;

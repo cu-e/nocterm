@@ -103,6 +103,7 @@ mod tests {
         chat.pinned = true;
         chat.pending_history = true;
         chat.updated = u64::MAX;
+        chat.draft = Some("literal draft\n\0界\"\\".into());
         chat.attachments = vec![
             SavedAttachment::LocalTerminal("local".into()),
             SavedAttachment::Connection("remote".into()),

@@ -514,10 +514,12 @@ mod history;
 mod invalidation;
 mod labels;
 mod lifecycle;
+mod navigation;
 mod persistence;
 mod provider_intersections;
 mod provider_permissions;
 mod resources;
+mod restoration;
 mod routing;
 mod servers;
 mod tool_input;
@@ -534,3 +536,8 @@ mod commands;
 
 mod audit;
 mod execution;
+
+mod drafts;
+
+mod drafts_intersections;
+mod restoration_intersections;

@@ -78,6 +78,9 @@ pub struct SavedChat {
     /// Saved transcript still needs delivery to the current agent session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending_history: bool,
+    /// Unsent composer text, preserved literally and kept out of the transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
     /// Seconds since the Unix epoch.
     pub updated: u64,
     pub entries: Vec<Entry>,
@@ -106,6 +109,7 @@ impl SavedChat {
             workdir: None,
             model: None,
             pending_history: false,
+            draft: None,
             updated: now(),
             entries: Vec::new(),
             queue: Vec::new(),
@@ -223,7 +227,15 @@ pub fn load_all(dir: &Path) -> Vec<SavedChat> {
                 .path()
                 .file_stem()
                 .is_some_and(|stem| *stem == *chat.id);
-            (chat.version == VERSION && valid_id(&chat.id) && name_matches).then_some(chat)
+            (chat.version == VERSION
+                && valid_id(&chat.id)
+                && name_matches
+                && (!chat.entries.is_empty()
+                    || !chat.queue.is_empty()
+                    || chat.draft.as_ref().is_some_and(|draft| !draft.is_empty())
+                    || chat.name.is_some()
+                    || chat.pinned))
+                .then_some(chat)
         })
         .collect();
     chats.sort_by_key(|chat| std::cmp::Reverse((chat.pinned, chat.updated)));
@@ -411,3 +423,6 @@ mod tests {
         assert!(chat.validate_size().is_err());
     }
 }
+
+#[cfg(test)]
+mod draft_tests;

@@ -1,7 +1,7 @@
 use crate::runtime::Runtime;
 use futures::{FutureExt as _, channel::oneshot};
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, WeakEntity, Window,
+    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
 };
 use nocterm_ai::{
     AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, acp, approval::ApprovalGrants,
@@ -97,6 +97,11 @@ pub(crate) struct AgentThread {
     /// The name the user gave the chat.
     pub name: Option<String>,
     pub pinned: bool,
+    pub draft: Option<String>,
+    draft_changed: bool,
+    /// A snapshot was queued for history, or this chat was restored.
+    history_queued: bool,
+    draft_save: Option<Task<()>>,
     pub state: ThreadState,
     pub last_prompt: Option<PromptMetadata>,
     /// The model of a saved chat's last prompt.
@@ -159,11 +164,17 @@ impl AgentThread {
     ) -> Self {
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| {
+            let snapshot = cx.ai_enabled().then(|| this.flush_snapshot(cx)).flatten();
+            this.document_revision += 1;
+            let revision = this.document_revision;
             this.cancel_execution();
             this.cancel_pending();
             let lease = this.lease.take();
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| {
+                    if let Some(chat) = snapshot {
+                        runtime.save_chat(chat, id, revision, cx);
+                    }
                     runtime.unregister_document(id);
                     if let Some(lease) = lease {
                         runtime.release_lease(id, lease, cx);
@@ -220,6 +231,10 @@ impl AgentThread {
             restore: None,
             name: None,
             pinned: false,
+            draft: None,
+            draft_changed: false,
+            history_queued: false,
+            draft_save: None,
             state: Default::default(),
             last_prompt: None,
             last_model: None,
@@ -273,6 +288,7 @@ impl AgentThread {
     pub(crate) fn is_draft(&self) -> bool {
         self.state.entries.is_empty()
             && self.queue.is_empty()
+            && self.draft.is_none()
             && self.name.is_none()
             && !self.generating
             && self.permissions.is_empty()
@@ -609,3 +625,5 @@ pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
         _ => String::new(),
     }
 }
+
+mod drafts;

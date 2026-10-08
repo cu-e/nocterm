@@ -73,7 +73,6 @@ impl AgentPanel {
         {
             self.leave_composer_with(true, cx);
         }
-        self.composer.drafts.retain(|id, _| !removed.contains(id));
         self.queue_heights.retain(|id, _| !removed.contains(id));
         self.threads
             .retain(|thread| !removed.contains(&thread.entity_id()));
@@ -292,7 +291,7 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.state.entries.is_empty() {
+        let when = if chat.state.entries.is_empty() && chat.draft.is_none() {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(

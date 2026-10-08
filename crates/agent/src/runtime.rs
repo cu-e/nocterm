@@ -109,6 +109,10 @@ impl Runtime {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
         let settings = cx.observe_global::<SettingsStore>(|this, cx| {
+            if !cx.ai_enabled() {
+                let ids = this.documents.keys().copied().collect::<Vec<_>>();
+                for id in ids { this.capture_and_detach_document(id, cx); }
+            }
             let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
             for warning in &registry.warnings{tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");}
             let keys: Vec<_> = this

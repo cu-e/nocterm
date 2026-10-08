@@ -23,6 +23,7 @@ impl AgentThread {
         thread.storage_budget =
             nocterm_ai::history::HistoryBudget::restored(chat.prepared_budget());
         thread.chat_id = chat.id;
+        thread.history_queued = true;
         thread.updated = chat.updated;
         thread.dormant = true;
         thread.status = "Saved chat".into();
@@ -31,6 +32,7 @@ impl AgentThread {
         thread.state.title = chat.title;
         thread.name = chat.name;
         thread.pinned = chat.pinned;
+        thread.draft = chat.draft.filter(|draft| !draft.is_empty());
         thread.attachments = super::queue::restore_attachments(&chat.attachments);
         thread.queue = chat
             .queue
@@ -139,7 +141,7 @@ impl AgentThread {
         self.save(cx);
         cx.notify();
     }
-    /// What is saved of this chat; `None` until something was said.
+    /// Metadata shared by transcript, queue and unsent composer snapshots.
     pub(super) fn history_metadata(&self, cx: &gpui_kit::App) -> nocterm_ai::history::SavedChat {
         let mut chat = nocterm_ai::history::SavedChat::new(self.agent_id.clone());
         chat.id = self.chat_id.clone();
@@ -147,6 +149,7 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = self.name.clone();
         chat.pinned = self.pinned;
+        chat.draft = self.draft.clone();
         chat.attachments = self.stable_attachments(self.default_attachments(), cx);
         chat.times = nocterm_ai::history::SavedChat::bounded_times(
             self.state.entries.len(),
@@ -154,6 +157,10 @@ impl AgentThread {
         );
         chat.model = self.model();
         chat.pending_history = self.fallback_history;
+        // Providers may not persist an empty session until its first prompt.
+        if self.state.entries.is_empty() {
+            return chat;
+        }
         match (&self.session(), &self.restore) {
             (Some(session), _) => {
                 chat.session_id = Some(session.0.to_string());
@@ -173,7 +180,7 @@ impl AgentThread {
         &self,
         cx: &gpui_kit::App,
     ) -> Option<std::sync::Arc<nocterm_ai::history::SharedChat>> {
-        if self.state.entries.is_empty() && self.queue.is_empty() {
+        if self.state.entries.is_empty() && self.queue.is_empty() && self.draft.is_none() {
             return None;
         }
         let mut metadata = self.history_metadata(cx);
@@ -203,13 +210,16 @@ impl AgentThread {
         self.updated = nocterm_ai::history::now();
         self.save(cx);
     }
-    /// Saves the chat to history, if anything was said.
+    /// Saves transcript, queued prompts or an unsent draft to history.
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
-        if let Some(chat) = self.shared_snapshot(cx) {
+        if let Some(chat) = self.pending_snapshot(cx) {
+            self.history_queued = true;
+            self.draft_save = None;
+            self.draft_changed = false;
             self.document_revision += 1;
             let revision = self.document_revision;
-            let owner = cx.entity_id();
             // Deferred: this may run while the runtime itself is updating.
+            let owner = cx.entity_id();
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| {
                     runtime.save_chat(chat, owner, revision, cx)

@@ -13,6 +13,7 @@ impl AgentPanel {
         self.stream = Default::default();
         self.list.update(cx, |list, cx| list.reset(0, cx));
         self.list_count = 0;
+        self.navigation.clear();
         self.expanded.clear();
         self.image_cache.clear();
         self.reset_commands();
@@ -28,7 +29,16 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = self.original_composer_text(cx);
+        if let Some(thread) = self.current() {
+            thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
+        }
         self.leave_composer_with(true, cx);
+        for thread in &self.threads {
+            Runtime::global(cx).update(cx, |runtime, cx| {
+                runtime.capture_and_detach_document(thread.entity_id(), cx);
+            });
+        }
         self.threads.clear();
         self.active = None;
         self.composer = Default::default();
@@ -88,22 +98,28 @@ impl AgentPanel {
             return;
         };
         let draft = self.original_composer_text(cx);
+        old.update(cx, |thread, cx| thread.set_draft(draft, cx));
         self.leave_composer_with(true, cx);
         // Release ACP even if another observer still holds the old document entity.
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
         let data = old.read(cx).restart_data();
         self.new_thread_connection(data.agent.clone(), true, window, cx);
-        if let Some(thread) = self.current() {
-            thread.update(cx, |thread, cx| {
-                thread.apply_restart(data);
-                cx.notify();
-            });
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(&thread, cx));
-            self.composer.drafts.insert(thread.entity_id(), draft);
-            self.load_composer(cx);
-        }
+        let Some(thread) = self
+            .current()
+            .filter(|thread| thread.entity_id() != old.entity_id())
+        else {
+            return;
+        };
+        thread.update(cx, |thread, _| thread.apply_restart(data));
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(&thread, cx));
+        thread.update(cx, |thread, cx| {
+            thread.save(cx);
+            cx.notify();
+        });
+        self.load_composer(cx);
         let old = old.entity_id();
+        Runtime::global(cx).update(cx, |runtime, _| runtime.unregister_document(old));
         self.retain_threads(|thread, _| thread.entity_id() != old, cx);
     }
     /// Shows the chats saved in earlier runs, oldest first, before the

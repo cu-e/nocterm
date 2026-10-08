@@ -69,13 +69,18 @@ and process injection variables are blocked even when explicitly requested.
 Each chat is saved as one JSON file in `agent-chats/` under the state directory
 (private 0700 directory, 0600 files). A chat is written when you send a
 message, when the agent finishes a reply, when its title, name or pin changes,
-when it fails, and once more when the application quits. A chat nobody wrote in
-is not saved, and an empty chat is dropped when you start or open another one.
+when it fails, and once more when the application quits. Unsent composer text
+belongs to its chat and is saved in coalesced batches after 300 ms, as well as
+when leaving the chat or closing the application. Draft-only chats appear as
+New Agent and restore their text when reopened, without sending it. Only truly
+empty chats are dropped when you start or open another one. Sending an ordinary
+message clears its draft after acceptance; temporary queue edits preserve the
+original unsent text.
 
 A saved chat holds the agent id, the agent's title, your name for it, the pin,
-the agent session id and its working directory, the last model, and the
-transcript: your messages, the agent's replies and reasoning, and tool calls
-with the input and output the agent reported for them. The terminal descriptors
+the agent session id and its working directory, the last model, unsent text,
+and the transcript: your messages, the agent's replies and reasoning, and tool
+calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
 terminal text. Images over 512 KiB are replaced by a note, only the last 2000
 entries of a chat are kept, and at most 200 chats are restored, pinned ones
@@ -85,6 +90,8 @@ After a restart, saved chats appear in the history without starting their
 agent. Opening history or creating an empty chat does not start an agent or MCP.
 Sending a message saves its queue entry before starting the agent and reopens its session with
 `session/resume` (no replay) or `session/load`, whichever the agent advertises.
+Chats containing only a draft or queued messages start a new session even if an
+older saved record includes an empty provider session id.
 An agent without restoration, or whose saved session no longer exists, starts
 a new session. A bounded copy of the saved user/assistant conversation accompanies
 the next prompt, and the status explains the fallback. Temporary restoration
