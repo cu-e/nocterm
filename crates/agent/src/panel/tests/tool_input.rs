@@ -54,15 +54,17 @@ fn verified_inputs_show_operations_with_literal_arguments_and_separate_options()
         json!({"terminal_id":"t1","program":"sh","args":args,"stdin":input}),
     );
     let selected = source(&call).unwrap();
-    assert_eq!(selected.label, "Program");
-    assert_eq!(selected.text, "sh");
-    assert_eq!(selected.extra[0].label, "Arguments");
+    assert_eq!(selected.label, "Command");
+    assert_eq!(selected.text, "echo 'a b'\n");
+    assert_eq!(selected.extra[0].label, "Program");
+    assert_eq!(selected.extra[0].text, "sh");
+    assert_eq!(selected.extra[1].label, "Arguments");
     assert_eq!(
-        serde_json::from_str::<Value>(&selected.extra[0].text).unwrap(),
+        serde_json::from_str::<Value>(&selected.extra[1].text).unwrap(),
         args
     );
-    assert_eq!(selected.extra[1].label, "Standard input");
-    assert_eq!(selected.extra[1].text, input);
+    assert_eq!(selected.extra[2].label, "Standard input");
+    assert_eq!(selected.extra[2].text, input);
     for (tool, input, label, literal, parameters) in [
         (
             "read_terminal",
@@ -473,23 +475,23 @@ fn structured_arguments_and_stdin_are_independently_copyable(cx: &mut TestAppCon
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(
             window.find(("copy-tool-input", 0usize)).label(),
-            Some("Copy program")
-        );
-        assert_eq!(
-            window.find(("copy-tool-input-extra-0", 0usize)).label(),
-            Some("Copy arguments")
+            Some("Copy command")
         );
         assert_eq!(
             window.find(("copy-tool-input-extra-1", 0usize)).label(),
+            Some("Copy arguments")
+        );
+        assert_eq!(
+            window.find(("copy-tool-input-extra-2", 0usize)).label(),
             Some("Copy standard input")
         );
-        window.click(("copy-tool-input-extra-0", 0usize), cx);
+        window.click(("copy-tool-input-extra-1", 0usize), cx);
         assert_eq!(
             serde_json::from_str::<Value>(&cx.read_from_clipboard().unwrap().text().unwrap())
                 .unwrap(),
             args
         );
-        window.click(("copy-tool-input-extra-1", 0usize), cx);
+        window.click(("copy-tool-input-extra-2", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), stdin);
     })
     .unwrap();

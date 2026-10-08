@@ -479,6 +479,8 @@ mod lifecycle;
 mod routing;
 mod servers;
 mod tool_input;
+mod tool_output;
+mod tool_presentation;
 
 mod flow;
 

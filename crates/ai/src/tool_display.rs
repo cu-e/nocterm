@@ -80,63 +80,8 @@ pub fn operation(tool: &str) -> &'static str {
     }
 }
 
-/// Only the explicit MCP envelope is unwrapped. A foreign tool's nested
-/// `arguments.command` is not proof that it is a Nocterm command.
-pub fn envelope(call: &acp::ToolCall, server: &str) -> Option<TerminalCall> {
-    let input = call.raw_input.as_ref()?;
-    let prefix = format!("mcp.{server}.");
-    let named_tool = call.name.as_deref().or_else(|| {
-        call.title
-            .starts_with("mcp.")
-            .then_some(call.title.as_str())
-    });
-    let named_tool = match named_tool {
-        Some(name) => Some(name.strip_prefix(&prefix)?),
-        None => None,
-    };
-    if let (Some(envelope_server), Some(tool), Some(arguments)) = (
-        input.get("server"),
-        input.get("tool"),
-        input.get("arguments"),
-    ) {
-        if envelope_server.as_str()? != server
-            || named_tool.is_some_and(|name| Some(name) != tool.as_str())
-        {
-            return None;
-        }
-        return parse(tool.as_str()?, arguments.clone());
-    }
-    let tool = call
-        .name
-        .as_deref()
-        .unwrap_or(&call.title)
-        .strip_prefix(&prefix)?;
-    parse(tool, input.clone())
-}
-
-/// A name alone can provide a readable fallback, never a destination.
-pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
-    let name = call.name.as_deref().unwrap_or(&call.title);
-    let name = name.strip_prefix("mcp.nocterm-")?;
-    let (registration, tool) = name.split_once('.')?;
-    if registration.is_empty() || !registration.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    (operation(tool) != "Tool").then_some(tool)
-}
-
-/// Historical provider input is useful as a requested operation. Matching
-/// identifiers only establish its format; they never establish its host.
-pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
-    let tool = fallback_tool(call)?;
-    let name = call.name.as_deref().unwrap_or(&call.title);
-    let (server, named_tool) = name.strip_prefix("mcp.")?.rsplit_once('.')?;
-    if tool != named_tool {
-        return None;
-    }
-    let request = envelope(call, server)?;
-    (self::request(&request).0 == tool).then_some(request)
-}
+mod identity;
+pub use identity::{envelope, fallback_tool, requested_call};
 
 pub fn header(call: &acp::ToolCall) -> String {
     let title = ToolDisplay::from_call(call)

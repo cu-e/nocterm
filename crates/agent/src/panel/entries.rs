@@ -20,6 +20,7 @@ use super::{
 };
 
 pub(super) mod tool_input;
+pub(super) mod tool_output;
 
 impl AgentPanel {
     fn image_view(&self, key: (usize, usize, bool)) -> gpui_kit::AnyElement {
@@ -289,28 +290,10 @@ impl AgentPanel {
                         };
                         row = row.child(tool_input::render(index, input, cx));
                     }
-                    let text = tool_output_text(&call.content);
-                    let mut end = text.len().min(200 * 1024);
-                    while !text.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    row = row.child(
-                        div()
-                            .id(("tool-output", index))
-                            .test_support()
-                            .w_full()
-                            .min_w_0()
-                            .max_w_full()
-                            .p_2()
-                            .rounded(px(6.))
-                            .bg(cx.theme().muted.opacity(0.5))
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
-                            .whitespace_normal()
-                            .child(text[..end].to_owned()),
-                    );
-                    if end < text.len() {
-                        row = row.child("Tool output truncated at 200 KiB.");
+                    if let Some(output) =
+                        tool_output::source(call, cx.settings().ai.approval.redact_secrets)
+                    {
+                        row = row.child(tool_output::render(index, output, cx));
                     }
                 }
             }
@@ -328,20 +311,4 @@ impl AgentPanel {
         }
         row.into_any_element()
     }
-}
-
-/// What a tool call produced, as text: its text content as is, anything
-/// else as JSON. Long lines wrap rather than scroll.
-fn tool_output_text(content: &[acp::ToolCallContent]) -> String {
-    content
-        .iter()
-        .map(|item| match item {
-            acp::ToolCallContent::Content(content) => match &content.content {
-                acp::ContentBlock::Text(text) => text.text.clone(),
-                block => serde_json::to_string_pretty(block).unwrap_or_default(),
-            },
-            item => serde_json::to_string_pretty(item).unwrap_or_default(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
 }
