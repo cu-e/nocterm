@@ -43,6 +43,8 @@ impl AgentPanel {
         self.sync_stream(&dirty, cx);
         body = body.child(
             div()
+                .id("agent-transcript-area")
+                .test_support()
                 .relative()
                 .w_full()
                 .min_w_0()

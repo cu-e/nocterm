@@ -76,6 +76,7 @@ pub(crate) struct AgentPanel {
     history_search: Entity<InputState>,
     renaming: Option<history::Renaming>,
     menu: Option<MenuKind>,
+    usage_focus: FocusHandle,
     list: Entity<gpui_kit::component::message_scroller::MessageScrollerState>,
     stream: stream::StreamReveal,
     stream_tick: Option<Task<()>>,
@@ -121,6 +122,9 @@ impl AgentPanel {
             let value = this.input.read(cx).value().to_string();
             if value == this.commands.input_value {
                 return;
+            }
+            if this.menu == Some(MenuKind::Usage) {
+                this.close_usage(window, cx);
             }
             this.commands.input_value = value;
             if !this
@@ -185,6 +189,16 @@ impl AgentPanel {
         });
         let (right_split, right_subscription) = split::split_state(1, cx);
         let (left_split, left_subscription) = split::split_state(0, cx);
+        let usage_focus = cx.focus_handle();
+        let usage_blur = cx.on_focus_out(&usage_focus, window, |this, _, _, cx| {
+            this.dismiss_usage(cx);
+        });
+        let input_focus = input.read(cx).focus_handle(cx);
+        let usage_input_blur = cx.on_focus_out(&input_focus, window, |this, _, window, cx| {
+            if !this.usage_focus.contains_focused(window, cx) {
+                this.dismiss_usage(cx);
+            }
+        });
         Self {
             image_cache: HashMap::new(),
             sign_in_inputs: HashMap::new(),
@@ -202,6 +216,7 @@ impl AgentPanel {
             history_search,
             renaming: None,
             menu: None,
+            usage_focus,
             list: cx
                 .new(|cx| gpui_kit::component::message_scroller::MessageScrollerState::new(0, cx)),
             stream: Default::default(),
@@ -222,6 +237,8 @@ impl AgentPanel {
                 Some(runtime_observer),
                 Some(right_subscription),
                 Some(left_subscription),
+                Some(usage_blur),
+                Some(usage_input_blur),
                 workspace_observer,
             ]
             .into_iter()
@@ -447,7 +464,11 @@ impl Render for AgentPanel {
             ))
             .capture_action(cx.listener(
                 |this, _: &gpui_kit::component::input::Escape, window, cx| {
-                    this.command_action("escape", window, cx);
+                    if this.dismiss_usage(cx) {
+                        cx.stop_propagation();
+                    } else {
+                        this.command_action("escape", window, cx);
+                    }
                 },
             ))
             .capture_action(cx.listener(
