@@ -110,7 +110,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = SettingsFile::new(dir.path().join("settings.toml"));
         file.save(&settings).unwrap();
-        assert_eq!(file.load().unwrap(), settings);
+        assert_eq!(file.load().unwrap().settings, settings);
     }
     #[test]
     fn unsanitized_process_limits_fail_validation() {

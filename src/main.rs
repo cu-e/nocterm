@@ -254,13 +254,19 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
     })
 }
 
-/// The user's settings. Broken settings are reported and replaced by the
-/// defaults for this run only: the file is left alone so nothing in it is
+/// The user's settings. A broken section runs on its defaults and is shown on
+/// the settings page; saving leaves it in the file. A file that is not TOML
+/// at all is replaced by the defaults for this run only, so nothing in it is
 /// lost.
 fn load_settings(paths: &Paths) -> SettingsStore {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(settings) => SettingsStore::new(settings, file),
+        Ok(loaded) => {
+            for error in &loaded.errors {
+                tracing::error!(%error, "a settings section is invalid; using its defaults");
+            }
+            SettingsStore::new(loaded.settings, file).with_errors(loaded.errors)
+        }
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
             SettingsStore::in_memory(Settings::default())

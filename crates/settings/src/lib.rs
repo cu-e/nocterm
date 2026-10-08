@@ -30,4 +30,4 @@ pub use schema::{
     SCROLLBACK_RANGE, Settings, ShellSettings, SshSettings, TerminalSettings, UiLayout,
     VaultSettings,
 };
-pub use store::SettingsFile;
+pub use store::{LoadedSettings, SectionError, SettingsFile};

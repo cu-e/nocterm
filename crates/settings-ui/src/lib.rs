@@ -419,11 +419,27 @@ impl Render for SettingsView {
                 .map(|page| page.view().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
         };
+        let section_errors: Vec<_> = cx
+            .global::<SettingsStore>()
+            .section_errors()
+            .iter()
+            .map(|error| {
+                format!(
+                    "The [{}] section of settings.toml has an error and uses its defaults until it is fixed or changed here: {}",
+                    error.key, error.error
+                )
+            })
+            .collect();
         let content = v_flex()
             .w_full()
             .max_w(form::page_width(cx))
             .px_8()
             .py_6()
+            .children(
+                section_errors
+                    .into_iter()
+                    .map(|error| form::error_text(error, cx)),
+            )
             .when_some(self.error.clone(), |content, error| {
                 content.child(form::error_text(error, cx))
             })

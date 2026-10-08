@@ -1,7 +1,7 @@
 //! Revision-checked settings publication with a bounded, ordered disk writer.
 use futures::channel::oneshot;
 use gpui_kit::{App, AppContext as _, BorrowAppContext as _, Context, Entity, Global, Task};
-use nocterm_settings::{Settings, SettingsFile};
+use nocterm_settings::{SectionError, Settings, SettingsFile};
 use std::{
     collections::VecDeque,
     sync::Arc,
@@ -17,6 +17,7 @@ pub struct SettingsStore {
     settings: Settings,
     file: Option<SettingsFile>,
     revision: u64,
+    errors: Vec<SectionError>,
 }
 impl SettingsStore {
     pub fn new(settings: Settings, file: SettingsFile) -> Self {
@@ -24,6 +25,7 @@ impl SettingsStore {
             settings: settings.sanitized(),
             file: Some(file),
             revision: 0,
+            errors: Vec::new(),
         }
     }
     pub fn in_memory(settings: Settings) -> Self {
@@ -31,10 +33,22 @@ impl SettingsStore {
             settings: settings.sanitized(),
             file: None,
             revision: 0,
+            errors: Vec::new(),
         }
+    }
+    /// Records the sections of the file that could not be read and run on
+    /// their defaults.
+    pub fn with_errors(mut self, errors: Vec<SectionError>) -> Self {
+        self.errors = errors;
+        self
     }
     pub fn is_persistent(&self) -> bool {
         self.file.is_some()
+    }
+    /// Sections of the file that could not be read and have not been
+    /// rewritten since.
+    pub fn section_errors(&self) -> &[SectionError] {
+        &self.errors
     }
     /// Optimistic revision for drafts. Advances only after successful publication.
     pub fn revision(&self) -> u64 {
@@ -160,6 +174,10 @@ pub fn update_settings(
 }
 fn publish(settings: Settings, cx: &mut App) -> u64 {
     cx.update_global::<SettingsStore, _>(|store, _| {
+        let before = &store.settings;
+        store
+            .errors
+            .retain(|error| error.outlives(before, &settings));
         store.settings = settings;
         store.revision += 1;
         store.revision
@@ -318,8 +336,8 @@ mod tests {
                 .unwrap_err()
                 .contains("Reload saved settings")
         );
-        assert_eq!(file.load().unwrap().terminal.font_size, Some(18.));
-        assert!(!file.load().unwrap().terminal.copy_on_select);
+        assert_eq!(file.load().unwrap().settings.terminal.font_size, Some(18.));
+        assert!(!file.load().unwrap().settings.terminal.copy_on_select);
     }
     #[gpui_kit::test]
     async fn ordered_background_writes_reject_queued_stale_drafts_and_do_not_notify_before_commit(
@@ -426,7 +444,7 @@ mod tests {
             cx.update(|cx| edit_settings(cx, |settings| settings.terminal.copy_on_select = true));
         assert_eq!(first.await.unwrap(), 1);
         assert_eq!(second.await.unwrap(), 2);
-        let saved = file.load().unwrap();
+        let saved = file.load().unwrap().settings;
         assert_eq!(saved.terminal.font_size, Some(18.));
         assert!(saved.terminal.copy_on_select);
     }
@@ -439,7 +457,7 @@ mod tests {
             cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
         drop(task);
         cx.run_until_parked();
-        assert!(file.load().unwrap().terminal.copy_on_select);
+        assert!(file.load().unwrap().settings.terminal.copy_on_select);
         cx.update(|cx| assert_eq!(cx.global::<SettingsStore>().revision(), 1));
     }
 
@@ -488,6 +506,36 @@ mod tests {
         for task in tasks {
             assert!(task.await.is_err());
         }
+    }
+
+    #[gpui_kit::test]
+    async fn changing_a_broken_section_clears_its_error(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(directory.path().join("settings.toml"));
+        std::fs::write(
+            file.path(),
+            "[terminal]\nfont_szie = 1\n[monitor]\nbogus = 1\n",
+        )
+        .unwrap();
+        let loaded = file.load().unwrap();
+        install(
+            SettingsStore::new(loaded.settings, file.clone()).with_errors(loaded.errors),
+            cx,
+        );
+        cx.update(|cx| assert_eq!(cx.global::<SettingsStore>().section_errors().len(), 2));
+        let task =
+            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.copy_on_select = true));
+        assert_eq!(task.await.unwrap(), 1);
+        cx.update(|cx| {
+            let errors = cx.global::<SettingsStore>().section_errors();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].key, "monitor");
+        });
+        assert!(
+            std::fs::read_to_string(file.path())
+                .unwrap()
+                .contains("bogus = 1")
+        );
     }
 
     #[gpui_kit::test]
