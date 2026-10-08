@@ -1,8 +1,8 @@
 use super::*;
+use crate::credentials::fake::FakeStore;
 use futures::executor::block_on;
 use gpui_kit::{AppContext as _, TestAppContext};
 use nocterm_session::{Auth, Reply, SecretRequest, Target};
-use nocterm_vault::{CredentialBinding, VaultService};
 use std::{cell::RefCell, rc::Rc};
 
 fn prompt(request: SecretRequest) -> Prompt {
@@ -14,23 +14,15 @@ fn prompt(request: SecretRequest) -> Prompt {
 fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
     cx: &mut TestAppContext,
 ) {
-    // The vault worker is a real thread; let its completions wake the test scheduler.
-    cx.executor().allow_parking();
-    let directory = tempfile::tempdir().unwrap();
-    let service = Arc::new(
-        VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
-    );
-    block_on(service.create(Secret::new("test unique master passphrase"))).unwrap();
+    let store = Arc::new(FakeStore::unlocked());
     let target = Target::new("test", "test-host", 22);
-    let id = block_on(service.put(
-        None,
-        "test".into(),
-        CredentialBinding::Password {
+    let id = store.insert(
+        SecretRequest::Password {
             target: target.clone(),
+            retry: false,
         },
-        Secret::new("stored account password"),
-    ))
-    .unwrap();
+        "stored account password",
+    );
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -38,7 +30,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
             SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init_credentials(service.clone(), |_, _, _| Task::ready(Ok(())), cx);
+        crate::init_credentials(store.clone(), |_, _, _| Task::ready(Ok(())), cx);
         cx.new(|cx| {
             Terminal::new(
                 SessionSpec {
@@ -69,7 +61,6 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
             )
         })
     });
-    block_on(service.list()).unwrap();
     cx.run_until_parked();
     assert_eq!(
         block_on(answer).unwrap().unwrap().expose(),
@@ -86,7 +77,6 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
             )
         })
     });
-    block_on(service.list()).unwrap();
     cx.run_until_parked();
     assert!(
         cx.update(|cx| terminal.read(cx).prompt().is_some()),
@@ -103,7 +93,6 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
             )
         })
     });
-    block_on(service.list()).unwrap();
     cx.run_until_parked();
     assert!(cx.update(|cx| {
         terminal
@@ -130,7 +119,6 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
             );
         })
     });
-    block_on(service.list()).unwrap();
     cx.run_until_parked();
     assert!(
         cx.update(|cx| matches!(
@@ -147,13 +135,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAppContext) {
-    // The vault worker is a real thread; let its completions wake the test scheduler.
-    cx.executor().allow_parking();
-    let directory = tempfile::tempdir().unwrap();
-    let service = Arc::new(
-        VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
-    );
-    block_on(service.create(Secret::new("test unique master passphrase"))).unwrap();
+    let store = Arc::new(FakeStore::unlocked());
     let saved = Rc::new(RefCell::new(Vec::new()));
     let sink = saved.clone();
     let target = Target::new("test", "test-host", 22);
@@ -165,7 +147,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
             cx,
         );
         crate::init_credentials(
-            service.clone(),
+            store.clone(),
             move |_, id, _| {
                 sink.borrow_mut().push(id);
                 Task::ready(Ok(()))
@@ -200,7 +182,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
         })
     });
     assert!(
-        block_on(service.list()).unwrap().is_empty(),
+        store.records().is_empty(),
         "answering a prompt is not successful authentication"
     );
     cx.update(|cx| {
@@ -216,19 +198,18 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
             terminal.handle_event(Event::Connected, cx);
         })
     });
-    let records = block_on(service.list()).unwrap();
     cx.run_until_parked();
-    assert_eq!(records.len(), 1);
-    assert_eq!(saved.borrow().len(), 1);
-    let binding = CredentialBinding::Password {
-        target: target.clone(),
-    };
     assert_eq!(
-        block_on(service.get(records[0].id, binding))
-            .unwrap()
-            .expose(),
-        "saved account password"
+        store.records(),
+        [(
+            SecretRequest::Password {
+                target: target.clone(),
+                retry: false,
+            },
+            "saved account password".to_owned()
+        )]
     );
+    assert_eq!(saved.borrow().len(), 1);
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
             terminal.handle_event(
@@ -244,7 +225,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
         })
     });
     assert_eq!(
-        block_on(service.list()).unwrap().len(),
+        store.records().len(),
         1,
         "failed attempts must never be saved"
     );

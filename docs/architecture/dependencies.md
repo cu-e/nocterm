@@ -28,7 +28,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
 | `nocterm-snippets-ui` | feature | `nocterm-core`, `nocterm-session`, `nocterm-snippets`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-session` | SSH and SFTP transport, implemented with russh. |
-| `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
+| `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
 | `nocterm-ui` | ui | `nocterm-design`, `nocterm-settings`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
@@ -121,7 +121,6 @@ graph TD
     nocterm_terminal --> nocterm_session
     nocterm_terminal --> nocterm_settings
     nocterm_terminal --> nocterm_ui
-    nocterm_terminal --> nocterm_vault
     nocterm_terminal --> nocterm_vt
     nocterm_terminal --> nocterm_workspace
     nocterm_themes --> nocterm_design

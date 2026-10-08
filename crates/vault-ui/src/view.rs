@@ -1,6 +1,6 @@
 //! The Vault page's state and the operations it starts.
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Task, Window,
+    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window,
     component::input::{InputEvent, InputState},
     prelude::*,
 };
@@ -8,9 +8,9 @@ use nocterm_session::Secret;
 use nocterm_ui::{ActiveSettings as _, SettingsStore, edit_settings};
 use nocterm_vault::{CredentialInfo, DeviceCapability, VaultFuture, VaultService};
 use nocterm_workspace::SettingsPage;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use crate::Service;
+use crate::{Service, VaultStatusGlobal};
 
 /// The page's tabs, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,11 +49,9 @@ pub struct VaultView {
     /// Minutes before the vault locks itself, saved when the field is left.
     pub(crate) auto_lock: Entity<InputState>,
     pub(crate) auto_lock_error: Option<SharedString>,
-    _watch: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 impl VaultView {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
@@ -79,6 +77,9 @@ impl VaultView {
                 if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
                     this.save_auto_lock(cx);
                 }
+            }),
+            cx.observe_global_in::<VaultStatusGlobal>(window, |this, window, cx| {
+                this.status_changed(window, cx);
             }),
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 let minutes = cx.settings().vault.auto_lock_minutes.to_string();
@@ -106,37 +107,6 @@ impl VaultView {
             unlocked: false,
             generation: 0,
             _subscriptions: subscriptions,
-            _watch: cx.spawn_in(window, async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(250))
-                        .await;
-                    if !matches!(
-                        cx.update(|window, app| this.update(app, |this, cx| {
-                            let unlocked = this.service.is_unlocked();
-                            if unlocked != this.unlocked {
-                                this.unlocked = unlocked;
-                                if !unlocked {
-                                    this.records.clear();
-                                    this.generation = this.generation.wrapping_add(1);
-                                    this.busy = false;
-                                    this.device_busy = false;
-                                    this.password
-                                        .update(cx, |input, cx| input.set_value("", window, cx));
-                                    this.confirm
-                                        .update(cx, |input, cx| input.set_value("", window, cx));
-                                } else {
-                                    this.refresh(cx);
-                                }
-                                cx.notify();
-                            }
-                        })),
-                        Ok(Ok(()))
-                    ) {
-                        break;
-                    }
-                }
-            }),
         };
         this.refresh_device(cx);
         if this.service.is_unlocked() {
@@ -144,6 +114,27 @@ impl VaultView {
             this.refresh(cx);
         }
         this
+    }
+    /// Follows the vault locking or unlocking, by this page or any other path.
+    fn status_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let unlocked = self.service.is_unlocked();
+        if unlocked == self.unlocked {
+            return;
+        }
+        self.unlocked = unlocked;
+        if unlocked {
+            self.refresh(cx);
+        } else {
+            self.records.clear();
+            self.generation = self.generation.wrapping_add(1);
+            self.busy = false;
+            self.device_busy = false;
+            self.password
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.confirm
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        cx.notify();
     }
     pub(crate) fn refresh_device(&mut self, cx: &mut Context<Self>) {
         let future = self.service.probe_device_unlock();

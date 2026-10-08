@@ -6,6 +6,7 @@
 //! crate depends on one: the UI works the same over SSH, a local shell or a
 //! scripted fake in a test.
 
+mod credentials;
 pub mod exec;
 pub mod fs;
 mod launch;
@@ -14,6 +15,7 @@ mod secret;
 mod session;
 mod target;
 
+pub use credentials::{CredentialFuture, CredentialStore};
 pub use exec::{
     Collected, ErrorTail, ExecError, ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink,
     HostExec,

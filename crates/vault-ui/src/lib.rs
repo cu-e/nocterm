@@ -2,20 +2,45 @@
 //!
 //! The page has four tabs: the vault's state with unlock and lock, the saved
 //! credentials, the master password and device unlock, and options.
+mod credentials;
 mod render;
 mod unlock;
 mod view;
 
 use gpui_kit::{App, AppContext as _, Global};
 use nocterm_ui::{ActiveSettings as _, SettingsStore};
-use nocterm_vault::{DeviceUnlockProvider, VaultService};
+use nocterm_vault::{DeviceUnlockProvider, VaultService, VaultStatus};
 use nocterm_workspace::SettingsPageSpec;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+pub use credentials::VaultCredentials;
 pub use view::VaultView;
 
 struct Service(Arc<VaultService>);
 impl Global for Service {}
+
+/// The vault's status, updated whenever the vault worker publishes a change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultStatusGlobal(pub VaultStatus);
+impl Global for VaultStatusGlobal {}
+
+/// Mirrors the service's status into [`VaultStatusGlobal`] for the UI.
+fn watch_status(service: Arc<VaultService>, cx: &mut App) {
+    let mut seen = service.revision();
+    cx.set_global(VaultStatusGlobal(service.status()));
+    cx.spawn(async move |cx| {
+        loop {
+            seen = service.changed(seen).await;
+            let status = VaultStatusGlobal(service.status());
+            cx.update(|cx| {
+                if *cx.global::<VaultStatusGlobal>() != status {
+                    cx.set_global(status);
+                }
+            });
+        }
+    })
+    .detach();
+}
 
 /// Installs the shared service and returns it for authentication integration.
 pub fn init(path: PathBuf, cx: &mut App) -> Result<Arc<VaultService>, nocterm_vault::VaultError> {
@@ -34,6 +59,7 @@ pub fn init_with_device_unlock(
         device,
     )?);
     cx.set_global(Service(service.clone()));
+    watch_status(service.clone(), cx);
     unlock::init(cx);
     cx.observe_global::<SettingsStore>(|cx| {
         cx.global::<Service>().0.set_auto_lock(Duration::from_secs(

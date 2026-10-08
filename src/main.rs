@@ -111,7 +111,7 @@ fn main() -> anyhow::Result<()> {
             ) {
                 Ok(vault) => {
                     nocterm_terminal::init_credentials(
-                        vault,
+                        Arc::new(nocterm_vault_ui::VaultCredentials::new(vault)),
                         |spec, id, cx| {
                             nocterm_connections::Connections::global(cx).update(
                                 cx,
