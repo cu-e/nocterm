@@ -9,7 +9,43 @@ pub struct ConnectRequest {
     pub terminal_auth: bool,
     /// Run the agent isolated under this policy; `None` runs it directly.
     pub sandbox: Option<crate::sandbox::SandboxPolicy>,
+    /// Limits for the complete agent process tree.
+    pub resources: nocterm_settings::AgentResourceSettings,
+    /// Cancellation must return only after any startup process tree is stopped.
+    pub cancellation: ConnectionCancellation,
 }
+
+/// Shared startup cancellation. The connector acknowledges it by completing its future.
+#[derive(Clone, Default, Debug)]
+pub struct ConnectionCancellation(std::sync::Arc<CancellationState>);
+#[derive(Default, Debug)]
+struct CancellationState {
+    cancelled: std::sync::atomic::AtomicBool,
+    waker: futures::task::AtomicWaker,
+}
+impl ConnectionCancellation {
+    pub fn cancel(&self) {
+        self.0
+            .cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.0.waker.wake();
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub fn cancelled(&self) -> BoxFuture<'static, ()> {
+        let token = self.clone();
+        Box::pin(futures::future::poll_fn(move |cx| {
+            token.0.waker.register(cx.waker());
+            if token.is_cancelled() {
+                std::task::Poll::Ready(())
+            } else {
+                std::task::Poll::Pending
+            }
+        }))
+    }
+}
+
 pub trait AgentConnector: Send + Sync + 'static {
     fn connect(
         &self,
@@ -62,7 +98,16 @@ pub trait AgentCommands: Send + Sync {
     ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>>;
     fn authenticate(&self, method: acp::AuthMethodId)
     -> BoxFuture<'static, Result<(), AgentError>>;
-    fn close_session(&self, session: acp::SessionId);
+    /// Completes only after the agent acknowledges close and earlier events are drained.
+    fn close_session(
+        &self,
+        session: acp::SessionId,
+    ) -> BoxFuture<'static, Result<CloseSessionOutcome, AgentError>>;
+    /// Stops the connection, awaiting bounded process-tree cleanup.
+    fn shutdown_gracefully(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+        self.shutdown();
+        Box::pin(async { Ok(()) })
+    }
     fn shutdown(&self);
 }
 /// A session to reopen.
@@ -74,7 +119,16 @@ pub struct RestoreSessionRequest {
     /// Open a new session that starts with this one's history instead.
     pub fork: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseSessionOutcome {
+    Closed,
+    Unsupported,
+    TimedOut,
+}
+
 pub enum AgentEvent {
+    /// FIFO fence: the foreground consumer acknowledges all earlier events.
+    Barrier(oneshot::Sender<()>),
     Session(acp::SessionNotification),
     Permission {
         request: acp::RequestPermissionRequest,
@@ -87,6 +141,8 @@ pub enum AgentEvent {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
+    #[error("Agent process cleanup could not be confirmed: {0}")]
+    CleanupUnconfirmed(String),
     #[error("Authentication required: {0}")]
     AuthRequired(String),
     #[error("{0}")]

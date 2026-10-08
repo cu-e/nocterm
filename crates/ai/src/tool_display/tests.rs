@@ -93,3 +93,59 @@ fn a_foreign_title_or_mismatched_explicit_tool_cannot_impersonate_the_envelope()
     call.title = "Run command".into();
     assert!(envelope(&call, "nocterm-3").is_some());
 }
+
+#[test]
+fn exact_provider_spellings_share_identity_and_validate_wrappers() {
+    let input =
+        json!({"terminal_id":"t1", "program":"bash", "args":["-lc","printf '%s\\n' 'hello'"]});
+    let expected = request(&parse("exec_command", input.clone()).unwrap()).1;
+    for title in [
+        "mcp.nocterm-17.exec_command",
+        "mcp__nocterm-17__exec_command",
+    ] {
+        for wrapped in [false, true] {
+            let args = if wrapped {
+                json!({"server":"nocterm-17", "tool":"exec_command", "arguments":input})
+            } else {
+                input.clone()
+            };
+            let call = acp::ToolCall::new("screenshot", title).raw_input(args);
+            assert_eq!(request(&envelope(&call, "nocterm-17").unwrap()).1, expected);
+            assert!(envelope(&call, "nocterm-1").is_none());
+            assert!(header(&call).starts_with("Nocterm · Execute program"));
+            assert!(ToolDisplay::from_call(&call).is_none());
+        }
+    }
+    let mut call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
+    call.name = Some("mcp.nocterm-17.exec_command".into());
+    assert!(envelope(&call, "nocterm-17").is_some());
+    call.name = Some("mcp__nocterm-170__exec_command".into());
+    assert!(envelope(&call, "nocterm-17").is_none());
+}
+
+#[test]
+fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
+    for title in [
+        "mcp__foreign__exec_command",
+        "mcp__nocterm-x__exec_command",
+        "mcp__nocterm-17__exec_command__extra",
+        "mcp__nocterm-17__unknown",
+        "mcp__nocterm-17_exec_command",
+    ] {
+        let call = acp::ToolCall::new("c1", title)
+            .raw_input(json!({"terminal_id":"t1", "program":"true"}));
+        assert!(requested_call(&call).is_none(), "{title}");
+        assert!(envelope(&call, "nocterm-17").is_none());
+        assert!(header(&call).starts_with(title));
+    }
+    for input in [
+        json!({"server":"nocterm-170", "tool":"exec_command", "arguments":{"terminal_id":"t1", "program":"true"}}),
+        json!({"server":"nocterm-17", "tool":"send_input", "arguments":{"terminal_id":"t1", "text":"foreign"}}),
+        json!({"server":"nocterm-17", "arguments":{"terminal_id":"t1", "program":"true"}}),
+        json!({"terminal_id":"t1", "program":""}),
+    ] {
+        let call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
+        assert!(requested_call(&call).is_none());
+        assert!(header(&call).starts_with("mcp__nocterm-17__exec_command"));
+    }
+}

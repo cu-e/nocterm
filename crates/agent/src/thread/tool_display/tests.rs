@@ -267,3 +267,36 @@ fn a_reordered_request_at_the_tracking_limit_revokes_the_old_host_without_losing
         );
     }
 }
+
+#[test]
+fn both_provider_spellings_match_one_snapshot_and_duplicate_rows_revoke_the_host() {
+    for bridge_first in [false, true] {
+        let mut displays = ToolDisplays::default();
+        displays.prepare(1, 0);
+        let Entry::Tool(mut call) = row("c1") else {
+            unreachable!()
+        };
+        call.title = "mcp__nocterm-3__run_command".into();
+        let mut entries = vec![Entry::Tool(call)];
+        if bridge_first {
+            displays.records.push(record());
+        }
+        displays.normalize(&mut entries);
+        if !bridge_first {
+            displays.records.push(record());
+        }
+        displays.normalize(&mut entries);
+        let Entry::Tool(call) = &entries[0] else {
+            unreachable!()
+        };
+        assert!(tool_display::header(call).contains("original.example"));
+        entries.push(row("c2"));
+        displays.normalize(&mut entries);
+        for entry in &entries {
+            let Entry::Tool(call) = entry else {
+                unreachable!()
+            };
+            assert!(!tool_display::header(call).contains("original.example"));
+        }
+    }
+}

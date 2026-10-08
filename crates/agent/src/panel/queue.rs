@@ -23,7 +23,8 @@ use std::time::Duration;
 #[derive(Default)]
 pub(super) struct ComposerState {
     pub edit: Option<QueueEdit>,
-    pub drafts: std::collections::HashMap<EntityId, String>,
+    /// Text still belongs to the previously displayed chat until hydration runs.
+    loading: Option<(EntityId, String)>,
     pub revision: u64,
     pub pending_images: usize,
 }
@@ -43,7 +44,21 @@ impl AgentPanel {
     }
     pub(super) fn original_composer_text(&self, cx: &gpui_kit::App) -> String {
         self.composer.edit.as_ref().map_or_else(
-            || self.input.read(cx).value().to_string(),
+            || {
+                let value = self.input.read(cx).value().to_string();
+                if self
+                    .composer
+                    .loading
+                    .as_ref()
+                    .is_some_and(|(_, previous)| previous == &value)
+                {
+                    self.current()
+                        .and_then(|thread| thread.read(cx).draft.clone())
+                        .unwrap_or_default()
+                } else {
+                    value
+                }
+            },
             |edit| edit.draft.clone(),
         )
     }
@@ -71,9 +86,12 @@ impl AgentPanel {
         self.composer.pending_images = 0;
         let draft = self
             .restore_queue_edit(!discard, cx)
-            .unwrap_or_else(|| self.input.read(cx).value().to_string());
+            .unwrap_or_else(|| self.original_composer_text(cx));
         if !discard && let Some(thread) = self.current() {
-            self.composer.drafts.insert(thread.entity_id(), draft);
+            thread.update(cx, |thread, cx| {
+                thread.set_draft(draft, cx);
+                thread.save(cx);
+            });
         }
         self.queue_open = false;
     }
@@ -82,7 +100,8 @@ impl AgentPanel {
             return;
         };
         let id = thread.entity_id();
-        let draft = self.composer.drafts.get(&id).cloned().unwrap_or_default();
+        let revision = self.composer.revision;
+        self.composer.loading = Some((id, self.input.read(cx).value().to_string()));
         let Some(window) = thread.read(cx).window else {
             return;
         };
@@ -93,7 +112,20 @@ impl AgentPanel {
                     if panel
                         .current()
                         .is_some_and(|thread| thread.entity_id() == id)
+                        && panel.composer.revision == revision
                     {
+                        panel.sync_composer_draft(cx);
+                        if panel.composer.revision != revision {
+                            return;
+                        }
+                        let draft = panel
+                            .current()
+                            .unwrap()
+                            .read(cx)
+                            .draft
+                            .clone()
+                            .unwrap_or_default();
+                        panel.composer.loading = None;
                         panel
                             .input
                             .update(cx, |input, cx| input.set_value(draft, window, cx));
@@ -122,12 +154,15 @@ impl AgentPanel {
         self.composer.revision = self.composer.revision.wrapping_add(1);
         self.composer.pending_images = 0;
         let revision = self.composer.revision;
+        let draft = self.original_composer_text(cx);
+        self.composer.loading = None;
+        thread.update(cx, |thread, cx| thread.set_draft(draft.clone(), cx));
         let epoch = thread.read(cx).epoch;
         let ready = prompt.saved.images.is_empty();
         self.composer.edit = Some(QueueEdit {
             thread: thread.entity_id(),
             id,
-            draft: self.input.read(cx).value().to_string(),
+            draft,
             ready,
             preparation: None,
         });
@@ -451,5 +486,23 @@ impl AgentPanel {
         }
         row = row.child(previews);
         row.into_any_element()
+    }
+}
+
+impl AgentPanel {
+    pub(super) fn sync_composer_draft(&mut self, cx: &mut Context<Self>) {
+        if self.composer.edit.is_none()
+            && let Some(thread) = self.current()
+        {
+            let text = self.input.read(cx).value().to_string();
+            if let Some((owner, previous)) = &self.composer.loading {
+                if *owner != thread.entity_id() || previous == &text {
+                    return;
+                }
+                self.composer.loading = None;
+                self.composer.revision = self.composer.revision.wrapping_add(1);
+            }
+            thread.update(cx, |thread, cx| thread.set_draft(text, cx));
+        }
     }
 }

@@ -89,3 +89,10 @@ local terminals use these hooks for direct add/zoom controls and a blank-header
 double-click gesture; other panels preserve their original presentation.
 Existing tab-group tests were moved unchanged into coherent child modules.
 Remove this patch when upstream provides equivalent free-header customization.
+
+`src/message_scroller.rs` exposes the existing virtual list's read-only
+`logical_scroll_top` query through `MessageScrollerState`. Nocterm uses the row
+index and within-row offset to navigate between chat messages without measuring
+or scanning the transcript. Scroll actions, tail following, the scrollbar and the
+built-in jump-to-latest control keep their existing ownership. Remove this
+forwarder when upstream exposes an equivalent query.

@@ -161,7 +161,7 @@ impl Jobs {
             job.cancel(State::Cancelled);
         }
     }
-    pub(super) fn active(&self) -> impl Iterator<Item = (&str, &Arc<dyn HostExec>)> {
+    pub(in crate::thread) fn active(&self) -> impl Iterator<Item = (&str, &Arc<dyn HostExec>)> {
         self.jobs
             .values()
             .filter(|job| job.snapshot().active())

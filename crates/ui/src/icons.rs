@@ -28,6 +28,7 @@ gpui_kit::assets::icon_assets!(
         Upload,
         RefreshCw,
         ArrowUp,
+        ChevronsUp,
         ArrowDown,
         // The AI agent panel.
         Bot,

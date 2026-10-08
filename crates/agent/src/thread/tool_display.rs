@@ -181,7 +181,7 @@ impl AgentThread {
         entry: Option<&TerminalEntry>,
         cx: &mut Context<Self>,
     ) {
-        let Some(registration) = &self.registration else {
+        let Some(registration) = &self.registration() else {
             return;
         };
         let server = bridge_server_name(registration.id);

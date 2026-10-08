@@ -1,17 +1,17 @@
 use super::*;
 
 #[gpui_kit::test]
-fn shared_connection_approvals_recheck_detachment_and_stop_blocks_late_chunks(
+fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chunks(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
     new_chat(&f, cx);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     let (rx, session) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let (tx, rx) = oneshot::channel();
-        let registration = thread.read(cx).registration.as_ref().unwrap().id;
+        let registration = thread.read(cx).registration().as_ref().unwrap().id;
         let id = thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone());
         thread.update(cx, |thread, cx| {
             thread.handle_tool(
@@ -30,7 +30,7 @@ fn shared_connection_approvals_recheck_detachment_and_stop_blocks_late_chunks(
         assert_eq!(thread.read(cx).tools.len(), 1);
         thread.update(cx, |thread, _| thread.attachments.clear());
         thread.update(cx, |thread, cx| thread.approve_tool(0, true, true, cx));
-        (rx, thread.read(cx).session.clone().unwrap())
+        (rx, thread.read(cx).session().clone().unwrap())
     });
     assert!(f.access.sent.borrow().is_empty());
     assert!(futures::executor::block_on(rx).unwrap().is_err());
@@ -95,7 +95,7 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
             let terminals = thread.resolved(cx);
             assert_eq!(terminals.len(), 1);
             (
-                thread.registration.as_ref().unwrap().id,
+                thread.registration().as_ref().unwrap().id,
                 terminals[0].0.clone(),
             )
         })
@@ -137,7 +137,7 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
     new_chat(&f, cx);
     let responses = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        let registration_id = thread.read(cx).registration.as_ref().unwrap().id;
+        let registration_id = thread.read(cx).registration().as_ref().unwrap().id;
         let terminal_id = thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone());
         (0..5)
             .map(|_| {
@@ -224,7 +224,7 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
     new_chat(&f, cx);
     let responses = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        let session = thread.read(cx).session.clone().unwrap();
+        let session = thread.read(cx).session().clone().unwrap();
         (0..2).map(|_| {
             let (send, receive) = oneshot::channel();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Long permission title"},"options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"deny","name":"Reject","kind":"reject_once"}]})).unwrap();
@@ -270,7 +270,7 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     new_chat(&f, cx);
     let (send, receive) = oneshot::channel();
     cx.update(|cx| {
-        let session = owner.read(cx).session.clone().unwrap();
+        let session = owner.read(cx).session().clone().unwrap();
         let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Review pending request"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
         f.panel.update(cx, |panel, cx| { panel.history = true; cx.notify(); });
         owner.update(cx, |thread, cx| thread.permission(request, send, cx));
@@ -305,7 +305,7 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
         let (send, receive) = oneshot::channel();
         let owner = cx.update(|cx| {
             let owner = f.panel.read(cx).current().unwrap();
-            let session = owner.read(cx).session.clone().unwrap();
+            let session = owner.read(cx).session().clone().unwrap();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Hidden permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
             owner.update(cx, |thread, cx| thread.permission(request, send, cx));
             owner

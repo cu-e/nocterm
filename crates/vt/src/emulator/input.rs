@@ -39,6 +39,11 @@ impl Emulator {
         self.term.grid().display_offset()
     }
 
+    /// Whether a selection anchor exists, including a drag with no cells selected yet.
+    pub fn has_selection(&self) -> bool {
+        self.term.selection.is_some()
+    }
+
     pub fn clear_selection(&mut self) {
         self.term.selection = None;
     }

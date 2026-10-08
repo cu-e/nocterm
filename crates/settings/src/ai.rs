@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub(crate) mod lifecycle;
+use lifecycle::{AgentResourceSettings, AgentSessionSettings};
 
 /// AI agents that work inside nocterm. Nothing runs until a thread is started.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -21,8 +23,12 @@ pub struct AiSettings {
     /// Without isolation, agents can read and change any of your files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
-    /// What an agent may do in the terminals you attach to it.
+    /// Confirmation policies for the agent's own tools and attached terminals.
     pub approval: ApprovalSettings,
+    /// Global limits for live agent sessions across all windows.
+    pub sessions: AgentSessionSettings,
+    /// Per-connection Linux process container limits.
+    pub resources: AgentResourceSettings,
     /// Agents by id. An entry named like a built-in agent (`claude`, `codex`,
     /// `hermes`) changes it; any other id adds a custom agent.
     pub agents: BTreeMap<String, AgentServerSettings>,
@@ -36,6 +42,8 @@ impl Default for AiSettings {
             default_agent: None,
             working_directory: None,
             approval: ApprovalSettings::default(),
+            sessions: AgentSessionSettings::default(),
+            resources: AgentResourceSettings::default(),
             agents: BTreeMap::new(),
         }
     }
@@ -55,10 +63,13 @@ pub enum SandboxMode {
     Workspace,
 }
 
-/// Which agent actions in attached terminals need your confirmation.
+/// Which agent actions need your confirmation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ApprovalSettings {
+    /// Permission requests from the agent for its own files and tools. Allow
+    /// selects a one-time approval only; providers without one still ask.
+    pub agent_permissions: ApprovalPolicy,
     /// Reading the output of an attached terminal.
     pub terminal_read: ApprovalPolicy,
     /// Typing into an attached terminal, running a command in it, or connecting to an
@@ -73,6 +84,7 @@ pub struct ApprovalSettings {
 impl Default for ApprovalSettings {
     fn default() -> Self {
         Self {
+            agent_permissions: ApprovalPolicy::Ask,
             terminal_read: ApprovalPolicy::Allow,
             terminal_write: ApprovalPolicy::Ask,
             redact_secrets: true,
@@ -134,6 +146,8 @@ impl AiSettings {
     /// as written: the registry skips the ones it cannot start, and the
     /// settings page explains why.
     pub(crate) fn sanitize(&mut self) {
+        self.sessions.sanitize();
+        self.resources.sanitize();
         trim_unset(&mut self.default_agent);
         trim_unset(&mut self.working_directory);
         for agent in self.agents.values_mut() {
@@ -162,6 +176,7 @@ mod tests {
 
         assert!(ai.enabled);
         assert_eq!(ai.default_agent, None);
+        assert_eq!(ai.approval.agent_permissions, ApprovalPolicy::Ask);
         assert_eq!(ai.approval.terminal_read, ApprovalPolicy::Allow);
         assert_eq!(ai.approval.terminal_write, ApprovalPolicy::Ask);
         assert!(ai.approval.redact_secrets);
@@ -178,7 +193,27 @@ mod tests {
         assert!(!settings.ai.enabled);
         assert_eq!(settings.ai.approval.terminal_write, ApprovalPolicy::Allow);
         assert_eq!(settings.ai.approval.terminal_read, ApprovalPolicy::Allow);
+        assert_eq!(settings.ai.approval.agent_permissions, ApprovalPolicy::Ask);
         assert!(settings.ai.approval.redact_secrets);
+    }
+
+    #[test]
+    fn permission_policies_round_trip_independently() {
+        for agent_permissions in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
+            for terminal_read in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
+                for terminal_write in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
+                    let mut settings = Settings::default();
+                    settings.ai.approval.agent_permissions = agent_permissions;
+                    settings.ai.approval.terminal_read = terminal_read;
+                    settings.ai.approval.terminal_write = terminal_write;
+                    let encoded = toml::to_string(&settings).unwrap();
+                    assert_eq!(
+                        toml::from_str::<Settings>(&encoded).unwrap().ai.approval,
+                        settings.ai.approval
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -73,7 +73,6 @@ impl AgentPanel {
         {
             self.leave_composer_with(true, cx);
         }
-        self.composer.drafts.retain(|id, _| !removed.contains(id));
         self.queue_heights.retain(|id, _| !removed.contains(id));
         self.threads
             .retain(|thread| !removed.contains(&thread.entity_id()));
@@ -96,11 +95,9 @@ impl AgentPanel {
     pub(super) fn open_thread(&mut self, id: EntityId, cx: &mut Context<Self>) {
         self.leave_composer(cx);
         self.discard_drafts(Some(id), cx);
-        let Some(index) = self.index_of(id) else {
+        if self.index_of(id).is_none() {
             return;
-        };
-        let thread = self.threads[index].clone();
-        self.wake(&thread, cx);
+        }
         self.select_thread(id, cx);
     }
 
@@ -111,7 +108,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.index_of(id) {
-            let chat = self.threads[index].read(cx).chat_id.clone();
+            let thread = self.threads[index].clone();
+            let chat = thread.read(cx).chat_id.clone();
+            thread.update(cx, |thread, cx| thread.release_resources(cx));
             Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
             if self.current().is_none() {
@@ -292,7 +291,7 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.state.entries.is_empty() {
+        let when = if chat.state.entries.is_empty() && chat.draft.is_none() {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
@@ -412,6 +411,7 @@ impl AgentPanel {
                                 let rename = panel.clone();
                                 let fork = panel.clone();
                                 let pin = panel.clone();
+                                let release = panel.clone();
                                 menu.item(
                                     PopupMenuItem::new("Rename")
                                         .icon(IconName::Pencil)
@@ -425,6 +425,17 @@ impl AgentPanel {
                                     move |_, window, cx| {
                                         let _ = fork.update(cx, |panel, cx| {
                                             panel.fork_thread(id, window, cx)
+                                        });
+                                    },
+                                ))
+                                .item(PopupMenuItem::new("Release agent resources").on_click(
+                                    move |_, _, cx| {
+                                        let _ = release.update(cx, |panel, cx| {
+                                            if let Some(index) = panel.index_of(id) {
+                                                panel.threads[index].update(cx, |thread, cx| {
+                                                    thread.release_resources(cx)
+                                                });
+                                            }
                                         });
                                     },
                                 ))

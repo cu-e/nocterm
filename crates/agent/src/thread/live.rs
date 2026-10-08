@@ -40,11 +40,12 @@ impl AgentThread {
         };
         self.live_commands
             .insert(request.terminal_id.clone(), lease.clone());
-        let epoch = self.epoch;
         let id = request.terminal_id.clone();
         let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
         let idle = Duration::from_millis(request.idle_ms.unwrap_or(1000));
+        let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
+            let _guard = guard;
             let started = Instant::now();
             let mut changed = started;
             let mut generation = None;
@@ -59,7 +60,7 @@ impl AgentThread {
                                 .into(),
                         );
                     }
-                    if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
+                    if !this.accept_updates || !cx.ai_enabled() {
                         return Err("Command observation cancelled.".into());
                     }
                     let (_, entry, _) = this

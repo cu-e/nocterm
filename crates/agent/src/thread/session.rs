@@ -6,10 +6,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 impl AgentThread {
     pub(crate) fn restore_descriptor(&self) -> Option<Restore> {
-        self.session
+        self.session()
             .as_ref()
             .and_then(|session| {
-                self.session_workdir.as_ref().map(|workdir| Restore {
+                self.session_workdir().as_ref().map(|workdir| Restore {
                     session: session.clone(),
                     workdir: workdir.clone(),
                     fork: false,
@@ -28,7 +28,7 @@ impl AgentThread {
         if !cx.ai_enabled() {
             return;
         }
-        let Some(registration) = &self.registration else {
+        let Some(registration) = &self.registration() else {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
@@ -45,7 +45,7 @@ impl AgentThread {
                 acp::EnvVariable::new("NOCTERM_BRIDGE_ENDPOINT", registration.endpoint.clone()),
                 acp::EnvVariable::new("NOCTERM_BRIDGE_TOKEN", registration.token.clone()),
             ]);
-        self.commands = Some(commands.clone());
+        self.lease.as_mut().expect("starting lease").commands = Some(commands.clone());
         self.info = Some(info);
         self.status = "Starting chat…".into();
         self.status_error = false;
@@ -53,8 +53,8 @@ impl AgentThread {
         let restore = self
             .restore
             .clone()
-            .filter(|restore| restore.workdir.is_absolute());
-        self.session_workdir = Some(
+            .filter(|restore| !self.state.entries.is_empty() && restore.workdir.is_absolute());
+        self.lease.as_mut().expect("starting lease").workdir = Some(
             restore
                 .as_ref()
                 .map_or_else(|| workdir.clone(), |restore| restore.workdir.clone()),
@@ -95,15 +95,15 @@ impl AgentThread {
         });
         cx.spawn(async move |this, cx| {
             let (result, restored, workdir) = future.await;
-            let _ = this.update(cx, |this, cx| {
+            let orphan = result.as_ref().ok().map(|response| response.session_id.clone());
+            let transferred = this.update(cx, |this, cx| {
                 if this.epoch != epoch || !cx.ai_enabled() {
-                    if let Ok(response) = result { commands.close_session(response.session_id); }
-                    return;
+                    return false;
                 }
                 this.connecting_session = false;
                 if restored == Some(false) {
                     // The new session lives in the connection's directory.
-                    this.session_workdir = Some(workdir);
+                    this.lease.as_mut().expect("starting lease").workdir = Some(workdir);
                 }
                 if restored.is_none() && result.is_err() {
                     // Kept for after signing in.
@@ -117,7 +117,7 @@ impl AgentThread {
                         for (id, update) in std::mem::take(&mut this.pending_controls) {
                             if id == session { this.state.apply(update); }
                         }
-                        this.session = Some(session);
+                        this.lease.as_mut().expect("starting lease").session = Some(session);
                         this.restore = None;
                         this.fallback_history = this.fallback_history || (restored != Some(true) && !this.state.entries.is_empty());
                         this.auth_required = false;
@@ -127,6 +127,7 @@ impl AgentThread {
                             "Ready".into()
                         };
                         this.save(cx);
+                        this.dispatch_next(cx);
                         cx.notify();
                     }
                     Err(nocterm_ai::AgentError::AuthRequired(message)) => {
@@ -134,7 +135,12 @@ impl AgentThread {
                     }
                     Err(error) => this.fail(&error.to_string(), cx),
                 }
-            });
+                true
+            }).unwrap_or(false);
+            if !transferred && let Some(session) = orphan {
+                let cleanup = commands.close_session(session);
+                cx.background_executor().spawn(async move { let _ = cleanup.await; let _ = commands.shutdown_gracefully().await; }).detach();
+            }
         })
         .detach();
         cx.notify();

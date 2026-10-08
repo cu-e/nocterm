@@ -56,7 +56,7 @@ fn submit(
     approve: bool,
     cx: &mut TestAppContext,
 ) -> Reply {
-    let registration_id = cx.update(|cx| thread.read(cx).registration.as_ref().unwrap().id);
+    let registration_id = cx.update(|cx| thread.read(cx).registration().as_ref().unwrap().id);
     let (respond, response) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
@@ -320,6 +320,11 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         thread.update(cx, |thread, cx| {
             assert!(!thread.generating);
             thread.stop(cx);
+            assert!(thread.stopped);
+            assert!(
+                thread.accept_updates,
+                "idle Stop preserves access to retained command results"
+            );
         })
     });
     cx.run_until_parked();
@@ -328,6 +333,55 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
         "cancelled"
     );
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |settings| {
+            settings.ai.approval.agent_permissions = nocterm_settings::ApprovalPolicy::Allow;
+        })
+        .detach();
+    });
+    cx.run_until_parked();
+    let (respond, mut permission) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            let request = serde_json::from_value(serde_json::json!({
+                "sessionId": thread.session(), "toolCall":{"toolCallId":"late-provider-tool"},
+                "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
+            }))
+            .unwrap();
+            thread.permission(request, respond, cx);
+        })
+    });
+    assert_eq!(
+        permission.try_recv().unwrap(),
+        Some(acp::RequestPermissionOutcome::Cancelled)
+    );
+    assert_eq!(
+        read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
+        "cancelled"
+    );
+}
+
+#[gpui_kit::test]
+fn releasing_acp_while_generating_preserves_document_owned_execution(cx: &mut TestAppContext) {
+    let (f, thread, programs, terminal) = setup(cx);
+    let _id = start(&f, &thread, &terminal, cx);
+    thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(thread.read(cx).generating));
+    thread.update(cx, |thread, cx| thread.release_resources(cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(thread.read(cx).lease.is_none());
+        assert!(!thread.read(cx).generating);
+        assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
+    });
+    assert!(
+        !programs.closed(0),
+        "releasing ACP cancelled a document-owned program"
+    );
+    assert!(f.access.sent.borrow().is_empty());
+    programs.finish(0, b"finished after ACP close", 0, "");
+    cx.run_until_parked();
 }
 
 #[gpui_kit::test]
@@ -371,7 +425,7 @@ fn disabling_ai_cancels_execution_and_revokes_chat_access(cx: &mut TestAppContex
         .detach();
     cx.run_until_parked();
     assert!(programs.closed(0));
-    cx.update(|cx| assert!(thread.read(cx).registration.is_none()));
+    cx.update(|cx| assert!(thread.read(cx).registration().is_none()));
 }
 
 #[gpui_kit::test]

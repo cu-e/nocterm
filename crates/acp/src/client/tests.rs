@@ -29,10 +29,12 @@ for line in sys.stdin:
     else: raise Exception('Unexpected method '+method)
     print(json.dumps({'jsonrpc':'2.0','id':req['id'],'result':result}),flush=True)
 "#;
-        let connection = AcpConnector
+        let connection = AcpConnector::unmanaged()
             .connect(ConnectRequest {
                 terminal_auth: false,
                 sandbox: None,
+                resources: Default::default(),
+                cancellation: Default::default(),
                 launch: nocterm_ai::AgentLaunch {
                     id: "legacy-test".into(),
                     name: "Legacy".into(),
@@ -142,10 +144,12 @@ for line in sys.stdin:
     print(json.dumps({{'jsonrpc':'2.0','id':req['id'],'result':result}}),flush=True)
 "#
             );
-            let connection = AcpConnector
+            let connection = AcpConnector::unmanaged()
                 .connect(ConnectRequest {
                     terminal_auth: false,
                     sandbox: None,
+                    resources: Default::default(),
+                    cancellation: Default::default(),
                     launch: nocterm_ai::AgentLaunch {
                         id: "fork-test".into(),
                         name: "Fork".into(),
@@ -305,9 +309,11 @@ fn oversized_subprocess_line_fails_initialization_and_stops_processes() {
             env: Default::default(),
             inherit_env: Vec::new(),
         };
-        let result = AcpConnector.connect(ConnectRequest {
+        let result = AcpConnector::unmanaged().connect(ConnectRequest {
             terminal_auth: false,
             sandbox: None,
+            resources: Default::default(),
+            cancellation: Default::default(),
             launch,
             working_directory: directory.path().to_owned(),
         });
@@ -453,11 +459,14 @@ fn closes_sessions_only_when_agent_advertises_support() {
                         .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
                         .block_task()
                         .await?;
-                    queue_close_session(
+                    close_session(
                         connection.clone(),
                         info.agent_capabilities.session_capabilities.close.is_some(),
                         acp::SessionId::new("s1"),
-                    );
+                        &[],
+                    )
+                    .await
+                    .unwrap();
                     if advertised {
                         closed_rx
                             .recv()
@@ -494,6 +503,105 @@ fn closes_sessions_only_when_agent_advertises_support() {
                 Either::Left((result, _)) => result.unwrap(),
                 Either::Right(_) => panic!("Close-session dispatch timed out"),
             }
+        });
+    }
+}
+
+#[test]
+fn missing_rollout_is_unavailable_only_for_restore_rpc_errors() {
+    let raw = acp::Error::internal_error().data(json!({
+        "message": "no rollout found for thread id 01a11ca8-4cde-72e3-8429-f13aaec4f58c"
+    }));
+    let mapped = map_error(raw.clone());
+    assert!(matches!(mapped, AgentError::Rpc(_)));
+    assert!(matches!(
+        restore_error(mapped),
+        AgentError::RestoreUnavailable(_)
+    ));
+    for message in [
+        "storage temporarily unavailable",
+        "rollout write failed",
+        "thread id invalid",
+        "no rollout found",
+        "no rollout found for thread identity",
+    ] {
+        assert!(matches!(
+            restore_error(map_error(acp::Error::internal_error().data(message))),
+            AgentError::Rpc(_)
+        ));
+    }
+    assert!(matches!(
+        restore_error(map_error(
+            acp::Error::auth_required().data("no rollout found for thread id old")
+        )),
+        AgentError::AuthRequired(_)
+    ));
+    assert!(matches!(
+        restore_error(AgentError::Io("no rollout found for thread id old".into())),
+        AgentError::Io(_)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn resume_and_load_report_missing_rollout_as_unavailable() {
+    for resume in [false, true] {
+        futures::executor::block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let capabilities = if resume {
+                r#"{"sessionCapabilities":{"resume":{}}}"#
+            } else {
+                r#"{"loadSession":true}"#
+            };
+            let script = format!(
+                r#"
+import json, sys
+capabilities=json.loads('{capabilities}')
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    method=request['method']
+    if method=='initialize':
+        result={{'protocolVersion':1,'agentCapabilities':capabilities,'authMethods':[]}}
+        answer={{'jsonrpc':'2.0','id':request['id'],'result':result}}
+    else:
+        assert method in ['session/load','session/resume']
+        answer={{'jsonrpc':'2.0','id':request['id'],'error':{{'code':-32603,'message':'Internal error','data':'no rollout found for thread id stale'}}}}
+    print(json.dumps(answer),flush=True)
+"#
+            );
+            let launch = nocterm_ai::AgentLaunch {
+                id: "restore-fixture".into(),
+                name: "restore-fixture".into(),
+                command: "python3".into(),
+                args: vec!["-u".into(), "-c".into(), script],
+                env: Default::default(),
+                inherit_env: vec!["PATH".into()],
+            };
+            let connection = AcpConnector::unmanaged()
+                .connect(ConnectRequest {
+                    launch,
+                    working_directory: directory.path().to_owned(),
+                    terminal_auth: false,
+                    sandbox: None,
+                    resources: Default::default(),
+                    cancellation: Default::default(),
+                })
+                .await
+                .unwrap();
+            let result = connection
+                .commands
+                .restore_session(nocterm_ai::RestoreSessionRequest {
+                    session_id: acp::SessionId::new("stale"),
+                    cwd: directory.path().to_owned(),
+                    mcp_servers: Vec::new(),
+                    fork: false,
+                })
+                .await;
+            connection.commands.shutdown_gracefully().await.unwrap();
+            assert!(
+                matches!(result, Err(AgentError::RestoreUnavailable(message)) if message.contains("no rollout found for thread id stale"))
+            );
         });
     }
 }

@@ -121,6 +121,7 @@ fn switches_save_at_once_and_fields_follow_changes_made_elsewhere(cx: &mut TestA
 fn ai_switches_and_agent_fields_save_validated_values(cx: &mut TestAppContext) {
     let (handle, view) = open(cx);
     cx.update_window(handle, |_, window, cx| {
+        window.resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(1100.)));
         view.update(cx, |view, cx| view.select_page(4, window, cx));
         window.render_frame(cx);
         window.click("ai-read-approval", cx);
@@ -142,6 +143,43 @@ fn ai_switches_and_agent_fields_save_validated_values(cx: &mut TestAppContext) {
         );
         window.click("ai-enabled", cx);
         assert!(!cx.settings().ai.enabled);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn agent_permission_switch_is_independent_and_disabled_with_ai(cx: &mut TestAppContext) {
+    let (handle, view) = open(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(1100.)));
+        view.update(cx, |view, cx| view.select_page(4, window, cx));
+        window.render_frame(cx);
+        let terminal_read = cx.settings().ai.approval.terminal_read;
+        let terminal_write = cx.settings().ai.approval.terminal_write;
+        assert_eq!(
+            cx.settings().ai.approval.agent_permissions,
+            nocterm_settings::ApprovalPolicy::Ask
+        );
+        window.click("ai-agent-permissions", cx);
+        assert_eq!(
+            cx.settings().ai.approval.agent_permissions,
+            nocterm_settings::ApprovalPolicy::Allow
+        );
+        assert_eq!(cx.settings().ai.approval.terminal_read, terminal_read);
+        assert_eq!(cx.settings().ai.approval.terminal_write, terminal_write);
+        window.render_frame(cx);
+        window.click("ai-agent-permissions", cx);
+        assert_eq!(
+            cx.settings().ai.approval.agent_permissions,
+            nocterm_settings::ApprovalPolicy::Ask
+        );
+        window.click("ai-enabled", cx);
+        window.render_frame(cx);
+        window.click("ai-agent-permissions", cx);
+        assert_eq!(
+            cx.settings().ai.approval.agent_permissions,
+            nocterm_settings::ApprovalPolicy::Ask
+        );
     })
     .unwrap();
 }
