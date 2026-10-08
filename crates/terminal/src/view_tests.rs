@@ -658,5 +658,8 @@ mod input;
 #[path = "view/lease_input_tests.rs"]
 mod lease_input_tests;
 
+#[path = "view/pointer_tests.rs"]
+mod pointer_tests;
+
 #[path = "view/interrupt_tests.rs"]
 mod interrupt_tests;
