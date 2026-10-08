@@ -71,6 +71,47 @@ fn accepted_key_revokes_live_ownership_without_echo_or_redraw(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
+fn ctrl_c_dispatch_revokes_live_ownership_only_when_input_is_accepted(cx: &mut TestAppContext) {
+    let (handle, view, transport) = fixture(cx);
+    let driver = scripted_driver(&transport, 0);
+    let accepted = claim(cx, &view, &transport);
+    cx.update_window(handle, |_, window, cx| window.press("ctrl-c", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(drain(&driver), [vec![3]]);
+    assert!(
+        !accepted.is_active(),
+        "accepted interrupt must revoke AI command ownership"
+    );
+    accepted.cancel();
+    assert!(
+        drain(&driver).is_empty(),
+        "stale Stop emitted a second interrupt"
+    );
+
+    let rejected = claim(cx, &view, &transport);
+    let queued = cx.update(|cx| {
+        let terminal = view.read(cx).terminal.read(cx);
+        let mut queued = 0;
+        while terminal.send_protocol(b"queued".to_vec()) {
+            queued += 1;
+            assert!(queued <= 256);
+        }
+        queued
+    });
+    cx.update_window(handle, |_, window, cx| window.press("ctrl-c", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(
+        rejected.is_active(),
+        "rejected interrupt cannot revoke AI command ownership"
+    );
+    assert_eq!(drain(&driver), vec![b"queued".to_vec(); queued]);
+    rejected.cancel();
+    assert_eq!(drain(&driver), [vec![3]], "owned Stop must still interrupt");
+}
+
+#[gpui_kit::test]
 fn ime_composition_keeps_live_ownership_but_committed_text_revokes_it(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
     let lease = claim(cx, &view, &transport);

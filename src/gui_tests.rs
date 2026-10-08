@@ -17,6 +17,7 @@ use nocterm_workspace::{SessionSpec, Workspace};
 
 mod menu_tabs;
 mod shortcuts;
+mod terminal_events;
 mod vault;
 
 #[derive(Default)]
