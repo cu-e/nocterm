@@ -473,6 +473,7 @@ fn restore_error(error: AgentError) -> AgentError {
                 message.contains("session not found")
                     || message.contains("unknown session")
                     || message.contains("session does not exist")
+                    || message.contains("no rollout found for thread id ")
             }
         }
         _ => false,
@@ -555,3 +556,5 @@ mod tests;
 
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(all(test, unix))]
+mod restoration_intersections;
