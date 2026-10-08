@@ -1,5 +1,4 @@
 //! ACP provider permissions are independent of Nocterm terminal grants.
-use futures::channel::oneshot;
 use gpui_kit::Context;
 use nocterm_ai::acp;
 use nocterm_settings::ApprovalPolicy;
@@ -49,16 +48,16 @@ impl AgentThread {
     pub(crate) fn permission(
         &mut self,
         request: acp::RequestPermissionRequest,
-        respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+        respond: nocterm_ai::PermissionResponder,
         cx: &mut Context<Self>,
     ) {
         if !self.accepts_permission(&request, cx) {
-            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
+            respond.respond(acp::RequestPermissionOutcome::Cancelled);
             return;
         }
         let automatic = cx.settings().ai.approval.agent_permissions == ApprovalPolicy::Allow;
         if automatic && let Some(id) = allow_once(&request) {
-            let _ = respond.send(selected(id));
+            respond.respond(selected(id));
             return;
         }
         self.approval_generation = self.approval_generation.wrapping_add(1);
@@ -77,12 +76,12 @@ impl AgentThread {
         let mut changed = false;
         for mut permission in std::mem::take(&mut self.permissions) {
             if !self.accepts_permission(&permission.request, cx) {
-                let _ = permission
+                permission
                     .respond
-                    .send(acp::RequestPermissionOutcome::Cancelled);
+                    .respond(acp::RequestPermissionOutcome::Cancelled);
                 changed = true;
             } else if automatic && let Some(id) = allow_once(&permission.request) {
-                let _ = permission.respond.send(selected(id));
+                permission.respond.respond(selected(id));
                 changed = true;
             } else {
                 let explanation = automatic.then_some(ONE_TIME_REQUIRED);
@@ -113,7 +112,7 @@ impl AgentThread {
             })
             .map(selected)
             .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
-        let _ = permission.respond.send(outcome);
+        permission.respond.respond(outcome);
         cx.notify();
     }
 

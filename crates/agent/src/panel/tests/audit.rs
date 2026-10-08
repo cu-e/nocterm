@@ -14,7 +14,7 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     .unwrap();
 }
 fn pending_permission(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) {
-    let (send, _) = oneshot::channel();
+    let (send, _) = nocterm_ai::PermissionResponder::channel();
     thread.update(cx, |thread, cx| {
         let request = serde_json::from_value(serde_json::json!({
             "sessionId":thread.session().as_ref().unwrap(),

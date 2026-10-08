@@ -1,7 +1,9 @@
 use crate::thread::AgentThread;
 mod documents;
+mod lease;
 mod lifecycle;
 use gpui_kit::{App, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity, Window};
+pub(crate) use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
     ConnectRequest, ToolBridge, acp,
@@ -97,6 +99,9 @@ pub(crate) struct Runtime {
     /// Agents whose limits are being read.
     reading_limits: std::collections::HashSet<String>,
     serial: u64,
+    /// Leases dropped by their threads, waiting to be released.
+    lease_releases: async_channel::Sender<lease::ReleasedLease>,
+    _releasing: Task<()>,
     _settings: Subscription,
     _bridge: Option<Task<()>>,
 }
@@ -170,6 +175,17 @@ impl Runtime {
                 cx.notify();
             });
         });
+        let (lease_releases, released) = async_channel::unbounded();
+        let releasing = cx.spawn(async move |this, cx| {
+            while let Ok(lease) = released.recv().await {
+                if this
+                    .update(cx, |this, cx| this.release_lease(lease, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         Self {
             saved_chats: None,
             chat_writes: HashMap::new(),
@@ -196,6 +212,8 @@ impl Runtime {
             chat_revisions: Default::default(),
             registrations: HashMap::new(),
             serial: 0,
+            lease_releases,
+            _releasing: releasing,
             _settings: settings,
             _bridge: None,
         }
@@ -396,7 +414,13 @@ impl Runtime {
                 return;
             }
         };
-        thread.update(cx, |thread, _| thread.begin_lease(key, registration));
+        let lease = SessionLease::new(
+            thread.entity_id(),
+            key,
+            registration,
+            self.lease_releases.clone(),
+        );
+        thread.update(cx, |thread, _| thread.begin_lease(lease));
         self.serial += 1;
         let serial = self.serial;
         let cancellation = nocterm_ai::ConnectionCancellation::default();
@@ -585,10 +609,9 @@ impl Runtime {
                     .values()
                     .filter_map(WeakEntity::upgrade)
                     .find(|thread| thread.read(cx).session().as_ref() == Some(&request.session_id));
+                // A request no thread takes is answered `Cancelled` on drop.
                 if let Some(thread) = thread {
                     thread.update(cx, |thread, cx| thread.permission(request, respond, cx));
-                } else {
-                    let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
                 }
             }
             AgentEvent::Exited { code, stderr_tail } => self.stop_connection(

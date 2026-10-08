@@ -240,7 +240,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    let (respond, mut receive) = oneshot::channel();
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
             request: serde_json::from_value(json!({"sessionId":session,"toolCall":{

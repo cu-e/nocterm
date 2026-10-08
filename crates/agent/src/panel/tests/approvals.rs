@@ -227,7 +227,7 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
         (0..2).map(|_| {
-            let (send, receive) = oneshot::channel();
+            let (send, receive) = nocterm_ai::PermissionResponder::channel();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Long permission title"},"options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"deny","name":"Reject","kind":"reject_once"}]})).unwrap();
             thread.update(cx, |thread, cx| thread.permission(request, send, cx));
             receive
@@ -269,7 +269,7 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update(|cx| owner.update(cx, |thread, cx| thread.send("check the disk".into(), cx)));
     new_chat(&f, cx);
-    let (send, receive) = oneshot::channel();
+    let (send, receive) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         let session = owner.read(cx).session().clone().unwrap();
         let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Review pending request"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
@@ -303,7 +303,7 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
     let f = fixture(cx);
     for disposition in ["stop", "resolve", "delete"] {
         new_chat(&f, cx);
-        let (send, receive) = oneshot::channel();
+        let (send, receive) = nocterm_ai::PermissionResponder::channel();
         let owner = cx.update(|cx| {
             let owner = f.panel.read(cx).current().unwrap();
             let session = owner.read(cx).session().clone().unwrap();

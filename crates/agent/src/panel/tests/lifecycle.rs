@@ -224,7 +224,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
         thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
-    let (tx, rx) = oneshot::channel();
+    let (tx, rx) = nocterm_ai::PermissionResponder::channel();
     let request = serde_json::from_value(serde_json::json!({
         "sessionId": session, "toolCall": {"toolCallId":"call", "title":"Read"},
         "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
@@ -540,4 +540,35 @@ fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppCont
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_dropped_lease_shuts_its_agent_down(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
+    thread.update(cx, |thread, _| drop(thread.lease.take().unwrap()));
+    cx.run_until_parked();
+    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[gpui_kit::test]
+fn a_permission_no_thread_takes_is_cancelled(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let (respond, answer) = nocterm_ai::PermissionResponder::channel();
+    let request = serde_json::from_value(serde_json::json!({
+        "sessionId": "unknown-session", "toolCall": {"toolCallId":"call", "title":"Read"},
+        "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
+    }))
+    .unwrap();
+    f.events
+        .try_send(AgentEvent::Permission { request, respond })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        futures::executor::block_on(answer).unwrap(),
+        acp::RequestPermissionOutcome::Cancelled
+    );
 }

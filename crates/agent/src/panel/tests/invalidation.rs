@@ -34,7 +34,7 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    let (send, _receive) = oneshot::channel();
+    let (send, _receive) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
@@ -98,7 +98,7 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
     })
     .unwrap();
     for id in ["first", "second"] {
-        let (send, _receive) = oneshot::channel();
+        let (send, _receive) = nocterm_ai::PermissionResponder::channel();
         cx.update(|cx| {
             let session = owner.read(cx).session().clone().unwrap();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":id,"title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();

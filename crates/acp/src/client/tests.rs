@@ -247,7 +247,7 @@ fn sdk_channel_initializes_streams_permissions_and_config() {
                     }
                     AgentEvent::Permission { respond, .. } => {
                         assert!(streamed);
-                        let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
+                        respond.respond(acp::RequestPermissionOutcome::Cancelled);
                         return Ok::<_, acp::Error>(());
                     }
                     _ => panic!("Unexpected event"),

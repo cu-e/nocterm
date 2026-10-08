@@ -340,7 +340,7 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         .detach();
     });
     cx.run_until_parked();
-    let (respond, mut permission) = oneshot::channel();
+    let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             let request = serde_json::from_value(serde_json::json!({

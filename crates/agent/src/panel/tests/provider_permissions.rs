@@ -28,7 +28,7 @@ fn submit(
     session: acp::SessionId,
     options: Vec<acp::PermissionOption>,
 ) -> oneshot::Receiver<acp::RequestPermissionOutcome> {
-    let (respond, receive) = oneshot::channel();
+    let (respond, receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
             request: request(session, options),
@@ -252,7 +252,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
         foreign.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Cancelled)
     );
-    let (respond, mut direct_foreign) = oneshot::channel();
+    let (respond, mut direct_foreign) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.permission(request(session, options()), respond, cx)

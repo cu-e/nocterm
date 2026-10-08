@@ -1,11 +1,10 @@
-use crate::runtime::Runtime;
-use futures::{FutureExt as _, channel::oneshot};
+use crate::runtime::{Runtime, SessionLease};
+use futures::FutureExt as _;
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
 };
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, acp, approval::ApprovalGrants,
-    context::OpaqueIds, thread::ThreadState,
+    AgentInfo, BridgeCall, acp, approval::ApprovalGrants, context::OpaqueIds, thread::ThreadState,
 };
 use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::Workspace;
@@ -48,7 +47,7 @@ pub(crate) struct SignInWait {
 }
 pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
-    pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+    pub respond: nocterm_ai::PermissionResponder,
     pub generation: u64,
     pub explanation: Option<&'static str>,
 }
@@ -69,13 +68,6 @@ pub(crate) struct Fork {
     chat: nocterm_ai::history::SavedChat,
     restore: Option<Restore>,
     attachments: Vec<Attachment>,
-}
-pub(crate) struct SessionLease {
-    pub session: Option<acp::SessionId>,
-    pub commands: Option<Arc<dyn AgentCommands>>,
-    pub registration: Option<BridgeRegistration>,
-    pub connection_key: u64,
-    pub workdir: Option<PathBuf>,
 }
 
 pub(crate) struct AgentThread {
@@ -170,16 +162,14 @@ impl AgentThread {
             let revision = this.document_revision;
             this.cancel_execution();
             this.cancel_pending();
-            let lease = this.lease.take();
+            // The lease releases its connection when it is dropped.
+            drop(this.lease.take());
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| {
                     if let Some(chat) = snapshot {
                         runtime.save_chat(chat, id, revision, cx);
                     }
                     runtime.unregister_document(id);
-                    if let Some(lease) = lease {
-                        runtime.release_lease(id, lease, cx);
-                    }
                 });
             });
             if let Some(window) = this.window {
@@ -441,11 +431,8 @@ impl AgentThread {
         }
     }
     fn cancel_pending(&mut self) {
-        for permission in self.permissions.drain(..) {
-            let _ = permission
-                .respond
-                .send(acp::RequestPermissionOutcome::Cancelled);
-        }
+        // Dropped responders answer `Cancelled`.
+        self.permissions.clear();
         for call in self.tools.drain(..) {
             let _ = call.respond.send(Err("Request cancelled.".into()));
         }

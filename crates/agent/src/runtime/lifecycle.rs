@@ -1,6 +1,6 @@
 //! One admission queue and resource policy for every window.
+use super::lease::ReleasedLease;
 use super::*;
-use crate::thread::SessionLease;
 use std::time::Duration;
 impl Runtime {
     pub(crate) fn register_document(
@@ -154,12 +154,8 @@ impl Runtime {
             });
         }
     }
-    pub(crate) fn release_lease(
-        &mut self,
-        id: EntityId,
-        mut lease: SessionLease,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn release_lease(&mut self, mut lease: ReleasedLease, cx: &mut Context<Self>) {
+        let id = lease.owner;
         let key = lease.connection_key;
         if let Some(registration) = lease.registration.take() {
             self.registrations.remove(&registration.id);

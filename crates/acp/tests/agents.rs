@@ -54,7 +54,7 @@ fn real_agent_initialize_and_session() {
                 loop {
                     match drain_events.recv().await {
                         Ok(AgentEvent::Permission { respond, .. }) => {
-                            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
+                            respond.respond(acp::RequestPermissionOutcome::Cancelled);
                         }
                         Ok(AgentEvent::Exited { .. }) | Err(_) => break,
                         Ok(event) => collect_message(event, &streamed),
