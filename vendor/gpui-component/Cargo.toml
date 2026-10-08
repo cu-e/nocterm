@@ -35,8 +35,9 @@ license = "Apache-2.0"
 repository = "https://github.com/longbridge/gpui-kit"
 resolver = "2"
 
+# Nocterm: `log` is kept as upstream declares it; see NOCTERM.md.
 [package.metadata.cargo-machete]
-ignored = ["gpui_macros"]
+ignored = ["gpui_macros", "log"]
 
 [features]
 decimal = ["gpui-base/decimal"]

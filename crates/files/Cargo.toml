@@ -17,7 +17,6 @@ nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
-tracing.workspace = true
 directories.workspace = true
 parking_lot.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }

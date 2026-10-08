@@ -84,6 +84,7 @@ NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
+cargo machete --skip-target-dir
 cargo doc --workspace --no-deps
 python3 scripts/generate-license-notices.py --check-inputs
 ```

@@ -18,7 +18,6 @@ nocterm-workspace.workspace = true
 gpui-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-futures.workspace = true
 
 [lints]
 workspace = true
