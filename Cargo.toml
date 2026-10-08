@@ -175,6 +175,7 @@ secrecy = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 fs2 = "0.4"
 encoding_rs = "0.8"
+event-listener = "5"
 alacritty_terminal = "0.26"
 anyhow = "1"
 async-channel = "2"

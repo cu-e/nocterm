@@ -10,7 +10,7 @@ pub use device_unlock::{
     DeviceAvailability, DeviceCancellation, DeviceCapability, DeviceRegistrationState,
     DeviceUnlockError, DeviceUnlockProvider, VaultBinding, VaultKey,
 };
-pub use service::{VaultFuture, VaultService};
+pub use service::{VaultFuture, VaultService, VaultStatus};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{

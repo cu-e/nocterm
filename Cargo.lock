@@ -5266,7 +5266,6 @@ dependencies = [
  "nocterm-session",
  "nocterm-settings",
  "nocterm-ui",
- "nocterm-vault",
  "nocterm-vt",
  "nocterm-workspace",
  "regex",
@@ -5327,6 +5326,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
+ "event-listener",
  "fs2",
  "futures",
  "getrandom 0.4.3",
