@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.0.0](https://github.com/cu-e/nocterm/compare/v2.0.0...v3.0.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** Linux AI agents require systemd 254 or newer and a running systemd user manager. Managed agent startup fails closed when this prerequisite is unavailable.
+
+### Features
+
+* **agent:** configure provider permission prompts ([0b446f1](https://github.com/cu-e/nocterm/commit/0b446f1c83ab85a24a8fb41c47818505923d7ec6))
+* **agent:** persist composer drafts and add message navigation ([3195347](https://github.com/cu-e/nocterm/commit/31953473e7686adaa720934f2ebe58bdd8ebec38))
+
+
+### Bug Fixes
+
+* **acp:** classify missing rollout as unavailable restore error ([c2c102c](https://github.com/cu-e/nocterm/commit/c2c102c6f63b440bb1c1905e75058271e76ef839))
+* **agent:** bound live resources independently of chat history ([bf4abcf](https://github.com/cu-e/nocterm/commit/bf4abcfc98993759c9d98abea4b4b04c9638d000))
+* **agent:** dismiss usage card on escape and focus loss ([af8dd5b](https://github.com/cu-e/nocterm/commit/af8dd5b3ddc08f2291d088f656b39eba8a44ce9d))
+* **agent:** render provider terminal calls and results ([12face9](https://github.com/cu-e/nocterm/commit/12face983be72e5c8d82608cf498d1d2822b842d))
+* **terminal:** preserve interrupt key routing ([9d722cc](https://github.com/cu-e/nocterm/commit/9d722cca582eed2e35b8e28c1aba960a4d599b46))
+* **terminal:** scroll selection beyond viewport edges ([04c4320](https://github.com/cu-e/nocterm/commit/04c4320262e9322cf6b12ef9b66c41c21f7866f2))
+* **vt:** track pointer interaction state ([163a215](https://github.com/cu-e/nocterm/commit/163a2158870717b13fac3c98639edbdb0a21d59e))
+
 ## [2.0.0](https://github.com/cu-e/nocterm/compare/v1.5.0...v2.0.0) (2026-10-07)
 
 
