@@ -46,7 +46,7 @@ value; an empty arguments array removes the built-in arguments. Custom agent ids
 use letters, numbers, underscore or dash and need an executable.
 
 AI Settings (Settings → AI agents) controls the master switch, default agent,
-working directory, terminal access approvals, secret filtering, isolation and the
+working directory, agent permissions, terminal access approvals, secret filtering, isolation and the
 agents themselves. Every change saves itself; text fields save when typing pauses,
 on Enter and when they lose focus, and invalid text is kept with its error rather
 than saved. Each agent folds open to show its name, executable, arguments and
@@ -316,7 +316,15 @@ and do not stop the shell. A later Stop no longer controls that program. Use
 `exec_command` when execution needs a durable handle, cancellation and a deadline.
 
 Agents also have their own permission prompts (for example before running a tool
-of their own); those appear as separate cards with the agent's options.
+of their own or accessing files). **Agent permissions → Ask before an agent uses
+its own tools** controls those requests independently of terminal read and write
+approvals. Its setting is `ai.approval.agent_permissions`, with `ask` as the default.
+Turning it off (`allow`) selects the provider's ACP `allow_once` choice for each
+request, including requests already waiting. It never automatically selects
+`allow_always`: switching back to Ask makes subsequent requests wait again.
+If the provider supplies no valid one-time choice, the request remains as a card
+with an explanation and the provider's options for manual review. Stop, disabled
+AI and requests from an obsolete or different session cancel instead of approving.
 
 The terminal read cursor is inclusive: a resumed read may replace the previous
 last logical line after more text is appended. It is not an exact byte-stream

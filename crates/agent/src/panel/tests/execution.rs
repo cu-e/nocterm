@@ -320,10 +320,41 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         thread.update(cx, |thread, cx| {
             assert!(!thread.generating);
             thread.stop(cx);
+            assert!(thread.stopped);
+            assert!(
+                thread.accept_updates,
+                "idle Stop preserves access to retained command results"
+            );
         })
     });
     cx.run_until_parked();
     assert!(programs.closed(0));
+    assert_eq!(
+        read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
+        "cancelled"
+    );
+    cx.update(|cx| {
+        nocterm_ui::edit_settings(cx, |settings| {
+            settings.ai.approval.agent_permissions = nocterm_settings::ApprovalPolicy::Allow;
+        })
+        .detach();
+    });
+    cx.run_until_parked();
+    let (respond, mut permission) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            let request = serde_json::from_value(serde_json::json!({
+                "sessionId": thread.session, "toolCall":{"toolCallId":"late-provider-tool"},
+                "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
+            }))
+            .unwrap();
+            thread.permission(request, respond, cx);
+        })
+    });
+    assert_eq!(
+        permission.try_recv().unwrap(),
+        Some(acp::RequestPermissionOutcome::Cancelled)
+    );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
         "cancelled"

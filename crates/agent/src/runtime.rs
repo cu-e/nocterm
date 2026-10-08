@@ -129,6 +129,13 @@ impl Runtime {
                 this.registrations.clear();
                 this.services.bridge.stop();
             }
+            let threads: Vec<_> = this.connections.values()
+                .flat_map(|connection| connection.users.values())
+                .filter_map(WeakEntity::upgrade)
+                .collect();
+            for thread in threads {
+                thread.update(cx, |thread, cx| thread.apply_permission_policy(cx));
+            }
         });
         let favorites =
             nocterm_ai::favorites::AgentStateFile::load(&services.state_file).unwrap_or_default();

@@ -476,6 +476,8 @@ mod history;
 mod invalidation;
 mod labels;
 mod lifecycle;
+mod provider_intersections;
+mod provider_permissions;
 mod routing;
 mod servers;
 mod tool_input;

@@ -13,6 +13,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
 mod execution;
+mod permissions;
 mod prompt;
 mod queue;
 mod tool_display;
@@ -47,6 +48,8 @@ pub(crate) struct SignInWait {
 pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
     pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+    pub generation: u64,
+    pub explanation: Option<&'static str>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PromptMetadata {
@@ -411,48 +414,6 @@ impl AgentThread {
             let _ = call.respond.send(Err("Request cancelled.".into()));
         }
     }
-    pub(crate) fn permission(
-        &mut self,
-        request: acp::RequestPermissionRequest,
-        respond: oneshot::Sender<acp::RequestPermissionOutcome>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.accept_updates || !cx.ai_enabled() {
-            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
-            return;
-        }
-        self.approval_generation = self.approval_generation.wrapping_add(1);
-        self.permissions
-            .push(PendingPermission { request, respond });
-        cx.notify();
-    }
-    pub(crate) fn choose_permission(
-        &mut self,
-        index: usize,
-        option: Option<acp::PermissionOptionId>,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.permissions.len() {
-            return;
-        }
-        let permission = self.permissions.remove(index);
-        let outcome = option
-            .filter(|option| {
-                cx.ai_enabled()
-                    && self.accept_updates
-                    && permission
-                        .request
-                        .options
-                        .iter()
-                        .any(|candidate| candidate.option_id == *option)
-            })
-            .map(|option| {
-                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(option))
-            })
-            .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
-        let _ = permission.respond.send(outcome);
-        cx.notify();
-    }
     pub(crate) fn set_config(
         &mut self,
         id: acp::SessionConfigId,
@@ -529,6 +490,7 @@ impl AgentThread {
         self.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
+        self.stopped = true;
         if !self.generating {
             cx.notify();
             return;
@@ -537,7 +499,6 @@ impl AgentThread {
             commands.cancel(session.clone());
         }
         self.accept_updates = false;
-        self.stopped = true;
         self.status = "Stopping…".into();
         let epoch = self.epoch;
         let turn = self.turn;

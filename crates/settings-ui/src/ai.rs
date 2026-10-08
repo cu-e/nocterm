@@ -289,6 +289,22 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
             cx,
         ))
         .child(form::section(
+            "Agent permissions",
+            [form::row(
+                "Ask before an agent uses its own tools",
+                "Confirm the agent's requests to use its own files and tools. Off approves each request once; agents without an Allow once choice still ask. Terminal access is controlled separately below.",
+                toggle(
+                    "ai-agent-permissions",
+                    ai.approval.agent_permissions == ApprovalPolicy::Ask,
+                    off,
+                    |s, on| s.ai.approval.agent_permissions = policy(on),
+                    cx,
+                ),
+                cx,
+            )],
+            cx,
+        ))
+        .child(form::section(
             "Terminal access",
             [
                 form::row(

@@ -251,6 +251,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let permission = &thread.read(cx).permissions[index];
+        let generation = permission.generation;
         let title = permission
             .request
             .tool_call
@@ -266,34 +267,50 @@ impl AgentPanel {
             .collect();
         let mut actions = h_flex().w_full().min_w_0().flex_wrap().gap_1();
         for (id, name) in options {
+            let owner = thread.downgrade();
             actions = actions.child(
                 Button::new(SharedString::from(format!("permission-{index}-{id}")))
                     .custom(menu_variant(cx))
                     .small()
                     .max_w_full()
                     .label(name)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(thread) = this.current() {
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        if let Some(thread) = owner.upgrade() {
                             thread.update(cx, |thread, cx| {
-                                thread.choose_permission(index, Some(id.clone()), cx)
+                                thread.choose_permission_request(generation, Some(id.clone()), cx)
                             });
                         }
                     })),
             );
         }
+        let owner = thread.downgrade();
         actions = actions.child(
             Button::new(("permission-cancel", index))
                 .custom(menu_variant(cx))
                 .small()
                 .label("Cancel")
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(thread) = this.current() {
-                        thread.update(cx, |thread, cx| thread.choose_permission(index, None, cx));
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    if let Some(thread) = owner.upgrade() {
+                        thread.update(cx, |thread, cx| {
+                            thread.choose_permission_request(generation, None, cx)
+                        });
                     }
                 })),
         );
         card(cx)
             .child(div().w_full().min_w_0().truncate().text_sm().child(title))
+            .when_some(permission.explanation, |card, explanation| {
+                card.child(
+                    div()
+                        .id(("permission-explanation", index))
+                        .test_support()
+                        .w_full()
+                        .min_w_0()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(explanation),
+                )
+            })
             .child(actions)
             .into_any_element()
     }

@@ -7,6 +7,7 @@
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
 | `ai.agents` | "object" | `{}` | Agents by id. An entry named like a built-in agent (`claude`, `codex`, `hermes`) changes it; any other id adds a custom agent. |
+| `ai.approval.agent_permissions` | ["allow","ask"] | `"ask"` | Whether an action runs straight away or waits for the user. |
 | `ai.approval.redact_secrets` | "boolean" | `true` | Hide private keys, access tokens, passwords and credentials in URLs in terminal output before an agent reads it. This is best effort; do not attach terminals that show secrets. |
 | `ai.approval.terminal_read` | ["allow","ask"] | `"allow"` | Whether an action runs straight away or waits for the user. |
 | `ai.approval.terminal_write` | ["allow","ask"] | `"ask"` | Whether an action runs straight away or waits for the user. |
