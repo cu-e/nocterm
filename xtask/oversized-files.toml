@@ -6,7 +6,6 @@
 [files]
 "crates/files/src/operations_ui_tests.rs" = 833
 "crates/files/src/tests.rs" = 1125
-"crates/terminal/src/terminal.rs" = 1124
 "crates/vault/src/lib.rs" = 826
 "crates/vt/src/search.rs" = 994
 "crates/workspace/src/tests.rs" = 1201
