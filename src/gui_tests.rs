@@ -110,7 +110,7 @@ fn fixture_with_vault(
                 terminal_auth: None,
                 private_dirs: Vec::new(),
                 shared_dirs: Vec::new(),
-                connector: Arc::new(nocterm_acp::AcpConnector),
+                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
                 state_file: paths.state_dir().join("agents.toml"),
                 chats_dir: paths.state_dir().join("agent-chats"),

@@ -28,7 +28,7 @@ fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
             .current()
             .unwrap()
             .read(cx)
-            .registration
+            .registration()
             .as_ref()
             .unwrap()
             .id
@@ -79,7 +79,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     cx.run_until_parked();
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let terminal_id =
         cx.update(|cx| thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone()));
     let script = "printf '%s\\n' '*literal*' \"$HOME\"\r\n\tprintf '```'\n";
@@ -238,7 +238,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     cx.run_until_parked();
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let (respond, mut receive) = oneshot::channel();
     f.events
         .try_send(AgentEvent::Permission {

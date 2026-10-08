@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub(crate) mod lifecycle;
+use lifecycle::{AgentResourceSettings, AgentSessionSettings};
 
 /// AI agents that work inside nocterm. Nothing runs until a thread is started.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -23,6 +25,10 @@ pub struct AiSettings {
     pub working_directory: Option<String>,
     /// Confirmation policies for the agent's own tools and attached terminals.
     pub approval: ApprovalSettings,
+    /// Global limits for live agent sessions across all windows.
+    pub sessions: AgentSessionSettings,
+    /// Per-connection Linux process container limits.
+    pub resources: AgentResourceSettings,
     /// Agents by id. An entry named like a built-in agent (`claude`, `codex`,
     /// `hermes`) changes it; any other id adds a custom agent.
     pub agents: BTreeMap<String, AgentServerSettings>,
@@ -36,6 +42,8 @@ impl Default for AiSettings {
             default_agent: None,
             working_directory: None,
             approval: ApprovalSettings::default(),
+            sessions: AgentSessionSettings::default(),
+            resources: AgentResourceSettings::default(),
             agents: BTreeMap::new(),
         }
     }
@@ -138,6 +146,8 @@ impl AiSettings {
     /// as written: the registry skips the ones it cannot start, and the
     /// settings page explains why.
     pub(crate) fn sanitize(&mut self) {
+        self.sessions.sanitize();
+        self.resources.sanitize();
         trim_unset(&mut self.default_agent);
         trim_unset(&mut self.working_directory);
         for agent in self.agents.values_mut() {

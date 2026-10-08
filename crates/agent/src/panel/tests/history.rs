@@ -8,7 +8,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
-        thread.read(cx).session.clone().unwrap()
+        thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
     f.events
@@ -40,7 +40,15 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         "{text}"
     );
 
-    // As after a restart: a new panel shows the saved chat, not yet connected.
+    // As after a restart: the previous process has closed before another document resumes it.
+    f.panel.update(cx, |panel, cx| {
+        panel
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| thread.release_resources(cx));
+    });
+    cx.run_until_parked();
+    // A new panel shows the saved chat, not yet connected.
     cx.update(|cx| {
         Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(saved.clone()))
     });
@@ -59,7 +67,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         let thread = thread.read(cx);
         assert!(thread.dormant);
         assert_eq!(thread.state.entries.len(), 2);
-        assert!(thread.session.is_none());
+        assert!(thread.session().is_none());
     });
     assert!(f.commands.restores.lock().unwrap().is_empty());
 
@@ -72,7 +80,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         vec![(session.clone(), false)]
     );
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), sessions);
-    cx.update(|cx| assert_eq!(thread.read(cx).session.as_ref(), Some(&session)));
+    cx.update(|cx| assert_eq!(thread.read(cx).session().as_ref(), Some(&session)));
 
     let id = cx.update(|cx| thread.read(cx).chat_id.clone());
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
@@ -193,7 +201,9 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     // A fork starts with the chat's messages, in a copy of its session.
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
-            panel.fork_thread(nginx.entity_id(), window, cx)
+            panel.fork_thread(nginx.entity_id(), window, cx);
+            let fork = panel.current().unwrap();
+            panel.wake(&fork, cx)
         })
     })
     .unwrap();
@@ -206,7 +216,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         assert_eq!(fork.title(), "restart nginx (fork)");
         assert_eq!(fork.state.entries.len(), 2);
         assert_eq!(
-            fork.session,
+            fork.session().clone(),
             Some(acp::SessionId::new(format!("fork-of-{nginx_session}")))
         );
         assert_ne!(fork.chat_id, nginx.read(cx).chat_id);
@@ -253,10 +263,12 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
             assert!(thread.last_prompt.is_none());
             thread.send("  ".into(), cx);
             assert!(thread.last_prompt.is_none());
-            let session = thread.session.take();
-            thread.send("Rejected before the session is ready".into(), cx);
+            let session = thread.lease.as_mut().unwrap().session.take();
+            thread.send("Queued before the session is ready".into(), cx);
+            assert_eq!(thread.queue.len(), 1);
+            thread.queue.clear();
             assert!(thread.last_prompt.is_none());
-            thread.session = session;
+            thread.lease.as_mut().unwrap().session = session;
             let mut option = acp::SessionConfigOption::select(
                 "model",
                 "Agent model",

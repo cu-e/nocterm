@@ -24,7 +24,7 @@ impl AgentThread {
     pub(crate) fn handle_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
         if !cx.ai_enabled()
             || !self.accept_updates
-            || self.registration.as_ref().map(|value| value.id) != Some(call.registration_id)
+            || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             let _ = call.respond.send(Err("Chat is unavailable.".into()));
             return;
@@ -105,7 +105,7 @@ impl AgentThread {
         // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
         if !cx.ai_enabled()
             || !self.accept_updates
-            || self.registration.as_ref().map(|value| value.id) != Some(call.registration_id)
+            || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             let _ = call.respond.send(Err("Chat is unavailable.".into()));
             return;
@@ -213,7 +213,9 @@ impl AgentThread {
         let workspace = self.workspace.clone();
         let profile = summary.id.to_string();
         let epoch = self.epoch;
+        let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
+            let _guard = guard;
             let opened = cx
                 .update_window(window, |_, window, cx| {
                     directory.open_background(&profile, &workspace, window, cx)

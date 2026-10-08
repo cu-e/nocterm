@@ -15,7 +15,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
             .current()
             .unwrap()
             .read(cx)
-            .session
+            .session()
             .clone()
             .unwrap()
     });
@@ -65,14 +65,15 @@ struct DelayedConnector {
 impl AgentConnector for DelayedConnector {
     fn connect(
         &self,
-        _: ConnectRequest,
+        request: ConnectRequest,
     ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
         let started = self.started.clone();
         let cancelled = self.cancelled.clone();
         async move {
             started.fetch_add(1, Ordering::SeqCst);
             let _guard = CancelGuard(cancelled);
-            futures::future::pending().await
+            request.cancellation.cancelled().await;
+            Err(AgentError::Io("Startup cancelled".into()))
         }
         .boxed()
     }
@@ -198,7 +199,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
         assert!(!workspace.read(cx).right_panel_is_open());
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
-    assert_eq!(f.bridge.revoked.lock().unwrap().len(), 2);
+    assert_eq!(f.bridge.revoked.lock().unwrap().len(), 1);
     cx.update(|cx| nocterm_ui::update_settings(cx, |s| s.ai.enabled = true))
         .await
         .unwrap();
@@ -220,7 +221,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
-        thread.read(cx).session.clone().unwrap()
+        thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
     let (tx, rx) = oneshot::channel();
@@ -288,7 +289,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     cx.run_until_parked();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        assert_eq!(thread.read(cx).session.as_ref(), Some(&session));
+        assert_eq!(thread.read(cx).session().as_ref(), Some(&session));
         assert!(thread.read(cx).state.entries.iter().any(
             |entry| matches!(entry, nocterm_ai::thread::Entry::Agent(text) if text == "answer")
         ));
@@ -307,10 +308,10 @@ fn authentication_controls_follow_required_state_and_create_session_after_click(
         let thread = f.panel.read(cx).current().unwrap();
         assert!(thread.read(cx).auth_required);
         assert!(
-            thread.read(cx).registration.is_some(),
+            thread.read(cx).registration().is_some(),
             "auth-required must preserve bridge for retry"
         );
-        assert!(thread.read(cx).session.is_none());
+        assert!(thread.read(cx).session().is_none());
         window.click("authenticate-sign-in", cx);
     })
     .unwrap();
@@ -319,7 +320,7 @@ fn authentication_controls_follow_required_state_and_create_session_after_click(
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
         assert!(!thread.read(cx).auth_required);
-        assert!(thread.read(cx).session.is_some());
+        assert!(thread.read(cx).session().is_some());
         assert_eq!(thread.read(cx).status, "Ready");
         assert!(window.try_find("authenticate-sign-in").is_none());
         assert!(window.try_find("agent-status").is_none());
@@ -413,7 +414,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
         assert!(thread.read(cx).auth_required);
         assert!(!thread.read(cx).authenticating);
         assert_eq!(thread.read(cx).status, "Sign-in failed");
-        assert!(thread.read(cx).session.is_some());
+        assert!(thread.read(cx).session().is_some());
         f.commands
             .authentication_failure
             .store(false, Ordering::SeqCst);
@@ -425,7 +426,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
         assert!(!thread.read(cx).auth_required);
-        assert!(thread.read(cx).session.is_some());
+        assert!(thread.read(cx).session().is_some());
         assert!(window.try_find("authenticate-sign-in").is_none());
     })
     .unwrap();
@@ -488,7 +489,7 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
         assert!(!thread.read(cx).auth_required);
-        assert!(thread.read(cx).session.is_some());
+        assert!(thread.read(cx).session().is_some());
         assert!(window.try_find("authenticate-setup").is_none());
     })
     .unwrap();

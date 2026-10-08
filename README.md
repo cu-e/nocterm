@@ -270,7 +270,10 @@ executables, with terminal/connection/group context, capability-driven model
 and effort controls, model favorites and image input. Open it from the footer
 or Window → AI Agents (Ctrl+Alt+B / Cmd+Alt+B). AI Settings is available from
 Session → Preferences and the normal Settings shortcut. Disabling AI closes
-chats and stops its processes; nothing launches before a chat is created.
+chats and stops its processes. Empty chats and saved history start no processes;
+sending a message starts or restores the agent. Linux agents require a running
+systemd user manager and `systemd-run` from systemd 254 or later. Each agent runs in a separate user service
+with limits for memory, swap and tasks, and its children stop when Nocterm exits.
 
 The built-in Claude/Codex commands use pinned npm ACP adapters and need Node.js
 and npm (`npx`); Claude requires Node.js 22 or later. Hermes uses `hermes acp`.
@@ -279,7 +282,11 @@ available in AI Settings. Model favorites persist in `agents.toml`.
 
 Chats are saved in `agent-chats/` and reopen their agent session after a
 restart when the agent supports resuming. The history can be searched, and each
-chat can be renamed, forked or pinned. Stop cancels only the current reply; the
+chat can be renamed, forked or pinned. Chat actions also offer **Release agent
+resources**, preserving the conversation and terminals. Across all windows, the
+default policy permits four starting, live or closing sessions, retains two idle
+sessions and releases them after 90 seconds. Configure `[ai.sessions]` and
+`[ai.resources]` in settings.toml to change these limits. Stop cancels only the current reply; the
 chat goes on in the same session. The ring by the send button opens a Context
 Usage card with the context window, session tokens and, for Claude and Codex,
 the 5-hour and weekly plan limits. The attach menu lists saved servers under

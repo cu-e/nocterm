@@ -19,7 +19,8 @@ impl AgentThread {
         images: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) {
-        let (Some(commands), Some(session)) = (self.commands.clone(), self.session.clone()) else {
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
             return;
         };
         // A new turn: updates count again.

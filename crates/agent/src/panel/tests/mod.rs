@@ -25,6 +25,9 @@ use std::{
 struct Commands {
     sessions: AtomicU64,
     session_gate: Mutex<Option<oneshot::Receiver<()>>>,
+    close_gate: Mutex<Option<oneshot::Receiver<()>>>,
+    closed: Mutex<Vec<acp::SessionId>>,
+    shutdown_failure: AtomicBool,
     auth_required: AtomicBool,
     authentications: AtomicUsize,
     authentication_failure: AtomicBool,
@@ -119,7 +122,32 @@ impl AgentCommands for Commands {
         }
         .boxed()
     }
-    fn close_session(&self, _: acp::SessionId) {}
+    fn close_session(
+        &self,
+        session: acp::SessionId,
+    ) -> BoxFuture<'static, Result<nocterm_ai::CloseSessionOutcome, AgentError>> {
+        self.closed.lock().unwrap().push(session);
+        let gate = self.close_gate.lock().unwrap().take();
+        async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+            Ok(nocterm_ai::CloseSessionOutcome::Closed)
+        }
+        .boxed()
+    }
+    fn shutdown_gracefully(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+        self.shutdown();
+        let failed = self.shutdown_failure.load(Ordering::SeqCst);
+        async move {
+            if failed {
+                Err(AgentError::Io("Process tree still alive".into()))
+            } else {
+                Ok(())
+            }
+        }
+        .boxed()
+    }
     fn shutdown(&self) {
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
@@ -128,6 +156,7 @@ struct Connector {
     commands: Arc<Commands>,
     events: async_channel::Receiver<AgentEvent>,
     connects: AtomicUsize,
+    event_senders: Mutex<Vec<async_channel::Sender<AgentEvent>>>,
 }
 impl AgentConnector for Connector {
     fn connect(
@@ -136,7 +165,8 @@ impl AgentConnector for Connector {
     ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
         self.connects.fetch_add(1, Ordering::SeqCst);
         let commands = self.commands.clone();
-        let events = self.events.clone();
+        let (sender, events) = async_channel::bounded(256);
+        self.event_senders.lock().unwrap().push(sender);
         async move {
             Ok(AgentConnection {
                 commands,
@@ -181,6 +211,7 @@ impl ToolBridge for Bridge {
 struct Access {
     executor: std::cell::RefCell<Option<Arc<dyn nocterm_session::HostExec>>>,
     lease: std::cell::RefCell<Option<Arc<AtomicBool>>>,
+    at_prompt: std::cell::Cell<bool>,
     sent: std::cell::RefCell<Vec<String>>,
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
     /// Shared by the sessions of a test.
@@ -210,7 +241,7 @@ impl TerminalAccess for Access {
                 TerminalStatus::Connected
             },
             cwd: None,
-            at_prompt: Some(true),
+            at_prompt: Some(self.at_prompt.get()),
             dirty_input: false,
             alt_screen: false,
             generation: 1,
@@ -329,12 +360,14 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             commands: commands.clone(),
             events: rx,
             connects: AtomicUsize::new(0),
+            event_senders: Default::default(),
         });
         (commands, bridge, connector, events, sender)
     };
     let access = Rc::new(Access {
         executor: Default::default(),
         lease: Default::default(),
+        at_prompt: std::cell::Cell::new(true),
         sent: Default::default(),
         profile: Default::default(),
         sign_in: Default::default(),
@@ -363,6 +396,9 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             cx,
         );
         let mut panel = None;
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.inject_events(connector.events.clone(), cx)
+        });
         let mut terminal = None;
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -402,9 +438,11 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
 }
 fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(fixture.handle, |_, window, cx| {
-        fixture
-            .panel
-            .update(cx, |panel, cx| panel.new_thread("codex".into(), window, cx))
+        fixture.panel.update(cx, |panel, cx| {
+            panel.new_thread("codex".into(), window, cx);
+            let thread = panel.current().unwrap();
+            panel.wake(&thread, cx);
+        })
     })
     .unwrap();
     cx.run_until_parked();
@@ -425,7 +463,7 @@ fn exchange(f: &Fixture, text: &str, answer: &str, cx: &mut TestAppContext) -> a
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send(text.into(), cx));
-        thread.read(cx).session.clone().unwrap()
+        thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
     f.events
@@ -476,8 +514,10 @@ mod history;
 mod invalidation;
 mod labels;
 mod lifecycle;
+mod persistence;
 mod provider_intersections;
 mod provider_permissions;
+mod resources;
 mod routing;
 mod servers;
 mod tool_input;

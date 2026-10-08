@@ -4957,6 +4957,7 @@ dependencies = [
  "nocterm-ai",
  "nocterm-core",
  "nocterm-settings",
+ "rustix 1.1.5",
  "serde_json",
  "subtle",
  "tempfile",

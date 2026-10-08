@@ -17,7 +17,7 @@ fn pending_permission(thread: &Entity<crate::thread::AgentThread>, cx: &mut Test
     let (send, _) = oneshot::channel();
     thread.update(cx, |thread, cx| {
         let request = serde_json::from_value(serde_json::json!({
-            "sessionId":thread.session.as_ref().unwrap(),
+            "sessionId":thread.session().as_ref().unwrap(),
             "toolCall":{"toolCallId":"pending","title":"Needs approval"},
             "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
         }))
@@ -295,7 +295,7 @@ fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAp
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     let full = "Ответ 👨‍👩‍👧‍👦 世界 ".repeat(1000);
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
         .try_send(AgentEvent::Session(acp::SessionNotification::new(
             session,

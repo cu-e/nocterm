@@ -91,7 +91,7 @@ impl AgentPanel {
         body = body
             .when(
                 thread.read(cx).generating
-                    || thread.read(cx).session.is_none()
+                    || thread.read(cx).session().is_none()
                     || thread.read(cx).auth_required
                     || thread.read(cx).fallback_history
                     || thread.read(cx).status_error

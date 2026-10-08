@@ -82,7 +82,8 @@ entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 
 After a restart, saved chats appear in the history without starting their
-agent. Opening one connects the agent and reopens its session with
+agent. Opening history or creating an empty chat does not start an agent or MCP.
+Sending a message saves its queue entry before starting the agent and reopens its session with
 `session/resume` (no replay) or `session/load`, whichever the agent advertises.
 An agent without restoration, or whose saved session no longer exists, starts
 a new session. A bounded copy of the saved user/assistant conversation accompanies
@@ -367,11 +368,43 @@ foreground queue, four connections per token and 64 total bridge connections.
 MCP supports initialization, ping, tools listing and tool calls; unsupported
 methods fail explicitly.
 
+The conversation document, live ACP session and process container have separate
+owners. A chat can stay open after its agent stops. Each live session has its own
+connection, so a hung or unsupported `session/close` cannot terminate another
+chat's work. Closing awaits the ACP response (up to five seconds), acknowledges a
+FIFO fence after earlier foreground events, then waits for process cleanup. A
+closing session still occupies its admission slot. Failed physical cleanup keeps
+that slot reserved and reports the error. Late startup results whose UI owner
+has disappeared are closed instead of being abandoned.
+
+`[ai.sessions]` controls the policy shared by every window: `max_live = 4` counts
+starting, live and closing sessions; `max_idle = 2` retains warm sessions;
+`idle_timeout_secs = 90` releases idle sessions. Requests wait in their saved FIFO
+queues when the limit is reached, and the oldest idle session yields first.
+Generating, authentication, permissions, bridge calls, configuration requests and
+active command jobs retain a session. A paused queue, composer edit, pin or draft
+does not. Idle release leaves background terminals and shell command ownership
+intact. **Release agent resources** in chat actions pauses the queue and preserves
+the document; sending another message activates it again.
+
+On Linux, agents require systemd 254 or later, `systemd-run` and a reachable systemd user manager. Each
+connection uses a transient user service with `KillMode=control-group`, a bounded
+stop timeout and limits for the complete process tree. `[ai.resources]` defaults
+to `memory_high_mb = 2048`, `memory_max_mb = 4096`, `memory_swap_max_mb = 1024` and
+`tasks_max = 512`. Exceeding a hard limit can terminate the agent. A missing user
+manager prevents launch and reports an error. The internal `agent-host` helper
+watches a pidfd for the owning Nocterm process, verifies its `/proc` start time
+and exits when that owner dies; systemd then cleans up the cgroup, including
+children that created new process groups. Child environment variables are
+rebuilt from the allowlist rather than inherited from the systemd manager.
+
 Switching AI off cancels prompts and pending permissions/tools, closes chats,
-revokes registrations, stops the listener, terminates agent process groups, and
-hides the button/panel in every workspace. Turning it on does not start anything.
-Application exit uses the same teardown. Process tree termination on Windows is
-best effort and does not provide Unix process-group guarantees.
+revokes registrations, stops the listener and hides the panel in every workspace.
+Turning it on starts nothing. On application exit a synchronous serialized flush waits for any active atomic
+write, blocks later stale writes, and saves final document snapshots before
+the windows are destroyed, including dormant chats. A failed save retains its snapshot and queued messages in memory and
+shows an error independently of ACP ownership. Other Unix systems retain process
+group teardown; Windows process tree termination is best effort.
 
 ## Privacy boundary
 

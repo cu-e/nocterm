@@ -273,7 +273,7 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
             .current()
             .unwrap()
             .read(cx)
-            .session
+            .session()
             .clone()
             .unwrap()
     });
@@ -569,7 +569,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     let server = cx.update(|cx| {
         format!(
             "nocterm-{}",
-            thread.read(cx).registration.as_ref().unwrap().id
+            thread.read(cx).registration().as_ref().unwrap().id
         )
     });
     let mut call = acp::ToolCall::new("snapshot", format!("mcp.{server}.run_command"));

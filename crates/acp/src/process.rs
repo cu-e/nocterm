@@ -2,48 +2,19 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
 };
 
 use nocterm_ai::{AgentError, ConnectRequest};
 
-pub(crate) struct ProcessGroup {
-    pid: u32,
-    active: AtomicBool,
-}
-impl ProcessGroup {
-    pub(crate) fn kill(&self) {
-        if !self.active.swap(false, Ordering::AcqRel) {
-            return;
-        }
-        #[cfg(unix)]
-        {
-            let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(self.pid as i32),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-        }
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &self.pid.to_string(), "/T", "/F"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-    }
-    pub(crate) fn finish(&self) {
-        self.kill();
-    }
-}
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        self.kill();
-    }
-}
+mod lifecycle;
+pub(crate) use lifecycle::ProcessGroup;
+#[cfg(target_os = "linux")]
+mod host;
+#[cfg(target_os = "linux")]
+mod systemd;
+#[cfg(target_os = "linux")]
+pub use host::run_agent_host;
 
 pub(crate) struct Spawned {
     pub child: async_process::Child,
@@ -51,7 +22,10 @@ pub(crate) struct Spawned {
     pub secrets: Arc<Vec<String>>,
 }
 
-pub(crate) fn spawn(request: &ConnectRequest) -> Result<Spawned, AgentError> {
+pub(crate) fn spawn(
+    request: &ConnectRequest,
+    helper: Option<&Path>,
+) -> Result<Spawned, AgentError> {
     let env = nocterm_ai::env::sanitized_environment(
         &request.launch,
         std::env::vars_os()
@@ -111,9 +85,26 @@ pub(crate) fn spawn(request: &ConnectRequest) -> Result<Spawned, AgentError> {
             (bwrap, args)
         }
     };
-    let mut command = std::process::Command::new(executable);
+    #[cfg(target_os = "linux")]
+    let managed = helper
+        .map(|helper| systemd::prepare(request, helper, &executable, &process_args, &env))
+        .transpose()?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = helper;
+    #[cfg(target_os = "linux")]
+    let mut command = managed.as_ref().map_or_else(
+        || std::process::Command::new(&executable),
+        |managed| managed.command(),
+    );
+    #[cfg(not(target_os = "linux"))]
+    let mut command = std::process::Command::new(&executable);
+    #[cfg(target_os = "linux")]
+    if managed.is_none() {
+        command.args(&process_args);
+    }
+    #[cfg(not(target_os = "linux"))]
+    command.args(&process_args);
     command
-        .args(&process_args)
         .env_clear()
         .envs(env)
         .current_dir(&request.working_directory)
@@ -132,10 +123,11 @@ pub(crate) fn spawn(request: &ConnectRequest) -> Result<Spawned, AgentError> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| AgentError::Io(format!("Cannot start agent: {e}")))?;
-    let group = Arc::new(ProcessGroup {
-        pid: child.id(),
-        active: AtomicBool::new(true),
-    });
+    let group = Arc::new(ProcessGroup::new(
+        child.id(),
+        #[cfg(target_os = "linux")]
+        managed,
+    ));
     Ok(Spawned {
         child,
         group,
@@ -215,6 +207,8 @@ mod tests {
         ConnectRequest {
             terminal_auth: false,
             sandbox: None,
+            resources: Default::default(),
+            cancellation: Default::default(),
             launch: nocterm_ai::AgentLaunch {
                 id: "test".into(),
                 name: "test".into(),
@@ -243,7 +237,7 @@ mod tests {
             ("EXPECTED".into(), "present".into()),
         ]);
         r.launch.inherit_env = vec!["SSH_AUTH_SOCK".into(), "NOCTERM_SECRET".into()];
-        let mut spawned = spawn(&r).unwrap();
+        let mut spawned = spawn(&r, None).unwrap();
         let mut stdout = spawned.child.stdout.take().unwrap();
         let text = futures::executor::block_on(async {
             let mut text = String::new();
@@ -260,7 +254,7 @@ mod tests {
         let path = dir.path().join("agent");
         std::fs::write(&path, "#!/bin/sh\nprintf correct").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut spawned = spawn(&request(dir.path(), "./agent", Vec::new())).unwrap();
+        let mut spawned = spawn(&request(dir.path(), "./agent", Vec::new()), None).unwrap();
         let text = futures::executor::block_on(async {
             let mut text = String::new();
             spawned
@@ -280,11 +274,14 @@ mod tests {
     #[test]
     fn kills_the_process_group_including_grandchildren() {
         let dir = tempfile::tempdir().unwrap();
-        let mut spawned = spawn(&request(
-            dir.path(),
-            "/bin/sh",
-            vec!["-c".into(), "sleep 60 & echo $!; wait".into()],
-        ))
+        let mut spawned = spawn(
+            &request(
+                dir.path(),
+                "/bin/sh",
+                vec!["-c".into(), "sleep 60 & echo $!; wait".into()],
+            ),
+            None,
+        )
         .unwrap();
         let mut reader = futures::io::BufReader::new(spawned.child.stdout.take().unwrap());
         let pid: i32 = futures::executor::block_on(crate::lines::read_line(&mut reader, 128))
@@ -331,7 +328,7 @@ mod tests {
             &[],
             &[],
         ));
-        let mut spawned = spawn(&r).expect("Spawn with bwrap");
+        let mut spawned = spawn(&r, None).expect("Spawn with bwrap");
         let text = futures::executor::block_on(async {
             let mut text = String::new();
             spawned

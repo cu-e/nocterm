@@ -61,7 +61,7 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
     set_policy(cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let mut receive = submit(&f, cx, session, options());
     selected_once(&mut receive);
     let mut tool_response = cx.update(|cx| {
@@ -72,7 +72,7 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
             let terminal_id = thread.resolved(cx)[0].0.clone();
             thread.handle_tool(
                 BridgeCall {
-                    registration_id: thread.registration.as_ref().unwrap().id,
+                    registration_id: thread.registration().as_ref().unwrap().id,
                     call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
                         terminal_id,
                         text: "echo reviewed".into(),
@@ -105,8 +105,8 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let sessions = cx.update(|cx| {
         [
-            first.read(cx).session.clone().unwrap(),
-            second.read(cx).session.clone().unwrap(),
+            first.read(cx).session().clone().unwrap(),
+            second.read(cx).session().clone().unwrap(),
         ]
     });
     let mut first_receive = submit(&f, cx, sessions[0].clone(), options());
@@ -140,7 +140,7 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     set_policy(cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let mut receive = submit(
         &f,
         cx,
@@ -172,7 +172,7 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let mut once = submit(
         &f,
         cx,
@@ -225,7 +225,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let session = cx.update(|cx| thread.read(cx).session.clone().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     let mut invalid = submit(&f, cx, session.clone(), options());
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
@@ -239,7 +239,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let mut obsolete = submit(&f, cx, session.clone(), options());
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            thread.session = Some("replacement-session".into())
+            thread.lease.as_mut().unwrap().session = Some("replacement-session".into())
         })
     });
     set_policy(cx, ApprovalPolicy::Allow);
@@ -274,7 +274,7 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
             if generating {
                 thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
             }
-            thread.read(cx).session.clone().unwrap()
+            thread.read(cx).session().clone().unwrap()
         });
         cx.run_until_parked();
         let mut queued = submit(&f, cx, session.clone(), options());
@@ -308,7 +308,7 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
             .current()
             .unwrap()
             .read(cx)
-            .session
+            .session()
             .clone()
             .unwrap()
     });

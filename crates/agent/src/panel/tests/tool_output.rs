@@ -288,7 +288,7 @@ fn literal_output_copy_updates_with_late_results_and_stays_bounded(cx: &mut Test
             .current()
             .unwrap()
             .read(cx)
-            .session
+            .session()
             .clone()
             .unwrap()
     });

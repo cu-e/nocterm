@@ -43,7 +43,7 @@ impl AgentThread {
         cx.ai_enabled()
             && self.accept_updates
             && !self.stopped
-            && self.session.as_ref() == Some(&request.session_id)
+            && self.session().as_ref() == Some(&request.session_id)
     }
 
     pub(crate) fn permission(

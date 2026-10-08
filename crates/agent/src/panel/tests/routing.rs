@@ -21,7 +21,7 @@ fn server_names(f: &Fixture) -> Vec<String> {
 }
 
 fn registration(thread: &Entity<crate::thread::AgentThread>, cx: &App) -> u64 {
-    thread.read(cx).registration.as_ref().unwrap().id
+    thread.read(cx).registration().as_ref().unwrap().id
 }
 
 fn run(
@@ -58,8 +58,8 @@ fn each_chat_gives_its_agent_a_server_of_its_own(cx: &mut TestAppContext) {
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_eq!(
         f.connector.connects.load(Ordering::SeqCst),
-        1,
-        "both chats share one agent process"
+        2,
+        "each chat owns an independent agent process"
     );
     let names = server_names(&f);
     assert_eq!(names.len(), 2);

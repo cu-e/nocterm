@@ -94,7 +94,7 @@ impl AgentThread {
         replace: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<bool, String> {
-        if !cx.ai_enabled() || self.auth_required || self.ended() || self.session.is_none() {
+        if !cx.ai_enabled() || self.auth_required || self.ended() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.images.is_empty() {
@@ -151,8 +151,16 @@ impl AgentThread {
             || self.queue.is_empty()
             || self.auth_required
             || self.ended()
-            || self.session.is_none()
         {
+            return;
+        }
+        if self.persistence_error.is_some()
+            || (self.lease.is_none() && self.persisted_revision < self.document_revision)
+        {
+            return;
+        }
+        if self.session().is_none() {
+            self.request_activation(cx);
             return;
         }
         let prompt = self.queue.remove(0);

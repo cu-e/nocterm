@@ -14,6 +14,7 @@ pub use session_options::{
 };
 mod store;
 
+pub use ai::lifecycle::{AgentResourceSettings, AgentSessionSettings};
 pub use ai::{AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode};
 pub use explorer::{
     ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,

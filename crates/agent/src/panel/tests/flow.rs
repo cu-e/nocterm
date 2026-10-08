@@ -215,6 +215,13 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
             .snapshot(cx)
             .unwrap()
     });
+    f.panel.update(cx, |panel, cx| {
+        panel
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| thread.release_resources(cx));
+    });
+    cx.run_until_parked();
     let thread = cx
         .new(|cx| crate::thread::AgentThread::restored(saved.clone(), f.workspace.downgrade(), cx));
     f.commands
@@ -333,6 +340,13 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
             .snapshot(cx)
             .unwrap()
     });
+    f.panel.update(cx, |panel, cx| {
+        panel
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| thread.release_resources(cx));
+    });
+    cx.run_until_parked();
     let thread = cx
         .new(|cx| crate::thread::AgentThread::restored(saved.clone(), f.workspace.downgrade(), cx));
     f.commands
@@ -355,7 +369,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), count);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).session.as_ref().unwrap().0.as_ref(),
+            thread.read(cx).session().as_ref().unwrap().0.as_ref(),
             saved.session_id.as_deref().unwrap()
         );
         assert!(!thread.read(cx).fallback_history);
@@ -443,7 +457,7 @@ fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
         thread.send("after restart".into(), cx);
     });
     cx.run_until_parked();
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
     let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
     assert_eq!(saved[0].queue[0].text, "after restart");
     assert!(

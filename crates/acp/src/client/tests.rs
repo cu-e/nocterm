@@ -29,10 +29,12 @@ for line in sys.stdin:
     else: raise Exception('Unexpected method '+method)
     print(json.dumps({'jsonrpc':'2.0','id':req['id'],'result':result}),flush=True)
 "#;
-        let connection = AcpConnector
+        let connection = AcpConnector::unmanaged()
             .connect(ConnectRequest {
                 terminal_auth: false,
                 sandbox: None,
+                resources: Default::default(),
+                cancellation: Default::default(),
                 launch: nocterm_ai::AgentLaunch {
                     id: "legacy-test".into(),
                     name: "Legacy".into(),
@@ -142,10 +144,12 @@ for line in sys.stdin:
     print(json.dumps({{'jsonrpc':'2.0','id':req['id'],'result':result}}),flush=True)
 "#
             );
-            let connection = AcpConnector
+            let connection = AcpConnector::unmanaged()
                 .connect(ConnectRequest {
                     terminal_auth: false,
                     sandbox: None,
+                    resources: Default::default(),
+                    cancellation: Default::default(),
                     launch: nocterm_ai::AgentLaunch {
                         id: "fork-test".into(),
                         name: "Fork".into(),
@@ -305,9 +309,11 @@ fn oversized_subprocess_line_fails_initialization_and_stops_processes() {
             env: Default::default(),
             inherit_env: Vec::new(),
         };
-        let result = AcpConnector.connect(ConnectRequest {
+        let result = AcpConnector::unmanaged().connect(ConnectRequest {
             terminal_auth: false,
             sandbox: None,
+            resources: Default::default(),
+            cancellation: Default::default(),
             launch,
             working_directory: directory.path().to_owned(),
         });
@@ -453,11 +459,14 @@ fn closes_sessions_only_when_agent_advertises_support() {
                         .send_request(acp::InitializeRequest::new(ProtocolVersion::V1))
                         .block_task()
                         .await?;
-                    queue_close_session(
+                    close_session(
                         connection.clone(),
                         info.agent_capabilities.session_capabilities.close.is_some(),
                         acp::SessionId::new("s1"),
-                    );
+                        &[],
+                    )
+                    .await
+                    .unwrap();
                     if advertised {
                         closed_rx
                             .recv()

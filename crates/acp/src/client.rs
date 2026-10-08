@@ -18,7 +18,19 @@ use crate::{lines, models::Models, process};
 
 /// Runtime-neutral ACP connector. Each live subprocess has one protocol driver.
 #[derive(Clone, Default)]
-pub struct AcpConnector;
+pub struct AcpConnector {
+    helper: Option<std::path::PathBuf>,
+}
+impl AcpConnector {
+    pub fn managed(helper: std::path::PathBuf) -> Self {
+        Self {
+            helper: Some(helper),
+        }
+    }
+    pub fn unmanaged() -> Self {
+        Self::default()
+    }
+}
 
 struct ConnectingGuard(Option<Arc<process::ProcessGroup>>);
 impl Drop for ConnectingGuard {
@@ -34,8 +46,12 @@ impl AgentConnector for AcpConnector {
         &self,
         request: ConnectRequest,
     ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
+        let helper = self.helper.clone();
         async move {
-            let mut spawned = process::spawn(&request)?;
+            let cancellation = request.cancellation.clone();
+            if cancellation.is_cancelled() { return Err(AgentError::Io("Agent startup cancelled".into())); }
+            let mut spawned = process::spawn(&request, helper.as_deref())?;
+            let startup_group = spawned.group.clone();
             let mut connecting = ConnectingGuard(Some(spawned.group.clone()));
             let stdin = spawned.child.stdin.take().ok_or_else(|| AgentError::Io("Agent stdin unavailable".into()))?;
             let stdout = spawned.child.stdout.take().ok_or_else(|| AgentError::Io("Agent stdout unavailable".into()))?;
@@ -66,6 +82,7 @@ impl AgentConnector for AcpConnector {
             std::thread::Builder::new().name("nocterm-acp".into()).spawn(move || {
                 futures::executor::block_on(async move {
                     let models = Arc::new(Mutex::new(Models::default()));
+                    let command_events = events_tx.clone();
                     let protocol = client_builder_with_models(events_tx.clone(), models.clone())
                         .connect_with(Lines::new(Box::pin(lines::outgoing(stdin)), Box::pin(lines::incoming(stdout))), async move |connection: ConnectionTo<Agent>| {
                             let capabilities = acp::ClientCapabilities::default().auth(acp::AuthCapabilities::new().terminal(terminal_auth)).session(acp::ClientSessionCapabilities::default().config_options(acp::SessionConfigOptionsCapabilities::default().boolean(acp::BooleanConfigOptionCapabilities::default())));
@@ -81,7 +98,7 @@ impl AgentConnector for AcpConnector {
                                     let close_supported=info.capabilities.session_capabilities.close.is_some();
                                     let restore = if info.capabilities.session_capabilities.resume.is_some() { Restore::Resume } else if info.capabilities.load_session { Restore::Load } else { Restore::Unsupported };
                                     let fork_supported=info.capabilities.session_capabilities.fork.is_some();
-                                    let commands = Arc::new(Commands {connection:connection.clone(), stop:stop_tx, group,secrets:command_secrets,close_supported,restore,fork_supported,models});
+                                    let commands = Arc::new(Commands {connection:connection.clone(), stop:stop_tx, group,secrets:command_secrets,close_supported,restore,fork_supported,models,events:command_events});
                                     if ready_tx.send(Ok(AgentConnection {info, commands, events:events_rx})).is_err() { return Ok(()); }
                                     let _ = select(Box::pin(stop_rx.recv()), Box::pin(connection.incoming_closed())).await;
                                     Ok(())
@@ -92,14 +109,14 @@ impl AgentConnector for AcpConnector {
                         });
                     let (result, status) = match select(Box::pin(protocol), Box::pin(spawned.child.status())).await {
                         Either::Left((result, status)) => {
-                            spawned.group.finish();
+                            let _ = spawned.group.shutdown().await;
                             (result, status.await.ok())
                         }
                         Either::Right((status, protocol)) => {
                             // Descendants can retain stdout after the leader exits.
                             // Drain final protocol events, then terminate the entire group.
                             let _ = async_io::Timer::after(Duration::from_millis(250)).await;
-                            spawned.group.finish();
+                            let _ = spawned.group.shutdown().await;
                             (protocol.await, status.ok())
                         }
                     };
@@ -115,8 +132,15 @@ impl AgentConnector for AcpConnector {
                     events_tx.close();
                 });
             }).map_err(|e| AgentError::Io(e.to_string()))?;
-            let result = ready_rx.await.map_err(|_| AgentError::Io("Agent exited during initialization".into()))?;
-            if result.is_ok() {connecting.0.take();}
+            let result = match select(Box::pin(ready_rx), cancellation.cancelled()).await {
+                Either::Left((result, _)) => result.unwrap_or_else(|_| Err(AgentError::Io("Agent exited during initialization".into()))),
+                Either::Right(_) => Err(AgentError::Io("Agent startup cancelled".into())),
+            };
+            if result.is_ok() {
+                connecting.0.take();
+            } else {
+                startup_group.shutdown().await.map_err(|error| AgentError::CleanupUnconfirmed(error.to_string()))?;
+            }
             result
         }.boxed()
     }
@@ -139,6 +163,7 @@ struct Commands {
     restore: Restore,
     fork_supported: bool,
     models: Arc<Mutex<Models>>,
+    events: async_channel::Sender<AgentEvent>,
 }
 impl AgentCommands for Commands {
     fn new_session(
@@ -325,12 +350,50 @@ impl AgentCommands for Commands {
         }
         .boxed()
     }
-    fn close_session(&self, session: acp::SessionId) {
-        self.models
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&session);
-        queue_close_session(self.connection.clone(), self.close_supported, session);
+    fn close_session(
+        &self,
+        session: acp::SessionId,
+    ) -> BoxFuture<'static, Result<nocterm_ai::CloseSessionOutcome, AgentError>> {
+        let connection = self.connection.clone();
+        let supported = self.close_supported;
+        let secrets = self.secrets.clone();
+        let models = self.models.clone();
+        let events = self.events.clone();
+        async move {
+            let result = close_session(connection, supported, session.clone(), &secrets).await;
+            models
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&session);
+            if matches!(result, Ok(nocterm_ai::CloseSessionOutcome::Closed)) {
+                let (ack, barrier) = oneshot::channel();
+                let fence = async {
+                    events.send(AgentEvent::Barrier(ack)).await.ok()?;
+                    barrier.await.ok()
+                };
+                match select(
+                    Box::pin(fence),
+                    Box::pin(async_io::Timer::after(Duration::from_secs(5))),
+                )
+                .await
+                {
+                    Either::Left((Some(()), _)) => {}
+                    _ => return Ok(nocterm_ai::CloseSessionOutcome::TimedOut),
+                }
+            }
+            result
+        }
+        .boxed()
+    }
+    fn shutdown_gracefully(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+        let group = self.group.clone();
+        let stop = self.stop.clone();
+        async move {
+            let result = group.shutdown().await;
+            let _ = stop.try_send(());
+            result
+        }
+        .boxed()
     }
     fn shutdown(&self) {
         let _ = self.stop.try_send(());
@@ -343,19 +406,29 @@ impl Drop for Commands {
     }
 }
 
-fn queue_close_session(connection: ConnectionTo<Agent>, supported: bool, session: acp::SessionId) {
+async fn close_session(
+    connection: ConnectionTo<Agent>,
+    supported: bool,
+    session: acp::SessionId,
+    secrets: &[String],
+) -> Result<nocterm_ai::CloseSessionOutcome, AgentError> {
     if !supported {
-        return;
+        return Ok(nocterm_ai::CloseSessionOutcome::Unsupported);
     }
-    let request_connection = connection.clone();
-    let _ = connection.spawn(async move {
-        // Closing a UI thread must not block the foreground or the inbound dispatcher.
-        let _ = request_connection
-            .send_request(acp::CloseSessionRequest::new(session))
-            .block_task()
-            .await;
-        Ok(())
-    });
+    let close = connection
+        .send_request(acp::CloseSessionRequest::new(session))
+        .block_task();
+    match select(
+        Box::pin(close),
+        Box::pin(async_io::Timer::after(Duration::from_secs(5))),
+    )
+    .await
+    {
+        Either::Left((result, _)) => result
+            .map(|_| nocterm_ai::CloseSessionOutcome::Closed)
+            .map_err(|error| map_error_with(error, secrets)),
+        Either::Right(_) => Ok(nocterm_ai::CloseSessionOutcome::TimedOut),
+    }
 }
 
 fn map_error_with(mut error: acp::Error, secrets: &[String]) -> AgentError {
@@ -479,3 +552,6 @@ fn client_builder_with_models(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod lifecycle_tests;

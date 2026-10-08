@@ -7,7 +7,7 @@ use super::{AgentThread, Fork, Restore};
 use crate::runtime::Runtime;
 
 impl AgentThread {
-    /// A thread showing `chat` from history, connected only when opened.
+    /// A thread showing `chat` from history, connected only when work is submitted.
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
         workspace: WeakEntity<Workspace>,
@@ -81,8 +81,8 @@ impl AgentThread {
         chat.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
         chat.pending_history = self.fallback_history || !whole;
-        let restore = match (&self.session, &self.restore) {
-            (Some(session), _) => self.session_workdir.clone().map(|workdir| Restore {
+        let restore = match (&self.session(), &self.restore) {
+            (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
                 session: session.clone(),
                 workdir,
                 fork: true,
@@ -100,7 +100,7 @@ impl AgentThread {
             attachments: self.default_attachments().to_vec(),
         }
     }
-    /// The chat `fork` made, connected only when opened.
+    /// The chat `fork` made, connected only when work is submitted.
     pub(crate) fn forked(
         fork: Fork,
         workspace: WeakEntity<Workspace>,
@@ -154,10 +154,10 @@ impl AgentThread {
         );
         chat.model = self.model();
         chat.pending_history = self.fallback_history;
-        match (&self.session, &self.restore) {
+        match (&self.session(), &self.restore) {
             (Some(session), _) => {
                 chat.session_id = Some(session.0.to_string());
-                chat.workdir = self.session_workdir.clone();
+                chat.workdir = self.session_workdir().clone();
             }
             // A fork not yet opened has no session of its own: reopening the
             // original would continue it rather than a copy.
@@ -206,9 +206,14 @@ impl AgentThread {
     /// Saves the chat to history, if anything was said.
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
         if let Some(chat) = self.shared_snapshot(cx) {
+            self.document_revision += 1;
+            let revision = self.document_revision;
+            let owner = cx.entity_id();
             // Deferred: this may run while the runtime itself is updating.
             cx.defer(move |cx| {
-                Runtime::global(cx).update(cx, |runtime, cx| runtime.save_chat(chat, cx))
+                Runtime::global(cx).update(cx, |runtime, cx| {
+                    runtime.save_chat(chat, owner, revision, cx)
+                })
             });
         }
     }

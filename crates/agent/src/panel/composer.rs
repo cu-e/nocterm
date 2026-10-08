@@ -293,11 +293,7 @@ impl AgentPanel {
                         })
                         .flex_shrink_0()
                         .tooltip(if stop_button { "Stop" } else { "Send" })
-                        .disabled(
-                            thread.read(cx).session.is_none()
-                                || thread.read(cx).auth_required
-                                || self.preparing_images(),
-                        )
+                        .disabled(thread.read(cx).auth_required || self.preparing_images())
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.current().is_some_and(|thread| {
                                 thread.read(cx).generating
