@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.1.0](https://github.com/cu-e/nocterm/compare/v3.0.0...v3.1.0) (2026-10-09)
+
+
+### Features
+
+* **agent:** connect shown chats and recover failed sessions ([4046980](https://github.com/cu-e/nocterm/commit/4046980d6a7d750db40e00b28d56d98c633d0f3e))
+
+
+### Bug Fixes
+
+* **agent-runtime:** load history on demand and order quit persistence ([940bd7b](https://github.com/cu-e/nocterm/commit/940bd7b6831c429be1e265394c0d8104ce3fad06))
+* **agent:** decode historical tool wrappers tolerantly ([b43791d](https://github.com/cu-e/nocterm/commit/b43791d444bed287325e10f06e096b7d1231dc95))
+* **agent:** keep terminal tools working for Hermes and after rebuilds ([bbe95e1](https://github.com/cu-e/nocterm/commit/bbe95e1ff98e10b5ecc23c6d6d9b833a4dde8724))
+* **agent:** keep terminal tools working for Hermes and after rebuilds ([5784459](https://github.com/cu-e/nocterm/commit/5784459ea008cd3799f2124fcd8c0d3424cb12ab))
+* **agent:** persist bridge-owned tool outcomes ([9efd3af](https://github.com/cu-e/nocterm/commit/9efd3af4dd909adfe747aa48fea4bf2ab768fedd))
+* **agent:** render tool row sections independently ([a73db59](https://github.com/cu-e/nocterm/commit/a73db5973462bd349ba37cdc8de1a1c9c26ae35a))
+* **agent:** replace truncated previews with complete tool results ([9ddba71](https://github.com/cu-e/nocterm/commit/9ddba71133ed06e615c80277138adcfc9cddb522))
+* **agent:** show rejected tool requests and Codex errors ([93e8566](https://github.com/cu-e/nocterm/commit/93e85664880c1dc5942a97aa479fc7a284e1f82c))
+* **containers-ui:** bind destructive confirmation to its host ([fbdf7ae](https://github.com/cu-e/nocterm/commit/fbdf7aea0c01513a35d878b678700784685dffbe))
+* **local:** cancel local commands and start them off the GUI thread ([8821134](https://github.com/cu-e/nocterm/commit/88211340d83793751d1e457a139dad87f7732be2))
+* **monitor:** bound frame lines and deliver frames one at a time ([90975ad](https://github.com/cu-e/nocterm/commit/90975ad129e696a471132880d16ceb997c2048c3))
+* **ui:** order layout and settings writes on quit ([f79adcd](https://github.com/cu-e/nocterm/commit/f79adcdd94bf06150f608f8b8c51b5af3fd107de))
+
+
+### Documentation
+
+* record architecture decisions and the layer rules ([4991b30](https://github.com/cu-e/nocterm/commit/4991b30f33aa7b9c939fd717b1ec21352eb0feb1))
+* split the architecture notes into one document per layer ([e78d108](https://github.com/cu-e/nocterm/commit/e78d1084a61d0f2fd992ad5b1f216bbe773f6752))
+
 ## [3.0.0](https://github.com/cu-e/nocterm/compare/v2.0.0...v3.0.0) (2026-10-08)
 
 
