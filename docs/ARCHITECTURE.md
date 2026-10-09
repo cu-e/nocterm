@@ -1,14 +1,31 @@
 # Architecture
 
 The application is the composition root. `src/main.rs` loads paths, settings and
-design tokens, installs SSH/local transports and the vault service, and registers independent workspace
-features. The [dependency map](architecture/dependencies.md) is generated from
+design tokens and passes them, with the SSH/local transports and the vault, to
+`src/bootstrap.rs`, which installs every global in one order shared with the GUI
+tests and registers independent workspace features. The [dependency map](architecture/dependencies.md) is generated from
 Cargo metadata; `cargo xtask architecture` enforces its declared layers and
 rejects runtime GUI dependencies below the UI layer. Service crates sit beside
 the UI layer: they own GPUI entities and background work but no views, so they
 depend on GPUI alone, never on the component library, UI or features. The
 [architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
 regression evidence and residual constraints.
+
+## Layers
+
+| Layer | May depend on | GUI |
+| ----- | ------------- | --- |
+| foundation | foundation | none |
+| domain | domain, foundation | none |
+| adapter | domain, foundation | none |
+| service | service, domain, foundation | GPUI only |
+| ui | ui, domain, foundation | yes |
+| feature | service, ui, domain, foundation | yes |
+| app | everything but tooling | yes |
+
+Features never depend on each other; they meet in the workspace's seams
+(items, panels, actions, the session factory). Accepted decisions and the
+alternatives they rejected are recorded in [docs/adr](adr/README.md).
 
 `nocterm-vault` declares the device-unlock provider contract and owns envelope,
 binding and cancellation rules. The composition root injects
