@@ -62,6 +62,7 @@ impl AgentThread {
                 self.permission(*request, respond, cx);
             }
             SessionEvent::Tool(call) => self.handle_tool(call, cx),
+            SessionEvent::ToolRejected(rejected) => self.record_rejected_tool(rejected, cx),
             SessionEvent::Stopped(message) => self.connection_stopped(&message, cx),
             SessionEvent::Failed(message) => self.fail(&message, cx),
             SessionEvent::AgentRemoved => {

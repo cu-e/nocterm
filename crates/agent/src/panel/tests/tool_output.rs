@@ -19,8 +19,11 @@ pub(super) fn call(tool: &str, args: Value, output: Value, verified: bool) -> ac
     call.status = acp::ToolCallStatus::Completed;
     call.raw_output = Some(output);
     if verified {
-        ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()))
-            .attach(&mut call);
+        let mut display =
+            ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()));
+        display.version = 1;
+        display.outcome = None;
+        display.attach(&mut call);
     }
     call
 }

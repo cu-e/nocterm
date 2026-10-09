@@ -14,7 +14,8 @@ fn record() -> Record {
     let request = tool_display::envelope(&call, "nocterm-3").unwrap();
     Record {
         server: "nocterm-3".into(),
-        request: tool_display::request(&request),
+        id: 0,
+        request: tool_display::raw_envelope(&call, "nocterm-3").unwrap(),
         display: ToolDisplay::new(
             &request,
             Some("Original server · user@original.example:2222".into()),
@@ -299,4 +300,45 @@ fn both_provider_spellings_match_one_snapshot_and_duplicate_rows_revoke_the_host
             assert!(!tool_display::header(call).contains("original.example"));
         }
     }
+}
+
+#[test]
+fn completion_updates_bound_rows_and_cannot_cross_turns_or_duplicate_requests() {
+    let mut displays = ToolDisplays::default();
+    displays.prepare(1, 0);
+    let mut first = record();
+    first.id = 5;
+    displays.records.push(first);
+    let mut entries = vec![row("first")];
+    displays.normalize(&mut entries);
+    displays.finish(Some((1, 5)), Ok(json!({"text":"late result"})));
+    assert_eq!(displays.normalize(&mut entries), vec![0]);
+    let Entry::Tool(call) = &entries[0] else {
+        unreachable!()
+    };
+    assert!(matches!(
+        ToolDisplay::from_call(call).unwrap().outcome,
+        Some(tool_display::ToolOutcome::Ok(_))
+    ));
+    let mut second = record();
+    second.id = 6;
+    displays.records.push(second);
+    displays.normalize(&mut entries);
+    displays.finish(Some((1, 6)), Err("second result".into()));
+    let Entry::Tool(call) = &entries[0] else {
+        unreachable!()
+    };
+    assert!(
+        ToolDisplay::from_call(call).unwrap().outcome.is_none(),
+        "ambiguity removes unverified outcomes"
+    );
+    displays.prepare(2, entries.len());
+    let mut next = record();
+    next.id = 5;
+    displays.records.push(next);
+    displays.finish(Some((1, 5)), Err("old turn result".into()));
+    assert!(matches!(
+        displays.records[0].display.outcome,
+        Some(tool_display::ToolOutcome::Pending)
+    ));
 }

@@ -216,3 +216,58 @@ fn a_request_the_bridge_rejected_is_still_shown_but_never_matched() {
         );
     }
 }
+
+#[test]
+fn v1_metadata_and_unparseable_v2_requests_remain_readable() {
+    let mut call = acp::ToolCall::new("old", "provider");
+    call.meta = Some(
+        [(
+            META_KEY.into(),
+            json!({"version":1,"tool":"list_terminals","arguments":{},"destination":null}),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    assert!(ToolDisplay::from_call(&call).unwrap().outcome.is_none());
+    let display = ToolDisplay::requested("unknown_tool".into(), json!({"bad":true}));
+    display.attach(&mut call);
+    assert!(
+        ToolDisplay::from_call(&call)
+            .unwrap()
+            .display_request()
+            .is_none()
+    );
+}
+
+#[test]
+fn outcome_budget_counts_serialized_escaping_for_success_and_error() {
+    let mut display = ToolDisplay::requested("list_terminals".into(), json!({}));
+    display.finish(Ok(json!({"context":"ok"})));
+    assert!(matches!(display.outcome, Some(ToolOutcome::Ok(_))));
+    display.finish(Ok(json!("\n".repeat(140_000))));
+    assert!(display.outcome.is_none());
+    display.finish(Err("password=secret".into()));
+    let Some(ToolOutcome::Err(error)) = &display.outcome else {
+        panic!("error outcome");
+    };
+    assert!(!error.contains("secret"));
+    display.finish(Err("\n".repeat(140_000)));
+    assert!(display.outcome.is_none());
+}
+
+#[test]
+fn raw_matching_preserves_rejected_unknown_tools_and_original_arguments() {
+    for title in [
+        "mcp.nocterm-3.typo",
+        "mcp__nocterm-3__typo",
+        "mcp_nocterm_3_typo",
+    ] {
+        let call = acp::ToolCall::new("bad", title).raw_input(json!({"wrong":true}));
+        assert_eq!(
+            raw_envelope(&call, "nocterm-3"),
+            Some(("typo".into(), json!({"wrong":true})))
+        );
+        assert!(raw_envelope(&call, "nocterm-4").is_none());
+        assert!(envelope(&call, "nocterm-3").is_none());
+    }
+}

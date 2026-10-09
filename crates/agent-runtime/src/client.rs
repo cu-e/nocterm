@@ -5,7 +5,7 @@
 //! delivered synchronously, in the order the runtime emits them.
 use super::SessionLease;
 use gpui::{App, EntityId};
-use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, PermissionResponder, acp};
+use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 /// What the runtime tells a chat.
@@ -27,6 +27,7 @@ pub enum SessionEvent {
     },
     /// A call to one of the chat's terminal tools.
     Tool(BridgeCall),
+    ToolRejected(BridgeRejection),
     /// The connection ended with `0`.
     Stopped(String),
     /// The connection could not be started.
@@ -40,7 +41,9 @@ pub enum SessionEvent {
     /// The previous session's close finished; a new one may start.
     SessionClosed,
     /// The chat's snapshot at `revision` was written.
-    Saved { revision: u64 },
+    Saved {
+        revision: u64,
+    },
     /// The chat's last snapshot could not be written.
     SaveFailed(String),
     /// The permission settings changed.

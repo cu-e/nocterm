@@ -7,7 +7,7 @@ use gpui_kit::{
 };
 use nocterm_ai::{
     acp,
-    tool_display::{self, ToolDisplay},
+    tool_display::{self, ToolDisplay, ToolOutcome},
 };
 use serde_json::Value;
 
@@ -62,6 +62,20 @@ fn text(value: &Value) -> String {
 }
 
 pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
+    if let Some(display) = ToolDisplay::from_call(call)
+        && let Some(outcome) = display.outcome
+    {
+        let mut output = match outcome {
+            ToolOutcome::Pending => return None,
+            ToolOutcome::Ok(value) => decode::known(&display.tool, &value, 0)
+                .unwrap_or_else(|| Output::plain("Tool output", text(&value))),
+            ToolOutcome::Err(error) => Output::plain("Error", error),
+        };
+        if redact {
+            output.redact();
+        }
+        return Some(output);
+    }
     let request = ToolDisplay::from_call(call)
         .and_then(|display| display.display_request())
         .or_else(|| tool_display::requested_call(call));

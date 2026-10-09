@@ -585,7 +585,15 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.apply_presented_update(acp::SessionUpdate::ToolCall(call));
-            thread.record_tool_display(&request, Some(&entry), cx);
+            let (respond, _) = oneshot::channel();
+            let mut request = BridgeCall {
+                arguments: Some(json!({"terminal_id":"t1","command":"echo snapshot"})),
+                display_token: None,
+                registration_id: thread.registration().as_ref().unwrap().id,
+                call: request.clone(),
+                respond,
+            };
+            thread.record_tool_display(&mut request, Some(&entry), cx);
             thread.composer.attachments.clear();
         })
     });
@@ -625,7 +633,15 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.apply_presented_update(acp::SessionUpdate::ToolCall(call));
-            thread.record_tool_display(&ipv6, Some(&entry), cx);
+            let (respond, _) = oneshot::channel();
+            let mut request = BridgeCall {
+                arguments: Some(json!({"terminal_id":"t1","command":"echo ipv6"})),
+                display_token: None,
+                registration_id: thread.registration().as_ref().unwrap().id,
+                call: ipv6.clone(),
+                respond,
+            };
+            thread.record_tool_display(&mut request, Some(&entry), cx);
             let Entry::Tool(call) = &thread.state.entries[1] else {
                 unreachable!()
             };

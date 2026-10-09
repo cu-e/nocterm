@@ -60,6 +60,8 @@ fn submit(
     let (respond, response) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,

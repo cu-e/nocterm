@@ -83,6 +83,7 @@ impl AgentThread {
     pub(crate) fn release_resources(&mut self, cx: &mut Context<Self>) {
         self.composer.queue_paused = true;
         self.cancel_pending();
+        self.finalize_tool_displays();
         self.generating = false;
         self.auth_required = false;
         self.authenticating = false;

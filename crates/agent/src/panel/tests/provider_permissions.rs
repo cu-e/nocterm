@@ -72,6 +72,8 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
             let terminal_id = thread.resolved(cx)[0].0.clone();
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: thread.registration().as_ref().unwrap().id,
                     call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
                         terminal_id,

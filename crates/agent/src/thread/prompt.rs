@@ -82,6 +82,7 @@ impl AgentThread {
                 this.generating = false;
                 this.prompt_attachments = None;
                 this.cancel_pending();
+                this.finalize_tool_displays();
                 this.persist(cx);
                 match result {
                     Ok(response) => {

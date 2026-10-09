@@ -318,20 +318,40 @@ impl Runtime {
             return;
         }
         let calls = self.services.bridge.calls();
+        let rejections = self.services.bridge.rejections();
         self._bridge = Some(cx.spawn(async move |this, cx| {
-            while let Ok(call) = calls.recv().await {
+            loop {
+                use futures::future::{Either, select};
+                let event = if rejections.is_closed() && rejections.is_empty() {
+                    match calls.recv().await {
+                        Ok(call) => SessionEvent::Tool(call),
+                        Err(_) => break,
+                    }
+                } else {
+                    match select(Box::pin(calls.recv()), Box::pin(rejections.recv())).await {
+                        Either::Left((Ok(call), _)) => SessionEvent::Tool(call),
+                        Either::Right((Ok(rejected), _)) => SessionEvent::ToolRejected(rejected),
+                        Either::Left((Err(_), _)) => break,
+                        Either::Right((Err(_), _)) => continue,
+                    }
+                };
+                let registration = match &event {
+                    SessionEvent::Tool(call) => call.registration_id,
+                    SessionEvent::ToolRejected(rejected) => rejected.registration_id,
+                    _ => unreachable!(),
+                };
                 let client = this
                     .read_with(cx, |this, _| {
                         this.registrations
-                            .get(&call.registration_id)
+                            .get(&registration)
                             .filter(|client| client.alive())
                             .cloned()
                     })
                     .ok()
                     .flatten();
                 if let Some(client) = client {
-                    cx.update(|cx| client.emit(SessionEvent::Tool(call), cx));
-                } else {
+                    cx.update(|cx| client.emit(event, cx));
+                } else if let SessionEvent::Tool(call) = event {
                     let _ = call
                         .respond
                         .send(Err("Chat was closed or AI is disabled.".into()));
@@ -339,6 +359,7 @@ impl Runtime {
             }
         }));
     }
+
     pub fn register_bridge(
         &mut self,
         client: &Client,

@@ -1,4 +1,4 @@
-//! Client-owned presentation of validated Nocterm requests. This is saved with
+//! Client-owned presentation of requested Nocterm operations. This is saved with
 //! the transcript so a later profile rename or reconnect cannot rewrite history.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,6 +9,14 @@ pub const META_KEY: &str = "nocterm/tool-display";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub enum ToolOutcome {
+    Pending,
+    Ok(Value),
+    Err(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolDisplay {
     pub version: u8,
     pub tool: String,
@@ -16,24 +24,50 @@ pub struct ToolDisplay {
     pub destination: Option<String>,
     #[serde(default)]
     pub redacted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ToolOutcome>,
 }
 
 impl ToolDisplay {
     pub fn new(call: &TerminalCall, destination: Option<String>) -> Self {
         let (tool, arguments) = request(call);
         Self {
-            version: 1,
+            version: 2,
             tool: tool.into(),
             arguments,
             destination,
             redacted: false,
+            outcome: Some(ToolOutcome::Pending),
         }
+    }
+
+    pub fn requested(tool: String, arguments: Value) -> Self {
+        Self {
+            version: 2,
+            tool,
+            arguments,
+            destination: None,
+            redacted: false,
+            outcome: Some(ToolOutcome::Pending),
+        }
+    }
+
+    pub fn finish(&mut self, result: Result<Value, String>) {
+        let outcome = match result {
+            Ok(value) => ToolOutcome::Ok(value),
+            Err(error) => ToolOutcome::Err(crate::redact::redact(&error)),
+        };
+        self.outcome = serde_json::to_vec(&outcome)
+            .ok()
+            .filter(|bytes| bytes.len() <= 256 * 1024)
+            .map(|_| outcome);
     }
 
     pub fn from_call(call: &acp::ToolCall) -> Option<Self> {
         let value = call.meta.as_ref()?.get(META_KEY)?.clone();
         let display: Self = serde_json::from_value(value).ok()?;
-        (display.version == 1 && display.display_request().is_some()).then_some(display)
+        (display.version == 2 || (display.version == 1 && display.display_request().is_some()))
+            .then_some(display)
     }
 
     /// Display data has already been validated before execution. Redaction can
@@ -46,6 +80,11 @@ impl ToolDisplay {
     pub fn redact(&mut self) {
         let original = self.arguments.clone();
         redact_values(&mut self.arguments);
+        match &mut self.outcome {
+            Some(ToolOutcome::Ok(value)) => redact_values(value),
+            Some(ToolOutcome::Err(error)) => *error = crate::redact::redact(error),
+            _ => {}
+        }
         self.redacted |= self.arguments != original;
     }
 
@@ -81,7 +120,7 @@ pub fn operation(tool: &str) -> &'static str {
 }
 
 mod identity;
-pub use identity::{bridge_server_name, envelope, fallback_tool, requested_call};
+pub use identity::{bridge_server_name, envelope, fallback_tool, raw_envelope, requested_call};
 
 pub fn header(call: &acp::ToolCall) -> String {
     let title = ToolDisplay::from_call(call)

@@ -44,7 +44,11 @@ fn identity(name: &str) -> Option<Identity<'_>> {
             name[digits..].strip_prefix('_')?,
         )
     };
-    (operation(tool) != "Tool").then_some(Identity { registration, tool })
+    (!tool.is_empty()
+        && tool
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    .then_some(Identity { registration, tool })
 }
 
 fn explicit_identity(call: &acp::ToolCall) -> Option<Option<Identity<'_>>> {
@@ -70,6 +74,32 @@ fn explicit_identity(call: &acp::ToolCall) -> Option<Option<Identity<'_>>> {
 /// format. Neither establishes an execution destination.
 pub fn envelope(call: &acp::ToolCall, server: &str) -> Option<TerminalCall> {
     envelope_of(call, registration(server)?, parse)
+}
+
+/// Exact provider identity and original arguments, including rejected requests.
+pub fn raw_envelope(call: &acp::ToolCall, server: &str) -> Option<(String, serde_json::Value)> {
+    let registration = registration(server)?;
+    let named = explicit_identity(call)?;
+    if named.is_some_and(|named| named.registration != registration) {
+        return None;
+    }
+    let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) else {
+        return Some((named?.tool.into(), json!({})));
+    };
+    if ["server", "tool", "arguments"]
+        .iter()
+        .any(|key| input.get(key).is_some())
+    {
+        let envelope_server = input.get("server")?.as_str()?;
+        let tool = input.get("tool")?.as_str()?;
+        if self::registration(envelope_server) != Some(registration)
+            || named.is_some_and(|named| named.tool != tool)
+        {
+            return None;
+        }
+        return Some((tool.into(), input.get("arguments")?.clone()));
+    }
+    Some((named?.tool.into(), input.clone()))
 }
 
 /// `read` turns the tool's arguments into a request: strictly when matching
@@ -105,6 +135,9 @@ fn envelope_of(
 
 pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
     let named = explicit_identity(call)??;
+    if operation(named.tool) == "Tool" {
+        return None;
+    }
     // A malformed or inconsistent payload keeps its original provider label.
     if call
         .raw_input

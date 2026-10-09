@@ -190,6 +190,7 @@ struct Bridge {
     revoked: Arc<Mutex<Vec<u64>>>,
     stops: AtomicUsize,
     calls: async_channel::Receiver<BridgeCall>,
+    rejections: async_channel::Receiver<nocterm_ai::BridgeRejection>,
 }
 impl ToolBridge for Bridge {
     fn register(&self) -> Result<BridgeRegistration, String> {
@@ -207,6 +208,9 @@ impl ToolBridge for Bridge {
     }
     fn calls(&self) -> async_channel::Receiver<BridgeCall> {
         self.calls.clone()
+    }
+    fn rejections(&self) -> async_channel::Receiver<nocterm_ai::BridgeRejection> {
+        self.rejections.clone()
     }
     fn stop(&self) {
         self.stops.fetch_add(1, Ordering::SeqCst);
@@ -343,6 +347,7 @@ struct Fixture {
     terminal: gpui_kit::EntityId,
     /// Tool calls as the terminal bridge delivers them.
     calls: async_channel::Sender<BridgeCall>,
+    rejections: async_channel::Sender<nocterm_ai::BridgeRejection>,
     _directory: tempfile::TempDir,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
@@ -351,15 +356,17 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
-    let (commands, bridge, connector, events, sender) = {
+    let (commands, bridge, connector, events, sender, rejection_sender) = {
         let commands = Arc::new(Commands::default());
         let (events, rx) = async_channel::bounded(256);
         let (sender, calls) = async_channel::bounded(16);
+        let (rejection_sender, rejections) = async_channel::bounded(16);
         let bridge = Arc::new(Bridge {
             next: AtomicU64::new(1),
             revoked: Default::default(),
             stops: AtomicUsize::new(0),
             calls,
+            rejections,
         });
         let connector = Arc::new(Connector {
             commands: commands.clone(),
@@ -367,7 +374,14 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             connects: AtomicUsize::new(0),
             event_senders: Default::default(),
         });
-        (commands, bridge, connector, events, sender)
+        (
+            commands,
+            bridge,
+            connector,
+            events,
+            sender,
+            rejection_sender,
+        )
     };
     let access = Rc::new(Access {
         executor: Default::default(),
@@ -439,6 +453,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         access,
         terminal,
         calls: sender,
+        rejections: rejection_sender,
         _directory: directory,
     }
 }
@@ -515,6 +530,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 }
 
 mod approvals;
+mod bridge_outcomes;
 mod composer;
 mod hermes;
 mod history;

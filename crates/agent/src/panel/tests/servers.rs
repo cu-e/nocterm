@@ -149,6 +149,8 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
             let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: registration,
                     call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
                         server_id: server.clone(),
@@ -228,6 +230,8 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
             let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: registration,
                     call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
                         server_id: server,
@@ -292,6 +296,8 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
             let registration = thread.registration().as_ref().unwrap().id;
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: registration,
                     call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
                         server_id: server,

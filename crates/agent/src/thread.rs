@@ -155,11 +155,12 @@ impl AgentThread {
     ) -> Self {
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| {
+            this.cancel_pending();
+            this.finalize_tool_displays();
             let snapshot = cx.ai_enabled().then(|| this.flush_snapshot(cx)).flatten();
             this.document_revision += 1;
             let revision = this.document_revision;
             this.cancel_execution();
-            this.cancel_pending();
             // The lease releases its connection when it is dropped.
             drop(this.lease.take());
             cx.defer(move |cx| {
@@ -278,6 +279,7 @@ impl AgentThread {
     pub(crate) fn fail(&mut self, message: &str, cx: &mut Context<Self>) {
         self.cancel_execution();
         self.finish_pending_tools();
+        self.cancel_pending();
         if !self.dormant {
             self.persist(cx);
         }
@@ -407,6 +409,7 @@ impl AgentThread {
         self.storage_budget.refresh(&self.state.entries, &dirty)
     }
     fn finish_pending_tools(&mut self) {
+        self.finalize_tool_displays();
         for (index, entry) in self.state.entries.iter_mut().enumerate() {
             if let nocterm_ai::thread::Entry::Tool(call) = entry
                 && matches!(
@@ -423,8 +426,8 @@ impl AgentThread {
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.
         self.permissions.clear();
-        for call in self.tools.drain(..) {
-            let _ = call.respond.send(Err("Request cancelled.".into()));
+        for call in std::mem::take(&mut self.tools) {
+            self.finish(call, Err("Request cancelled.".into()));
         }
     }
     pub(crate) fn set_config(

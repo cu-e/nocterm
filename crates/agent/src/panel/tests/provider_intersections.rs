@@ -36,6 +36,8 @@ pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -
     let (respond, mut receive) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,
@@ -186,19 +188,22 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
             2,
             "same MCP result is not rendered twice"
         );
-        assert_eq!(output.sections[0].text, stdout);
-        assert_eq!(output.sections[1].text, "warning\n");
+        assert_eq!(output.sections[0].text, payload["stdout"].as_str().unwrap());
+        assert_eq!(output.sections[1].text, payload["stderr"].as_str().unwrap());
+        assert!(output.parameters.iter().any(|text| text
+            == &format!(
+                "Process: {}",
+                if payload["state"] == "running" {
+                    "Running"
+                } else {
+                    "Starting"
+                }
+            )));
         assert!(
             output
                 .parameters
                 .iter()
-                .any(|text| text == "Process: Exited")
-        );
-        assert!(
-            output
-                .parameters
-                .iter()
-                .any(|text| text == "Exit status: 7")
+                .any(|text| text == "Exit status: unknown")
         );
     });
     cx.update(|cx| thread.update(cx, |thread, _| thread.composer.attachments.clear()));
@@ -220,8 +225,6 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
-        window.click(("copy-tool-output", 0usize), cx);
-        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), stdout);
     })
     .unwrap();
 }
