@@ -1,0 +1,43 @@
+{
+  "toolCallId": "fixture",
+  "title": "mcp.nocterm-17.exec_command",
+  "status": "completed",
+  "rawInput": {
+    "server": "nocterm-17",
+    "tool": "exec_command",
+    "arguments": {
+      "terminal_id": "t1",
+      "program": "sh",
+      "args": [
+        "-c",
+        "printf 'fixture\\n'"
+      ]
+    }
+  },
+  "rawOutput": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"command_id\":\"c1\",\"state\":\"exited\",\"stdout\":\"fixture\\n\",\"stderr\":\"\",\"exit_status\":0,\"total_bytes\":8,\"truncated\":false,\"error\":null}"
+        }
+      ],
+      "structuredContent": {
+        "command_id": "c1",
+        "state": "exited",
+        "stdout": "fixture\n",
+        "stderr": "",
+        "exit_status": 0,
+        "total_bytes": 8,
+        "truncated": false,
+        "error": null
+      },
+      "_meta": {
+        "future": true
+      }
+    },
+    "error": null
+  }
+}

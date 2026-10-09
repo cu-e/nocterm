@@ -1,0 +1,26 @@
+{
+  "toolCallId": "fixture",
+  "title": "mcp.nocterm-17.exec_command",
+  "status": "completed",
+  "rawInput": {
+    "server": "nocterm-17",
+    "tool": "exec_command",
+    "arguments": {
+      "terminal_id": "t1",
+      "program": "sh",
+      "args": [
+        "-c",
+        "printf 'fixture\\n'"
+      ]
+    }
+  },
+  "rawOutput": {
+    "result": null,
+    "error": {
+      "message": "Tool request failed",
+      "code": -32602
+    },
+    "id": 7,
+    "jsonrpc": "2.0"
+  }
+}
