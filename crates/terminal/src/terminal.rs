@@ -15,9 +15,8 @@ use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
     SessionError, Transport,
 };
-use nocterm_settings::{
-    CursorShape, LocalShellSettings, LoggingOptions, SshSettings, TerminalSettings,
-};
+use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
+use nocterm_ui::{CursorShape, TerminalSettings};
 use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
@@ -146,10 +145,10 @@ impl Terminal {
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let options = emulator_options(cx.setting::<nocterm_settings::TerminalSettings>());
+        let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
         let mut this = Self {
             codec: crate::codec::TextCodec::new(
-                cx.setting::<nocterm_settings::TerminalSettings>().charset,
+                cx.setting::<nocterm_ui::TerminalSettings>().charset,
             ),
             input_error: RefCell::default(),
             text_error: None,
@@ -179,7 +178,7 @@ impl Terminal {
             _pump: None,
             sync_timer: None,
             _settings: cx.observe_global::<SettingsStore>(|this, cx| {
-                let options = emulator_options(cx.setting::<nocterm_settings::TerminalSettings>());
+                let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
                 this.emulator.set_options(options);
                 this.refresh_find(cx);
                 this.emit_output(cx);
@@ -435,10 +434,8 @@ impl Terminal {
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
                     if text.len() <= 1024 * 1024
-                        && cx
-                            .setting::<nocterm_settings::TerminalSettings>()
-                            .clipboard_write
-                            == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                        && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                            == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                     {
                         cx.emit(TerminalEvent::ClipboardWrite(text));
                     }
@@ -611,7 +608,7 @@ pub(crate) fn emulator_options(settings: &TerminalSettings) -> EmulatorOptions {
     }
 }
 
-fn shell_launch(settings: &nocterm_settings::ShellSettings) -> nocterm_session::ShellLaunch {
+fn shell_launch(settings: &nocterm_session::ShellSettings) -> nocterm_session::ShellLaunch {
     nocterm_session::ShellLaunch {
         program: settings.program.clone(),
         args: settings.args.clone(),

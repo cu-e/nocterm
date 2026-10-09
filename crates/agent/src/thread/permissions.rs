@@ -1,7 +1,7 @@
 //! ACP provider permissions are independent of Nocterm terminal grants.
 use gpui_kit::Context;
+use nocterm_ai::ApprovalPolicy;
 use nocterm_ai::acp;
-use nocterm_settings::ApprovalPolicy;
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 
 use super::{AgentThread, PendingPermission};
@@ -56,7 +56,7 @@ impl AgentThread {
             return;
         }
         let automatic = cx
-            .setting::<nocterm_settings::AiSettings>()
+            .setting::<nocterm_ai::AiSettings>()
             .approval
             .agent_permissions
             == ApprovalPolicy::Allow;
@@ -77,7 +77,7 @@ impl AgentThread {
     /// Applies changes to queued requests without granting persistent provider permissions.
     pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
         let automatic = cx
-            .setting::<nocterm_settings::AiSettings>()
+            .setting::<nocterm_ai::AiSettings>()
             .approval
             .agent_permissions
             == ApprovalPolicy::Allow;

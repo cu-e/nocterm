@@ -5,7 +5,7 @@
 //! [`observe_ai_enabled`] to stop what it started when the switch goes off.
 
 use gpui_kit::{App, Subscription};
-use nocterm_settings::AiSettings;
+use nocterm_ai::AiSettings;
 
 use crate::SettingsExt as _;
 
@@ -42,8 +42,9 @@ pub fn observe_ai_enabled(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
+    use crate::TerminalSettings;
     use gpui_kit::TestAppContext;
-    use nocterm_settings::{SettingsDocument, TerminalSettings};
+    use nocterm_settings::SettingsDocument;
 
     use crate::{SettingsStore, register_setting};
 

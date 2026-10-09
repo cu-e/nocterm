@@ -131,7 +131,7 @@ impl TerminalView {
             cx.observe_keystrokes(Self::on_keyboard_binding),
             cx.observe_global::<nocterm_ui::SettingsStore>(|this, cx| {
                 if !cx
-                    .setting::<nocterm_settings::TerminalSettings>()
+                    .setting::<nocterm_ui::TerminalSettings>()
                     .semantic_highlighting
                 {
                     this.highlights.borrow_mut().clear();
@@ -200,10 +200,8 @@ impl TerminalView {
             TerminalEvent::ClipboardWrite(text) => {
                 if self.focus_handle.is_focused(window)
                     && cx.active_window() == Some(window.window_handle())
-                    && cx
-                        .setting::<nocterm_settings::TerminalSettings>()
-                        .clipboard_write
-                        == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                    && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                        == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                 {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 }

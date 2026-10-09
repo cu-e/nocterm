@@ -29,7 +29,7 @@ pub struct TerminalStyle {
 impl TerminalStyle {
     pub fn current(cx: &App) -> Self {
         let tokens = cx.design();
-        let settings = cx.setting::<nocterm_settings::TerminalSettings>();
+        let settings = cx.setting::<crate::TerminalSettings>();
         let theme = cx.theme();
         let colors = &tokens.palette(theme.is_dark()).terminal;
 

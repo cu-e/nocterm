@@ -1,15 +1,16 @@
-//! The shape of `settings.toml`.
+//! `[appearance]` and `[terminal]`: how the interface and terminals look.
 //!
 //! The doc comment of every field doubles as its entry in the generated
 //! reference (`docs/reference/settings.md`) and as its description in the
 //! settings tab, so write it for the person changing the setting.
 
-use std::{collections::BTreeMap, ops::RangeInclusive};
+use std::ops::RangeInclusive;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{SettingsSection, clamp_f32, trim_unset};
+use nocterm_session::{Charset, validate_term};
+use nocterm_settings::{SettingsSection, clamp_f32, trim_unset};
 
 /// Terminal font sizes a user may pick, in pixels.
 pub const FONT_SIZE_RANGE: RangeInclusive<f32> = 6.0..=72.0;
@@ -17,10 +18,6 @@ pub const FONT_SIZE_RANGE: RangeInclusive<f32> = 6.0..=72.0;
 pub const LINE_HEIGHT_RANGE: RangeInclusive<f32> = 1.0..=3.0;
 /// Scrollback lengths a user may pick, in lines.
 pub const SCROLLBACK_RANGE: RangeInclusive<u32> = 0..=1_000_000;
-/// Connection timeouts a user may pick, in seconds.
-pub const CONNECT_TIMEOUT_RANGE: RangeInclusive<u32> = 1..=600;
-/// Keep-alive intervals a user may pick, in seconds; zero turns them off.
-pub const KEEPALIVE_RANGE: RangeInclusive<u32> = 0..=3600;
 /// Space between floating cards a user may pick, in pixels.
 pub const CARD_GAP_RANGE: RangeInclusive<f32> = 0.0..=24.0;
 /// Corner radii of floating cards a user may pick, in pixels.
@@ -29,7 +26,7 @@ pub const CARD_RADIUS_RANGE: RangeInclusive<f32> = 0.0..=24.0;
 /// How the interface looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub struct Appearance {
+pub struct AppearanceSettings {
     /// Which palette to use: follow the operating system, or always light or dark.
     pub mode: AppearanceMode,
     /// Imported light theme name. Unset uses Nocterm Default.
@@ -54,14 +51,14 @@ pub struct Appearance {
     pub card_radius: f32,
 }
 
-impl Appearance {
+impl AppearanceSettings {
     /// Default space between floating cards, in pixels.
     pub const DEFAULT_CARD_GAP: f32 = 4.0;
     /// Default corner radius of floating cards, in pixels.
     pub const DEFAULT_CARD_RADIUS: f32 = 10.0;
 }
 
-impl Default for Appearance {
+impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
             mode: AppearanceMode::default(),
@@ -102,7 +99,7 @@ pub enum AppearanceMode {
 #[serde(default, deny_unknown_fields)]
 pub struct TerminalSettings {
     /// Text encoding used when a session has no override.
-    pub charset: crate::Charset,
+    pub charset: Charset,
     /// Font family. Unset: the design tokens' terminal font.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
@@ -140,7 +137,7 @@ pub struct TerminalSettings {
 impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
-            charset: crate::Charset::default(),
+            charset: Charset::default(),
             font_family: None,
             font_size: None,
             line_height: None,
@@ -176,79 +173,7 @@ pub enum CursorShape {
     Underline,
 }
 
-/// How SSH connections are made.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct SshSettings {
-    /// Explicit connection route; proxy authentication is not supported yet.
-    pub proxy: crate::ProxyConfig,
-    /// Seconds to wait for a host to answer before giving up.
-    #[schemars(extend("minimum" = CONNECT_TIMEOUT_RANGE.start(), "maximum" = CONNECT_TIMEOUT_RANGE.end()))]
-    pub connect_timeout_secs: u32,
-    /// Seconds between keep-alive probes on an idle connection. 0 turns them off.
-    #[schemars(extend("minimum" = KEEPALIVE_RANGE.start(), "maximum" = KEEPALIVE_RANGE.end()))]
-    pub keepalive_interval_secs: u32,
-    /// Default remote shell launch options; profiles may override them.
-    pub launch: ShellSettings,
-}
-
-impl Default for SshSettings {
-    fn default() -> Self {
-        Self {
-            proxy: crate::ProxyConfig::default(),
-            connect_timeout_secs: 15,
-            keepalive_interval_secs: 30,
-            launch: ShellSettings::default(),
-        }
-    }
-}
-
-/// Shell launch settings. Changes apply on the next launch or reconnect.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct ShellSettings {
-    /// Shell executable. Empty means the system or server default.
-    pub program: Option<String>,
-    /// Individual executable arguments, without shell parsing.
-    pub args: Vec<String>,
-    /// Initial directory. Empty means the user's home directory.
-    pub cwd: Option<String>,
-    /// Additional environment variables; never put passwords here.
-    pub env: BTreeMap<String, String>,
-    /// Enable ephemeral cwd and prompt integration in supported shells.
-    pub integration: bool,
-}
-impl Default for ShellSettings {
-    fn default() -> Self {
-        Self {
-            program: None,
-            args: Vec::new(),
-            cwd: None,
-            env: BTreeMap::new(),
-            integration: true,
-        }
-    }
-}
-/// Automatic locking of the portable encrypted vault.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct VaultSettings {
-    /// Lock after this many minutes without vault use (1–1440).
-    #[schemars(extend("minimum" = 1, "maximum" = 1440))]
-    pub auto_lock_minutes: u32,
-    /// Prompt for the master password when Nocterm starts.
-    pub prompt_on_startup: bool,
-}
-impl Default for VaultSettings {
-    fn default() -> Self {
-        Self {
-            auto_lock_minutes: 15,
-            prompt_on_startup: false,
-        }
-    }
-}
-
-impl SettingsSection for Appearance {
+impl SettingsSection for AppearanceSettings {
     const KEY: &'static str = "appearance";
 
     fn sanitize(&mut self) {
@@ -275,62 +200,19 @@ impl SettingsSection for TerminalSettings {
             .scrollback_lines
             .clamp(*SCROLLBACK_RANGE.start(), *SCROLLBACK_RANGE.end());
         self.term = self.term.trim().to_owned();
-        if crate::validate_term(&self.term).is_err() {
+        if validate_term(&self.term).is_err() {
             self.term = Self::default().term;
         }
-    }
-}
-
-impl SettingsSection for SshSettings {
-    const KEY: &'static str = "ssh";
-
-    fn sanitize(&mut self) {
-        self.connect_timeout_secs = self
-            .connect_timeout_secs
-            .clamp(*CONNECT_TIMEOUT_RANGE.start(), *CONNECT_TIMEOUT_RANGE.end());
-        self.keepalive_interval_secs = self
-            .keepalive_interval_secs
-            .clamp(*KEEPALIVE_RANGE.start(), *KEEPALIVE_RANGE.end());
-    }
-}
-
-/// Local shell launch options; applied when opening the bottom terminal.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-pub struct LocalShellSettings(pub ShellSettings);
-
-impl std::ops::Deref for LocalShellSettings {
-    type Target = ShellSettings;
-
-    fn deref(&self) -> &ShellSettings {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for LocalShellSettings {
-    fn deref_mut(&mut self) -> &mut ShellSettings {
-        &mut self.0
-    }
-}
-
-impl SettingsSection for LocalShellSettings {
-    const KEY: &'static str = "local";
-}
-
-impl SettingsSection for VaultSettings {
-    const KEY: &'static str = "vault";
-
-    fn sanitize(&mut self) {
-        self.auto_lock_minutes = self.auto_lock_minutes.clamp(1, 1440);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nocterm_settings::SettingsDocument;
 
     fn read<S: SettingsSection>(text: &str) -> S {
-        let mut document = crate::SettingsDocument::from_table(toml::from_str(text).unwrap());
+        let mut document = SettingsDocument::from_table(toml::from_str(text).unwrap());
         document.register::<S>();
         assert!(document.errors().is_empty(), "{:?}", document.errors());
         document.get::<S>().clone()
@@ -375,20 +257,12 @@ mod tests {
         assert_eq!(terminal.line_height, None);
         assert_eq!(terminal.font_family, None);
         assert_eq!(terminal.term, "xterm-256color");
-
-        let mut ssh = SshSettings {
-            connect_timeout_secs: 0,
-            ..SshSettings::default()
-        };
-        ssh.sanitize();
-        assert_eq!(ssh.connect_timeout_secs, 1);
-
-        let mut appearance = Appearance {
+        let mut appearance = AppearanceSettings {
             card_gap: 100.0,
             card_radius: f32::NAN,
             light_theme: Some("  ".into()),
             dark_theme: Some(" My Dark ".into()),
-            ..Appearance::default()
+            ..AppearanceSettings::default()
         };
         appearance.sanitize();
         assert_eq!(appearance.card_gap, 24.0);
@@ -399,16 +273,9 @@ mod tests {
 
     #[test]
     fn layout_is_floating_unless_classic_is_chosen() {
-        assert_eq!(Appearance::default().layout, UiLayout::Floating);
-        let appearance: Appearance = read("[appearance]\nlayout = \"classic\"\n");
+        assert_eq!(AppearanceSettings::default().layout, UiLayout::Floating);
+        let appearance: AppearanceSettings = read("[appearance]\nlayout = \"classic\"\n");
         assert_eq!(appearance.layout, UiLayout::Classic);
-    }
-
-    #[test]
-    fn the_local_shell_is_a_plain_table() {
-        let local: LocalShellSettings = read("[local]\nargs = [\"-l\"]\n");
-        assert_eq!(local.args, ["-l"]);
-        assert!(local.integration);
     }
 
     #[test]
@@ -418,10 +285,7 @@ mod tests {
             section.sanitize();
             assert_eq!(section, S::default(), "{}", S::KEY);
         }
-        check::<Appearance>();
+        check::<AppearanceSettings>();
         check::<TerminalSettings>();
-        check::<SshSettings>();
-        check::<LocalShellSettings>();
-        check::<VaultSettings>();
     }
 }

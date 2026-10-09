@@ -188,7 +188,7 @@ impl AgentThread {
         let destination = self.tool_destination(request, entry, cx);
         let mut display = ToolDisplay::new(request, destination);
         if cx
-            .setting::<nocterm_settings::AiSettings>()
+            .setting::<nocterm_ai::AiSettings>()
             .approval
             .redact_secrets
         {

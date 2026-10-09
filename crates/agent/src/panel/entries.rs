@@ -264,7 +264,7 @@ impl AgentPanel {
                         {
                             let title = nocterm_ai::tool_display::header(call);
                             if cx
-                                .setting::<nocterm_settings::AiSettings>()
+                                .setting::<nocterm_ai::AiSettings>()
                                 .approval
                                 .redact_secrets
                             {
@@ -289,7 +289,7 @@ impl AgentPanel {
                 if expanded {
                     if let Some(input) = tool_input::source(call) {
                         let input = if cx
-                            .setting::<nocterm_settings::AiSettings>()
+                            .setting::<nocterm_ai::AiSettings>()
                             .approval
                             .redact_secrets
                         {
@@ -301,7 +301,7 @@ impl AgentPanel {
                     }
                     if let Some(output) = tool_output::source(
                         call,
-                        cx.setting::<nocterm_settings::AiSettings>()
+                        cx.setting::<nocterm_ai::AiSettings>()
                             .approval
                             .redact_secrets,
                     ) {

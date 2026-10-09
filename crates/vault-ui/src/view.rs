@@ -65,7 +65,7 @@ impl VaultView {
         });
         let auto_lock = cx.new(|cx| {
             InputState::new(window, cx).default_value(
-                cx.setting::<nocterm_settings::VaultSettings>()
+                cx.setting::<crate::VaultSettings>()
                     .auto_lock_minutes
                     .to_string(),
             )
@@ -86,7 +86,7 @@ impl VaultView {
             }),
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 let minutes = cx
-                    .setting::<nocterm_settings::VaultSettings>()
+                    .setting::<crate::VaultSettings>()
                     .auto_lock_minutes
                     .to_string();
                 let focused = this.auto_lock.read(cx).focus_handle(cx).is_focused(window);
@@ -259,12 +259,8 @@ impl VaultView {
         match text.parse::<u32>() {
             Ok(minutes) if (1..=1440).contains(&minutes) => {
                 self.auto_lock_error = None;
-                if minutes
-                    != cx
-                        .setting::<nocterm_settings::VaultSettings>()
-                        .auto_lock_minutes
-                {
-                    cx.update_setting::<nocterm_settings::VaultSettings>(move |settings| {
+                if minutes != cx.setting::<crate::VaultSettings>().auto_lock_minutes {
+                    cx.update_setting::<crate::VaultSettings>(move |settings| {
                         settings.auto_lock_minutes = minutes
                     })
                     .detach();

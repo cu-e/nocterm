@@ -74,7 +74,7 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings
-            .update::<nocterm_settings::VaultSettings>(|section| section.prompt_on_startup = true);
+            .update::<nocterm_vault_ui::VaultSettings>(|section| section.prompt_on_startup = true);
         let vault_path = directory.path().join("vault.bin");
         let paths = nocterm_core::Paths::rooted_at(directory.path());
         cx.set_global(FixtureDirectory {
@@ -115,7 +115,7 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::super::app_menus::build, window, cx);
                     if cx
-                        .setting::<nocterm_settings::VaultSettings>()
+                        .setting::<nocterm_vault_ui::VaultSettings>()
                         .prompt_on_startup
                     {
                         let pages = vec![nocterm_vault_ui::settings_page()];

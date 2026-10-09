@@ -380,7 +380,7 @@ impl ServerFacts {
 /// (tests) it is on; nothing goes over the network there anyway.
 pub(crate) fn country_detection_enabled(cx: &App) -> bool {
     !cx.has_global::<nocterm_ui::SettingsStore>()
-        || nocterm_ui::SettingsExt::setting::<nocterm_settings::Appearance>(cx)
+        || nocterm_ui::SettingsExt::setting::<nocterm_ui::AppearanceSettings>(cx)
             .detect_server_country
 }
 

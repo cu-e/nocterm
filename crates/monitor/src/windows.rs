@@ -8,9 +8,9 @@
 
 use std::{fmt::Write as _, time::Duration};
 
+use crate::MonitorMetric;
 use base64::Engine as _;
 use nocterm_session::ExecRequest;
-use nocterm_settings::MonitorMetric;
 
 use crate::{
     CpuTimes, DiskCounters, Filesystem, HostInfo, MetricSet, NetworkCounters, Reading, Temperature,

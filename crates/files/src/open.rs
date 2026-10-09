@@ -2,12 +2,12 @@
 //! Explorer, or the system's default application, and local entries in the
 //! system file manager.
 
+use crate::{OpenSettings, Opener};
 use gpui_kit::{
     App, SharedString, WeakEntity, Window,
     component::menu::{PopupMenu, PopupMenuItem},
 };
 use nocterm_session::fs::path;
-use nocterm_settings::{OpenSettings, Opener};
 use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::Workspace;
 use std::{
@@ -20,9 +20,7 @@ use crate::operations::FileTarget;
 /// The user's opener settings; the defaults where none are installed.
 fn settings(cx: &App) -> OpenSettings {
     if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<nocterm_settings::ExplorerSettings>()
-            .open
-            .clone()
+        cx.setting::<crate::ExplorerSettings>().open.clone()
     } else {
         OpenSettings::default()
     }

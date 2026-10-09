@@ -1,4 +1,4 @@
-use nocterm_settings::AiSettings;
+use crate::AiSettings;
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AgentLaunch {

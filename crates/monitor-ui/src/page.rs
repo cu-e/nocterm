@@ -2,6 +2,9 @@
 
 use std::{ops::RangeInclusive, time::Duration};
 
+use crate::{
+    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorSettings,
+};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
     Task, Window,
@@ -15,10 +18,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{
-    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorMetric,
-    MonitorSettings,
-};
+use nocterm_monitor::MonitorMetric;
 use nocterm_ui::{SettingsExt as _, SettingsStore, form};
 use nocterm_workspace::SettingsPage;
 

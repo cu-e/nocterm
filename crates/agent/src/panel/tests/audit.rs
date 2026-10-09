@@ -595,7 +595,7 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
     })
     .unwrap();
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();

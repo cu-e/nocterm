@@ -49,7 +49,7 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
 async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -83,7 +83,7 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.sessions.idle_timeout_secs = 2
         })
     })
@@ -144,7 +144,7 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
 async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -257,7 +257,7 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
 async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -339,7 +339,7 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.sessions.max_live = 1;
             settings.sessions.idle_timeout_secs = 1;
         })
@@ -732,7 +732,7 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
 async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.sessions.idle_timeout_secs = 2
         })
     })

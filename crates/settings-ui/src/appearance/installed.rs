@@ -51,7 +51,7 @@ pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<Setti
                     .map(|e| e.name.clone())
                     .collect();
                 let save = cx.update(|cx| {
-                    cx.update_setting::<nocterm_settings::Appearance>(move |s| {
+                    cx.update_setting::<nocterm_ui::AppearanceSettings>(move |s| {
                         if s.light_theme
                             .as_ref()
                             .is_some_and(|n| names.contains(n) && !light.contains(n))

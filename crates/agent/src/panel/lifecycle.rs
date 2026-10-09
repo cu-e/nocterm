@@ -63,10 +63,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(_launch) =
-            nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
-                .get(&id)
-                .cloned()
+        let Some(_launch) = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
+            .get(&id)
+            .cloned()
         else {
             return;
         };

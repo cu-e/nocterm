@@ -190,7 +190,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             workspace.set_menu_builder(app_menus::build, window, cx);
             if vault_ready
                 && cx
-                    .setting::<nocterm_settings::VaultSettings>()
+                    .setting::<nocterm_vault_ui::VaultSettings>()
                     .prompt_on_startup
             {
                 let pages = vec![nocterm_vault_ui::settings_page()];

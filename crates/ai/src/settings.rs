@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::trim_unset;
+use nocterm_settings::trim_unset;
 pub(crate) mod lifecycle;
 use lifecycle::{AgentResourceSettings, AgentSessionSettings};
 
@@ -143,7 +143,7 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
-impl crate::SettingsSection for AiSettings {
+impl nocterm_settings::SettingsSection for AiSettings {
     const KEY: &'static str = "ai";
 
     /// Trims text values; an empty one counts as unset. Agent entries are kept
@@ -164,7 +164,7 @@ impl crate::SettingsSection for AiSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SettingsSection as _;
+    use nocterm_settings::SettingsSection as _;
 
     fn read(text: &str) -> AiSettings {
         let table: toml::Table = toml::from_str(text).unwrap();

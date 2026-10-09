@@ -60,7 +60,7 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
         let mut settings = nocterm_settings::SettingsDocument::default();
-        settings.update::<nocterm_settings::LoggingOptions>(|section| section.auto_start = true);
+        settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),

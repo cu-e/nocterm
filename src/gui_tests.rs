@@ -82,7 +82,7 @@ fn fixture_with_vault(
         cx.set_reduce_motion(true);
         let directory = tempfile::tempdir().unwrap();
         let mut settings = nocterm_settings::SettingsDocument::default();
-        settings.update::<nocterm_settings::LocalShellSettings>(|section| {
+        settings.update::<nocterm_session::LocalShellSettings>(|section| {
             section.cwd = Some(directory.path().to_string_lossy().into_owned())
         });
         let vault_path = directory.path().join("vault.bin");
@@ -139,7 +139,7 @@ fn fixture_with_vault(
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
                     if vault_ready
                         && cx
-                            .setting::<nocterm_settings::VaultSettings>()
+                            .setting::<nocterm_vault_ui::VaultSettings>()
                             .prompt_on_startup
                     {
                         let pages = vec![nocterm_vault_ui::settings_page()];
@@ -438,7 +438,7 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
             .find_item::<nocterm_settings_ui::SettingsView>()
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
             .detach();
         window.render_frame(cx);
     })
@@ -473,7 +473,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
             ..Default::default()
         });
         source.credential = Some(markers[3].parse().unwrap());
-        source.options.proxy = Some(nocterm_settings::ProxyConfig::HttpConnect {
+        source.options.proxy = Some(nocterm_session::ProxyConfig::HttpConnect {
             host: markers[2].into(),
             port: 8080,
         });

@@ -139,7 +139,7 @@ impl AgentThread {
     ) -> serde_json::Value {
         let redact = |text: String| {
             if cx
-                .setting::<nocterm_settings::AiSettings>()
+                .setting::<nocterm_ai::AiSettings>()
                 .approval
                 .redact_secrets
             {

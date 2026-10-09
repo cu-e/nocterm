@@ -1,5 +1,5 @@
 use super::*;
-use nocterm_settings::ApprovalPolicy;
+use nocterm_ai::ApprovalPolicy;
 
 fn options() -> Vec<acp::PermissionOption> {
     vec![
@@ -41,7 +41,7 @@ fn submit(
 
 fn set_policy(cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(move |settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
             settings.approval.agent_permissions = policy;
         })
         .detach()
@@ -314,7 +314,7 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     });
     let mut queued = submit(&f, cx, session, options());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.enabled = false;
             settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })

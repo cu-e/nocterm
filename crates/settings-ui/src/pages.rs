@@ -1,4 +1,4 @@
-//! Appearance, Terminal, Local shell and SSH pages.
+//! AppearanceSettings, Terminal, Local shell and SSH pages.
 use gpui_kit::{
     AnyElement, App, Context, Entity, SharedString, Window,
     component::{
@@ -12,11 +12,14 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{
-    Appearance, CARD_GAP_RANGE, CARD_RADIUS_RANGE, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy,
-    CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, LocalShellSettings,
-    LoggingOptions, SCROLLBACK_RANGE, SessionOptions, SettingsDocument, SettingsSection,
-    ShellSettings, SshSettings, TerminalSettings,
+use nocterm_session::{
+    CONNECT_TIMEOUT_RANGE, KEEPALIVE_RANGE, LocalShellSettings, LoggingOptions, SessionOptions,
+    ShellSettings, SshSettings,
+};
+use nocterm_settings::{SettingsDocument, SettingsSection};
+use nocterm_ui::{
+    AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy, CursorShape,
+    FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings,
 };
 use nocterm_ui::{SessionOptionsEditor, SettingsExt as _, form};
 
@@ -62,8 +65,8 @@ pub(crate) fn add_fields(
 ) {
     view.add_field(
         "appearance.card_gap",
-        |s: &Appearance| s.card_gap.to_string(),
-        |s: &mut Appearance, text| {
+        |s: &AppearanceSettings| s.card_gap.to_string(),
+        |s: &mut AppearanceSettings, text| {
             s.card_gap = number(text, "Card gap", CARD_GAP_RANGE)?;
             Ok(())
         },
@@ -72,8 +75,8 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "appearance.card_radius",
-        |s: &Appearance| s.card_radius.to_string(),
-        |s: &mut Appearance, text| {
+        |s: &AppearanceSettings| s.card_radius.to_string(),
+        |s: &mut AppearanceSettings, text| {
             s.card_radius = number(text, "Card radius", CARD_RADIUS_RANGE)?;
             Ok(())
         },

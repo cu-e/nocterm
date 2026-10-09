@@ -330,7 +330,7 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
     );
     for redacts in [true, false] {
         cx.update(|cx| {
-            cx.update_setting::<nocterm_settings::AiSettings>(move |settings| {
+            cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
                 settings.approval.redact_secrets = redacts;
             })
             .detach();

@@ -5,12 +5,12 @@
 //! read that one global, so choosing the layout here reframes the window
 //! without any view knowing where the choice came from.
 
+use crate::UiLayout;
 use gpui_kit::{
     App, Hsla,
     component::{ActiveTheme as _, floating::FloatingCards},
     hsla as gpui_hsla, px,
 };
-use nocterm_settings::UiLayout;
 
 use crate::{ActiveDesign as _, SettingsExt as _, hsla, terminal_style::color};
 
@@ -36,7 +36,7 @@ pub(crate) fn apply_floating(cx: &mut App) {
 
 /// The floating geometry for the current settings, tokens and theme.
 fn cards(cx: &App) -> Option<FloatingCards> {
-    let appearance = cx.setting::<nocterm_settings::Appearance>();
+    let appearance = cx.setting::<crate::AppearanceSettings>();
     if appearance.layout != UiLayout::Floating {
         return None;
     }

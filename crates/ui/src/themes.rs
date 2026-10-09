@@ -39,7 +39,7 @@ fn resolve(cx: &mut App) {
     let mut tokens = design.base.clone();
     let mut imported = [false; 2];
     let builtin = DesignTokens::builtin();
-    let appearance = cx.setting::<nocterm_settings::Appearance>();
+    let appearance = cx.setting::<crate::AppearanceSettings>();
     for (appearance, name) in [
         (Appearance::Light, &appearance.light_theme),
         (Appearance::Dark, &appearance.dark_theme),

@@ -14,6 +14,7 @@ pub mod form;
 mod icons;
 mod layout;
 pub mod notice;
+mod sections;
 mod session_options;
 mod settings;
 pub use session_options::SessionOptionsEditor;
@@ -26,6 +27,10 @@ pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
 pub use layout::LayoutMemory;
+pub use sections::{
+    AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy,
+    CursorShape, FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings, UiLayout,
+};
 pub use settings::{SettingsExt, SettingsStore, edit_settings, register_setting};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
@@ -47,9 +52,9 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) {
     cx.set_global(Design::new(tokens));
     cx.set_global(settings);
     settings::init(cx);
-    register_setting::<nocterm_settings::Appearance>(cx);
-    register_setting::<nocterm_settings::TerminalSettings>(cx);
-    register_setting::<nocterm_settings::AiSettings>(cx);
+    register_setting::<crate::AppearanceSettings>(cx);
+    register_setting::<crate::TerminalSettings>(cx);
+    register_setting::<nocterm_ai::AiSettings>(cx);
     apply_theme(cx);
 
     cx.observe_global::<Design>(apply_theme).detach();

@@ -94,7 +94,7 @@ fn summary(snapshot: Option<&Snapshot>, stale: bool, cx: &App) -> AnyElement {
         .text_xs()
         .when(stale, |row| row.opacity(0.6))
         .children(
-            cx.setting::<nocterm_settings::MonitorSettings>()
+            cx.setting::<crate::MonitorSettings>()
                 .status_bar
                 .iter()
                 .map(|metric| item(*metric, snapshot, muted, cx)),

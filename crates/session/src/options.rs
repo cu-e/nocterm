@@ -100,7 +100,7 @@ impl Default for LoggingOptions {
         }
     }
 }
-impl crate::SettingsSection for LoggingOptions {
+impl nocterm_settings::SettingsSection for LoggingOptions {
     const KEY: &'static str = "logging";
 
     fn sanitize(&mut self) {

@@ -73,7 +73,7 @@ pub(crate) fn register(paths: Paths, vault_ready: bool, cx: &mut App) {
     });
     cx.on_action(|_: &LogsDirectory, cx| {
         let directory = cx
-            .setting::<nocterm_settings::LoggingOptions>()
+            .setting::<nocterm_session::LoggingOptions>()
             .directory
             .clone()
             .unwrap_or_else(|| {

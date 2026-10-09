@@ -16,7 +16,16 @@ verification for user-bound memory-only keys. See [device unlock](DEVICE_UNLOCK.
 for the platform boundaries and explicit installation.
 
 `nocterm-core` provides paths and atomic, comment-preserving TOML persistence.
-`nocterm-settings` owns the configuration schema, defaults, ranges and storage.
+`nocterm-settings` owns the settings mechanism, not their schema: the
+`SettingsSection` trait, a document that reads each top-level table on its own
+(a broken table falls back to its defaults and is reported, the others keep
+working, and saving leaves it untouched) and the file. Each section lives with
+the crate that uses it: `[ssh]`, `[local]` and `[logging]` in `nocterm-session`,
+`[appearance]` and `[terminal]` in `nocterm-ui`, `[ai]` in `nocterm-ai`,
+`[monitor]` in `nocterm-monitor-ui`, `[explorer]` in `nocterm-files` and
+`[vault]` in `nocterm-vault-ui`. Owners register their sections at startup and
+read them with `cx.setting::<S>()`; `cargo xtask architecture` fails if the
+settings reference does not list a section.
 `nocterm-design` owns typed visual tokens and theme overrides. These foundation
 crates have no UI or transport dependencies.
 
@@ -225,13 +234,13 @@ vault credentials are left untouched. `nocterm-settings-ui`
 contributes a single settings Item with a page list. Every control saves itself:
 switches and choices at once, text when typing pauses, on Enter and on blur.
 Invalid text stays in its field with the error and is never written. Each save is
-an edit queued with `edit_settings` and applied to the settings current when the
-write runs, so quick successive edits and other windows never conflict; changes
-are published through SettingsStore only after a successful write, and fields not
-being edited follow changes made elsewhere. Persistent writes run through bounded
-ordered background queues; whole-draft saves (`save_settings`) still carry a
-revision and profile drafts carry the original snapshot, so another window cannot
-silently lose its saved changes. Pages share `nocterm_ui::form` sections and rows
+an edit of one section (`update_setting`) queued and applied to the settings
+current when the write runs, so quick successive edits and other windows never
+conflict; changes are published through SettingsStore only after a successful
+write, observers of other sections are not woken, and fields not being edited
+follow changes made elsewhere. Persistent writes run through bounded ordered
+background queues; profile drafts carry the original snapshot, so another window
+cannot silently lose its saved changes. Pages share `nocterm_ui::form` sections and rows
 on the terminal's background. Recent snapshots
 coalesce separately from connection opening. Native quit draining is bounded
 best effort within GPUI's shutdown deadline. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition

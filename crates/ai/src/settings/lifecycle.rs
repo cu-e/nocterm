@@ -79,7 +79,8 @@ impl AgentResourceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AiSettings, SettingsFile};
+    use crate::AiSettings;
+    use nocterm_settings::SettingsFile;
     #[test]
     fn global_admission_and_memory_limits_are_bounded_and_round_trip() {
         let dir = tempfile::tempdir().unwrap();

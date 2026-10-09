@@ -14,11 +14,11 @@ use gpui_kit::{
     div,
     prelude::*,
 };
+use nocterm_ai::{AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode};
 use nocterm_ai::{
     registry::AgentRegistry,
     sandbox::{Availability, current_availability},
 };
-use nocterm_settings::{AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode};
 use nocterm_ui::{IconName, SettingsExt as _, form};
 
 use crate::{

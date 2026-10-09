@@ -57,10 +57,7 @@ impl Runtime {
             self.pending_activation.clear();
             return;
         }
-        let policy = cx
-            .setting::<nocterm_settings::AiSettings>()
-            .sessions
-            .clone();
+        let policy = cx.setting::<nocterm_ai::AiSettings>().sessions.clone();
         let now = cx.background_executor().now();
         let mut idle = Vec::new();
         for (key, connection) in &self.connections {
@@ -131,7 +128,7 @@ impl Runtime {
             }
             let agent = thread.read(cx).agent_id.clone();
             if let Some(launch) =
-                nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
+                nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
                     .get(&agent)
                     .cloned()
             {

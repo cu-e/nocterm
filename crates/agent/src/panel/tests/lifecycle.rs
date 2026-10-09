@@ -39,7 +39,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.run_until_parked();
     cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).state.entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes>0);assert_eq!(thread.read(cx).tool_bytes,0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();
@@ -108,7 +108,7 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(cancelled.load(Ordering::SeqCst), 0);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();
@@ -122,7 +122,7 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     let f = fixture(cx);
     new_chat(&f, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.agents.entry("codex".into()).or_default().command = Some("other-agent".into())
         })
     })
@@ -133,7 +133,7 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     new_chat(&f, cx);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.agents.get_mut("codex").unwrap().enabled = false
         })
     })
@@ -187,7 +187,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
-    cx.update(|cx| cx.update_setting::<nocterm_settings::AiSettings>(|s| s.enabled = false))
+    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = false))
         .await
         .unwrap();
     cx.run_until_parked();
@@ -199,7 +199,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     assert_eq!(f.bridge.revoked.lock().unwrap().len(), 1);
-    cx.update(|cx| cx.update_setting::<nocterm_settings::AiSettings>(|s| s.enabled = true))
+    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = true))
         .await
         .unwrap();
     cx.run_until_parked();

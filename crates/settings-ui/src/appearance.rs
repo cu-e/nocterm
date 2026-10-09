@@ -9,9 +9,9 @@ use gpui_kit::{
     },
     prelude::*,
 };
-use nocterm_settings::{AppearanceMode, UiLayout};
 use nocterm_themes::{Appearance, ThemeRegistry};
 use nocterm_ui::{ActiveThemes as _, SettingsExt as _, Themes, form};
+use nocterm_ui::{AppearanceMode, UiLayout};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -86,7 +86,7 @@ impl AppearancePage {
                     let SelectEvent::Confirm(name) = event;
                     let name = name.clone().filter(|s| s != "Nocterm Default");
                     this.save(
-                        move |s: &mut nocterm_settings::Appearance| match appearance {
+                        move |s: &mut nocterm_ui::AppearanceSettings| match appearance {
                             Appearance::Light => s.light_theme = name,
                             Appearance::Dark => s.dark_theme = name,
                         },
@@ -131,8 +131,8 @@ impl AppearancePage {
 }
 fn selection(appearance: Appearance, cx: &App) -> String {
     let name = match appearance {
-        Appearance::Light => &cx.setting::<nocterm_settings::Appearance>().light_theme,
-        Appearance::Dark => &cx.setting::<nocterm_settings::Appearance>().dark_theme,
+        Appearance::Light => &cx.setting::<nocterm_ui::AppearanceSettings>().light_theme,
+        Appearance::Dark => &cx.setting::<nocterm_ui::AppearanceSettings>().dark_theme,
     };
     name.as_ref()
         .filter(|name| {
@@ -156,7 +156,7 @@ fn choices(appearance: Appearance, cx: &App) -> Vec<String> {
 /// How the window's regions are framed.
 fn layout(
     view: &SettingsView,
-    settings: &nocterm_settings::Appearance,
+    settings: &nocterm_ui::AppearanceSettings,
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     let mut rows = vec![form::row(
@@ -169,7 +169,7 @@ fn layout(
                 ("Floating", UiLayout::Floating),
                 ("Classic", UiLayout::Classic),
             ],
-            |s: &mut nocterm_settings::Appearance, layout| s.layout = layout,
+            |s: &mut nocterm_ui::AppearanceSettings, layout| s.layout = layout,
             cx,
         ),
         cx,
@@ -194,7 +194,7 @@ fn layout(
 }
 
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let settings = cx.setting::<nocterm_settings::Appearance>().clone();
+    let settings = cx.setting::<nocterm_ui::AppearanceSettings>().clone();
     let mut sections = vec![form::section(
         "Theme",
         [
@@ -209,7 +209,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                         ("Light", AppearanceMode::Light),
                         ("Dark", AppearanceMode::Dark),
                     ],
-                    |s: &mut nocterm_settings::Appearance, mode| s.mode = mode,
+                    |s: &mut nocterm_ui::AppearanceSettings, mode| s.mode = mode,
                     cx,
                 ),
                 cx,
@@ -238,6 +238,6 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
         [view.appearance.browser.clone().into_any_element()],
         cx,
     ));
-    sections.push(form::section("Servers",[form::row("Show server countries","Look up the public IP address of each server on connecting and show its flag. Private addresses and host names are never sent. A country chosen on the connection is always shown.",pages::toggle("detect-server-country",settings.detect_server_country,false,|s: &mut nocterm_settings::Appearance,on|s.detect_server_country=on,cx),cx)],cx));
+    sections.push(form::section("Servers",[form::row("Show server countries","Look up the public IP address of each server on connecting and show its flag. Private addresses and host names are never sent. A country chosen on the connection is always shown.",pages::toggle("detect-server-country",settings.detect_server_country,false,|s: &mut nocterm_ui::AppearanceSettings,on|s.detect_server_country=on,cx),cx)],cx));
     sections
 }

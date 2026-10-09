@@ -272,7 +272,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>());
+        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>());
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
@@ -281,7 +281,7 @@ impl AgentPanel {
             .as_ref()
             .filter(known)
             .or(cx
-                .setting::<nocterm_settings::AiSettings>()
+                .setting::<nocterm_ai::AiSettings>()
                 .default_agent
                 .as_ref()
                 .filter(known))

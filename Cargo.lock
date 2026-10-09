@@ -4975,7 +4975,6 @@ dependencies = [
  "nocterm-ai",
  "nocterm-core",
  "nocterm-session",
- "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",
@@ -5014,7 +5013,6 @@ dependencies = [
  "gpui-pre-reqwest",
  "nocterm-core",
  "nocterm-session",
- "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",
@@ -5111,6 +5109,8 @@ dependencies = [
  "nocterm-workspace",
  "parking_lot",
  "rustix 1.1.5",
+ "schemars 1.2.2",
+ "serde",
  "tempfile",
  "uuid",
 ]
@@ -5157,7 +5157,8 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "nocterm-session",
- "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
 ]
 
 [[package]]
@@ -5171,6 +5172,9 @@ dependencies = [
  "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5185,6 +5189,7 @@ dependencies = [
  "secrecy",
  "serde",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5205,6 +5210,7 @@ dependencies = [
  "flate2",
  "gpui-kit",
  "nocterm-ai",
+ "nocterm-session",
  "nocterm-settings",
  "nocterm-themes",
  "nocterm-ui",
@@ -5311,13 +5317,16 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
+ "nocterm-ai",
  "nocterm-design",
+ "nocterm-session",
  "nocterm-settings",
  "nocterm-themes",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "tempfile",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -5363,6 +5372,8 @@ dependencies = [
  "nocterm-ui",
  "nocterm-vault",
  "nocterm-workspace",
+ "schemars 1.2.2",
+ "serde",
  "tempfile",
 ]
 
@@ -10855,8 +10866,14 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "nocterm-ai",
  "nocterm-design",
+ "nocterm-files",
+ "nocterm-monitor-ui",
+ "nocterm-session",
  "nocterm-settings",
+ "nocterm-ui",
+ "nocterm-vault-ui",
  "proc-macro2",
  "schemars 1.2.2",
  "serde",

@@ -10,9 +10,11 @@ mod credentials;
 pub mod exec;
 pub mod fs;
 mod launch;
+mod options;
 mod program;
 mod secret;
 mod session;
+mod settings;
 mod target;
 
 pub use credentials::{CredentialFuture, CredentialStore};
@@ -31,4 +33,9 @@ pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
 pub use launch::{ShellLaunch, quote_posix, quote_powershell};
 pub use program::{ProgramTransport, TerminalRequest};
 
-pub use nocterm_settings::{Charset, LoggingOptions, ProxyConfig, SessionOptions};
+pub use options::{
+    Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS, validate_term,
+};
+pub use settings::{
+    CONNECT_TIMEOUT_RANGE, KEEPALIVE_RANGE, LocalShellSettings, ShellSettings, SshSettings,
+};

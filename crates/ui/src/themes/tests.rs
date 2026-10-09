@@ -1,7 +1,8 @@
 use super::*;
 use crate::{ActiveDesign, TerminalStyle, hsla, init};
+use crate::{AppearanceMode, AppearanceSettings};
 use gpui_kit::{TestAppContext, component::Theme};
-use nocterm_settings::{Appearance as AppearanceSettings, AppearanceMode, SettingsDocument};
+use nocterm_settings::SettingsDocument;
 #[gpui_kit::test]
 async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();

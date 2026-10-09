@@ -5,6 +5,7 @@ mod text;
 
 use std::{collections::BTreeMap, time::Duration};
 
+use crate::{ExplorerSettings, INDEXING_ENTRIES_RANGE, OpenRule, Opener};
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString,
     Subscription, Task, Window,
@@ -20,7 +21,6 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{ExplorerSettings, INDEXING_ENTRIES_RANGE, OpenRule, Opener};
 use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, form};
 use nocterm_workspace::SettingsPage;
 

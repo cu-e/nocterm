@@ -1,9 +1,9 @@
 //! Real ACP and bridge routing intersections, without manually attaching display metadata.
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::ApprovalPolicy;
 use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
-use nocterm_settings::ApprovalPolicy;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -72,7 +72,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     let program = Arc::new(Program::default());
     *f.access.executor.borrow_mut() = Some(program.clone());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
         .detach()
@@ -230,7 +230,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
 fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.terminal_read = ApprovalPolicy::Allow;
             settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
@@ -255,7 +255,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     assert!(receive.try_recv().unwrap().is_none());
     cx.update(|cx| assert_eq!(thread.read(cx).permissions.len(), 1));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })
         .detach()

@@ -324,13 +324,10 @@ impl VaultView {
             "Ask for the master password at startup",
             "Open this page when nocterm starts, so saved credentials are ready.",
             Switch::new("vault-prompt-on-startup")
-                .checked(
-                    cx.setting::<nocterm_settings::VaultSettings>()
-                        .prompt_on_startup,
-                )
+                .checked(cx.setting::<crate::VaultSettings>().prompt_on_startup)
                 .on_click(cx.listener(|_, checked: &bool, _, cx| {
                     let checked = *checked;
-                    cx.update_setting::<nocterm_settings::VaultSettings>(move |settings| {
+                    cx.update_setting::<crate::VaultSettings>(move |settings| {
                         settings.prompt_on_startup = checked
                     })
                     .detach();

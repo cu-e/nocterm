@@ -9,12 +9,16 @@ mod details;
 mod graph;
 mod model;
 mod page;
+mod settings;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
 use nocterm_workspace::{SettingsPageSpec, Workspace};
 
 pub use page::MonitorPage;
+pub use settings::{
+    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorSettings,
+};
 
 gpui_kit::actions!(
     monitor,
@@ -26,7 +30,7 @@ gpui_kit::actions!(
 
 /// Adds the monitor to the footer of `workspace`.
 pub fn register(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
-    nocterm_ui::register_setting::<nocterm_settings::MonitorSettings>(cx);
+    nocterm_ui::register_setting::<crate::MonitorSettings>(cx);
     let handle = cx.entity();
     let session = workspace.active_session(cx);
     let local = nocterm_workspace::host::local_exec(cx);

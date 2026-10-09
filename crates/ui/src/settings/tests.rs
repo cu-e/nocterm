@@ -1,8 +1,8 @@
 use super::writer::{MAX_PENDING, SettingsWriter};
 use super::*;
+use crate::{AppearanceSettings, TerminalSettings};
 use futures::{FutureExt as _, channel::oneshot};
 use gpui_kit::TestAppContext;
-use nocterm_settings::{MonitorSettings, TerminalSettings};
 use std::sync::{Arc, Mutex};
 
 fn install(store: SettingsStore, cx: &mut TestAppContext) {
@@ -10,7 +10,7 @@ fn install(store: SettingsStore, cx: &mut TestAppContext) {
         cx.set_global(store);
         init(cx);
         register_setting::<TerminalSettings>(cx);
-        register_setting::<MonitorSettings>(cx);
+        register_setting::<AppearanceSettings>(cx);
     });
 }
 
@@ -239,7 +239,7 @@ async fn changing_a_broken_section_clears_its_error(cx: &mut TestAppContext) {
     let file = SettingsFile::new(directory.path().join("settings.toml"));
     std::fs::write(
         file.path(),
-        "[terminal]\nfont_szie = 1\n[monitor]\nbogus = 1\n",
+        "[terminal]\nfont_szie = 1\n[appearance]\nbogus = 1\n",
     )
     .unwrap();
     install(SettingsStore::new(file.load().unwrap(), file.clone()), cx);
@@ -248,7 +248,7 @@ async fn changing_a_broken_section_clears_its_error(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let errors = cx.global::<SettingsStore>().section_errors();
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].key, "monitor");
+        assert_eq!(errors[0].key, "appearance");
     });
     assert!(
         std::fs::read_to_string(file.path())
@@ -267,7 +267,7 @@ async fn observers_of_a_section_ignore_changes_to_others(cx: &mut TestAppContext
             seen.borrow_mut().push(terminal.copy_on_select)
         })
     });
-    cx.update(|cx| cx.update_setting::<MonitorSettings>(|monitor| monitor.interval_secs = 9))
+    cx.update(|cx| cx.update_setting::<AppearanceSettings>(|appearance| appearance.card_gap = 9.0))
         .await
         .unwrap();
     cx.run_until_parked();

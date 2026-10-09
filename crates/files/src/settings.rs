@@ -195,7 +195,7 @@ impl OpenSettings {
     }
 }
 
-impl crate::SettingsSection for ExplorerSettings {
+impl nocterm_settings::SettingsSection for ExplorerSettings {
     const KEY: &'static str = "explorer";
 
     fn sanitize(&mut self) {
@@ -241,7 +241,7 @@ fn clean_names(names: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SettingsSection as _;
+    use nocterm_settings::SettingsSection as _;
 
     #[test]
     fn rules_match_extensions_and_names_case_insensitively() {

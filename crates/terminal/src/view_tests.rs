@@ -336,8 +336,8 @@ fn osc52_requires_opt_in_and_focus_on_the_actual_terminal_screen(cx: &mut TestAp
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("original"));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::TerminalSettings>(|s| {
-            s.clipboard_write = nocterm_settings::ClipboardWritePolicy::FocusedTerminal;
+        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| {
+            s.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
         })
         .now_or_never()
         .unwrap()
@@ -372,8 +372,8 @@ fn osc52_cannot_write_from_a_focused_terminal_in_an_inactive_window(cx: &mut Tes
     }
     let (handle, view, transport) = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::TerminalSettings>(|settings| {
-            settings.clipboard_write = nocterm_settings::ClipboardWritePolicy::FocusedTerminal;
+        cx.update_setting::<nocterm_ui::TerminalSettings>(|settings| {
+            settings.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
         })
         .now_or_never()
         .unwrap()
@@ -620,8 +620,8 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
     assert_role(Some(crate::highlighting::Role::Error), cx);
     let scans = view.read_with(cx, |view, _| view.highlights.borrow().scan_count());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::Appearance>(|s| {
-            s.mode = nocterm_settings::AppearanceMode::Light;
+        cx.update_setting::<nocterm_ui::AppearanceSettings>(|s| {
+            s.mode = nocterm_ui::AppearanceMode::Light;
             s.detect_server_country = false;
         })
         .detach()
@@ -634,13 +634,13 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
     );
 
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::TerminalSettings>(|s| s.semantic_highlighting = false)
+        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = false)
             .detach()
     });
     cx.run_until_parked();
     assert_role(None, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::TerminalSettings>(|s| s.semantic_highlighting = true)
+        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = true)
             .detach()
     });
     cx.run_until_parked();

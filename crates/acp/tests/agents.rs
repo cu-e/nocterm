@@ -17,7 +17,7 @@ fn real_agent_initialize_and_session() {
     futures::executor::block_on(async {
         let id =
             std::env::var("NOCTERM_ACP_SMOKE").expect("Set NOCTERM_ACP_SMOKE=claude|codex|hermes");
-        let settings = nocterm_settings::AiSettings::default();
+        let settings = nocterm_ai::AiSettings::default();
         let registry = AgentRegistry::new(&settings);
         let launch = registry.get(&id).expect("Known agent").clone();
         let directory = tempfile::tempdir().unwrap();

@@ -295,11 +295,7 @@ fn options_save_the_lock_delay_and_reject_values_out_of_range(cx: &mut TestAppCo
             view.save_auto_lock(cx);
             assert!(view.auto_lock_error.is_none());
         });
-        assert_eq!(
-            cx.setting::<nocterm_settings::VaultSettings>()
-                .auto_lock_minutes,
-            30
-        );
+        assert_eq!(cx.setting::<crate::VaultSettings>().auto_lock_minutes, 30);
     })
     .unwrap();
 }

@@ -10,7 +10,7 @@ pub struct ConnectRequest {
     /// Run the agent isolated under this policy; `None` runs it directly.
     pub sandbox: Option<crate::sandbox::SandboxPolicy>,
     /// Limits for the complete agent process tree.
-    pub resources: nocterm_settings::AgentResourceSettings,
+    pub resources: crate::AgentResourceSettings,
     /// Cancellation must return only after any startup process tree is stopped.
     pub cancellation: ConnectionCancellation,
 }

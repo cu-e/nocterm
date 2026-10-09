@@ -8,6 +8,8 @@ publish = false
 [package.metadata.nocterm]
 layer = "feature"
 [dependencies]
+schemars.workspace = true
+serde.workspace = true
 nocterm-vault.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true

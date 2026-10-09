@@ -241,7 +241,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.within("session-term").click("input", cx);
-            for _ in 0..=nocterm_settings::TERM_PRESETS.len() {
+            for _ in 0..=nocterm_session::TERM_PRESETS.len() {
                 window.press("down", cx);
             }
             window.press("enter", cx);

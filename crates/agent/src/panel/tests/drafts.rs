@@ -318,7 +318,7 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
     })
     .unwrap();
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();
@@ -365,7 +365,7 @@ async fn disabling_ai_with_an_untouched_chat_does_not_create_a_history_file(
     let f = fixture(cx);
     new_chat(&f, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();

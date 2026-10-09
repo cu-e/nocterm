@@ -10,7 +10,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_settings::{Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS};
+use nocterm_session::{Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS};
 type Choice = Entity<SelectState<SearchableVec<&'static str>>>;
 pub struct SessionOptionsEditor {
     inherit: bool,

@@ -1,39 +1,19 @@
-//! User settings: the sections of `settings.toml` and the file itself.
+//! User settings: typed sections of `settings.toml` and the file itself.
+//!
+//! This crate knows no feature. Each crate defines the sections it uses
+//! ([`SettingsSection`]); the document reads every section on its own, so a
+//! mistake in one leaves the others working.
 //!
 //! Settings are what a *user* chooses (which font, which cursor); design
 //! tokens (`nocterm-design`) are what the *product* looks like by default.
 //! A setting left unset falls back to the matching token.
 
-mod ai;
 mod document;
-mod explorer;
 #[cfg(test)]
 mod fixtures;
-mod monitor;
-mod schema;
 mod section;
-mod session_options;
-pub use session_options::{
-    Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS, validate_term,
-};
 mod store;
 
-pub use ai::lifecycle::{AgentResourceSettings, AgentSessionSettings};
-pub use ai::{AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode};
 pub use document::{SectionError, SettingsDocument};
-pub use explorer::{
-    ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,
-    OpenSettings, Opener,
-};
-pub use monitor::{
-    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorMetric,
-    MonitorSettings,
-};
-pub use schema::{
-    Appearance, AppearanceMode, CARD_GAP_RANGE, CARD_RADIUS_RANGE, CONNECT_TIMEOUT_RANGE,
-    ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE,
-    LocalShellSettings, SCROLLBACK_RANGE, ShellSettings, SshSettings, TerminalSettings, UiLayout,
-    VaultSettings,
-};
 pub use section::{SettingsSection, clamp_f32, trim_unset};
 pub use store::SettingsFile;

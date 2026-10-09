@@ -166,7 +166,7 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
     cx.run_until_parked();
     for enabled in [true, false, true] {
         cx.update(|cx| {
-            nocterm_ui::SettingsExt::update_setting::<nocterm_settings::Appearance>(
+            nocterm_ui::SettingsExt::update_setting::<nocterm_ui::AppearanceSettings>(
                 cx,
                 move |appearance| appearance.detect_server_country = enabled,
             )

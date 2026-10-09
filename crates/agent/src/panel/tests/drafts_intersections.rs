@@ -56,7 +56,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
     .await
     .unwrap();

@@ -103,8 +103,7 @@ impl AgentPanel {
             Some(MenuKind::Agents) => {
                 let last = self.last_agent(cx);
                 for launch in
-                    nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
-                        .iter()
+                    nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>()).iter()
                 {
                     let id = launch.id.clone();
                     let shortcut = (last.as_deref() == Some(id.as_str()))

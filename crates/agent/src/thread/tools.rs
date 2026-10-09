@@ -33,10 +33,10 @@ impl AgentThread {
             let _ = call.respond.send(Err(error));
             return;
         }
-        if self.grants.requires_approval(
-            &call.call,
-            &cx.setting::<nocterm_settings::AiSettings>().approval,
-        ) || self.unsafe_live_input(&call.call, cx)
+        if self
+            .grants
+            .requires_approval(&call.call, &cx.setting::<nocterm_ai::AiSettings>().approval)
+            || self.unsafe_live_input(&call.call, cx)
         {
             self.approval_generation = self.approval_generation.wrapping_add(1);
             self.tools.push(call);
@@ -271,7 +271,7 @@ impl AgentThread {
         cx: &App,
     ) -> serde_json::Value {
         let text = if cx
-            .setting::<nocterm_settings::AiSettings>()
+            .setting::<nocterm_ai::AiSettings>()
             .approval
             .redact_secrets
         {

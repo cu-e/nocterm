@@ -11,6 +11,7 @@ mod registration;
 mod remote;
 mod remote_pane;
 mod row;
+mod settings;
 mod settings_page;
 mod statistics;
 #[cfg(test)]
@@ -44,6 +45,10 @@ use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 pub use registration::{OpenExplorerSettings, ShowTransfers, ToggleExplorer, register};
+pub use settings::{
+    ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,
+    OpenSettings, Opener,
+};
 pub use settings_page::ExplorerPage;
 
 /// Supplies the lazy Explorer page to the application Settings host.
@@ -397,11 +402,9 @@ impl FilesPanel {
     }
 }
 /// The user's indexing settings; the defaults where none are installed.
-fn indexing(cx: &App) -> nocterm_settings::IndexingSettings {
+fn indexing(cx: &App) -> crate::IndexingSettings {
     if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<nocterm_settings::ExplorerSettings>()
-            .indexing
-            .clone()
+        cx.setting::<crate::ExplorerSettings>().indexing.clone()
     } else {
         Default::default()
     }
@@ -425,7 +428,7 @@ impl Render for FilesPanel {
             let initial = cx
                 .has_global::<nocterm_ui::SettingsStore>()
                 .then(|| {
-                    cx.setting::<nocterm_settings::LocalShellSettings>()
+                    cx.setting::<nocterm_session::LocalShellSettings>()
                         .cwd
                         .clone()
                 })

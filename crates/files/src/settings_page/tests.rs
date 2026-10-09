@@ -42,7 +42,7 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
     });
     window.run_until_parked();
     window.update(|window, cx| {
-        let explorer = cx.setting::<nocterm_settings::ExplorerSettings>();
+        let explorer = cx.setting::<crate::ExplorerSettings>();
         assert_eq!(explorer.open.remote.program, "nvim");
         assert_eq!(explorer.open.rules.len(), 1);
         assert!(page.read(cx).fields.contains_key(&Key::Extensions(0)));
@@ -52,7 +52,7 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
     window.run_until_parked();
     window.update(|_, cx| {
         assert!(
-            cx.setting::<nocterm_settings::ExplorerSettings>()
+            cx.setting::<crate::ExplorerSettings>()
                 .open
                 .rules
                 .is_empty()
