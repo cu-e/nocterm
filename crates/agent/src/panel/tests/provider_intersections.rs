@@ -201,7 +201,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
                 .any(|text| text == "Exit status: 7")
         );
     });
-    cx.update(|cx| thread.update(cx, |thread, _| thread.attachments.clear()));
+    cx.update(|cx| thread.update(cx, |thread, _| thread.composer.attachments.clear()));
     update(&f, &session, acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
         "provider-call", acp::ToolCallUpdateFields::new().title("Different destination")
             .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),

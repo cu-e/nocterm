@@ -14,3 +14,4 @@ acceptance; a later record supersedes an earlier one.
 | [0006](0006-workspace-ports.md) | The side panel is a state machine; tabs open through a session factory |
 | [0007](0007-bootstrap.md) | One bootstrap for the application and its GUI tests |
 | [0008](0008-code-limits.md) | Function size and complexity limits shrink a grandfathered list |
+| [0009](0009-thread-composer.md) | A chat's composer state is kept apart from its conversation |

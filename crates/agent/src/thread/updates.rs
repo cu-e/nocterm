@@ -77,8 +77,8 @@ impl AgentThread {
         self.fail(message, cx);
         if !cx.ai_enabled() {
             self.state = Default::default();
-            self.attachments.clear();
-            self.images.clear();
+            self.composer.attachments.clear();
+            self.composer.images.clear();
         }
     }
 }

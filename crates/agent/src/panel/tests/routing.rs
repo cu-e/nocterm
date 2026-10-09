@@ -83,7 +83,7 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
             thread.name = Some("first".into());
             // The first chat has no terminals.
             thread.attach(Attachment::Terminal(f.terminal), cx);
-            assert!(thread.attachments.is_empty());
+            assert!(thread.composer.attachments.is_empty());
         })
     });
     new_chat(&f, cx);

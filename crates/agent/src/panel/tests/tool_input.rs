@@ -586,7 +586,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
         thread.update(cx, |thread, cx| {
             thread.apply_presented_update(acp::SessionUpdate::ToolCall(call));
             thread.record_tool_display(&request, Some(&entry), cx);
-            thread.attachments.clear();
+            thread.composer.attachments.clear();
         })
     });
     directory.0.borrow_mut()[0].name = "Renamed".into();

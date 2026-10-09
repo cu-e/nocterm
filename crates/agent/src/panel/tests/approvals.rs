@@ -28,7 +28,7 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
             )
         });
         assert_eq!(thread.read(cx).tools.len(), 1);
-        thread.update(cx, |thread, _| thread.attachments.clear());
+        thread.update(cx, |thread, _| thread.composer.attachments.clear());
         thread.update(cx, |thread, cx| thread.approve_tool(0, true, true, cx));
         (rx, thread.read(cx).session().clone().unwrap())
     });
@@ -91,7 +91,7 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
     let (registration, id) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
-            thread.attachments = vec![Attachment::Group("prod".into())];
+            thread.composer.attachments = vec![Attachment::Group("prod".into())];
             let terminals = thread.resolved(cx);
             assert_eq!(terminals.len(), 1);
             (

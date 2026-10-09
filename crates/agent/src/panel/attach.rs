@@ -90,6 +90,7 @@ impl AgentPanel {
         let through_server = summary.is_some_and(|summary| {
             thread
                 .read(cx)
+                .composer
                 .attachments
                 .iter()
                 .any(|attachment| match attachment {
@@ -101,7 +102,7 @@ impl AgentPanel {
                     Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
                 })
         });
-        let selected = thread.read(cx).attachments.contains(&attachment) || through_server;
+        let selected = thread.read(cx).composer.attachments.contains(&attachment) || through_server;
         let icon = summary.and_then(|summary| summary.icon.clone());
         let connected = info
             .as_ref()
@@ -155,7 +156,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Group(group.to_owned());
-        let selected = thread.read(cx).attachments.contains(&attachment);
+        let selected = thread.read(cx).composer.attachments.contains(&attachment);
         menu_row(
             SharedString::from(format!("attach-group-{group}")),
             group.to_owned(),
@@ -187,10 +188,11 @@ impl AgentPanel {
         let in_group = summary.group.as_ref().is_some_and(|group| {
             thread
                 .read(cx)
+                .composer
                 .attachments
                 .contains(&Attachment::Group(group.to_string()))
         });
-        let selected = thread.read(cx).attachments.contains(&attachment) || in_group;
+        let selected = thread.read(cx).composer.attachments.contains(&attachment) || in_group;
         let id = summary.id.to_string();
         let directory = directory.clone();
         let workspace = self.workspace.clone();

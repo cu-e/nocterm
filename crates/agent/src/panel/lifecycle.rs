@@ -80,7 +80,7 @@ impl AgentPanel {
         let thread = cx.new(|cx| AgentThread::new(id, self.workspace.clone(), cx));
         if let Some(id) = active {
             thread.update(cx, |thread, _| {
-                thread.attachments.push(Attachment::Terminal(id))
+                thread.composer.attachments.push(Attachment::Terminal(id))
             });
         }
         self.track(&thread, window, cx);

@@ -105,6 +105,7 @@ fn attach_menu_lists_servers_under_their_folders(cx: &mut TestAppContext) {
         assert!(
             thread
                 .read(cx)
+                .composer
                 .attachments
                 .contains(&Attachment::Group("homelab".into()))
         );
@@ -233,6 +234,7 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
                 .current()
                 .unwrap()
                 .read(cx)
+                .composer
                 .attachments
                 .is_empty()
         );
@@ -388,6 +390,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                 .current()
                 .unwrap()
                 .read(cx)
+                .composer
                 .attachments
                 .is_empty()
         );

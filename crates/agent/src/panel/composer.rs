@@ -113,7 +113,7 @@ impl AgentPanel {
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if thread.read(cx).attachments.is_empty() {
+        if thread.read(cx).composer.attachments.is_empty() {
             return None;
         }
         let mut chips = h_flex()
@@ -123,7 +123,7 @@ impl AgentPanel {
             .gap_1()
             .flex_wrap()
             .items_start();
-        for attachment in &thread.read(cx).attachments {
+        for attachment in &thread.read(cx).composer.attachments {
             let value = attachment.clone();
             let label = labels.label(attachment);
             let running = labels.connected(attachment);
@@ -158,6 +158,7 @@ impl AgentPanel {
     ) -> Option<AnyElement> {
         let previews = thread
             .read(cx)
+            .composer
             .images
             .iter()
             .map(|image| {
@@ -238,7 +239,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let context_tooltip = format!(
             "{} attached terminals · sent metadata {} B · terminal output {} B",
-            thread.read(cx).attachments.len(),
+            thread.read(cx).composer.attachments.len(),
             thread.read(cx).context_bytes,
             thread.read(cx).tool_bytes
         );
@@ -282,7 +283,7 @@ impl AgentPanel {
     fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
         thread.read(cx).generating
             && self.input.read(cx).value().trim().is_empty()
-            && thread.read(cx).images.is_empty()
+            && thread.read(cx).composer.images.is_empty()
             && self.composer.edit.is_none()
     }
 
@@ -382,8 +383,8 @@ fn remove_image(index: usize, cx: &mut Context<AgentPanel>) -> Button {
         .on_click(cx.listener(move |this, _, _, cx| {
             if let Some(thread) = this.current() {
                 thread.update(cx, |thread, cx| {
-                    if index < thread.images.len() {
-                        thread.images.remove(index);
+                    if index < thread.composer.images.len() {
+                        thread.composer.images.remove(index);
                     }
                     cx.notify();
                 });

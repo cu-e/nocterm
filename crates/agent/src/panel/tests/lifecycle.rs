@@ -22,7 +22,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread.read(cx).attachments,
+            thread.read(cx).composer.attachments,
             vec![Attachment::Terminal(f.terminal)]
         );
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));

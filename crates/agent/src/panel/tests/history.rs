@@ -266,8 +266,8 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
             assert!(thread.last_prompt.is_none());
             let session = thread.lease.as_mut().unwrap().session.take();
             thread.send("Queued before the session is ready".into(), cx);
-            assert_eq!(thread.queue.len(), 1);
-            thread.queue.clear();
+            assert_eq!(thread.composer.queue.len(), 1);
+            thread.composer.queue.clear();
             assert!(thread.last_prompt.is_none());
             thread.lease.as_mut().unwrap().session = session;
             let mut option = acp::SessionConfigOption::select(

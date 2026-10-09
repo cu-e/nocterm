@@ -292,7 +292,7 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.state.entries.is_empty() && chat.draft.is_none() {
+        let when = if chat.state.entries.is_empty() && chat.composer.draft.is_none() {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(

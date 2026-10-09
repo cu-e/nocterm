@@ -76,7 +76,7 @@ impl AgentThread {
             SessionEvent::CleanupUnconfirmed(error) => {
                 self.status = format!("Agent process cleanup could not be confirmed: {error}");
                 self.status_error = true;
-                self.queue_paused = true;
+                self.composer.queue_paused = true;
                 cx.notify();
             }
             SessionEvent::SessionClosed => {
@@ -94,7 +94,7 @@ impl AgentThread {
                     "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
                 );
                 self.persistence_error = Some(error);
-                self.queue_paused = true;
+                self.composer.queue_paused = true;
                 self.status_error = true;
                 cx.notify();
             }

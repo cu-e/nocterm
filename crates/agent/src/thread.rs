@@ -12,7 +12,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
 mod client;
+mod composer;
 pub(crate) use client::client;
+pub(crate) use composer::Composer;
 mod execution;
 mod permissions;
 mod prompt;
@@ -92,7 +94,8 @@ pub(crate) struct AgentThread {
     /// The name the user gave the chat.
     pub name: Option<String>,
     pub pinned: bool,
-    pub draft: Option<String>,
+    /// The input state, kept apart from the conversation.
+    pub composer: Composer,
     draft_changed: bool,
     /// A snapshot was queued for history, or this chat was restored.
     history_queued: bool,
@@ -115,17 +118,10 @@ pub(crate) struct AgentThread {
     /// The window of the panel showing this chat; background sessions open
     /// there.
     pub window: Option<AnyWindowHandle>,
-    pub attachments: Vec<Attachment>,
     /// Sessions this chat opened without a tab; closed with the chat.
     pub background: Vec<EntityId>,
     /// Background sessions waiting for the user to sign in from the chat.
     pub sign_ins: Vec<SignInWait>,
-    pub images: Vec<nocterm_ai::images::PromptImage>,
-    pub queue: Vec<queue::QueuedPrompt>,
-    pub queue_paused: bool,
-    /// Composer edits suspend dispatch independently of stops and errors.
-    pub queue_editing: bool,
-    composer_defaults: Option<attachments::ComposerDefaults>,
     pub prompt_attachments: Option<Vec<Attachment>>,
     pub dirty_rows: std::collections::HashSet<usize>,
     storage_dirty: std::collections::HashSet<usize>,
@@ -141,7 +137,6 @@ pub(crate) struct AgentThread {
     pub tool_bytes: usize,
     pub epoch: u64,
     pub turn: u64,
-    pub next_queue_id: u64,
     ids: OpaqueIds,
     /// Ids of attached servers without a session, as agents see them.
     server_ids: OpaqueIds,
@@ -225,7 +220,7 @@ impl AgentThread {
             restore: None,
             name: None,
             pinned: false,
-            draft: None,
+            composer: Composer::default(),
             draft_changed: false,
             history_queued: false,
             draft_save: None,
@@ -242,14 +237,8 @@ impl AgentThread {
             info: None,
             workspace,
             window: None,
-            attachments: Vec::new(),
             background: Vec::new(),
             sign_ins: Vec::new(),
-            images: Vec::new(),
-            queue: Vec::new(),
-            queue_paused: false,
-            queue_editing: false,
-            composer_defaults: None,
             prompt_attachments: None,
             dirty_rows: Default::default(),
             storage_dirty: Default::default(),
@@ -264,7 +253,6 @@ impl AgentThread {
             tool_bytes: 0,
             epoch: 0,
             turn: 0,
-            next_queue_id: 1,
             ids: Default::default(),
             server_ids: OpaqueIds::with_prefix("s"),
             grants: Default::default(),
@@ -281,8 +269,7 @@ impl AgentThread {
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
         self.state.entries.is_empty()
-            && self.queue.is_empty()
-            && self.draft.is_none()
+            && self.composer.is_empty()
             && self.name.is_none()
             && !self.generating
             && self.permissions.is_empty()
@@ -300,7 +287,7 @@ impl AgentThread {
         self.generating = false;
         self.auth_required = false;
         self.authenticating = false;
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.connecting_session = false;
         self.status = nocterm_ai::redact::redact(message);
         self.status_error = true;
@@ -313,7 +300,7 @@ impl AgentThread {
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
         self.cancel_execution();
         self.finish_pending_tools();
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.auth_required = true;
         self.authenticating = false;
         self.generating = false;
@@ -524,7 +511,7 @@ impl AgentThread {
     /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
         self.cancel_execution();
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
         self.stopped = true;
@@ -557,12 +544,13 @@ impl AgentThread {
     }
     pub(crate) fn attach(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
         if let Some(index) = self
+            .composer
             .attachments
             .iter()
             .position(|value| value == &attachment)
         {
-            self.attachments.remove(index);
-            if self.composer_defaults.is_none() {
+            self.composer.attachments.remove(index);
+            if !self.composer.editing() {
                 if let Some(attached) = &mut self.prompt_attachments {
                     attached.retain(|value| value != &attachment);
                 }
@@ -574,7 +562,7 @@ impl AgentThread {
                 }
             }
         } else {
-            self.attachments.push(attachment);
+            self.composer.attachments.push(attachment);
         }
         self.save(cx);
         cx.notify();

@@ -49,7 +49,7 @@ impl AgentThread {
             || self.operation_count.load(Ordering::Acquire) != 0
             || self.executions.active().next().is_some()
             || self.live_commands.values().any(|lease| lease.is_active())
-            || (!self.queue.is_empty() && !self.queue_paused && !self.queue_editing)
+            || self.composer.dispatchable()
     }
     pub(crate) fn request_activation(&mut self, cx: &mut Context<Self>) {
         if self.activation_pending || self.lease.is_some() || self.ended() {
@@ -81,7 +81,7 @@ impl AgentThread {
         self.grants.clear();
     }
     pub(crate) fn release_resources(&mut self, cx: &mut Context<Self>) {
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.cancel_pending();
         self.generating = false;
         self.auth_required = false;

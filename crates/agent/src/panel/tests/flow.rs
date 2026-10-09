@@ -26,16 +26,16 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("first".into(), cx);
-        thread.attachments = vec![Attachment::Group("second context".into())];
+        thread.composer.attachments = vec![Attachment::Group("second context".into())];
         assert!(thread.submit("second".into(), None, cx).unwrap());
-        thread.attachments = vec![Attachment::Group("third context".into())];
+        thread.composer.attachments = vec![Attachment::Group("third context".into())];
         assert!(thread.submit("third".into(), None, cx).unwrap());
-        let id = thread.queue[0].saved.id;
-        thread.attachments = vec![Attachment::Group("edited context".into())];
+        let id = thread.composer.queue[0].saved.id;
+        thread.composer.attachments = vec![Attachment::Group("edited context".into())];
         assert!(thread.submit("edited second".into(), Some(id), cx).unwrap());
-        assert_eq!(thread.queue.len(), 2);
-        assert_eq!(thread.queue[0].saved.id, id);
-        assert_eq!(thread.queue[1].saved.text, "third");
+        assert_eq!(thread.composer.queue.len(), 2);
+        assert_eq!(thread.composer.queue[0].saved.id, id);
+        assert_eq!(thread.composer.queue[1].saved.text, "third");
     });
     cx.run_until_parked();
     assert_eq!(texts(&f), ["first"]);
@@ -59,7 +59,7 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
         )
     });
     complete_active(&f, cx);
-    cx.update(|cx| assert!(thread.read(cx).queue.is_empty()));
+    cx.update(|cx| assert!(thread.read(cx).composer.queue.is_empty()));
 }
 #[gpui_kit::test]
 fn send_now_waits_for_cancellation_then_retains_other_messages(cx: &mut TestAppContext) {
@@ -70,7 +70,7 @@ fn send_now_waits_for_cancellation_then_retains_other_messages(cx: &mut TestAppC
         thread.send("first".into(), cx);
         thread.send("second".into(), cx);
         thread.send("priority".into(), cx);
-        let priority = thread.queue[1].saved.id;
+        let priority = thread.composer.queue[1].saved.id;
         thread.send_now(priority, cx);
     });
     cx.run_until_parked();
@@ -100,17 +100,17 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     cx.run_until_parked();
     complete_active(&f, cx);
     assert_eq!(texts(&f), ["first"]);
-    cx.update(|cx| assert_eq!(thread.read(cx).queue.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer.queue.len(), 1));
     f.commands.auth_required.store(true, Ordering::SeqCst);
     thread.update(cx, |thread, cx| {
-        let id = thread.queue[0].saved.id;
+        let id = thread.composer.queue[0].saved.id;
         thread.send_now(id, cx);
         thread.send("third".into(), cx);
     });
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).auth_required);
-        assert_eq!(thread.read(cx).queue[0].saved.text, "third");
+        assert_eq!(thread.read(cx).composer.queue[0].saved.text, "third");
     });
     assert_eq!(texts(&f), ["first", "second"]);
 }
@@ -149,7 +149,7 @@ fn queue_edit_restores_the_unsent_composer_draft(cx: &mut TestAppContext) {
             "unsent draft"
         );
         assert_eq!(
-            f.panel.read(cx).current().unwrap().read(cx).queue[0]
+            f.panel.read(cx).current().unwrap().read(cx).composer.queue[0]
                 .saved
                 .text,
             "replacement"
@@ -392,10 +392,10 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).queue_paused);
+        assert!(thread.read(cx).composer.queue_paused);
         assert!(thread.read(cx).status_error);
         assert!(thread.read(cx).status.contains("Could not save chat"));
-        assert_eq!(thread.read(cx).queue[0].saved.text, "retained");
+        assert_eq!(thread.read(cx).composer.queue[0].saved.text, "retained");
     });
     complete_active(&f, cx);
     assert_eq!(texts(&f), ["active"]);
@@ -427,8 +427,11 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
     cx.update(|cx| {
         assert!(f.panel.read(cx).composer.edit.is_none());
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
-        assert_eq!(old.read(cx).queue[0].saved.text, "queued");
-        assert_eq!(old.read(cx).attachments, [Attachment::Terminal(f.terminal)]);
+        assert_eq!(old.read(cx).composer.queue[0].saved.text, "queued");
+        assert_eq!(
+            old.read(cx).composer.attachments,
+            [Attachment::Terminal(f.terminal)]
+        );
     });
     f.panel
         .update(cx, |panel, cx| panel.open_thread(old.entity_id(), cx));
@@ -452,6 +455,7 @@ fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
         thread
+            .composer
             .attachments
             .push(Attachment::Group("production".into()));
         thread.send("after restart".into(), cx);
@@ -573,7 +577,7 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(!f.panel.read(cx).preparing_images());
-        assert_eq!(thread.read(cx).images.len(), 1);
+        assert_eq!(thread.read(cx).composer.images.len(), 1);
     });
     cx.update_window(f.handle, |_, window, cx| window.press("enter", cx))
         .unwrap();
@@ -628,6 +632,6 @@ fn late_image_preparation_cannot_attach_to_a_different_chat(cx: &mut TestAppCont
         let panel = f.panel.read(cx);
         assert!(!panel.preparing_images());
         assert!(panel.error.is_none());
-        assert!(panel.current().unwrap().read(cx).images.is_empty());
+        assert!(panel.current().unwrap().read(cx).composer.images.is_empty());
     });
 }

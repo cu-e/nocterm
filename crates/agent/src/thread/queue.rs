@@ -97,27 +97,34 @@ impl AgentThread {
         if !cx.ai_enabled() || self.auth_required || self.ended() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.images.is_empty() {
+        if text.trim().is_empty() && self.composer.images.is_empty() {
             return Ok(false);
         }
-        let id = replace.unwrap_or(self.next_queue_id);
+        let id = replace.unwrap_or(self.composer.next_queue_id());
         let saved = SavedPrompt {
             id,
             text,
             images: Vec::new(),
-            attachments: self.stable_attachments(&self.attachments, cx),
+            attachments: self.stable_attachments(&self.composer.attachments, cx),
         };
         let mut saved = saved;
         let encoded_len = nocterm_ai::history::prompt_size(&saved)?
             + self
+                .composer
                 .images
                 .iter()
                 .map(|image| image.encoded_len())
                 .sum::<usize>()
-            + self.images.len().saturating_sub(1);
-        saved.images = self.images.iter().map(|image| image.content()).collect();
-        let prompt = QueuedPrompt::prepared(saved, self.attachments.clone(), Some(encoded_len));
-        let mut queue = self.queue.clone();
+            + self.composer.images.len().saturating_sub(1);
+        saved.images = self
+            .composer
+            .images
+            .iter()
+            .map(|image| image.content())
+            .collect();
+        let prompt =
+            QueuedPrompt::prepared(saved, self.composer.attachments.clone(), Some(encoded_len));
+        let mut queue = self.composer.queue.clone();
         if let Some(id) = replace {
             let Some(slot) = queue.iter_mut().find(|prompt| prompt.saved.id == id) else {
                 return Err("This message was already sent.".into());
@@ -134,19 +141,14 @@ impl AgentThread {
         }
         self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
-        self.queue = queue;
+        self.composer.accept(queue, replace.is_some());
         if replace.is_none() {
-            self.draft = None;
             self.draft_save = None;
             self.draft_changed = false;
         }
-        if replace.is_none() {
-            self.next_queue_id += 1;
-        }
-        self.images.clear();
         self.persist(cx);
         if !self.generating && replace.is_none() {
-            self.queue_paused = false;
+            self.composer.queue_paused = false;
             self.dispatch_next(cx);
         }
         cx.notify();
@@ -154,13 +156,7 @@ impl AgentThread {
     }
 
     pub(crate) fn dispatch_next(&mut self, cx: &mut Context<Self>) {
-        if self.queue_paused
-            || self.queue_editing
-            || self.generating
-            || self.queue.is_empty()
-            || self.auth_required
-            || self.ended()
-        {
+        if !self.composer.dispatchable() || self.generating || self.auth_required || self.ended() {
             return;
         }
         if self.persistence_error.is_some()
@@ -172,7 +168,9 @@ impl AgentThread {
             self.request_activation(cx);
             return;
         }
-        let prompt = self.queue.remove(0);
+        let Some(prompt) = self.composer.take_next() else {
+            return;
+        };
         // Context is fixed for this turn, including terminal tool access.
         self.prompt_attachments = Some(prompt.attachments);
         let saved = Arc::unwrap_or_clone(prompt.saved);
@@ -180,15 +178,13 @@ impl AgentThread {
     }
 
     pub(crate) fn send_now(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(index) = self.queue.iter().position(|prompt| prompt.saved.id == id) else {
+        if !self.composer.move_to_front(id) {
             return;
-        };
-        let prompt = self.queue.remove(index);
-        self.queue.insert(0, prompt);
+        }
         if self.generating {
             self.stop(cx);
         }
-        self.queue_paused = false;
+        self.composer.queue_paused = false;
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
         if !self.generating {
