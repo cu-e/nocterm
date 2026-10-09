@@ -2,10 +2,12 @@
 use crate::thread::Attachment;
 use gpui_kit::{App, EntityId, WeakEntity};
 use nocterm_workspace::{TerminalStatus, Workspace};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 pub(super) struct AttachmentLabels {
     terminals: HashMap<EntityId, (String, bool)>,
     connections: HashMap<String, String>,
+    /// Folders that hold at least one saved server.
+    groups: HashSet<String>,
 }
 impl AttachmentLabels {
     pub(super) fn new(workspace: &WeakEntity<Workspace>, cx: &App) -> Self {
@@ -23,17 +25,23 @@ impl AttachmentLabels {
                 (entry.item, (entry.title.to_string(), connected))
             })
             .collect();
-        let connections = workspace
+        let summaries = workspace
             .as_ref()
             .and_then(|workspace| workspace.read(cx).connection_directory())
             .map(|directory| directory.connections(cx))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let groups = summaries
+            .iter()
+            .filter_map(|summary| summary.group.as_ref().map(ToString::to_string))
+            .collect();
+        let connections = summaries
             .into_iter()
             .map(|summary| (summary.id.to_string(), summary.name.to_string()))
             .collect();
         Self {
             terminals,
             connections,
+            groups,
         }
     }
     pub(super) fn label(&self, attachment: &Attachment) -> String {
@@ -48,7 +56,9 @@ impl AttachmentLabels {
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| "Unavailable connection".into()),
-            Attachment::Group(group) => format!("Group {group}"),
+            // A renamed or emptied folder gives the agent nothing.
+            Attachment::Group(group) if self.groups.contains(group) => format!("Group {group}"),
+            Attachment::Group(group) => format!("Group {group} · no servers"),
             Attachment::UnavailableLocal(title) => format!("{title} · unavailable after restart"),
         }
     }

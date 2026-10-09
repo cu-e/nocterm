@@ -151,7 +151,13 @@ fn boot(
                 private_dirs: Vec::new(),
                 shared_dirs: Vec::new(),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
-                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+                bridge: Arc::new(nocterm_acp::BridgeServer::new(
+                    paths.clone(),
+                    nocterm_acp::RelayCommand {
+                        program: std::env::current_exe().expect("test executable"),
+                        args: vec![crate::AGENT_BRIDGE.into()],
+                    },
+                )),
                 state_file: paths.state_dir().join("agents.toml"),
                 chats_dir: paths.state_dir().join("agent-chats"),
                 codex_home: None,

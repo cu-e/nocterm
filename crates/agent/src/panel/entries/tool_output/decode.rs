@@ -37,7 +37,32 @@ fn mcp_text(value: &Value) -> Option<(&str, bool)> {
     Some((item.get("text")?.as_str()?, error))
 }
 
+/// Hermes fences results from MCP tools: the opening tag, one line of
+/// guidance, a blank line, the result and the closing tag.
+fn fenced(value: &Value) -> Option<Value> {
+    let text = value.as_str()?;
+    let (source, rest) = text
+        .strip_prefix("<untrusted_tool_result source=\"")?
+        .split_once("\">\n")?;
+    let (guidance, result) = rest.split_once("\n\n")?;
+    if source.contains(['"', '\n']) || guidance.contains('\n') {
+        return None;
+    }
+    let result = result.strip_suffix("\n</untrusted_tool_result>")?;
+    Some(Value::String(result.into()))
+}
+
+/// Hermes reports a failed MCP call as `{"error": message}`.
+fn provider_error(value: &Value) -> Option<&str> {
+    let object = value.as_object()?;
+    (object.len() == 1).then_some(())?;
+    object.get("error")?.as_str()
+}
+
 fn nested(value: &Value) -> Option<Value> {
+    if let Some(result) = fenced(value) {
+        return Some(result);
+    }
     if let Some(payload) = payload(value) {
         return Some(payload);
     }
@@ -85,6 +110,9 @@ pub(super) fn known(tool: &str, value: &Value, depth: usize) -> Option<Output> {
         return known(tool, &nested, depth + 1);
     }
     if let Some((message, true)) = mcp_text(value) {
+        return Some(Output::plain("Error", message.into()));
+    }
+    if let Some(message) = provider_error(value) {
         return Some(Output::plain("Error", message.into()));
     }
     let object = value.as_object()?;

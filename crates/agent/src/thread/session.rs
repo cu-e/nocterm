@@ -1,4 +1,4 @@
-use super::{AgentThread, Restore, bridge_server_name};
+use super::{AgentThread, Restore};
 use gpui_kit::Context;
 use nocterm_ai::{AgentCommands, AgentInfo, acp};
 use nocterm_ui::ActiveAi as _;
@@ -29,23 +29,10 @@ impl AgentThread {
         if !cx.ai_enabled() {
             return;
         }
-        let Some(registration) = &self.registration() else {
+        let Some(server) = self.registration().as_ref().map(|r| r.mcp_server()) else {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
-        let binary = match std::env::current_exe() {
-            Ok(binary) => binary,
-            Err(error) => {
-                self.fail(&error.to_string(), cx);
-                return;
-            }
-        };
-        let server = acp::McpServerStdio::new(bridge_server_name(registration.id), binary)
-            .args(vec!["agent-bridge".into()])
-            .env(vec![
-                acp::EnvVariable::new("NOCTERM_BRIDGE_ENDPOINT", registration.endpoint.clone()),
-                acp::EnvVariable::new("NOCTERM_BRIDGE_TOKEN", registration.token.clone()),
-            ]);
         self.lease.as_mut().expect("starting lease").commands = Some(commands.clone());
         self.info = Some(info);
         self.status = "Starting chat…".into();
@@ -64,7 +51,7 @@ impl AgentThread {
         self.pending_controls.clear();
         let executor = cx.background_executor().clone();
         let epoch = self.epoch;
-        let servers = vec![acp::McpServer::Stdio(server)];
+        let servers = vec![server];
         let session_commands = commands.clone();
         let pending_restore = restore.clone();
         let future = cx.background_executor().spawn(async move {

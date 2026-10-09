@@ -9,7 +9,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agent_auth;
-mod agent_bridge;
 mod app_menus;
 mod application;
 mod bootstrap;
@@ -37,6 +36,8 @@ use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
 const APP_ID: &str = "dev.nocterm.Nocterm";
+/// The subcommand agents run to reach a chat's terminal tools.
+const AGENT_BRIDGE: &str = "agent-bridge";
 
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
@@ -49,9 +50,9 @@ fn main() -> anyhow::Result<()> {
     }
     if std::env::args_os()
         .nth(1)
-        .is_some_and(|arg| arg == "agent-bridge")
+        .is_some_and(|arg| arg == AGENT_BRIDGE)
     {
-        return agent_bridge::run_from_environment().map_err(anyhow::Error::msg);
+        return nocterm_acp::run_relay_from_environment().map_err(anyhow::Error::from);
     }
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -60,7 +61,9 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    let agent_helper = std::env::current_exe().context("locating the agent process helper")?;
+    // Resolved before anything can replace the binary: afterwards Linux reports
+    // the running image as "<path> (deleted)", which no agent can start.
+    let executable = std::env::current_exe().context("locating the nocterm executable")?;
     let paths = Paths::discover()?;
     let tokens = load_tokens(&paths);
     let settings = load_settings(&paths);
@@ -89,7 +92,7 @@ fn main() -> anyhow::Result<()> {
                         catalog,
                         registry,
                     }),
-                    agent: agent_services(&paths, agent_helper),
+                    agent: agent_services(&paths, executable),
                     vault: Some(bootstrap::VaultSetup {
                         file: paths.config_dir().join("vault.bin"),
                         device_unlock: true,
@@ -145,11 +148,17 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn agent_services(paths: &Paths, helper: std::path::PathBuf) -> nocterm_agent::AgentServices {
+fn agent_services(paths: &Paths, executable: std::path::PathBuf) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
-        connector: Arc::new(nocterm_acp::AcpConnector::managed(helper)),
+        connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
         terminal_auth: Some(Arc::new(agent_auth::open)),
-        bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+        bridge: Arc::new(nocterm_acp::BridgeServer::new(
+            paths.clone(),
+            nocterm_acp::RelayCommand {
+                program: executable,
+                args: vec![AGENT_BRIDGE.into()],
+            },
+        )),
         state_file: paths.state_dir().join("agents.toml"),
         chats_dir: paths.state_dir().join("agent-chats"),
         codex_home: nocterm_ai::usage::codex_home(),

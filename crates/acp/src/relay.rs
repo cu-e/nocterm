@@ -1,6 +1,6 @@
 use std::io::{self, BufReader, Read, Write};
 
-use crate::bridge::{Socket, bounded_line};
+use crate::bridge::{ENDPOINT_VARIABLE, Socket, TOKEN_VARIABLE, bounded_line};
 
 fn connect(endpoint: &str) -> io::Result<Socket> {
     #[cfg(unix)]
@@ -26,6 +26,21 @@ fn connect(endpoint: &str) -> io::Result<Socket> {
         }
         Socket::connect(address)
     }
+}
+
+/// Runs the relay a [`crate::BridgeServer`] registration launched, with the
+/// credentials it was handed.
+pub fn run_relay_from_environment() -> io::Result<()> {
+    let variable = |name| {
+        std::env::var(name)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("Missing {name}")))
+    };
+    run_relay(
+        io::stdin(),
+        io::stdout(),
+        &variable(ENDPOINT_VARIABLE)?,
+        &variable(TOKEN_VARIABLE)?,
+    )
 }
 
 /// Runs the stdio relay without GUI initialization or protocol output on stderr.
