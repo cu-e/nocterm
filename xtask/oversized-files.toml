@@ -4,4 +4,3 @@
 # to the limit: split by responsibility into child modules (see AGENTS.md).
 
 [files]
-"crates/vault/src/lib.rs" = 826
