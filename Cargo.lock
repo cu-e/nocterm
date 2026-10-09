@@ -5161,6 +5161,7 @@ dependencies = [
  "nix 0.28.0",
  "nocterm-session",
  "portable-pty",
+ "process-wrap",
  "tempfile",
 ]
 
@@ -6689,6 +6690,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "process-wrap"
+version = "9.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f95f6259ebd0640685b7cd26d635861f39208df0f89b2b61ff5cf76310fa54f6"
+dependencies = [
+ "indexmap 2.14.2",
+ "nix 0.31.3",
+ "windows 0.62.2",
 ]
 
 [[package]]
