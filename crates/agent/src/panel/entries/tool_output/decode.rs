@@ -39,7 +39,7 @@ pub(super) fn bridge(tool: &str, value: &Value) -> Output {
 }
 
 /// Key/value text also handles future payloads without exposing provider JSON.
-pub(super) fn readable(value: &Value) -> String {
+pub(in crate::panel::entries) fn readable(value: &Value) -> String {
     readable_at(value, 0)
 }
 

@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use super::tool_input::{Section, literal_section};
 mod decode;
+pub(super) use decode::readable;
 
 pub(in crate::panel) struct Output {
     pub sections: Vec<Section>,
@@ -62,25 +63,24 @@ fn text(value: &Value) -> String {
 }
 
 pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
-    if let Some(display) = ToolDisplay::from_call(call)
-        && let Some(outcome) = display.outcome
+    let display = ToolDisplay::from_call(call);
+    if let Some(display) = &display
+        && let Some(outcome) = &display.outcome
     {
         let mut output = match outcome {
             ToolOutcome::Pending => return None,
-            ToolOutcome::Ok(value) => decode::bridge(&display.tool, &value),
-            ToolOutcome::Err(error) => Output::plain("Error", error),
+            ToolOutcome::Ok(value) => decode::bridge(&display.tool, value),
+            ToolOutcome::Err(error) => Output::plain("Error", error.clone()),
         };
         if redact {
             output.redact();
         }
         return Some(output);
     }
-    let request = ToolDisplay::from_call(call)
-        .and_then(|display| display.display_request())
-        .or_else(|| tool_display::requested_call(call));
-    let tool = request
+    let tool = display
         .as_ref()
-        .map(|request| tool_display::request(request).0);
+        .map(|display| display.tool.as_str())
+        .or_else(|| tool_display::requested_arguments(call).map(|(tool, _)| tool));
     let mut output = Output {
         sections: Vec::new(),
         parameters: Vec::new(),

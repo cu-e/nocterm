@@ -133,33 +133,40 @@ fn envelope_of(
     read(named?.tool, input.clone())
 }
 
+/// Presentation identity remains useful even when its arguments are malformed.
 pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
-    let Some(Some(named)) = explicit_identity(call) else {
-        let tool = legacy_tool(call)?;
-        return requested_call(call).is_some().then_some(tool);
-    };
-    if operation(named.tool) == "Tool" {
-        return None;
-    }
-    // A malformed or inconsistent payload keeps its original provider label.
-    if call
-        .raw_input
-        .as_ref()
-        .is_some_and(|input| !input.is_null())
-        && requested_call(call).is_none()
-    {
-        return None;
-    }
-    Some(named.tool)
+    requested_arguments(call).map(|(tool, _)| tool)
 }
 
-/// What a Nocterm tool row asked for, for display. Requests the bridge
-/// rejected, such as a timeout beyond its limit, are shown all the same.
-pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
-    if let Some(Some(named)) = explicit_identity(call) {
-        return envelope_of(call, named.registration, deserialize);
+/// Original request arguments for display, without executor shape validation.
+/// Explicit provider names and any server envelope must still agree.
+pub fn requested_arguments(call: &acp::ToolCall) -> Option<(&str, serde_json::Value)> {
+    match explicit_identity(call) {
+        Some(Some(named)) => {
+            if operation(named.tool) == "Tool" {
+                return None;
+            }
+            let server = format!("{SERVER_PREFIX}{}", named.registration);
+            let (_, arguments) = raw_envelope(call, &server)?;
+            Some((named.tool, arguments))
+        }
+        Some(None) => {
+            let input = call.raw_input.as_ref()?;
+            let server = input.get("server")?.as_str()?;
+            let tool = input.get("tool")?.as_str()?;
+            if operation(tool) == "Tool" {
+                return None;
+            }
+            let (_, arguments) = raw_envelope(call, server)?;
+            Some((tool, arguments))
+        }
+        None => legacy_arguments(call),
     }
-    let (tool, arguments) = legacy_arguments(call)?;
+}
+
+/// What a Nocterm tool row asked for, including requests the bridge rejected.
+pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
+    let (tool, arguments) = requested_arguments(call)?;
     deserialize(tool, arguments)
 }
 

@@ -120,7 +120,9 @@ pub fn operation(tool: &str) -> &'static str {
 }
 
 mod identity;
-pub use identity::{bridge_server_name, envelope, fallback_tool, raw_envelope, requested_call};
+pub use identity::{
+    bridge_server_name, envelope, fallback_tool, raw_envelope, requested_arguments, requested_call,
+};
 
 pub fn header(call: &acp::ToolCall) -> String {
     let title = ToolDisplay::from_call(call)
