@@ -255,6 +255,29 @@ fn outcome_budget_counts_serialized_escaping_for_success_and_error() {
 }
 
 #[test]
+fn outcome_budget_accepts_the_exact_boundary_and_rejects_one_more_byte() {
+    let limit = 256 * 1024;
+    for success in [false, true] {
+        let empty = if success {
+            ToolOutcome::Ok(json!(""))
+        } else {
+            ToolOutcome::Err(String::new())
+        };
+        let overhead = serde_json::to_vec(&empty).unwrap().len();
+        let mut display = ToolDisplay::requested("list_terminals".into(), json!({}));
+        for extra in [0, 1] {
+            let text = "x".repeat(limit - overhead + extra);
+            let result = if success { Ok(json!(text)) } else { Err(text) };
+            display.finish(result);
+            assert_eq!(display.outcome.is_some(), extra == 0);
+            if let Some(outcome) = &display.outcome {
+                assert_eq!(serde_json::to_vec(outcome).unwrap().len(), limit);
+            }
+        }
+    }
+}
+
+#[test]
 fn raw_matching_preserves_rejected_unknown_tools_and_original_arguments() {
     for title in [
         "mcp.nocterm-3.typo",

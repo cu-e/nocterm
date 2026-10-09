@@ -232,3 +232,52 @@ fn incomplete_fences_and_extra_text_need_exact_matching_raw_proof() {
         );
     }
 }
+
+#[test]
+fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text() {
+    let full = full_fence();
+    let preview = truncated_fence(&full, 120);
+    let block = json!({"type":"text","text":full});
+    for raw in [
+        json!({"content":[block],"_meta":{"future":true}}),
+        json!(json!({"result":{"content":[block]}}).to_string()),
+    ] {
+        let mut call = call(
+            "exec_command",
+            json!({"terminal_id":"t1","program":"sh"}),
+            raw,
+            false,
+        );
+        call.content = vec![nocterm_ai::acp::ToolCallContent::from(preview.clone())];
+        assert_eq!(source(&call, false).unwrap().sections.len(), 2);
+    }
+    for (preview, raw) in [
+        (
+            preview.replace(
+                &format!("{} chars total", full.chars().count()),
+                &format!("{} chars total", full.len()),
+            ),
+            json!(full),
+        ),
+        (preview.clone(), json!({"content":[block,block]})),
+        (
+            preview.clone(),
+            json!({"result":full,"error":{"message":"failed"}}),
+        ),
+    ] {
+        let mut call = call(
+            "exec_command",
+            json!({"terminal_id":"t1","program":"sh"}),
+            raw,
+            false,
+        );
+        call.content = vec![nocterm_ai::acp::ToolCallContent::from(preview.clone())];
+        assert!(
+            source(&call, false)
+                .unwrap()
+                .sections
+                .iter()
+                .any(|section| section.text == preview)
+        );
+    }
+}

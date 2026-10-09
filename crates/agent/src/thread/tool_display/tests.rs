@@ -342,3 +342,26 @@ fn completion_updates_bound_rows_and_cannot_cross_turns_or_duplicate_requests() 
         Some(tool_display::ToolOutcome::Pending)
     ));
 }
+
+#[test]
+fn an_execution_completed_before_its_provider_row_binds_the_saved_outcome() {
+    let mut displays = ToolDisplays::default();
+    displays.prepare(1, 0);
+    let mut completed = record();
+    completed.id = 5;
+    displays.records.push(completed);
+    displays.finish(Some((1, 5)), Ok(json!({"text":"completed before row"})));
+    let mut entries = vec![row("late-provider-row")];
+    assert_eq!(displays.normalize(&mut entries), vec![0]);
+    let Entry::Tool(call) = &entries[0] else {
+        unreachable!()
+    };
+    let restored: acp::ToolCall =
+        serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
+    let Some(tool_display::ToolOutcome::Ok(value)) =
+        ToolDisplay::from_call(&restored).unwrap().outcome
+    else {
+        panic!("a late row must preserve the completed bridge outcome");
+    };
+    assert_eq!(value, json!({"text":"completed before row"}));
+}
