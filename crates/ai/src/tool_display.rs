@@ -106,17 +106,7 @@ impl ToolDisplay {
 }
 
 pub fn operation(tool: &str) -> &'static str {
-    match tool {
-        "list_terminals" => "List terminals",
-        "read_terminal" => "Read terminal",
-        "send_input" => "Send input",
-        "run_command" => "Run command",
-        "open_terminal" => "Connect",
-        "exec_command" => "Execute program",
-        "read_command" => "Read command",
-        "cancel_command" => "Cancel command",
-        _ => "Tool",
-    }
+    crate::tools::catalog::get(tool).map_or("Tool", |spec| spec.label)
 }
 
 mod identity;
@@ -133,16 +123,17 @@ pub fn header(call: &acp::ToolCall) -> String {
 }
 
 pub fn request(call: &TerminalCall) -> (&'static str, Value) {
-    match call {
-        TerminalCall::ListTerminals => ("list_terminals", json!({})),
-        TerminalCall::ReadTerminal(v) => ("read_terminal", json!(v)),
-        TerminalCall::SendInput(v) => ("send_input", json!(v)),
-        TerminalCall::RunCommand(v) => ("run_command", json!(v)),
-        TerminalCall::OpenTerminal(v) => ("open_terminal", json!(v)),
-        TerminalCall::ExecCommand(v) => ("exec_command", json!(v)),
-        TerminalCall::ReadCommand(v) => ("read_command", json!(v)),
-        TerminalCall::CancelCommand(v) => ("cancel_command", json!(v)),
-    }
+    let arguments = match call {
+        TerminalCall::ListTerminals => json!({}),
+        TerminalCall::ReadTerminal(v) => json!(v),
+        TerminalCall::SendInput(v) => json!(v),
+        TerminalCall::RunCommand(v) => json!(v),
+        TerminalCall::OpenTerminal(v) => json!(v),
+        TerminalCall::ExecCommand(v) => json!(v),
+        TerminalCall::ReadCommand(v) => json!(v),
+        TerminalCall::CancelCommand(v) => json!(v),
+    };
+    (call.name(), arguments)
 }
 
 /// A request the bridge would execute: well formed and within its limits.
@@ -155,18 +146,7 @@ pub fn parse(tool: &str, args: Value) -> Option<TerminalCall> {
 /// A well-formed request, whether or not the bridge accepted it. Only for
 /// showing what an agent asked for: a rejected request is still worth reading.
 fn deserialize(tool: &str, args: Value) -> Option<TerminalCall> {
-    let call = match tool {
-        "list_terminals" if args == json!({}) => TerminalCall::ListTerminals,
-        "read_terminal" => TerminalCall::ReadTerminal(serde_json::from_value(args).ok()?),
-        "send_input" => TerminalCall::SendInput(serde_json::from_value(args).ok()?),
-        "run_command" => TerminalCall::RunCommand(serde_json::from_value(args).ok()?),
-        "open_terminal" => TerminalCall::OpenTerminal(serde_json::from_value(args).ok()?),
-        "exec_command" => TerminalCall::ExecCommand(serde_json::from_value(args).ok()?),
-        "read_command" => TerminalCall::ReadCommand(serde_json::from_value(args).ok()?),
-        "cancel_command" => TerminalCall::CancelCommand(serde_json::from_value(args).ok()?),
-        _ => return None,
-    };
-    Some(call)
+    (crate::tools::catalog::get(tool)?.parse)(args)
 }
 
 fn redact_values(value: &mut Value) {
