@@ -4,7 +4,9 @@ The application is the composition root. `src/main.rs` loads paths, settings and
 design tokens, installs SSH/local transports and the vault service, and registers independent workspace
 features. The [dependency map](architecture/dependencies.md) is generated from
 Cargo metadata; `cargo xtask architecture` enforces its declared layers and
-rejects runtime GUI dependencies below the UI layer. The
+rejects runtime GUI dependencies below the UI layer. Service crates sit beside
+the UI layer: they own GPUI entities and background work but no views, so they
+depend on GPUI alone, never on the component library, UI or features. The
 [architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
 regression evidence and residual constraints.
 
@@ -441,10 +443,14 @@ of session. Theme changes belong in the token source or its user override.
 IDE features, collaboration, Vim mode and an extension runtime remain future
 consumers of these boundaries.
 
-The ACP AI panel uses three layers: `nocterm-ai` declares runtime-neutral agent
+The ACP AI panel uses four layers: `nocterm-ai` declares runtime-neutral agent
 contracts and bounded context/tool rules; `nocterm-acp` supplies subprocess and
-authenticated local bridge adapters; `nocterm-agent` supplies GPUI lifecycle and
-chat UI. App injects the adapter. Workspace exposes allowlisted `TerminalAccess`
+authenticated local bridge adapters; the `nocterm-agent-runtime` service admits
+connections, closes idle ones and writes chats; `nocterm-agent` supplies threads
+and chat UI. App injects the adapter. The runtime knows no thread type: a thread
+registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
+synchronously and in order, while the runtime reads only a `ClientState`. The
+host installs the `AiSettingsSource` the runtime reads settings through. Workspace exposes allowlisted `TerminalAccess`
 and `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.

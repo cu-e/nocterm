@@ -3,7 +3,7 @@ use super::lease::ReleasedLease;
 use super::*;
 use std::time::Duration;
 impl Runtime {
-    pub(crate) fn register_document(&mut self, client: Client, cx: &mut Context<Self>) {
+    pub fn register_document(&mut self, client: Client, cx: &mut Context<Self>) {
         let owner = client.id();
         let Some(state) = client.state(cx) else {
             return;
@@ -27,12 +27,12 @@ impl Runtime {
             }));
         }
     }
-    pub(crate) fn unregister_document(&mut self, id: EntityId) {
+    pub fn unregister_document(&mut self, id: EntityId) {
         self.documents.remove(&id);
         self.document_owners.retain(|_, owner| *owner != id);
         self.pending_activation.retain(|client| client.id() != id);
     }
-    pub(crate) fn request_activation(&mut self, client: Client, cx: &mut Context<Self>) {
+    pub fn request_activation(&mut self, client: Client, cx: &mut Context<Self>) {
         if self.shutting_down || !cx.ai_enabled() {
             return;
         }
@@ -136,7 +136,7 @@ impl Runtime {
             client.emit(SessionEvent::CleanupUnconfirmed(error.to_owned()), cx);
         }
     }
-    pub(crate) fn release_lease(&mut self, mut lease: ReleasedLease, cx: &mut Context<Self>) {
+    pub fn release_lease(&mut self, mut lease: ReleasedLease, cx: &mut Context<Self>) {
         let id = lease.owner;
         let key = lease.connection_key;
         if let Some(registration) = lease.registration.take() {
@@ -206,10 +206,10 @@ impl Runtime {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Runtime {
     /// The fixture injects one event stream; production has a separate stream per connection.
-    pub(crate) fn inject_events(
+    pub fn inject_events(
         &mut self,
         events: async_channel::Receiver<AgentEvent>,
         cx: &mut Context<Self>,

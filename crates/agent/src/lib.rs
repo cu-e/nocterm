@@ -1,6 +1,6 @@
 //! ACP chat UI and lifecycle, injected through domain contracts.
 mod panel;
-mod runtime;
+use nocterm_agent_runtime as runtime;
 mod thread;
 pub use runtime::TerminalAuthRequest;
 

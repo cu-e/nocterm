@@ -131,6 +131,7 @@ license-file = "LICENSE"
 nocterm-ai = { path = "crates/ai" }
 nocterm-acp = { path = "crates/acp" }
 nocterm-agent = { path = "crates/agent" }
+nocterm-agent-runtime = { path = "crates/agent-runtime" }
 
 # Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
 nocterm-device-unlock = { path = "crates/device-unlock" }
@@ -182,6 +183,8 @@ async-channel = "2"
 directories = "6"
 futures = "0.3"
 gpui-kit = "0.7"
+# GPUI alone, for crates that must not reach the component library.
+gpui = { package = "gpui-pre", version = "0.3.7", default-features = false }
 parking_lot = "0.12"
 portable-pty = "0.9"
 regex = "1"

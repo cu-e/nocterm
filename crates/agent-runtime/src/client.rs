@@ -4,12 +4,12 @@
 //! changes its own state when it receives a [`SessionEvent`]. Events are
 //! delivered synchronously, in the order the runtime emits them.
 use super::SessionLease;
-use gpui_kit::{App, EntityId};
+use gpui::{App, EntityId};
 use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, PermissionResponder, acp};
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 /// What the runtime tells a chat.
-pub(crate) enum SessionEvent {
+pub enum SessionEvent {
     /// A connection is being started for the chat; the lease holds it.
     Leased(SessionLease),
     /// The agent process is up: open or load the session.
@@ -50,7 +50,7 @@ pub(crate) enum SessionEvent {
 }
 
 /// What the runtime reads about a chat to schedule its connection.
-pub(crate) struct ClientState {
+pub struct ClientState {
     pub chat_id: String,
     pub agent_id: String,
     pub session: Option<acp::SessionId>,
@@ -65,7 +65,7 @@ pub(crate) struct ClientState {
 }
 
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.
-pub(crate) trait SessionClient {
+pub trait SessionClient {
     fn id(&self) -> EntityId;
     /// Whether the chat is still open.
     fn alive(&self) -> bool;
@@ -77,4 +77,4 @@ pub(crate) trait SessionClient {
     fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)>;
 }
 
-pub(crate) type Client = Rc<dyn SessionClient>;
+pub type Client = Rc<dyn SessionClient>;

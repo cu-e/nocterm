@@ -3,15 +3,15 @@ mod documents;
 mod lease;
 mod lifecycle;
 mod settings;
-pub(crate) use client::{Client, ClientState, SessionClient, SessionEvent};
-use gpui_kit::{App, Context, Entity, EntityId, Global, Task};
-pub(crate) use lease::SessionLease;
+pub use client::{Client, ClientState, SessionClient, SessionEvent};
+use gpui::{App, Context, Entity, EntityId, Global, Task};
+pub use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
     ConnectRequest, ToolBridge, acp,
 };
 use settings::AiSettingsExt as _;
-pub(crate) use settings::AiSettingsSource;
+pub use settings::AiSettingsSource;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -27,7 +27,7 @@ pub struct TerminalAuthRequest {
     pub title: String,
 }
 /// What the runtime connects agents with, and where it keeps their state.
-pub(crate) struct RuntimeServices {
+pub struct RuntimeServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub state_file: PathBuf,
@@ -45,7 +45,7 @@ pub(crate) struct RuntimeServices {
     /// tools' socket directory.
     pub shared_dirs: Vec<PathBuf>,
 }
-pub(crate) struct RuntimeGlobal(pub Entity<Runtime>);
+pub struct RuntimeGlobal(pub Entity<Runtime>);
 impl Global for RuntimeGlobal {}
 struct Connection {
     chat_id: String,
@@ -62,7 +62,7 @@ struct Connection {
     cancellation: nocterm_ai::ConnectionCancellation,
     startup_completion: Option<futures::channel::oneshot::Receiver<Result<(), String>>>,
 }
-pub(crate) struct Runtime {
+pub struct Runtime {
     pub services: RuntimeServices,
     pub favorites: nocterm_ai::favorites::AgentStateFile,
     pub favorites_error: Option<String>,
@@ -79,7 +79,7 @@ pub(crate) struct Runtime {
     chat_revisions: HashMap<String, (EntityId, u64)>,
     pub registrations: HashMap<u64, Client>,
     /// Chats read from disk and not yet shown by a panel; `None` while reading.
-    pub(crate) saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
+    pub saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
     /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
     chat_writes: HashMap<String, Option<Arc<nocterm_ai::history::SharedChat>>>,
     chat_writer: Option<Task<()>>,
@@ -99,10 +99,10 @@ pub(crate) struct Runtime {
     _bridge: Option<Task<()>>,
 }
 impl Runtime {
-    pub(crate) fn global(cx: &App) -> Entity<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<RuntimeGlobal>().0.clone()
     }
-    pub(crate) fn new(services: RuntimeServices, cx: &mut Context<Self>) -> Self {
+    pub fn new(services: RuntimeServices, cx: &mut Context<Self>) -> Self {
         for warning in nocterm_ai::AgentRegistry::new(cx.ai()).warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
@@ -162,7 +162,7 @@ impl Runtime {
         }
     }
     /// Applies changed AI settings to the running agents.
-    pub(crate) fn settings_changed(&mut self, cx: &mut Context<Self>) {
+    pub fn settings_changed(&mut self, cx: &mut Context<Self>) {
         if !cx.ai_enabled() {
             let ids = self.documents.keys().copied().collect::<Vec<_>>();
             for id in ids {
@@ -218,7 +218,7 @@ impl Runtime {
             );
         }
     }
-    pub(crate) fn toggle_favorite(
+    pub fn toggle_favorite(
         &mut self,
         agent: &str,
         option: &str,
@@ -229,7 +229,7 @@ impl Runtime {
         self.save_state(cx);
     }
     /// Remembers `agent` as the one new chats start with by default.
-    pub(crate) fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
+    pub fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
         if self.favorites.last_agent.as_deref() == Some(agent) {
             return;
         }
@@ -282,12 +282,12 @@ impl Runtime {
         }));
     }
     /// The plan limits last reported for `agent`.
-    pub(crate) fn limits(&self, agent: &str) -> Option<&nocterm_ai::usage::Limits> {
+    pub fn limits(&self, agent: &str) -> Option<&nocterm_ai::usage::Limits> {
         self.limits.get(agent).filter(|limits| !limits.is_empty())
     }
     /// Reads `agent`'s plan limits again, from agents that keep them in their
     /// own files. Others report them along with usage.
-    pub(crate) fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
+    pub fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
         let codex = nocterm_ai::AgentRegistry::new(cx.ai())
             .get(agent)
             .is_some_and(nocterm_ai::usage::is_codex);
@@ -313,7 +313,7 @@ impl Runtime {
         })
         .detach();
     }
-    pub(crate) fn start_bridge(&mut self, cx: &mut Context<Self>) {
+    pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self._bridge.is_some() {
             return;
         }
@@ -339,7 +339,7 @@ impl Runtime {
             }
         }));
     }
-    pub(crate) fn register_bridge(
+    pub fn register_bridge(
         &mut self,
         client: &Client,
         cx: &mut Context<Self>,
@@ -352,7 +352,7 @@ impl Runtime {
         self.start_bridge(cx);
         Ok(registration)
     }
-    pub(crate) fn terminal_auth_request(
+    pub fn terminal_auth_request(
         &self,
         key: u64,
         method: &acp::AuthMethodTerminal,
@@ -382,7 +382,7 @@ impl Runtime {
         })
     }
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(crate) fn connect(
+    pub fn connect(
         &mut self,
         client: Client,
         chat_id: String,
@@ -613,7 +613,7 @@ impl Runtime {
             client.emit(SessionEvent::Stopped(message.to_owned()), cx);
         }
     }
-    pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self.shutting_down = true;
         self.pending_activation.clear();
         let clients: Vec<_> = self.documents.values().cloned().collect();

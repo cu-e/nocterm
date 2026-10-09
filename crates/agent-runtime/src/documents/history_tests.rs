@@ -1,6 +1,6 @@
 //! Exercise final disk ownership at the boundary between dequeue and acknowledgement.
 use super::*;
-use gpui_kit::{AppContext as _, TestAppContext};
+use gpui::{AppContext as _, TestAppContext};
 use nocterm_ai::history::{SavedChat, SharedChat};
 
 struct UnusedConnector;
@@ -64,7 +64,7 @@ fn snapshot() -> Arc<SharedChat> {
     })
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn shutdown_persists_a_dequeued_snapshot_after_its_thread_has_gone(cx: &mut TestAppContext) {
     let (runtime, directory) = fixture(cx);
     let chat = snapshot();
@@ -85,7 +85,7 @@ fn shutdown_persists_a_dequeued_snapshot_after_its_thread_has_gone(cx: &mut Test
     assert_eq!(saved[0].draft, chat.draft);
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn the_latest_queued_snapshot_wins_over_an_unacknowledged_disk_write(cx: &mut TestAppContext) {
     let (runtime, directory) = fixture(cx);
     let old = snapshot();
@@ -112,7 +112,7 @@ fn the_latest_queued_snapshot_wins_over_an_unacknowledged_disk_write(cx: &mut Te
     assert_eq!(saved[0].draft.as_deref(), Some("newer text"));
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn deleting_a_chat_overrides_its_unacknowledged_disk_write_at_shutdown(cx: &mut TestAppContext) {
     let (runtime, directory) = fixture(cx);
     let chat = snapshot();

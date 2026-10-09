@@ -8,7 +8,8 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | --- | --- | --- | --- |
 | `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
-| `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
+| `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
+| `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-core` | ACP agent connections, their admission and the chats' durable documents. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
 | `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-containers` | domain | `nocterm-session` | Containers on a host: listing, actions, logs and shells through the docker or podman CLI. |
@@ -67,11 +68,14 @@ graph TD
     nocterm_acp --> nocterm_ai
     nocterm_acp --> nocterm_core
     nocterm_acp --> nocterm_settings
+    nocterm_agent --> nocterm_agent_runtime
     nocterm_agent --> nocterm_ai
     nocterm_agent --> nocterm_core
     nocterm_agent --> nocterm_session
     nocterm_agent --> nocterm_ui
     nocterm_agent --> nocterm_workspace
+    nocterm_agent_runtime --> nocterm_ai
+    nocterm_agent_runtime --> nocterm_core
     nocterm_ai --> nocterm_core
     nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_core

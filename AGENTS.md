@@ -55,6 +55,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `keymap-ui` | keymap settings page |
 | `ai` | agent registry, thread model, context and tool protocol |
 | `acp` | ACP client and local MCP bridge adapter |
+| `agent-runtime` | agent connections, admission and chat documents |
 | `agent` | agent panel, threads and composer |
 | `files` | local/remote Explorer and transfer UI |
 | `local` | local PTY and shell integration |

@@ -16,11 +16,11 @@ pub(super) struct PendingChatWrite {
 impl Runtime {
     /// Saved chats for the first panel that asks once they are read; later
     /// panels get none, so two windows never write the same chat.
-    pub(crate) fn take_saved_chats(&mut self) -> Option<Vec<nocterm_ai::history::SavedChat>> {
+    pub fn take_saved_chats(&mut self) -> Option<Vec<nocterm_ai::history::SavedChat>> {
         self.saved_chats.as_mut().map(std::mem::take)
     }
     /// Captures durable state before disabling AI or dropping a panel's documents.
-    pub(crate) fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
+    pub fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
         if let Some(client) = self.documents.get(&id).cloned()
             && let Some((chat, revision)) = client.capture(cx)
         {
@@ -29,7 +29,7 @@ impl Runtime {
         self.unregister_document(id);
     }
     /// Queues `chat` to be written, replacing an older queued snapshot.
-    pub(crate) fn save_chat(
+    pub fn save_chat(
         &mut self,
         chat: Arc<nocterm_ai::history::SharedChat>,
         owner: EntityId,
@@ -47,7 +47,7 @@ impl Runtime {
         self.write_chats(cx);
     }
     /// Queues the removal of chat `id`.
-    pub(crate) fn delete_chat(&mut self, id: String, cx: &mut Context<Self>) {
+    pub fn delete_chat(&mut self, id: String, cx: &mut Context<Self>) {
         self.deleted_chats.insert(id.clone());
         self.chat_revisions.remove(&id);
         self.chat_writes.insert(id, None);

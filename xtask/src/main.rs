@@ -90,8 +90,10 @@ fn allowed(source: &str, destination: &str) -> bool {
         "foundation" => destination == "foundation",
         "domain" => matches!(destination, "domain" | "foundation"),
         "adapter" => matches!(destination, "domain" | "foundation"),
+        // Services own GPUI entities but no views: they never reach the UI.
+        "service" => matches!(destination, "service" | "domain" | "foundation"),
         "ui" => matches!(destination, "ui" | "domain" | "foundation"),
-        "feature" => matches!(destination, "ui" | "domain" | "foundation"),
+        "feature" => matches!(destination, "service" | "ui" | "domain" | "foundation"),
         "app" => destination != "tooling",
         // Generated references read every crate's settings sections.
         "tooling" => !matches!(destination, "app" | "tooling"),
@@ -119,6 +121,11 @@ fn check_dependency(
         )
     {
         bail!("{source} runtime depends on GUI library {name}");
+    } else if dependency.kind.as_deref() != Some("dev")
+        && source == "service"
+        && matches!(name, "gpui-kit" | "gpui-component")
+    {
+        bail!("{source} runtime depends on component library {name}");
     }
     Ok(())
 }
@@ -139,7 +146,14 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
                 .with_context(|| format!("{} has no architecture layer", package.name))?;
             if !matches!(
                 layer,
-                "foundation" | "domain" | "adapter" | "ui" | "feature" | "app" | "tooling"
+                "foundation"
+                    | "domain"
+                    | "adapter"
+                    | "service"
+                    | "ui"
+                    | "feature"
+                    | "app"
+                    | "tooling"
             ) {
                 bail!("{} has unknown layer {layer}", package.name);
             }
@@ -469,6 +483,12 @@ mod tests {
             kind: None,
         };
         assert!(check_dependency("ui", &runtime, &layers).is_ok());
+        assert!(check_dependency("service", &runtime, &layers).is_err());
+        let gpui = Dependency {
+            name: "gpui-pre".into(),
+            kind: None,
+        };
+        assert!(check_dependency("service", &gpui, &layers).is_ok());
         let missing = Dependency {
             name: "nocterm-forgotten".into(),
             kind: None,
@@ -478,6 +498,9 @@ mod tests {
     #[test]
     fn feature_and_transport_boundaries_are_enforced() {
         assert!(!allowed("feature", "feature"));
+        assert!(allowed("feature", "service"));
+        assert!(!allowed("service", "ui"));
+        assert!(!allowed("service", "feature"));
         assert!(!allowed("feature", "adapter"));
         assert!(!allowed("ui", "feature"));
         assert!(allowed("adapter", "domain"));

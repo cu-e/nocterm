@@ -4972,6 +4972,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "image",
+ "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-core",
  "nocterm-session",
@@ -4979,6 +4980,19 @@ dependencies = [
  "nocterm-workspace",
  "serde",
  "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-agent-runtime"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "futures",
+ "gpui-pre",
+ "nocterm-ai",
+ "nocterm-core",
  "tempfile",
  "tracing",
 ]

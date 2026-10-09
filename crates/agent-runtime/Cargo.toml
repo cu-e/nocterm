@@ -1,0 +1,28 @@
+[package]
+name = "nocterm-agent-runtime"
+description = "ACP agent connections, their admission and the chats' durable documents."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[features]
+test-support = []
+
+[dependencies]
+nocterm-ai.workspace = true
+nocterm-core.workspace = true
+gpui.workspace = true
+futures.workspace = true
+async-channel.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

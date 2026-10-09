@@ -6,23 +6,25 @@ use std::{rc::Rc, sync::Arc};
 
 /// `thread` as the runtime sees it.
 pub(crate) fn client(thread: &Entity<AgentThread>) -> Client {
-    Rc::new(thread.downgrade())
+    Rc::new(ThreadClient(thread.downgrade()))
 }
 
-impl SessionClient for WeakEntity<AgentThread> {
+struct ThreadClient(WeakEntity<AgentThread>);
+
+impl SessionClient for ThreadClient {
     fn id(&self) -> EntityId {
-        self.entity_id()
+        self.0.entity_id()
     }
     fn alive(&self) -> bool {
-        self.upgrade().is_some()
+        self.0.upgrade().is_some()
     }
     fn emit(&self, event: SessionEvent, cx: &mut App) {
-        if let Some(thread) = self.upgrade() {
+        if let Some(thread) = self.0.upgrade() {
             thread.update(cx, |thread, cx| thread.runtime_event(event, cx));
         }
     }
     fn state(&self, cx: &App) -> Option<ClientState> {
-        let thread = self.upgrade()?;
+        let thread = self.0.upgrade()?;
         let thread = thread.read(cx);
         Some(ClientState {
             chat_id: thread.chat_id.clone(),
@@ -35,10 +37,10 @@ impl SessionClient for WeakEntity<AgentThread> {
         })
     }
     fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
-        self.upgrade()?.read(cx).flush_snapshot(cx)
+        self.0.upgrade()?.read(cx).flush_snapshot(cx)
     }
     fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
-        self.upgrade()?.update(cx, |thread, cx| {
+        self.0.upgrade()?.update(cx, |thread, cx| {
             let chat = thread.flush_snapshot(cx)?;
             thread.document_revision += 1;
             Some((chat, thread.document_revision))
