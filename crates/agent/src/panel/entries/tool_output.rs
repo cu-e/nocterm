@@ -62,6 +62,16 @@ fn text(value: &Value) -> String {
         .unwrap_or_else(|| serde_json::to_string_pretty(value).unwrap_or_default())
 }
 
+fn content_value(item: &acp::ToolCallContent) -> Value {
+    match item {
+        acp::ToolCallContent::Content(content) => match &content.content {
+            acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
+            block => serde_json::to_value(block).unwrap_or_default(),
+        },
+        item => serde_json::to_value(item).unwrap_or_default(),
+    }
+}
+
 pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
     let display = ToolDisplay::from_call(call);
     if let Some(display) = &display
@@ -87,13 +97,15 @@ pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Out
     };
     let mut content_values = Vec::new();
     for item in &call.content {
-        let value = match item {
-            acp::ToolCallContent::Content(content) => match &content.content {
-                acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
-                block => serde_json::to_value(block).unwrap_or_default(),
-            },
-            item => serde_json::to_value(item).unwrap_or_default(),
-        };
+        let value = content_value(item);
+        if tool.is_some()
+            && call
+                .raw_output
+                .as_ref()
+                .is_some_and(|raw| decode::truncated_preview(&value, raw))
+        {
+            continue;
+        }
         content_values.push(value);
     }
     if let [value] = content_values.as_slice() {

@@ -3,6 +3,7 @@ use super::Output;
 use serde_json::Value;
 mod payload;
 mod unwrap;
+pub(super) use unwrap::truncated_preview;
 
 pub(super) fn equivalent(tool: Option<&str>, content: &Value, raw: &Value) -> bool {
     content == raw

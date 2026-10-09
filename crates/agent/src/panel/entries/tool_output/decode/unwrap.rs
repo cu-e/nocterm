@@ -106,3 +106,66 @@ fn fenced(text: &str) -> Option<&str> {
     }
     result.strip_suffix("\n</untrusted_tool_result>")
 }
+
+/// Hermes previews truncate before the closing fence. Only a matching complete
+/// raw result proves that this exact provider preview can be replaced.
+pub(in crate::panel::entries::tool_output) fn truncated_preview(
+    content: &Value,
+    raw: &Value,
+) -> bool {
+    let Some(preview) = content.as_str() else {
+        return false;
+    };
+    let Some((prefix, total)) = preview.rsplit_once("\n... (") else {
+        return false;
+    };
+    let Some(total) = total.strip_suffix(" chars total, truncated)") else {
+        return false;
+    };
+    if !prefix.starts_with("<untrusted_tool_result source=\"") || fenced(prefix).is_some() {
+        return false;
+    }
+    let Ok(total) = total.parse::<usize>() else {
+        return false;
+    };
+    if !preview.ends_with(&format!("\n... ({total} chars total, truncated)")) {
+        return false;
+    }
+    matches_fence(prefix, total, raw, 0)
+}
+
+fn matches_fence(prefix: &str, total: usize, value: &Value, depth: usize) -> bool {
+    if depth >= MAX_WRAPPER_DEPTH {
+        return false;
+    }
+    if let Some(text) = value.as_str() {
+        if fenced(text).is_some() {
+            return prefix.len() < text.len()
+                && text.starts_with(prefix)
+                && text.chars().count() == total;
+        }
+        return text.len() <= MAX_DECODE_BYTES
+            && serde_json::from_str::<Value>(text)
+                .ok()
+                .is_some_and(|value| matches_fence(prefix, total, &value, depth + 1));
+    }
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return false;
+    }
+    if let Some(result) = value.get("result") {
+        return matches_fence(prefix, total, result, depth + 1);
+    }
+    if let Some([block]) = value
+        .get("content")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+    {
+        return matches_fence(prefix, total, block, depth + 1);
+    }
+    if value.get("type").and_then(Value::as_str) == Some("text")
+        && let Some(text) = value.get("text")
+    {
+        return matches_fence(prefix, total, text, depth + 1);
+    }
+    false
+}
