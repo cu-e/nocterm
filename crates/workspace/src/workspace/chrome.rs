@@ -100,14 +100,14 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.right_panel_maximized {
+        if self.right_panel.maximized() {
             return tile(
                 cards,
                 Self::forward_commands(div(), cx)
                     .id("workspace-right-panel")
                     .test_support()
                     .size_full()
-                    .when_some(self.right_panel.as_ref(), |body, panel| {
+                    .when_some(self.right_panel.handle.as_ref(), |body, panel| {
                         body.child(cached(panel.view()))
                     }),
             );
@@ -132,7 +132,7 @@ impl Workspace {
                             .id("workspace-right-panel")
                             .test_support()
                             .size_full()
-                            .when_some(self.right_panel.as_ref(), |body, panel| {
+                            .when_some(self.right_panel.handle.as_ref(), |body, panel| {
                                 body.child(cached(panel.view()))
                             }),
                     )),
@@ -319,17 +319,17 @@ impl Workspace {
                             Button::new("toggle-right-panel")
                                 .ghost()
                                 .small()
-                                .icon(if self.right_panel_attention {
+                                .icon(if self.right_panel.attention {
                                     IconName::ShieldCheck
                                 } else {
                                     IconName::PanelRight
                                 })
-                                .tooltip(if self.right_panel_attention {
+                                .tooltip(if self.right_panel.attention {
                                     "AI Agents: permission required"
                                 } else {
                                     "AI Agents"
                                 })
-                                .selected(self.right_panel_open)
+                                .selected(self.right_panel.open())
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_right_panel(window, cx)
                                 })),

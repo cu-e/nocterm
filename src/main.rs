@@ -175,10 +175,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
 
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            workspace.set_session_opener(nocterm_terminal::open_session);
-            workspace.set_background_session_opener(nocterm_terminal::open_background_session);
-            workspace.set_local_terminal_opener(nocterm_terminal::open_local);
-            workspace.set_program_opener(nocterm_terminal::open_program);
+            workspace.set_session_factory(nocterm_terminal::Factory);
             nocterm_connections::register(&mut workspace, window, cx);
             register_settings(&mut workspace, vault_ready);
             nocterm_files::register(&mut workspace, window, cx);

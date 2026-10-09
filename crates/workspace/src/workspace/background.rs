@@ -11,8 +11,6 @@ use super::{SessionSpec, Workspace, WorkspaceEvent};
 use crate::{Item, ItemEvent, ItemHandle};
 
 type Show = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
-pub(super) type BackgroundOpener =
-    Rc<dyn Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>) -> EntityId>;
 
 pub(super) struct BackgroundItem {
     pub(super) handle: Rc<dyn ItemHandle>,
@@ -22,15 +20,6 @@ pub(super) struct BackgroundItem {
 }
 
 impl Workspace {
-    /// Installs what turns a [`SessionSpec`] into a session without a tab.
-    pub fn set_background_session_opener(
-        &mut self,
-        opener: impl Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>) -> EntityId
-        + 'static,
-    ) {
-        self.background_opener = Some(Rc::new(opener));
-    }
-
     /// Opens a session that is not shown in a tab, and returns its item.
     pub fn open_background_session(
         &mut self,
@@ -38,8 +27,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<EntityId> {
-        let opener = self.background_opener.clone()?;
-        Some(opener(self, spec, window, cx))
+        self.factory().open_background(self, spec, window, cx)
     }
 
     /// Keeps `item` running without a tab.
