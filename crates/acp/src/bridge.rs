@@ -14,7 +14,7 @@ use futures::{
     future::{Either, select},
 };
 use nocterm_ai::{
-    BridgeCall, BridgeRegistration, ToolBridge,
+    BridgeCall, BridgeLaunch, BridgeRegistration, ToolBridge,
     mcp::{McpSession, McpStep},
 };
 use nocterm_core::Paths;
@@ -46,8 +46,20 @@ struct State {
     registrations: BTreeMap<u64, Registration>,
     sockets: BTreeMap<u64, Socket>,
 }
+/// The command an agent runs to reach the bridge. It must call
+/// [`crate::run_relay_from_environment`].
+#[derive(Clone, Debug)]
+pub struct RelayCommand {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
+pub(crate) const ENDPOINT_VARIABLE: &str = "NOCTERM_BRIDGE_ENDPOINT";
+pub(crate) const TOKEN_VARIABLE: &str = "NOCTERM_BRIDGE_TOKEN";
+
 struct Inner {
     paths: Paths,
+    relay: RelayCommand,
     state: Mutex<State>,
     generation: AtomicU64,
     next_id: AtomicU64,
@@ -61,11 +73,12 @@ pub struct BridgeServer {
     inner: Arc<Inner>,
 }
 impl BridgeServer {
-    pub fn new(paths: Paths) -> Self {
+    pub fn new(paths: Paths, relay: RelayCommand) -> Self {
         let (calls_tx, calls_rx) = async_channel::bounded(256);
         Self {
             inner: Arc::new(Inner {
                 paths,
+                relay,
                 state: Mutex::new(State::default()),
                 generation: AtomicU64::new(0),
                 next_id: AtomicU64::new(1),
@@ -78,64 +91,17 @@ impl BridgeServer {
 }
 impl ToolBridge for BridgeServer {
     fn register(&self) -> Result<BridgeRegistration, String> {
+        let relay = &self.inner.relay;
+        if !relay.program.is_file() {
+            // The agent would start without terminal tools and only say so in chat.
+            return Err(format!(
+                "Terminal tools need {}, which no longer exists. Restart nocterm.",
+                relay.program.display()
+            ));
+        }
         let token = random_token()?;
         let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.listening.is_none() {
-            let (listener, listening) = listen(&self.inner.paths)?;
-            listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-            let epoch = self.inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
-            let inner = self.inner.clone();
-            std::thread::Builder::new()
-                .name("nocterm-agent-bridge".into())
-                .spawn(move || {
-                    while inner.generation.load(Ordering::Acquire) == epoch {
-                        match listener.accept() {
-                            Ok((socket, _)) => {
-                                if inner.connections.fetch_add(1, Ordering::AcqRel) >= 64 {
-                                    inner.connections.fetch_sub(1, Ordering::AcqRel);
-                                    continue;
-                                }
-                                let inner = inner.clone();
-                                let connection_id = inner.next_id.fetch_add(1, Ordering::Relaxed);
-                                let count = ConnectionCount(inner.clone(), connection_id);
-                                {
-                                    let mut state =
-                                        inner.state.lock().unwrap_or_else(|e| e.into_inner());
-                                    if inner.generation.load(Ordering::Acquire) != epoch {
-                                        drop(state);
-                                        drop(count);
-                                        continue;
-                                    }
-                                    let Ok(tracked) = socket.try_clone() else {
-                                        drop(state);
-                                        drop(count);
-                                        continue;
-                                    };
-                                    state.sockets.insert(connection_id, tracked);
-                                }
-                                let _ = std::thread::Builder::new()
-                                    .name("nocterm-bridge-client".into())
-                                    .spawn(move || {
-                                        let _count = count;
-                                        let _ = serve(socket, inner, epoch, connection_id);
-                                    });
-                            }
-                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                std::thread::sleep(Duration::from_millis(20))
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            state.listening = Some(listening);
-        }
-        let endpoint = state
-            .listening
-            .as_ref()
-            .expect("listener created")
-            .endpoint
-            .clone();
+        let endpoint = start_listening(&self.inner, &mut state)?;
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (cancel, cancelled) = async_channel::bounded(1);
         state.registrations.insert(
@@ -148,10 +114,17 @@ impl ToolBridge for BridgeServer {
             },
         );
         let inner = Arc::downgrade(&self.inner);
+        let launch = BridgeLaunch {
+            program: relay.program.clone(),
+            args: relay.args.clone(),
+            env: vec![
+                (ENDPOINT_VARIABLE.into(), endpoint),
+                (TOKEN_VARIABLE.into(), token),
+            ],
+        };
         Ok(BridgeRegistration::new(
             id,
-            endpoint,
-            token,
+            launch,
             Arc::new(move |id| {
                 if let Some(inner) = inner.upgrade() {
                     revoke(&inner, id);
@@ -211,6 +184,66 @@ fn token_eq(a: &str, b: &str) -> bool {
     }
     bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
+/// Opens the listener on first use and returns the endpoint relays connect to.
+fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, String> {
+    if state.listening.is_none() {
+        let (listener, listening) = listen(&inner.paths)?;
+        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let epoch = inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let inner = inner.clone();
+        std::thread::Builder::new()
+            .name("nocterm-agent-bridge".into())
+            .spawn(move || {
+                while inner.generation.load(Ordering::Acquire) == epoch {
+                    match listener.accept() {
+                        Ok((socket, _)) => {
+                            if inner.connections.fetch_add(1, Ordering::AcqRel) >= 64 {
+                                inner.connections.fetch_sub(1, Ordering::AcqRel);
+                                continue;
+                            }
+                            let inner = inner.clone();
+                            let connection_id = inner.next_id.fetch_add(1, Ordering::Relaxed);
+                            let count = ConnectionCount(inner.clone(), connection_id);
+                            {
+                                let mut state =
+                                    inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                                if inner.generation.load(Ordering::Acquire) != epoch {
+                                    drop(state);
+                                    drop(count);
+                                    continue;
+                                }
+                                let Ok(tracked) = socket.try_clone() else {
+                                    drop(state);
+                                    drop(count);
+                                    continue;
+                                };
+                                state.sockets.insert(connection_id, tracked);
+                            }
+                            let _ = std::thread::Builder::new()
+                                .name("nocterm-bridge-client".into())
+                                .spawn(move || {
+                                    let _count = count;
+                                    let _ = serve(socket, inner, epoch, connection_id);
+                                });
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(20))
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        state.listening = Some(listening);
+    }
+    Ok(state
+        .listening
+        .as_ref()
+        .expect("listener created")
+        .endpoint
+        .clone())
+}
+
 fn listen(paths: &Paths) -> Result<(Listener, Listening), String> {
     #[cfg(unix)]
     {
@@ -443,16 +476,67 @@ mod tests {
             }
         }
     }
+    fn bridge(dir: &tempfile::TempDir) -> BridgeServer {
+        BridgeServer::new(
+            Paths::rooted_at(dir.path()),
+            RelayCommand {
+                program: std::env::current_exe().unwrap(),
+                args: vec!["agent-bridge".into()],
+            },
+        )
+    }
+    fn variable(registration: &BridgeRegistration, name: &str) -> String {
+        let (_, value) = registration
+            .launch()
+            .env
+            .iter()
+            .find(|(key, _)| key == name)
+            .unwrap();
+        value.clone()
+    }
+    fn endpoint(registration: &BridgeRegistration) -> String {
+        variable(registration, ENDPOINT_VARIABLE)
+    }
+    fn token(registration: &BridgeRegistration) -> String {
+        variable(registration, TOKEN_VARIABLE)
+    }
+    #[test]
+    fn launches_the_relay_under_the_chat_server_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let registration = bridge(&dir).register().unwrap();
+        let nocterm_ai::acp::McpServer::Stdio(server) = registration.mcp_server() else {
+            panic!("stdio relay");
+        };
+        assert_eq!(server.name, format!("nocterm-{}", registration.id));
+        assert_eq!(server.command, std::env::current_exe().unwrap());
+        assert_eq!(server.args, ["agent-bridge"]);
+        let names: Vec<_> = server.env.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, [ENDPOINT_VARIABLE, TOKEN_VARIABLE]);
+    }
+    #[test]
+    fn refuses_a_registration_whose_relay_program_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = BridgeServer::new(
+            Paths::rooted_at(dir.path()),
+            RelayCommand {
+                program: dir.path().join("nocterm (deleted)"),
+                args: vec!["agent-bridge".into()],
+            },
+        );
+        let error = server.register().err().unwrap();
+        assert!(error.contains("nocterm (deleted)"), "{error}");
+        assert!(error.contains("Restart nocterm"), "{error}");
+    }
     fn authenticated(registration: &BridgeRegistration) -> (Socket, BufReader<Socket>) {
         let mut socket =
-            Socket::connect(registration.endpoint.strip_prefix("unix:").unwrap()).unwrap();
+            Socket::connect(endpoint(registration).strip_prefix("unix:").unwrap()).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         writeln!(
             socket,
             "{}",
-            serde_json::json!({"token":registration.token})
+            serde_json::json!({"token":token(registration)})
         )
         .unwrap();
         let reader = BufReader::new(socket.try_clone().unwrap());
@@ -469,9 +553,10 @@ mod tests {
     fn authenticates_routes_and_revokes_pending_calls() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
-        let server = BridgeServer::new(Paths::rooted_at(dir.path()));
+        let server = bridge(&dir);
         let mut registration = server.register().unwrap();
-        let path = registration.endpoint.strip_prefix("unix:").unwrap();
+        let endpoint = endpoint(&registration);
+        let path = endpoint.strip_prefix("unix:").unwrap();
         assert_eq!(
             std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -513,10 +598,10 @@ mod tests {
     #[test]
     fn rejects_bad_tokens_and_limits_thread_connections() {
         let dir = tempfile::tempdir().unwrap();
-        let server = BridgeServer::new(Paths::rooted_at(dir.path()));
+        let server = bridge(&dir);
         let registration = server.register().unwrap();
         let mut bad =
-            Socket::connect(registration.endpoint.strip_prefix("unix:").unwrap()).unwrap();
+            Socket::connect(endpoint(&registration).strip_prefix("unix:").unwrap()).unwrap();
         bad.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         writeln!(bad, "{}", serde_json::json!({"token":"00".repeat(32)})).unwrap();
         let mut bytes = [0u8; 1];
@@ -534,16 +619,16 @@ mod tests {
     #[test]
     fn stop_cleans_listener_and_allows_reenable() {
         let dir = tempfile::tempdir().unwrap();
-        let server = BridgeServer::new(Paths::rooted_at(dir.path()));
+        let server = bridge(&dir);
         let first = server.register().unwrap();
         let (mut socket, mut reader) = authenticated(&first);
         initialize(&mut socket, &mut reader);
         server.stop();
-        assert!(!std::path::Path::new(first.endpoint.strip_prefix("unix:").unwrap()).exists());
+        assert!(!std::path::Path::new(endpoint(&first).strip_prefix("unix:").unwrap()).exists());
         assert!(bounded_line(&mut reader, 1024).unwrap_or(None).is_none());
         let second = server.register().unwrap();
-        assert_ne!(first.endpoint, second.endpoint);
-        assert_ne!(first.token, second.token);
+        assert_ne!(endpoint(&first), endpoint(&second));
+        assert_ne!(token(&first), token(&second));
         let (mut socket, mut reader) = authenticated(&second);
         initialize(&mut socket, &mut reader);
     }
@@ -561,7 +646,7 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        let server = BridgeServer::new(Paths::rooted_at(dir.path()));
+        let server = bridge(&dir);
         let registration = server.register().unwrap();
         let input = concat!(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n",
@@ -571,8 +656,8 @@ mod tests {
         crate::run_relay(
             io::Cursor::new(input.as_bytes().to_vec()),
             Output(bytes.clone()),
-            &registration.endpoint,
-            &registration.token,
+            &endpoint(&registration),
+            &token(&registration),
         )
         .unwrap();
         let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
@@ -606,9 +691,10 @@ mod tests {
     #[test]
     fn bounds_unauthenticated_connections_and_protocol_lines() {
         let dir = tempfile::tempdir().unwrap();
-        let server = BridgeServer::new(Paths::rooted_at(dir.path()));
+        let server = bridge(&dir);
         let registration = server.register().unwrap();
-        let path = registration.endpoint.strip_prefix("unix:").unwrap();
+        let endpoint = endpoint(&registration);
+        let path = endpoint.strip_prefix("unix:").unwrap();
         let mut oversized = Socket::connect(path).unwrap();
         oversized
             .set_read_timeout(Some(Duration::from_secs(2)))

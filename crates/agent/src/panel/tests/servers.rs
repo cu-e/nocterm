@@ -327,3 +327,74 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
         assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }
+
+#[gpui_kit::test]
+fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    install(&f, cx);
+    // The chat's terminal is a session of `web`, filed under `prod`.
+    *f.access.profile.borrow_mut() = Some("web".into());
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let attachments = |cx: &mut gpui_kit::App| thread.read(cx).composer.attachments.clone();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Terminal(f.terminal), cx);
+            assert!(thread.composer.attachments.is_empty());
+        })
+    });
+    let terminal = format!("attach-{:?}", f.terminal);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-attach-context", cx);
+        window.render_frame(cx);
+        window.click("attach-group-prod", cx);
+        window.render_frame(cx);
+        let prod = vec![Attachment::Group("prod".into())];
+        assert_eq!(attachments(cx), prod);
+        // Its servers and their sessions show as attached, and a click
+        // cannot leave a duplicate behind once the folder is detached.
+        for row in ["attach-connection-db", terminal.as_str()] {
+            window.click(row.to_owned(), cx);
+            window.render_frame(cx);
+            assert_eq!(attachments(cx), prod, "{row}");
+        }
+        window.click("attach-group-prod", cx);
+        window.render_frame(cx);
+        assert!(attachments(cx).is_empty());
+        window.click("attach-connection-db", cx);
+        window.render_frame(cx);
+        assert_eq!(attachments(cx), [Attachment::Connection("db".into())]);
+    })
+    .unwrap();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            assert!(thread.resolved(cx).is_empty(), "web is no longer attached");
+            let servers = thread.offline_servers(cx);
+            assert_eq!(servers.len(), 1);
+            assert_eq!(servers[0].1.id.as_ref(), "db");
+        })
+    });
+}
+
+#[gpui_kit::test]
+fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    install(&f, cx);
+    cx.update(|cx| {
+        let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
+        assert_eq!(
+            labels.label(&Attachment::Group("prod".into())),
+            "Group prod"
+        );
+        // Renamed away, or emptied: the chat keeps the folder, the agent gets nothing.
+        assert_eq!(
+            labels.label(&Attachment::Group("homelab".into())),
+            "Group homelab · no servers"
+        );
+        assert_eq!(
+            labels.label(&Attachment::Connection("deleted".into())),
+            "Unavailable connection"
+        );
+    });
+}

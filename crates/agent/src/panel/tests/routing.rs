@@ -1,7 +1,7 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
-use crate::thread::bridge_server_name;
+use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
 
 fn server_names(f: &Fixture) -> Vec<String> {

@@ -81,7 +81,7 @@ pub fn operation(tool: &str) -> &'static str {
 }
 
 mod identity;
-pub use identity::{envelope, fallback_tool, requested_call};
+pub use identity::{bridge_server_name, envelope, fallback_tool, requested_call};
 
 pub fn header(call: &acp::ToolCall) -> String {
     let title = ToolDisplay::from_call(call)

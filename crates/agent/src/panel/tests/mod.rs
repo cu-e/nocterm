@@ -197,8 +197,11 @@ impl ToolBridge for Bridge {
         let revoked = self.revoked.clone();
         Ok(BridgeRegistration::new(
             id,
-            "fake".into(),
-            "test-token".into(),
+            nocterm_ai::BridgeLaunch {
+                program: "/fake/nocterm".into(),
+                args: vec!["agent-bridge".into()],
+                env: vec![("NOCTERM_BRIDGE_TOKEN".into(), "test-token".into())],
+            },
             Arc::new(move |id| revoked.lock().unwrap().push(id)),
         ))
     }
@@ -513,6 +516,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 
 mod approvals;
 mod composer;
+mod hermes;
 mod history;
 mod invalidation;
 mod labels;

@@ -9,7 +9,7 @@ use nocterm_ai::{
 use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::TerminalEntry;
 
-use super::{AgentThread, bridge_server_name};
+use super::AgentThread;
 
 #[derive(Default)]
 pub(super) struct ToolDisplays {
@@ -184,7 +184,7 @@ impl AgentThread {
         let Some(registration) = &self.registration() else {
             return;
         };
-        let server = bridge_server_name(registration.id);
+        let server = tool_display::bridge_server_name(registration.id);
         let destination = self.tool_destination(request, entry, cx);
         let mut display = ToolDisplay::new(request, destination);
         if cx

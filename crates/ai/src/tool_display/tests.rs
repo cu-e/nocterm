@@ -149,3 +149,52 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
         assert!(header(&call).starts_with("mcp__nocterm-17__exec_command"));
     }
 }
+
+#[test]
+fn hermes_spelling_shares_identity_with_the_registered_server() {
+    let input = json!({"terminal_id":"t2", "program":"sh", "args":["-c","qm config 9000"]});
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_3_exec_command").raw_input(input.clone());
+    let expected = request(&parse("exec_command", input).unwrap());
+    assert_eq!(request(&envelope(&call, "nocterm-3").unwrap()), expected);
+    assert_eq!(request(&requested_call(&call).unwrap()), expected);
+    assert!(envelope(&call, "nocterm-30").is_none());
+    assert!(header(&call).starts_with("Nocterm · Execute program"));
+    assert_eq!(bridge_server_name(3), "nocterm-3");
+}
+
+#[test]
+fn hermes_omits_the_input_of_calls_without_arguments() {
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_list_terminals");
+    assert!(matches!(
+        envelope(&call, "nocterm-12"),
+        Some(TerminalCall::ListTerminals)
+    ));
+    assert!(header(&call).starts_with("Nocterm · List terminals"));
+    // A tool that needs arguments is not complete without them.
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_run_command");
+    assert!(envelope(&call, "nocterm-12").is_none());
+    assert!(header(&call).starts_with("Nocterm · Run command"));
+}
+
+#[test]
+fn malformed_and_foreign_hermes_names_keep_the_provider_label() {
+    for title in [
+        "mcp_nocterm_run_command",
+        "mcp_nocterm_x_run_command",
+        "mcp_nocterm_3run_command",
+        "mcp_nocterm_3_unknown",
+        "mcp_github_run_command",
+        "mcp_nocterm_3_exec_command_extra",
+    ] {
+        let call = acp::ToolCall::new("h1", title)
+            .raw_input(json!({"terminal_id":"t1", "command":"true"}));
+        assert!(requested_call(&call).is_none(), "{title}");
+        assert!(envelope(&call, "nocterm-3").is_none(), "{title}");
+        assert!(header(&call).starts_with(title), "{title}");
+    }
+    let mut call = acp::ToolCall::new("h1", "mcp_nocterm_3_run_command")
+        .raw_input(json!({"terminal_id":"t1", "command":"true"}));
+    call.name = Some("mcp__nocterm-4__run_command".into());
+    assert!(envelope(&call, "nocterm-3").is_none());
+    assert!(envelope(&call, "nocterm-4").is_none());
+}

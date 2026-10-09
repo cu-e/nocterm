@@ -25,14 +25,7 @@ impl AgentThread {
     fn attaches_server(&self, summary: &ConnectionSummary) -> bool {
         self.attachment_scope()
             .iter()
-            .any(|attachment| match attachment {
-                Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
-                Attachment::Connection(id) => summary.id.as_ref() == id,
-                Attachment::Group(group) => summary
-                    .group
-                    .as_ref()
-                    .is_some_and(|name| name.as_ref() == group),
-            })
+            .any(|attachment| attachment.covers_server(summary))
     }
 
     /// The terminals this chat may use: attached tabs, and every open

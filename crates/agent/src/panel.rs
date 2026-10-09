@@ -64,6 +64,7 @@ pub(crate) struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     threads: Vec<Entity<AgentThread>>,
     active: Option<usize>,
+    /// Whether the history column is beside the chat; it starts open.
     history: bool,
     /// How much opening the history column widened the panel.
     widened: Option<gpui_kit::Pixels>,
@@ -220,7 +221,7 @@ impl AgentPanel {
             workspace,
             threads: Vec::new(),
             active: None,
-            history: false,
+            history: true,
             widened: None,
             splits: [right_split, left_split],
             docked_left: false,

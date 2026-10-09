@@ -7,9 +7,9 @@ use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, H
 use serde_json::{Value, json};
 
 #[derive(Default)]
-struct Program {
-    request: Mutex<Option<ExecRequest>>,
-    sink: Mutex<Option<ExecSink>>,
+pub(super) struct Program {
+    pub(super) request: Mutex<Option<ExecRequest>>,
+    pub(super) sink: Mutex<Option<ExecSink>>,
 }
 
 impl HostExec for Program {
@@ -21,7 +21,7 @@ impl HostExec for Program {
     }
 }
 
-fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
+pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
     let registration_id = cx.update(|cx| {
         f.panel
             .read(cx)
@@ -49,7 +49,7 @@ fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
         .unwrap()
 }
 
-fn update(
+pub(super) fn update(
     f: &Fixture,
     session: &acp::SessionId,
     update: acp::SessionUpdate,

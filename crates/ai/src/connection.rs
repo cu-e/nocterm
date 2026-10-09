@@ -193,25 +193,42 @@ pub trait ToolBridge: Send + Sync + 'static {
     fn calls(&self) -> async_channel::Receiver<BridgeCall>;
     fn stop(&self);
 }
+/// How an agent starts the relay to a chat's bridge. The adapter that owns the
+/// bridge decides the command; the chat only hands it to the agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BridgeLaunch {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
 pub struct BridgeRegistration {
     pub id: u64,
-    pub endpoint: String,
-    pub token: String,
+    launch: BridgeLaunch,
     revoke: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 impl BridgeRegistration {
-    pub fn new(
-        id: u64,
-        endpoint: String,
-        token: String,
-        revoke: Arc<dyn Fn(u64) + Send + Sync>,
-    ) -> Self {
+    pub fn new(id: u64, launch: BridgeLaunch, revoke: Arc<dyn Fn(u64) + Send + Sync>) -> Self {
         Self {
             id,
-            endpoint,
-            token,
+            launch,
             revoke: Some(revoke),
         }
+    }
+    pub fn launch(&self) -> &BridgeLaunch {
+        &self.launch
+    }
+    /// The chat's terminal tools server, as the agent should start it.
+    pub fn mcp_server(&self) -> acp::McpServer {
+        let BridgeLaunch { program, args, env } = self.launch.clone();
+        acp::McpServer::Stdio(
+            acp::McpServerStdio::new(crate::tool_display::bridge_server_name(self.id), program)
+                .args(args)
+                .env(
+                    env.into_iter()
+                        .map(|(name, value)| acp::EnvVariable::new(name, value))
+                        .collect(),
+                ),
+        )
     }
     pub fn revoke(&mut self) {
         if let Some(revoke) = self.revoke.take() {

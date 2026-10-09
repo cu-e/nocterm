@@ -569,13 +569,6 @@ impl AgentThread {
     }
 }
 
-/// The name of a chat's terminal tools server. Each chat's is unique: agents
-/// such as Hermes keep one server per name for the whole process, so a shared
-/// name would send every chat's calls to the first chat's bridge.
-pub(crate) fn bridge_server_name(registration: u64) -> String {
-    format!("nocterm-{registration}")
-}
-
 pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
     match &option.kind {
         acp::SessionConfigKind::Select(select) => {

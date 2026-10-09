@@ -295,7 +295,6 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
     cx.update_window(f.handle, |_, window, cx| {
         let id = f.panel.read(cx).current().unwrap().entity_id().as_u64();
         window.render_frame(cx);
-        window.click("agent-history", cx);
         let row = window.find(("history-thread", id)).bounds();
         let delete = window.find(("delete-thread", id)).bounds();
         let history = window.find("agent-history-list").bounds();
@@ -313,6 +312,21 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
         assert!(!f.panel.read(cx).history);
         window.render_frame(cx);
         assert!(f.panel.read(cx).history_tick.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn history_starts_open_beside_the_first_chat(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        let id = f.panel.read(cx).current().unwrap().entity_id().as_u64();
+        window.render_frame(cx);
+        assert!(window.find(("history-thread", id)).visible());
+        window.click("agent-history", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("history-thread", id)).is_none());
     })
     .unwrap();
 }
