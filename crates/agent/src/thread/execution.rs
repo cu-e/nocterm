@@ -3,7 +3,7 @@ use super::AgentThread;
 use gpui_kit::Context;
 use nocterm_ai::{BridgeCall, TerminalCall};
 use nocterm_session::ExecRequest;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::TerminalEntry;
 use std::{
     sync::Arc,
@@ -138,7 +138,11 @@ impl AgentThread {
         cx: &gpui_kit::App,
     ) -> serde_json::Value {
         let redact = |text: String| {
-            if cx.settings().ai.approval.redact_secrets {
+            if cx
+                .setting::<nocterm_ai::AiSettings>()
+                .approval
+                .redact_secrets
+            {
                 nocterm_ai::redact::redact(&text)
             } else {
                 text

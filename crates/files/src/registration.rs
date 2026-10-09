@@ -19,6 +19,7 @@ gpui_kit::actions!(
 );
 
 pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    nocterm_ui::register_setting::<crate::ExplorerSettings>(cx);
     transfers::init(cx);
     let active = workspace.active_session(cx);
     let handle = cx.entity();

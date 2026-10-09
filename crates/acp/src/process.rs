@@ -22,6 +22,7 @@ pub(crate) struct Spawned {
     pub secrets: Arc<Vec<String>>,
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn spawn(
     request: &ConnectRequest,
     helper: Option<&Path>,

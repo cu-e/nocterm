@@ -22,12 +22,12 @@ use gpui_kit::{
     rems,
 };
 use nocterm_session::{CloseReason, ConnectStage, HostKeyDecision, Prompt, Secret, SecretRequest};
-use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName, TerminalStyle};
+use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _, TerminalStyle};
 use nocterm_vt::{
     CellPoint, Frame, KeyPress, Modifiers, MouseEvent, MouseEventKind, Palette, Rgb, Scroll,
     SearchDirection, SelectionKind, encode_focus, encode_key, encode_mouse, encode_paste,
 };
-use nocterm_workspace::{Item, ItemCommand, ItemEvent, SessionContext, SessionSpec, TabState};
+use nocterm_workspace::{Item, ItemEvent, SessionContext, SessionSpec, TabState};
 
 use crate::{
     Copy, KEY_CONTEXT, Paste, Reconnect, SCREEN_KEY_CONTEXT, ScrollPageDown, ScrollPageUp,
@@ -130,7 +130,10 @@ impl TerminalView {
             cx.subscribe_in(&terminal, window, Self::on_terminal_event),
             cx.observe_keystrokes(Self::on_keyboard_binding),
             cx.observe_global::<nocterm_ui::SettingsStore>(|this, cx| {
-                if !cx.settings().terminal.semantic_highlighting {
+                if !cx
+                    .setting::<nocterm_ui::TerminalSettings>()
+                    .semantic_highlighting
+                {
                     this.highlights.borrow_mut().clear();
                 }
                 cx.notify();
@@ -197,8 +200,8 @@ impl TerminalView {
             TerminalEvent::ClipboardWrite(text) => {
                 if self.focus_handle.is_focused(window)
                     && cx.active_window() == Some(window.window_handle())
-                    && cx.settings().terminal.clipboard_write
-                        == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                    && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                        == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                 {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 }

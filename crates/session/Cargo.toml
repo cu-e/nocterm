@@ -17,8 +17,10 @@ serde.workspace = true
 schemars.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
-zeroize.workspace = true
 getrandom.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+toml.workspace = true

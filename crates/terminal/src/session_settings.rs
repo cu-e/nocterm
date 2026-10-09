@@ -226,8 +226,12 @@ mod tests {
         })
         .unwrap();
         cx.read(|cx| {
-            use nocterm_ui::ActiveSettings as _;
-            assert_eq!(cx.settings(), &nocterm_settings::Settings::default());
+            let store = cx.global::<nocterm_ui::SettingsStore>();
+            assert_eq!(
+                store.revision(),
+                0,
+                "applying a session setting saved nothing"
+            );
         });
     }
 
@@ -237,7 +241,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.within("session-term").click("input", cx);
-            for _ in 0..=nocterm_settings::TERM_PRESETS.len() {
+            for _ in 0..=nocterm_session::TERM_PRESETS.len() {
                 window.press("down", cx);
             }
             window.press("enter", cx);

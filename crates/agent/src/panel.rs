@@ -15,7 +15,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _, IconName, SettingsStore};
+use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
@@ -98,6 +98,7 @@ pub(crate) struct AgentPanel {
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -271,7 +272,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
+        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>());
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
@@ -279,7 +280,11 @@ impl AgentPanel {
             .last_agent
             .as_ref()
             .filter(known)
-            .or(cx.settings().ai.default_agent.as_ref().filter(known))
+            .or(cx
+                .setting::<nocterm_ai::AiSettings>()
+                .default_agent
+                .as_ref()
+                .filter(known))
             .cloned()
             .or_else(|| registry.iter().next().map(|launch| launch.id.clone()))
     }
@@ -423,6 +428,7 @@ impl RightPanel for AgentPanel {
     }
 }
 impl Render for AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         if self.history && !self.threads.is_empty() {

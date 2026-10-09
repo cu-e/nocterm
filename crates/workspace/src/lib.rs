@@ -10,7 +10,7 @@
 //!   icons at its foot.
 //! - **Actions** ([`Workspace::register_action`]): commands a feature handles
 //!   at workspace level, bound to keys by the keymap rather than in code.
-//! - **The session opener** ([`Workspace::set_session_opener`]): how a request
+//! - **The session factory** ([`SessionFactory`]): how a request
 //!   to open a session becomes a tab, so the feature that asks (connections)
 //!   never depends on the feature that answers (terminal). Programs shown in
 //!   a tab of their own ([`Workspace::open_program`]) go the same way.
@@ -39,7 +39,7 @@ pub use actions::*;
 pub use connection_directory::{ConnectionDirectory, ConnectionSummary};
 pub use file_drag::{FileDrag, RemoteFileDrag};
 pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
-pub use item::{Item, ItemCommand, ItemEvent, ItemHandle, SessionContext, TabState};
+pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::{LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
@@ -48,7 +48,7 @@ pub use terminal_access::{
     LiveCommandLease, SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus,
     TerminalText, TextRequest,
 };
-pub use workspace::{SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
+pub use workspace::{SessionFactory, SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
 
 /// The key context of the workspace, for keymap entries.
 pub const KEY_CONTEXT: &str = "Workspace";

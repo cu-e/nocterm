@@ -12,11 +12,12 @@ use std::{
 
 #[test]
 #[ignore = "requires an installed and authenticated real ACP agent"]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn real_agent_initialize_and_session() {
     futures::executor::block_on(async {
         let id =
             std::env::var("NOCTERM_ACP_SMOKE").expect("Set NOCTERM_ACP_SMOKE=claude|codex|hermes");
-        let settings = nocterm_settings::AiSettings::default();
+        let settings = nocterm_ai::AiSettings::default();
         let registry = AgentRegistry::new(&settings);
         let launch = registry.get(&id).expect("Known agent").clone();
         let directory = tempfile::tempdir().unwrap();
@@ -53,7 +54,7 @@ fn real_agent_initialize_and_session() {
                 loop {
                     match drain_events.recv().await {
                         Ok(AgentEvent::Permission { respond, .. }) => {
-                            let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
+                            respond.respond(acp::RequestPermissionOutcome::Cancelled);
                         }
                         Ok(AgentEvent::Exited { .. }) | Err(_) => break,
                         Ok(event) => collect_message(event, &streamed),

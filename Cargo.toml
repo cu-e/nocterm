@@ -37,7 +37,6 @@ nocterm-workspace.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
-serde.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -132,6 +131,7 @@ license-file = "LICENSE"
 nocterm-ai = { path = "crates/ai" }
 nocterm-acp = { path = "crates/acp" }
 nocterm-agent = { path = "crates/agent" }
+nocterm-agent-runtime = { path = "crates/agent-runtime" }
 
 # Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
 nocterm-device-unlock = { path = "crates/device-unlock" }
@@ -176,12 +176,15 @@ secrecy = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 fs2 = "0.4"
 encoding_rs = "0.8"
+event-listener = "5"
 alacritty_terminal = "0.26"
 anyhow = "1"
 async-channel = "2"
 directories = "6"
 futures = "0.3"
 gpui-kit = "0.7"
+# GPUI alone, for crates that must not reach the component library.
+gpui = { package = "gpui-pre", version = "0.3.7", default-features = false }
 parking_lot = "0.12"
 portable-pty = "0.9"
 regex = "1"
@@ -217,6 +220,11 @@ print_stderr = "deny"
 # GPUI views and delegates routinely exceed the default thresholds.
 type_complexity = "allow"
 too_many_arguments = "allow"
+# Thresholds are in clippy.toml. Functions already over them carry
+# `#[expect(..., reason = "...")]`, which fails once they are split; `allow`
+# is rejected by `cargo xtask architecture`.
+too_many_lines = "warn"
+cognitive_complexity = "warn"
 
 [profile.dev]
 debug = "limited"

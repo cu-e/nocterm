@@ -2,11 +2,10 @@ use crate::{Item, ItemEvent, LocalTerminal, Workspace};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
-    TestSupportExt as _, Window, WindowOptions,
+    Window, WindowOptions,
     component::{
         Placement, WindowExt as _,
         dock::{DockPlacement, PaneRef},
-        floating::FloatingCards,
     },
     div,
     prelude::*,
@@ -25,8 +24,40 @@ struct Probe {
     target: Option<nocterm_session::Target>,
     connected: bool,
     fs: Option<std::sync::Arc<dyn nocterm_session::RemoteFs>>,
-    commands: Vec<crate::ItemCommand>,
-    executed: Rc<RefCell<Vec<crate::ItemCommand>>>,
+    commands: Vec<Command>,
+    executed: Rc<RefCell<Vec<Command>>>,
+}
+
+/// The commands a [`Probe`] answers while they are in its `commands`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Command {
+    Copy,
+    Paste,
+    Find,
+}
+
+fn record<A: gpui_kit::Action>(
+    command: Command,
+) -> impl Fn(&mut Probe, &A, &mut Window, &mut Context<Probe>) + 'static {
+    move |probe, _, _, _| probe.executed.borrow_mut().push(command)
+}
+
+impl Probe {
+    fn on_commands(&self, element: gpui_kit::Div, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let has = |command| self.commands.contains(&command);
+        element
+            .when(has(Command::Copy), |el| {
+                el.on_action(cx.listener(record::<gpui_kit::component::input::Copy>(Command::Copy)))
+            })
+            .when(has(Command::Paste), |el| {
+                el.on_action(
+                    cx.listener(record::<gpui_kit::component::input::Paste>(Command::Paste)),
+                )
+            })
+            .when(has(Command::Find), |el| {
+                el.on_action(cx.listener(record::<crate::Find>(Command::Find)))
+            })
+    }
 }
 impl EventEmitter<ItemEvent> for Probe {}
 impl Focusable for Probe {
@@ -35,14 +66,16 @@ impl Focusable for Probe {
     }
 }
 impl Render for Probe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.alternate_focus {
-            Some(alternate) => div()
+            Some(alternate) => self
+                .on_commands(div(), cx)
                 .size_full()
                 .child(div().h_1_2().track_focus(&self.focus))
                 .child(div().h_1_2().track_focus(alternate))
                 .into_any_element(),
-            None => div()
+            None => self
+                .on_commands(div(), cx)
                 .size_full()
                 .track_focus(&self.focus)
                 .into_any_element(),
@@ -60,12 +93,6 @@ impl Item for Probe {
     }
     fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.closes.set(self.closes.get() + 1);
-    }
-    fn command_enabled(&self, command: crate::ItemCommand, _: &App) -> bool {
-        self.commands.contains(&command)
-    }
-    fn execute(&mut self, command: crate::ItemCommand, _: &mut Window, _: &mut Context<Self>) {
-        self.executed.borrow_mut().push(command);
     }
 }
 impl LocalTerminal for Probe {
@@ -86,7 +113,7 @@ pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Works
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(nocterm_settings::Settings::default()),
+            nocterm_ui::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
             cx,
         );
         let (window, workspace) =
@@ -108,440 +135,11 @@ fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
         target: None,
         connected: true,
         fs: None,
-        commands: vec![crate::ItemCommand::Copy, crate::ItemCommand::Find],
+        commands: vec![Command::Copy, Command::Find],
         executed: Rc::new(RefCell::new(Vec::new())),
     })
 }
 
-#[gpui_kit::test]
-fn standard_menu_opens_and_dispatches_to_the_focused_bottom_terminal(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    let closes = Rc::new(Cell::new(0));
-    let (central, local) = cx
-        .update_window(handle, |_, window, cx| {
-            let central = probe(cx, closes.clone());
-            let local = probe(cx, closes);
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item(central.clone(), window, cx);
-                workspace.set_local_terminal(local.clone(), window, cx);
-                workspace.set_menu_builder(
-                    |workspace, window, cx| {
-                        vec![
-                            gpui_kit::Menu::new("Edit").items([gpui_kit::MenuItem::action(
-                                "Copy",
-                                crate::EditCopy,
-                            )
-                            .disabled(!workspace.item_command_enabled(
-                                crate::ItemCommand::Copy,
-                                window,
-                                cx,
-                            ))]),
-                            gpui_kit::Menu::new("Search")
-                                .items([gpui_kit::MenuItem::action("Find", crate::Find)]),
-                        ]
-                    },
-                    window,
-                    cx,
-                );
-            });
-            window.render_frame(cx);
-            window
-                .within("app-menu-bar")
-                .within(0usize)
-                .click("menu", cx);
-            window.render_frame(cx);
-            assert!(
-                window.try_find("popup-menu").is_some(),
-                "standard menu must actually open after state refresh"
-            );
-            assert_eq!(
-                workspace
-                    .read(cx)
-                    .command_item(window, cx)
-                    .unwrap()
-                    .item_id(),
-                local.entity_id(),
-                "popup focus keeps the bottom terminal context"
-            );
-            window.within("popup-menu").click(0usize, cx);
-            (central, local)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        local.read_with(cx, |item, _| item.executed.borrow().clone()),
-        vec![crate::ItemCommand::Copy]
-    );
-    assert!(central.read_with(cx, |item, _| item.executed.borrow().is_empty()));
-}
-
-#[gpui_kit::test]
-fn native_menu_rename_focuses_alias_input_after_dismissal(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        let item = probe(cx, Rc::new(Cell::new(0)));
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item(item, window, cx);
-            workspace.set_menu_builder(
-                |_, _, _| {
-                    vec![
-                        gpui_kit::Menu::new("Session")
-                            .items([gpui_kit::MenuItem::action("Rename Tab", crate::RenameTab)]),
-                    ]
-                },
-                window,
-                cx,
-            );
-        });
-        window.render_frame(cx);
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        window.within("popup-menu").click(0usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("popup-menu").is_none());
-        assert!(
-            window.has_focused_input(cx),
-            "menu dismissal cannot steal alias input focus"
-        );
-        window.press("ctrl-a", cx);
-        window.input("Native menu alias", cx);
-        window.press("enter", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(
-            workspace.read(cx).command_title(window, cx).as_deref(),
-            Some("Native menu alias")
-        );
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn native_new_session_focuses_the_connection_menu_after_dismissal(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    let menu = cx
-        .update_window(handle, |_, window, cx| {
-            let item = probe(cx, Rc::new(Cell::new(0)));
-            let menu = probe(cx, Rc::new(Cell::new(0)));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item(item, window, cx);
-                workspace.set_new_tab_menu(menu.clone(), cx);
-                workspace.set_menu_builder(
-                    |_, _, _| {
-                        vec![
-                            gpui_kit::Menu::new("Session")
-                                .items([gpui_kit::MenuItem::action("New Session", crate::NewTab)]),
-                        ]
-                    },
-                    window,
-                    cx,
-                );
-            });
-            window.render_frame(cx);
-            window
-                .within("app-menu-bar")
-                .within(0usize)
-                .click("menu", cx);
-            window.within("popup-menu").click(0usize, cx);
-            menu
-        })
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(workspace.read(cx).new_tab_menu_open);
-        assert!(menu.read(cx).focus_handle(cx).contains_focused(window, cx));
-        assert!(window.try_find("popup-menu").is_none());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn command_routing_prefers_focus_and_rejects_unsupported_commands(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    let (a, b, local) = cx
-        .update_window(handle, |_, window, cx| {
-            let a = probe(cx, Rc::new(Cell::new(0)));
-            let b = probe(cx, Rc::new(Cell::new(0)));
-            let local = probe(cx, Rc::new(Cell::new(0)));
-            workspace.update(cx, |workspace, cx| {
-                assert!(workspace.command_item(window, cx).is_none());
-                workspace.add_item(a.clone(), window, cx);
-                workspace.add_item(b.clone(), window, cx);
-                workspace.split_active(Placement::Right, window, cx);
-                workspace.set_local_terminal(local.clone(), window, cx);
-            });
-            window.render_frame(cx);
-            (a, b, local)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        workspace.update(cx, |workspace, cx| {
-            assert_eq!(
-                workspace.command_item(window, cx).unwrap().item_id(),
-                local.entity_id()
-            );
-            assert!(!workspace.item_command_enabled(crate::ItemCommand::Paste, window, cx));
-            workspace.execute_item_command(crate::ItemCommand::Paste, window, cx);
-            assert!(local.read(cx).executed.borrow().is_empty());
-        });
-        window.focus(&a.read(cx).focus_handle(cx), cx);
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        workspace.update(cx, |workspace, cx| {
-            assert_eq!(
-                workspace.command_item(window, cx).unwrap().item_id(),
-                a.entity_id()
-            );
-            workspace.execute_item_command(crate::ItemCommand::Find, window, cx);
-            assert_eq!(
-                *a.read(cx).executed.borrow(),
-                vec![crate::ItemCommand::Find]
-            );
-            assert!(b.read(cx).executed.borrow().is_empty());
-            window.focus(&workspace.focus_handle(cx), cx);
-            assert_eq!(
-                workspace.command_item(window, cx).unwrap().item_id(),
-                workspace.active_item().unwrap().item_id(),
-                "focus outside Item containers falls back to the active central pane"
-            );
-        });
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn copy_connection_name_uses_the_display_alias_without_editing_it(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        let item = probe(cx, Rc::new(Cell::new(0)));
-        workspace.update(cx, |workspace, cx| {
-            workspace.add_item(item, window, cx);
-            workspace.items[0]
-                .dock_item
-                .update(cx, |dock, _| dock.alias = Some("Production west".into()));
-        });
-        window.render_frame(cx);
-        window.dispatch_action(Box::new(crate::CopyConnectionName), cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.read(|cx| {
-        assert_eq!(
-            cx.read_from_clipboard().unwrap().text().unwrap(),
-            "Production west"
-        );
-        assert_eq!(
-            workspace.read(cx).items[0]
-                .dock_item
-                .read(cx)
-                .alias
-                .as_deref(),
-            Some("Production west")
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn menu_snapshots_are_window_local_and_refresh_only_on_opening(cx: &mut TestAppContext) {
-    let (first, workspace) = fixture(cx);
-    let (second, other) = cx.update(|cx| {
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Workspace::new(window, cx))
-        })
-        .unwrap()
-    });
-    let calls = Rc::new(Cell::new(0));
-    cx.update(|cx| {
-        gpui_kit::base::GlobalState::global_mut(cx)
-            .set_app_menus(vec![gpui_kit::Menu::new("Sentinel").owned()]);
-    });
-    let item = cx
-        .update_window(first, |_, window, cx| {
-            let item = probe(cx, Rc::new(Cell::new(0)));
-            let calls = calls.clone();
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item(item.clone(), window, cx);
-                workspace.set_menu_builder(
-                    move |workspace, window, cx| {
-                        calls.set(calls.get() + 1);
-                        vec![gpui_kit::Menu::new("First window").items([
-                            gpui_kit::MenuItem::action("Copy", crate::EditCopy).disabled(
-                                !workspace.item_command_enabled(
-                                    crate::ItemCommand::Copy,
-                                    window,
-                                    cx,
-                                ),
-                            ),
-                        ])]
-                    },
-                    window,
-                    cx,
-                );
-            });
-            item
-        })
-        .unwrap();
-    cx.update_window(second, |_, window, cx| {
-        other.update(cx, |other, cx| {
-            other.set_menu_builder(
-                |_, _, _| {
-                    vec![
-                        gpui_kit::Menu::new("Second window").items([gpui_kit::MenuItem::action(
-                            "Find",
-                            crate::Find,
-                        )
-                        .disabled(true)]),
-                    ]
-                },
-                window,
-                cx,
-            )
-        });
-        window.render_frame(cx);
-        assert_eq!(
-            window
-                .within("app-menu-bar")
-                .within(0usize)
-                .find("menu")
-                .label(),
-            Some("Second window")
-        );
-    })
-    .unwrap();
-    assert_eq!(calls.get(), 1);
-    cx.update_window(first, |_, window, cx| {
-        item.update(cx, |item, cx| {
-            item.commands.clear();
-            cx.emit(ItemEvent::Changed);
-        });
-        window.render_frame(cx);
-        assert_eq!(
-            window
-                .within("app-menu-bar")
-                .within(0usize)
-                .find("menu")
-                .label(),
-            Some("First window")
-        );
-        assert_eq!(
-            calls.get(),
-            1,
-            "output changes do not rebuild menu snapshots"
-        );
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        assert_eq!(calls.get(), 2, "initial opening takes fresh command state");
-        window.render_frame(cx);
-        assert!(window.try_find("popup-menu").is_some());
-        window.within("popup-menu").click(0usize, cx);
-        window.render_frame(cx);
-        assert!(
-            window.try_find("popup-menu").is_some(),
-            "disabled item cannot invoke or dismiss the menu"
-        );
-        item.update(cx, |_, cx| cx.emit(ItemEvent::Changed));
-        window.render_frame(cx);
-        assert_eq!(
-            calls.get(),
-            2,
-            "an open popup is stable during session updates"
-        );
-        assert!(item.read(cx).executed.borrow().is_empty());
-        window.press("escape", cx);
-    })
-    .unwrap();
-    cx.read(|cx| {
-        assert_eq!(
-            gpui_kit::base::GlobalState::global(cx).app_menus()[0]
-                .name
-                .as_ref(),
-            "Sentinel"
-        )
-    });
-}
-
-#[gpui_kit::test]
-fn native_menu_keyboard_navigation_keeps_the_original_item(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    let item = cx
-        .update_window(handle, |_, window, cx| {
-            let item = probe(cx, Rc::new(Cell::new(0)));
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_item(item.clone(), window, cx);
-                workspace.set_menu_builder(
-                    |_, _, _| {
-                        vec![
-                            gpui_kit::Menu::new("Edit")
-                                .items([gpui_kit::MenuItem::action("Copy", crate::EditCopy)]),
-                            gpui_kit::Menu::new("Search")
-                                .items([gpui_kit::MenuItem::action("Find", crate::Find)]),
-                        ]
-                    },
-                    window,
-                    cx,
-                );
-            });
-            window.render_frame(cx);
-            // Use real tab navigation to focus the native menu trigger.
-            for _ in 0..30 {
-                if window
-                    .within("app-menu-bar")
-                    .within(0usize)
-                    .find("menu")
-                    .focused()
-                    == Some(true)
-                {
-                    break;
-                }
-                window.focus_next(cx);
-                window.render_frame(cx);
-            }
-            assert_eq!(
-                window
-                    .within("app-menu-bar")
-                    .within(0usize)
-                    .find("menu")
-                    .focused(),
-                Some(true)
-            );
-            window.press("enter", cx);
-            window.render_frame(cx);
-            assert!(window.try_find("popup-menu").is_some());
-            window.press("right", cx);
-            window.render_frame(cx);
-            assert_eq!(
-                workspace
-                    .read(cx)
-                    .command_item(window, cx)
-                    .unwrap()
-                    .item_id(),
-                item.entity_id()
-            );
-            window.within("popup-menu").click(0usize, cx);
-            item
-        })
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        item.read_with(cx, |item, _| item.executed.borrow().clone()),
-        vec![crate::ItemCommand::Find]
-    );
-}
 fn groups(workspace: &Workspace, cx: &App) -> usize {
     let dock = workspace.dock.read(cx);
     let tree = dock.layout(DockPlacement::Center).unwrap();
@@ -986,11 +584,14 @@ fn alternate_child_focus_tracks_split_and_bottom_command_ownership(cx: &mut Test
                     expected_central.entity_id(),
                     "bottom focus must preserve the active central pane"
                 );
-                workspace.execute_item_command(crate::ItemCommand::Copy, window, cx);
+                workspace.dispatch_command(Box::new(gpui_kit::component::input::Copy), window, cx);
             });
-            assert_eq!(*item.read(cx).executed.borrow(), [crate::ItemCommand::Copy]);
         })
         .unwrap();
+        cx.run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(*item.executed.borrow(), [Command::Copy]);
+        });
     }
 }
 
@@ -1005,6 +606,7 @@ impl nocterm_session::RemoteFs for MarkerFs {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mut TestAppContext) {
     use std::sync::Arc;
     let (window, workspace) = fixture(cx);
@@ -1118,84 +720,8 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     .unwrap();
 }
 
-pub(super) struct RightProbe {
-    pub(super) focus: FocusHandle,
-    pub(super) maximized: bool,
-}
-impl EventEmitter<crate::RightPanelEvent> for RightProbe {}
-impl Focusable for RightProbe {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for RightProbe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("right-probe")
-            .test_support()
-            .size_full()
-            .track_focus(&self.focus)
-            .child("AI")
-    }
-}
-impl crate::Panel for RightProbe {
-    fn title(&self, _: &App) -> gpui_kit::SharedString {
-        "AI Agents".into()
-    }
-    fn icon(&self, _: &App) -> nocterm_ui::IconName {
-        nocterm_ui::IconName::Bot
-    }
-}
-impl crate::RightPanel for RightProbe {
-    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.maximized = maximized;
-        cx.notify();
-    }
-}
-
-#[gpui_kit::test]
-fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.resize(gpui_kit::size(px(1800.), px(760.)));
-        let panel = cx.new(|cx| RightProbe {
-            focus: cx.focus_handle(),
-            maximized: false,
-        });
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel(panel.clone(), window, cx);
-            workspace.toggle_right_panel(window, cx);
-            assert!(!workspace.right_panel_is_open());
-            workspace.set_right_panel_available(true, window, cx);
-            workspace.toggle_right_panel(window, cx);
-            assert!(workspace.right_panel_is_open());
-            assert!(panel.read(cx).focus.is_focused(window));
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("right-probe").is_some());
-        assert!(window.try_find("empty-new-tab").is_some());
-        assert!(window.try_find("open-settings").is_none());
-        let toggle = window.find("toggle-right-panel").bounds();
-        assert!(toggle.left() > window.find("toggle-local-terminal").bounds().right());
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("empty-new-tab").is_none());
-        assert!(window.try_find("toggle-right-panel").is_some());
-        assert!(panel.read(cx).maximized);
-        let inset = FloatingCards::get(cx).map_or(px(0.), |cards| cards.gap * 2. + px(2.));
-        let probe = window.find("right-probe").bounds().size.width;
-        assert!((probe - (window.viewport_size().width - inset)).abs() < px(2.));
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_available(false, window, cx)
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("toggle-right-panel").is_none());
-        assert!(window.try_find("right-probe").is_none());
-        assert!(window.try_find("empty-new-tab").is_some());
-        assert!(!panel.read(cx).maximized);
-        assert!(workspace.read(cx).focus_handle.is_focused(window));
-    })
-    .unwrap();
-}
+#[path = "menu_tests.rs"]
+mod menus;
+#[path = "right_panel_tests.rs"]
+mod right_panel;
+pub(super) use right_panel::RightProbe;

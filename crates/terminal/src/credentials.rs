@@ -1,17 +1,13 @@
-//! Authentication integration depends on the vault domain, never its UI feature.
+//! Prompts answered from, and remembered in, a [`CredentialStore`].
 use crate::{Terminal, TerminalEvent};
 use gpui_kit::{App, Context, Global, Task};
-use nocterm_session::{CredentialId, Prompt, Secret, SecretRequest};
-use nocterm_vault::{CredentialBinding, VaultService};
+use nocterm_session::{CredentialId, CredentialStore, Prompt, Secret, SecretRequest};
 use nocterm_workspace::SessionSpec;
-use std::{rc::Rc, sync::Arc, time::Duration};
-
-/// How often a prompt waiting for the vault checks whether it was unlocked.
-const UNLOCK_POLL: Duration = Duration::from_millis(250);
+use std::{rc::Rc, sync::Arc};
 
 type Saved = Rc<dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>>>;
 pub(crate) struct ActiveCredentials {
-    service: Arc<VaultService>,
+    store: Arc<dyn CredentialStore>,
     saved: Saved,
 }
 impl Global for ActiveCredentials {}
@@ -19,12 +15,12 @@ impl Global for ActiveCredentials {}
 /// Composition-root callback associates an encrypted credential ID with saved
 /// connections/recent targets. It receives no plaintext secret.
 pub fn init_credentials(
-    service: Arc<VaultService>,
+    store: Arc<dyn CredentialStore>,
     on_saved: impl Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>> + 'static,
     cx: &mut App,
 ) {
     cx.set_global(ActiveCredentials {
-        service,
+        store,
         saved: Rc::new(on_saved),
     });
 }
@@ -32,22 +28,11 @@ pub fn init_credentials(
 #[derive(Default)]
 pub(crate) struct CredentialState {
     pub epoch: u64,
-    candidate: Option<(CredentialBinding, Secret)>,
+    candidate: Option<(SecretRequest, Secret)>,
     lookup: Option<Task<()>>,
     pub message: Option<String>,
     /// The prompt has a saved secret and waits for the vault to unlock.
     awaiting_vault: bool,
-}
-fn binding(request: &SecretRequest) -> Option<CredentialBinding> {
-    match request {
-        SecretRequest::Password { target, .. } => Some(CredentialBinding::Password {
-            target: target.clone(),
-        }),
-        SecretRequest::KeyPassphrase { path, .. } => {
-            Some(CredentialBinding::KeyPassphrase { path: path.clone() })
-        }
-        SecretRequest::Interactive { .. } => None,
-    }
 }
 /// What a secret prompt asks for, whether the last answer was wrong, and
 /// whether the answer is hidden while typed.
@@ -79,7 +64,7 @@ impl Terminal {
     }
     pub fn vault_unlocked(&self, cx: &App) -> bool {
         cx.try_global::<ActiveCredentials>()
-            .is_some_and(|provider| provider.service.is_unlocked())
+            .is_some_and(|provider| provider.store.is_available())
     }
     /// Whether unlocking the vault would answer the current prompt.
     pub fn awaiting_vault(&self) -> bool {
@@ -111,25 +96,25 @@ impl Terminal {
         ) {
             return;
         }
-        let Some(binding) = binding(&request) else {
+        if !request.is_storable() {
             return;
-        };
+        }
         let Some(id) = self.spec().credential else {
             return;
         };
         let Some(provider) = cx.try_global::<ActiveCredentials>() else {
             return;
         };
-        if !provider.service.is_unlocked() {
+        if !provider.store.is_available() {
             self.credentials.message = Some(
                 "Unlock the credential vault to use the saved secret, or enter it here.".into(),
             );
             self.credentials.awaiting_vault = true;
-            let service = provider.service.clone();
-            self.wait_for_unlock(service, cx);
+            let available = provider.store.wait_available();
+            self.wait_for_unlock(available, cx);
             return;
         }
-        let future = provider.service.get(id, binding);
+        let future = provider.store.get(id, &request);
         let epoch = self.credentials.epoch;
         self.credentials.lookup = Some(cx.spawn(async move |this, cx| {
             let result = future.await;
@@ -150,23 +135,21 @@ impl Terminal {
     }
     /// Answers the prompt with the saved secret as soon as the vault is
     /// unlocked, whether from the prompt's link, Settings or device unlock.
-    fn wait_for_unlock(&mut self, service: Arc<VaultService>, cx: &mut Context<Self>) {
+    fn wait_for_unlock(
+        &mut self,
+        available: impl Future<Output = ()> + 'static,
+        cx: &mut Context<Self>,
+    ) {
         let epoch = self.credentials.epoch;
         self.credentials.lookup = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(UNLOCK_POLL).await;
-                if !service.is_unlocked() {
-                    continue;
+            available.await;
+            let _ = this.update(cx, |this, cx| {
+                if epoch == this.credentials.epoch && this.prompt().is_some() {
+                    this.credentials.awaiting_vault = false;
+                    this.retrieve_credential(cx);
+                    cx.emit(TerminalEvent::Changed);
                 }
-                let _ = this.update(cx, |this, cx| {
-                    if epoch == this.credentials.epoch && this.prompt().is_some() {
-                        this.credentials.awaiting_vault = false;
-                        this.retrieve_credential(cx);
-                        cx.emit(TerminalEvent::Changed);
-                    }
-                });
-                return;
-            }
+            });
         }));
     }
     /// Remember is an explicit user choice and never applies to interactive/MFA.
@@ -191,9 +174,9 @@ impl Terminal {
         if remember
             && self.vault_unlocked(cx)
             && let Some(Prompt::Secret { request, .. }) = self.prompt()
-            && let Some(binding) = binding(request)
+            && request.is_storable()
         {
-            self.credentials.candidate = Some((binding, secret.clone()));
+            self.credentials.candidate = Some((request.clone(), secret.clone()));
         }
         self.answer_secret(Some(secret), cx);
     }
@@ -201,18 +184,18 @@ impl Terminal {
         self.credentials.candidate = None;
     }
     pub(crate) fn save_authenticated_credential(&mut self, cx: &mut Context<Self>) {
-        let Some((binding, secret)) = self.credentials.candidate.take() else {
+        let Some((request, secret)) = self.credentials.candidate.take() else {
             return;
         };
         let Some(provider) = cx.try_global::<ActiveCredentials>() else {
             return;
         };
-        let service = provider.service.clone();
         let saved = provider.saved.clone();
         let spec = self.spec().clone();
-        // A new ID avoids replacing a different binding referenced by an edited
-        // profile. Association is published only after the ciphertext commits.
-        let future = service.put(None, spec.title.to_string(), binding, secret);
+        // Association is published only after the credential is saved.
+        let future = provider
+            .store
+            .save(spec.title.to_string(), &request, secret);
         let epoch = self.credentials.epoch;
         cx.spawn(async move |this, cx| {
             let result = future.await;
@@ -253,5 +236,7 @@ impl Terminal {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod fake;
 #[cfg(test)]
 mod tests;

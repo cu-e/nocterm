@@ -10,8 +10,9 @@ publish = false
 layer = "domain"
 
 [dependencies]
+schemars.workspace = true
+serde.workspace = true
 nocterm-session.workspace = true
-nocterm-settings.workspace = true
 base64.workspace = true
 futures.workspace = true
 

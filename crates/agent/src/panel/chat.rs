@@ -11,6 +11,7 @@ use super::{AgentPanel, MenuKind, widgets::activity_text};
 use crate::thread::AgentThread;
 
 impl AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_chat(
         &mut self,
         thread: Entity<AgentThread>,

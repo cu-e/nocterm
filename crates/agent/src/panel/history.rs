@@ -278,6 +278,7 @@ impl AgentPanel {
         history.into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_history_row(
         &self,
         thread: &Entity<AgentThread>,
@@ -291,11 +292,11 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.state.entries.is_empty() && chat.draft.is_none() {
+        let when = if chat.state.entries.is_empty() && chat.composer.draft.is_none() {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
-                nocterm_ai::history::now().saturating_sub(chat.updated),
+                nocterm_ai::time::now().saturating_sub(chat.updated),
             )))
         };
         let model = chat.model().unwrap_or_default();

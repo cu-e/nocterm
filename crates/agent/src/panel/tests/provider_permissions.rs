@@ -1,5 +1,5 @@
 use super::*;
-use nocterm_settings::ApprovalPolicy;
+use nocterm_ai::ApprovalPolicy;
 
 fn options() -> Vec<acp::PermissionOption> {
     vec![
@@ -28,7 +28,7 @@ fn submit(
     session: acp::SessionId,
     options: Vec<acp::PermissionOption>,
 ) -> oneshot::Receiver<acp::RequestPermissionOutcome> {
-    let (respond, receive) = oneshot::channel();
+    let (respond, receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
             request: request(session, options),
@@ -41,8 +41,8 @@ fn submit(
 
 fn set_policy(cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, move |settings| {
-            settings.ai.approval.agent_permissions = policy;
+        cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
+            settings.approval.agent_permissions = policy;
         })
         .detach()
     });
@@ -252,7 +252,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
         foreign.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Cancelled)
     );
-    let (respond, mut direct_foreign) = oneshot::channel();
+    let (respond, mut direct_foreign) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.permission(request(session, options()), respond, cx)
@@ -314,9 +314,9 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     });
     let mut queued = submit(&f, cx, session, options());
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings.ai.enabled = false;
-            settings.ai.approval.agent_permissions = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.enabled = false;
+            settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })
     })
     .await

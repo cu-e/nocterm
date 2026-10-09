@@ -96,3 +96,9 @@ index and within-row offset to navigate between chat messages without measuring
 or scanning the transcript. Scroll actions, tail following, the scrollbar and the
 built-in jump-to-latest control keep their existing ownership. Remove this
 forwarder when upstream exposes an equivalent query.
+
+
+`Cargo.toml` lists `log` under `[package.metadata.cargo-machete] ignored`.
+Nocterm runs cargo-machete over the whole repository; the upstream dependency
+is kept unchanged so the manifest does not drift from upstream. Remove the
+entry when upstream drops or uses the dependency.

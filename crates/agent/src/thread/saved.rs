@@ -3,7 +3,7 @@ use gpui_kit::{Context, WeakEntity};
 use nocterm_ai::{acp, thread::ThreadState};
 use nocterm_workspace::Workspace;
 
-use super::{AgentThread, Fork, Restore};
+use super::{AgentThread, Composer, Fork, Restore};
 use crate::runtime::Runtime;
 
 impl AgentThread {
@@ -32,9 +32,7 @@ impl AgentThread {
         thread.state.title = chat.title;
         thread.name = chat.name;
         thread.pinned = chat.pinned;
-        thread.draft = chat.draft.filter(|draft| !draft.is_empty());
-        thread.attachments = super::queue::restore_attachments(&chat.attachments);
-        thread.queue = chat
+        let queue = chat
             .queue
             .into_iter()
             .enumerate()
@@ -47,14 +45,11 @@ impl AgentThread {
                 )
             })
             .collect();
-        thread.next_queue_id = thread
-            .queue
-            .iter()
-            .map(|prompt| prompt.saved.id)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        thread.queue_paused = true;
+        thread.composer = Composer::restored(
+            chat.draft,
+            super::queue::restore_attachments(&chat.attachments),
+            queue,
+        );
         thread.fallback_history = pending_history;
         thread.restore = chat.session_id.map(|session| Restore {
             session: acp::SessionId::new(session),
@@ -99,7 +94,7 @@ impl AgentThread {
         Fork {
             chat,
             restore,
-            attachments: self.default_attachments().to_vec(),
+            attachments: self.composer.default_attachments().to_vec(),
         }
     }
     /// The chat `fork` made, connected only when work is submitted.
@@ -113,7 +108,7 @@ impl AgentThread {
         let mut thread = Self::restored(fork.chat, workspace, cx);
         thread.fallback_history = pending_history;
         thread.restore = fork.restore;
-        thread.attachments = fork.attachments;
+        thread.composer.attachments = fork.attachments;
         thread.status = "Forked chat".into();
         thread
     }
@@ -149,8 +144,8 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = self.name.clone();
         chat.pinned = self.pinned;
-        chat.draft = self.draft.clone();
-        chat.attachments = self.stable_attachments(self.default_attachments(), cx);
+        chat.draft = self.composer.draft.clone();
+        chat.attachments = self.stable_attachments(self.composer.default_attachments(), cx);
         chat.times = nocterm_ai::history::SavedChat::bounded_times(
             self.state.entries.len(),
             &self.state.times,
@@ -180,7 +175,10 @@ impl AgentThread {
         &self,
         cx: &gpui_kit::App,
     ) -> Option<std::sync::Arc<nocterm_ai::history::SharedChat>> {
-        if self.state.entries.is_empty() && self.queue.is_empty() && self.draft.is_none() {
+        if self.state.entries.is_empty()
+            && self.composer.queue.is_empty()
+            && self.composer.draft.is_none()
+        {
             return None;
         }
         let mut metadata = self.history_metadata(cx);
@@ -188,6 +186,7 @@ impl AgentThread {
         Some(std::sync::Arc::new(nocterm_ai::history::SharedChat {
             metadata,
             queue: self
+                .composer
                 .queue
                 .iter()
                 .map(|prompt| prompt.saved.clone())
@@ -207,7 +206,7 @@ impl AgentThread {
     }
     /// Marks the chat as changed now and saves it.
     pub(crate) fn persist(&mut self, cx: &mut Context<Self>) {
-        self.updated = nocterm_ai::history::now();
+        self.updated = nocterm_ai::time::now();
         self.save(cx);
     }
     /// Saves transcript, queued prompts or an unsent draft to history.

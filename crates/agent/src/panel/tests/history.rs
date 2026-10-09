@@ -132,6 +132,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let chats = f._directory.path().join("chats");
@@ -265,8 +266,8 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
             assert!(thread.last_prompt.is_none());
             let session = thread.lease.as_mut().unwrap().session.take();
             thread.send("Queued before the session is ready".into(), cx);
-            assert_eq!(thread.queue.len(), 1);
-            thread.queue.clear();
+            assert_eq!(thread.composer.queue.len(), 1);
+            thread.composer.queue.clear();
             assert!(thread.last_prompt.is_none());
             thread.lease.as_mut().unwrap().session = session;
             let mut option = acp::SessionConfigOption::select(

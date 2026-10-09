@@ -205,6 +205,7 @@ pub struct ConnectionEditor {
 }
 
 impl ConnectionEditor {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn new(
         profile: Option<Profile>,
         workspace: WeakEntity<Workspace>,

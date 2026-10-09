@@ -14,7 +14,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_ui::{ActiveSettings as _, IconName, edit_settings, form};
+use nocterm_ui::{IconName, SettingsExt as _, form};
 use nocterm_vault::DeviceAvailability;
 
 use crate::view::{Tab, VaultView};
@@ -324,11 +324,11 @@ impl VaultView {
             "Ask for the master password at startup",
             "Open this page when nocterm starts, so saved credentials are ready.",
             Switch::new("vault-prompt-on-startup")
-                .checked(cx.settings().vault.prompt_on_startup)
+                .checked(cx.setting::<crate::VaultSettings>().prompt_on_startup)
                 .on_click(cx.listener(|_, checked: &bool, _, cx| {
                     let checked = *checked;
-                    edit_settings(cx, move |settings| {
-                        settings.vault.prompt_on_startup = checked
+                    cx.update_setting::<crate::VaultSettings>(move |settings| {
+                        settings.prompt_on_startup = checked
                     })
                     .detach();
                     cx.notify();

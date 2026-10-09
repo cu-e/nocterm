@@ -14,12 +14,12 @@ use gpui_kit::{
     div,
     prelude::*,
 };
+use nocterm_ai::{AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode};
 use nocterm_ai::{
     registry::AgentRegistry,
     sandbox::{Availability, current_availability},
 };
-use nocterm_settings::{AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode, Settings};
-use nocterm_ui::{ActiveSettings as _, IconName, form};
+use nocterm_ui::{IconName, SettingsExt as _, form};
 
 use crate::{
     SettingsView,
@@ -62,8 +62,8 @@ pub(crate) fn add_fields(
 ) {
     view.add_field(
         "ai.working_directory",
-        |s| s.ai.working_directory.clone().unwrap_or_default(),
-        |s, text| {
+        |s: &AiSettings| s.working_directory.clone().unwrap_or_default(),
+        |s: &mut AiSettings, text| {
             let path = optional(text);
             if path.as_deref().is_some_and(|path| {
                 !std::path::Path::new(path).is_absolute() || path.contains('\0')
@@ -72,7 +72,7 @@ pub(crate) fn add_fields(
                     "Enter an absolute path, or leave empty for the private workspace.".into(),
                 );
             }
-            s.ai.working_directory = path;
+            s.working_directory = path;
             Ok(())
         },
         window,
@@ -88,7 +88,7 @@ pub(crate) fn add_fields(
 
 /// Adds fields for agents that appeared and drops those of removed ones.
 pub(crate) fn sync(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsView>) {
-    let ids = agent_ids(&cx.settings().ai);
+    let ids = agent_ids(cx.setting::<AiSettings>());
     for id in view.ai.agents.clone() {
         if !ids.contains(&id) {
             view.remove_fields(&format!("agent.{id}."));
@@ -163,7 +163,7 @@ fn agent_fields(
         let write_id = id.clone();
         view.add_field(
             format!("agent.{id}.{name}"),
-            move |s| get(&s.ai.agents.get(&read_id).cloned().unwrap_or_default()),
+            move |s: &AiSettings| get(&s.agents.get(&read_id).cloned().unwrap_or_default()),
             move |s, text| edit_agent(s, &write_id, |agent| set(agent, text)),
             window,
             cx,
@@ -173,17 +173,17 @@ fn agent_fields(
 
 /// Changes agent `id`, keeping only what differs from the built-in defaults.
 fn edit_agent(
-    settings: &mut Settings,
+    settings: &mut AiSettings,
     id: &str,
     edit: impl FnOnce(&mut AgentServerSettings) -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut agent = settings.ai.agents.get(id).cloned().unwrap_or_default();
+    let mut agent = settings.agents.get(id).cloned().unwrap_or_default();
     edit(&mut agent)?;
     validate_agent(id, &agent)?;
     if BUILTIN.contains(&id) && agent == AgentServerSettings::default() {
-        settings.ai.agents.remove(id);
+        settings.agents.remove(id);
     } else {
-        settings.ai.agents.insert(id.to_owned(), agent);
+        settings.agents.insert(id.to_owned(), agent);
     }
     Ok(())
 }
@@ -232,15 +232,15 @@ pub(crate) fn validate_agent(id: &str, setting: &AgentServerSettings) -> Result<
 /// Saves `edit` unless it would make the AI settings invalid.
 fn save_checked(
     view: &mut SettingsView,
-    edit: impl Fn(&mut Settings) -> Result<(), String> + 'static,
+    edit: impl Fn(&mut AiSettings) -> Result<(), String> + 'static,
     cx: &mut Context<SettingsView>,
 ) {
-    let mut probe = cx.settings().clone();
+    let mut probe = cx.setting::<AiSettings>().clone();
     match edit(&mut probe) {
         Ok(()) => {
             view.ai.error = None;
             view.save(
-                move |settings| {
+                move |settings: &mut AiSettings| {
                     let _ = edit(settings);
                 },
                 cx,
@@ -253,8 +253,9 @@ fn save_checked(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
-    let ai = cx.settings().ai.clone();
+    let ai = cx.setting::<AiSettings>().clone();
     let off = !ai.enabled;
     let mut page = v_flex()
         .w_full()
@@ -269,7 +270,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                 form::row(
                     "Enable AI agents",
                     "Off hides the agent panel and stops every running agent.",
-                    toggle("ai-enabled", ai.enabled, false, |s, on| s.ai.enabled = on, cx),
+                    toggle("ai-enabled", ai.enabled, false, |s: &mut AiSettings, on| s.enabled = on, cx),
                     cx,
                 ),
                 form::row(
@@ -297,7 +298,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                     "ai-agent-permissions",
                     ai.approval.agent_permissions == ApprovalPolicy::Ask,
                     off,
-                    |s, on| s.ai.approval.agent_permissions = policy(on),
+                    |s: &mut AiSettings, on| s.approval.agent_permissions = policy(on),
                     cx,
                 ),
                 cx,
@@ -314,7 +315,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                         "ai-read-approval",
                         ai.approval.terminal_read == ApprovalPolicy::Ask,
                         off,
-                        |s, on| s.ai.approval.terminal_read = policy(on),
+                        |s: &mut AiSettings, on| s.approval.terminal_read = policy(on),
                         cx,
                     ),
                     cx,
@@ -326,7 +327,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                         "ai-write-approval",
                         ai.approval.terminal_write == ApprovalPolicy::Ask,
                         off,
-                        |s, on| s.ai.approval.terminal_write = policy(on),
+                        |s: &mut AiSettings, on| s.approval.terminal_write = policy(on),
                         cx,
                     ),
                     cx,
@@ -338,7 +339,7 @@ pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) ->
                         "ai-redact",
                         ai.approval.redact_secrets,
                         off,
-                        |s, on| s.ai.approval.redact_secrets = on,
+                        |s: &mut AiSettings, on| s.approval.redact_secrets = on,
                         cx,
                     ),
                     cx,
@@ -392,7 +393,7 @@ fn default_agent(ai: &AiSettings, disabled: bool, cx: &mut Context<SettingsView>
                 .selected(current == id)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let id = id.clone();
-                    this.save(move |s| s.ai.default_agent = id, cx)
+                    this.save(move |s: &mut AiSettings| s.default_agent = id, cx)
                 }))
         }))
         .into_any_element()
@@ -422,8 +423,8 @@ fn isolation(
             "ai-sandbox",
             on,
             off || (!available && !on),
-            |s, on| {
-                s.ai.sandbox = if on {
+            |s: &mut AiSettings, on| {
+                s.sandbox = if on {
                     SandboxMode::Workspace
                 } else {
                     SandboxMode::Off
@@ -435,6 +436,7 @@ fn isolation(
     )
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn agent(
     view: &SettingsView,
     id: &str,
@@ -545,10 +547,10 @@ fn agent(
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let id = remove_id.clone();
                             this.save(
-                                move |s| {
-                                    s.ai.agents.remove(&id);
-                                    if s.ai.default_agent.as_deref() == Some(id.as_str()) {
-                                        s.ai.default_agent = None;
+                                move |s: &mut AiSettings| {
+                                    s.agents.remove(&id);
+                                    if s.default_agent.as_deref() == Some(id.as_str()) {
+                                        s.default_agent = None;
                                     }
                                 },
                                 cx,
@@ -622,8 +624,8 @@ fn add(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsVi
             view.ai.add_error = None;
             view.ai.expanded.insert(id.clone());
             view.save(
-                move |s| {
-                    s.ai.agents.insert(id, agent);
+                move |s: &mut AiSettings| {
+                    s.agents.insert(id, agent);
                 },
                 cx,
             );
@@ -679,23 +681,23 @@ mod tests {
 
     #[test]
     fn editing_a_builtin_back_to_its_defaults_removes_the_override() {
-        let mut settings = Settings::default();
+        let mut settings = AiSettings::default();
         edit_agent(&mut settings, "claude", |a| {
             a.command = Some("/opt/claude".into());
             Ok(())
         })
         .unwrap();
-        assert!(settings.ai.agents.contains_key("claude"));
+        assert!(settings.agents.contains_key("claude"));
         edit_agent(&mut settings, "claude", |a| {
             a.command = None;
             Ok(())
         })
         .unwrap();
-        assert!(settings.ai.agents.is_empty());
+        assert!(settings.agents.is_empty());
         assert!(
             edit_agent(&mut settings, "mine", |_| Ok(())).is_err(),
             "a custom agent needs an executable"
         );
-        assert!(settings.ai.agents.is_empty());
+        assert!(settings.agents.is_empty());
     }
 }

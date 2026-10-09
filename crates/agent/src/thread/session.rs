@@ -18,6 +18,7 @@ impl AgentThread {
             .or_else(|| self.restore.clone())
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn create_session(
         &mut self,
         commands: Arc<dyn AgentCommands>,

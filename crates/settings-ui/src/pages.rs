@@ -1,4 +1,4 @@
-//! Appearance, Terminal, Local shell and SSH pages.
+//! AppearanceSettings, Terminal, Local shell and SSH pages.
 use gpui_kit::{
     AnyElement, App, Context, Entity, SharedString, Window,
     component::{
@@ -12,12 +12,16 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{
-    CARD_GAP_RANGE, CARD_RADIUS_RANGE, CONNECT_TIMEOUT_RANGE, ClipboardWritePolicy, CursorShape,
-    FONT_SIZE_RANGE, KEEPALIVE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, SessionOptions,
-    Settings, ShellSettings,
+use nocterm_session::{
+    CONNECT_TIMEOUT_RANGE, KEEPALIVE_RANGE, LocalShellSettings, LoggingOptions, SessionOptions,
+    ShellSettings, SshSettings,
 };
-use nocterm_ui::{ActiveSettings as _, SessionOptionsEditor, form};
+use nocterm_settings::{SettingsDocument, SettingsSection};
+use nocterm_ui::{
+    AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy, CursorShape,
+    FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings,
+};
+use nocterm_ui::{SessionOptionsEditor, SettingsExt as _, form};
 
 use crate::{
     Page, SettingsView,
@@ -28,28 +32,32 @@ pub(crate) fn new_session_options(
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Entity<SessionOptionsEditor> {
-    let options = session_options(cx.settings());
+    let options = session_options(cx);
     cx.new(|cx| SessionOptionsEditor::new(options, false, window, cx))
 }
 
-fn session_options(settings: &Settings) -> SessionOptions {
+fn session_options(cx: &App) -> SessionOptions {
+    let terminal = cx.setting::<TerminalSettings>();
     SessionOptions {
-        term: Some(settings.terminal.term.clone()),
-        charset: Some(settings.terminal.charset),
-        proxy: Some(settings.ssh.proxy.clone()),
-        logging: Some(settings.logging.clone()),
+        term: Some(terminal.term.clone()),
+        charset: Some(terminal.charset),
+        proxy: Some(cx.setting::<SshSettings>().proxy.clone()),
+        logging: Some(cx.setting::<LoggingOptions>().clone()),
     }
 }
 
-pub(crate) fn apply_session_options(settings: &mut Settings, options: SessionOptions) {
-    settings.terminal.term = options
-        .term
-        .unwrap_or_else(|| nocterm_settings::TerminalSettings::default().term);
-    settings.terminal.charset = options.charset.unwrap_or_default();
-    settings.ssh.proxy = options.proxy.unwrap_or_default();
-    settings.logging = options.logging.unwrap_or_default();
+pub(crate) fn apply_session_options(document: &mut SettingsDocument, options: SessionOptions) {
+    document.update::<TerminalSettings>(|terminal| {
+        terminal.term = options
+            .term
+            .unwrap_or_else(|| TerminalSettings::default().term);
+        terminal.charset = options.charset.unwrap_or_default();
+    });
+    document.update::<SshSettings>(|ssh| ssh.proxy = options.proxy.unwrap_or_default());
+    document.set(options.logging.unwrap_or_default());
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn add_fields(
     view: &mut SettingsView,
     window: &mut Window,
@@ -57,9 +65,9 @@ pub(crate) fn add_fields(
 ) {
     view.add_field(
         "appearance.card_gap",
-        |s| s.appearance.card_gap.to_string(),
-        |s, text| {
-            s.appearance.card_gap = number(text, "Card gap", CARD_GAP_RANGE)?;
+        |s: &AppearanceSettings| s.card_gap.to_string(),
+        |s: &mut AppearanceSettings, text| {
+            s.card_gap = number(text, "Card gap", CARD_GAP_RANGE)?;
             Ok(())
         },
         window,
@@ -67,9 +75,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "appearance.card_radius",
-        |s| s.appearance.card_radius.to_string(),
-        |s, text| {
-            s.appearance.card_radius = number(text, "Card radius", CARD_RADIUS_RANGE)?;
+        |s: &AppearanceSettings| s.card_radius.to_string(),
+        |s: &mut AppearanceSettings, text| {
+            s.card_radius = number(text, "Card radius", CARD_RADIUS_RANGE)?;
             Ok(())
         },
         window,
@@ -77,9 +85,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "terminal.font_family",
-        |s| s.terminal.font_family.clone().unwrap_or_default(),
-        |s, text| {
-            s.terminal.font_family = optional(text);
+        |s: &TerminalSettings| s.font_family.clone().unwrap_or_default(),
+        |s: &mut TerminalSettings, text| {
+            s.font_family = optional(text);
             Ok(())
         },
         window,
@@ -87,14 +95,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "terminal.font_size",
-        |s| {
-            s.terminal
-                .font_size
-                .map(|v| v.to_string())
-                .unwrap_or_default()
-        },
-        |s, text| {
-            s.terminal.font_size = optional_number(text, "Font size", FONT_SIZE_RANGE)?;
+        |s: &TerminalSettings| s.font_size.map(|v| v.to_string()).unwrap_or_default(),
+        |s: &mut TerminalSettings, text| {
+            s.font_size = optional_number(text, "Font size", FONT_SIZE_RANGE)?;
             Ok(())
         },
         window,
@@ -102,14 +105,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "terminal.line_height",
-        |s| {
-            s.terminal
-                .line_height
-                .map(|v| v.to_string())
-                .unwrap_or_default()
-        },
-        |s, text| {
-            s.terminal.line_height = optional_number(text, "Line height", LINE_HEIGHT_RANGE)?;
+        |s: &TerminalSettings| s.line_height.map(|v| v.to_string()).unwrap_or_default(),
+        |s: &mut TerminalSettings, text| {
+            s.line_height = optional_number(text, "Line height", LINE_HEIGHT_RANGE)?;
             Ok(())
         },
         window,
@@ -117,9 +115,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "terminal.scrollback",
-        |s| s.terminal.scrollback_lines.to_string(),
-        |s, text| {
-            s.terminal.scrollback_lines = number(text, "Scrollback", SCROLLBACK_RANGE)?;
+        |s: &TerminalSettings| s.scrollback_lines.to_string(),
+        |s: &mut TerminalSettings, text| {
+            s.scrollback_lines = number(text, "Scrollback", SCROLLBACK_RANGE)?;
             Ok(())
         },
         window,
@@ -127,9 +125,9 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "ssh.timeout",
-        |s| s.ssh.connect_timeout_secs.to_string(),
-        |s, text| {
-            s.ssh.connect_timeout_secs = number(text, "Connection timeout", CONNECT_TIMEOUT_RANGE)?;
+        |s: &SshSettings| s.connect_timeout_secs.to_string(),
+        |s: &mut SshSettings, text| {
+            s.connect_timeout_secs = number(text, "Connection timeout", CONNECT_TIMEOUT_RANGE)?;
             Ok(())
         },
         window,
@@ -137,31 +135,31 @@ pub(crate) fn add_fields(
     );
     view.add_field(
         "ssh.keepalive",
-        |s| s.ssh.keepalive_interval_secs.to_string(),
-        |s, text| {
-            s.ssh.keepalive_interval_secs = number(text, "Keepalive interval", KEEPALIVE_RANGE)?;
+        |s: &SshSettings| s.keepalive_interval_secs.to_string(),
+        |s: &mut SshSettings, text| {
+            s.keepalive_interval_secs = number(text, "Keepalive interval", KEEPALIVE_RANGE)?;
             Ok(())
         },
         window,
         cx,
     );
-    shell_fields(view, "local", |s| &mut s.local, |s| &s.local, window, cx);
-    shell_fields(
+    shell_fields::<LocalShellSettings>(view, "local", |s| &mut s.0, |s| &s.0, window, cx);
+    shell_fields::<SshSettings>(
         view,
         "ssh.launch",
-        |s| &mut s.ssh.launch,
-        |s| &s.ssh.launch,
+        |s| &mut s.launch,
+        |s| &s.launch,
         window,
         cx,
     );
 }
 
 /// Program, arguments, directory and environment of a shell.
-fn shell_fields(
+fn shell_fields<S: SettingsSection>(
     view: &mut SettingsView,
     prefix: &'static str,
-    shell: fn(&mut Settings) -> &mut ShellSettings,
-    read: fn(&Settings) -> &ShellSettings,
+    shell: fn(&mut S) -> &mut ShellSettings,
+    read: fn(&S) -> &ShellSettings,
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) {
@@ -235,11 +233,11 @@ pub(crate) fn render(
 }
 
 /// A switch that saves `set(settings, checked)` when flipped.
-pub(crate) fn toggle(
+pub(crate) fn toggle<S: SettingsSection>(
     id: impl Into<gpui_kit::ElementId>,
     checked: bool,
     disabled: bool,
-    set: fn(&mut Settings, bool),
+    set: fn(&mut S, bool),
     cx: &mut Context<SettingsView>,
 ) -> Switch {
     Switch::new(id)
@@ -252,11 +250,11 @@ pub(crate) fn toggle(
 }
 
 /// Mutually exclusive choices shown side by side.
-pub(crate) fn choices<T: Copy + PartialEq + 'static>(
+pub(crate) fn choices<S: SettingsSection, T: Copy + PartialEq + 'static>(
     id: &'static str,
     current: T,
     options: &[(&'static str, T)],
-    set: fn(&mut Settings, T),
+    set: fn(&mut S, T),
     cx: &mut Context<SettingsView>,
 ) -> AnyElement {
     h_flex()
@@ -319,8 +317,9 @@ pub(crate) fn short_row(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let terminal = cx.settings().terminal.clone();
+    let terminal = cx.setting::<TerminalSettings>().clone();
     vec![
         form::section(
             "Text",
@@ -363,7 +362,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                             ("Bar", CursorShape::Bar),
                             ("Underline", CursorShape::Underline),
                         ],
-                        |s, shape| s.terminal.cursor_shape = shape,
+                        |s: &mut TerminalSettings, shape| s.cursor_shape = shape,
                         cx,
                     ),
                     cx,
@@ -375,7 +374,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "cursor-blink",
                         terminal.cursor_blink,
                         false,
-                        |s, on| s.terminal.cursor_blink = on,
+                        |s: &mut TerminalSettings, on| s.cursor_blink = on,
                         cx,
                     ),
                     cx,
@@ -400,7 +399,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "semantic-highlighting",
                         terminal.semantic_highlighting,
                         false,
-                        |s, on| s.terminal.semantic_highlighting = on,
+                        |s: &mut TerminalSettings, on| s.semantic_highlighting = on,
                         cx,
                     ),
                     cx,
@@ -412,7 +411,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "copy-select",
                         terminal.copy_on_select,
                         false,
-                        |s, on| s.terminal.copy_on_select = on,
+                        |s: &mut TerminalSettings, on| s.copy_on_select = on,
                         cx,
                     ),
                     cx,
@@ -424,8 +423,8 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "clipboard-write",
                         terminal.clipboard_write == ClipboardWritePolicy::FocusedTerminal,
                         false,
-                        |s, on| {
-                            s.terminal.clipboard_write = if on {
+                        |s: &mut TerminalSettings, on| {
+                            s.clipboard_write = if on {
                                 ClipboardWritePolicy::FocusedTerminal
                             } else {
                                 ClipboardWritePolicy::Deny
@@ -448,7 +447,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "line-numbers",
                         terminal.show_line_numbers,
                         false,
-                        |s, on| s.terminal.show_line_numbers = on,
+                        |s: &mut TerminalSettings, on| s.show_line_numbers = on,
                         cx,
                     ),
                     cx,
@@ -460,7 +459,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
                         "timestamps",
                         terminal.show_timestamps,
                         false,
-                        |s, on| s.terminal.show_timestamps = on,
+                        |s: &mut TerminalSettings, on| s.show_timestamps = on,
                         cx,
                     ),
                     cx,
@@ -472,7 +471,7 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
 }
 
 fn local_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let integration = cx.settings().local.integration;
+    let integration = cx.setting::<LocalShellSettings>().integration;
     vec![
         form::section(
             "Launch",
@@ -517,7 +516,7 @@ fn local_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEl
                     "local-integration",
                     integration,
                     false,
-                    |s, on| s.local.integration = on,
+                    |s: &mut LocalShellSettings, on| s.integration = on,
                     cx,
                 ),
                 cx,
@@ -528,7 +527,7 @@ fn local_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEl
 }
 
 fn ssh(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let integration = cx.settings().ssh.launch.integration;
+    let integration = cx.setting::<SshSettings>().launch.integration;
     vec![
         form::section(
             "Session defaults",
@@ -599,7 +598,7 @@ fn ssh(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
                         "remote-integration",
                         integration,
                         false,
-                        |s, on| s.ssh.launch.integration = on,
+                        |s: &mut SshSettings, on| s.launch.integration = on,
                         cx,
                     ),
                     cx,

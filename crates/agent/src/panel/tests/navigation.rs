@@ -227,11 +227,14 @@ fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &m
         cx.notify();
     });
     for mode in [
-        nocterm_settings::AppearanceMode::Dark,
-        nocterm_settings::AppearanceMode::Light,
+        nocterm_ui::AppearanceMode::Dark,
+        nocterm_ui::AppearanceMode::Light,
     ] {
         cx.update(|cx| {
-            nocterm_ui::edit_settings(cx, move |settings| settings.appearance.mode = mode).detach()
+            cx.update_setting::<nocterm_ui::AppearanceSettings>(move |settings| {
+                settings.mode = mode
+            })
+            .detach()
         });
         cx.run_until_parked();
         scroll_to(&f, 5, cx);

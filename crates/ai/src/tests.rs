@@ -1,8 +1,8 @@
+use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
 use crate::{
     acp, approval::ApprovalGrants, context::*, env::*, favorites::*, images::*, mcp::*,
     registry::*, thread::*, tools::*,
 };
-use nocterm_settings::{AgentServerSettings, AiSettings, ApprovalSettings};
 use serde_json::json;
 #[test]
 fn registry_merges_overrides_and_rejects_invalid_entries() {

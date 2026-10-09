@@ -1,44 +1,29 @@
 //! A sign-in prompt waiting for the vault answers itself once it is unlocked.
-use crate::Terminal;
-use futures::{FutureExt as _, executor::block_on};
+use crate::{Terminal, credentials::fake::FakeStore};
+use futures::FutureExt as _;
 use gpui_kit::{AppContext as _, Entity, Task, TestAppContext};
-use nocterm_session::{
-    Auth, CloseReason, CredentialId, Event, Prompt, Reply, Secret, SecretRequest, Target,
-};
+use nocterm_session::{Auth, CloseReason, Event, Prompt, Reply, Secret, SecretRequest, Target};
 use nocterm_ui::SettingsStore;
-use nocterm_vault::{CredentialBinding, VaultError, VaultService};
 use nocterm_workspace::SessionSpec;
 use std::{sync::Arc, time::Duration};
 
-const MASTER: &str = "test unique master passphrase";
-
 struct Setup {
-    service: Arc<VaultService>,
+    store: Arc<FakeStore>,
     terminal: Entity<Terminal>,
     target: Target,
-    _directory: tempfile::TempDir,
 }
 
 /// A terminal for a saved server whose password is in a locked vault.
 fn setup(cx: &mut TestAppContext) -> Setup {
-    // The vault worker is a real thread; let its completions wake the test scheduler.
-    cx.executor().allow_parking();
-    let directory = tempfile::tempdir().unwrap();
-    let service = Arc::new(
-        VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
-    );
-    block_on(service.create(Secret::new(MASTER))).unwrap();
+    let store = Arc::new(FakeStore::default());
     let target = Target::new("test", "test-host", 22);
-    let id: CredentialId = block_on(service.put(
-        None,
-        "test".into(),
-        CredentialBinding::Password {
+    let id = store.insert(
+        SecretRequest::Password {
             target: target.clone(),
+            retry: false,
         },
-        Secret::new("stored account password"),
-    ))
-    .unwrap();
-    service.lock();
+        "stored account password",
+    );
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -46,7 +31,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
             SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init_credentials(service.clone(), |_, _, _| Task::ready(Ok(())), cx);
+        crate::init_credentials(store.clone(), |_, _, _| Task::ready(Ok(())), cx);
         cx.new(|cx| {
             Terminal::new(
                 SessionSpec {
@@ -63,10 +48,9 @@ fn setup(cx: &mut TestAppContext) -> Setup {
         })
     });
     Setup {
-        service,
+        store,
         terminal,
         target,
-        _directory: directory,
     }
 }
 
@@ -88,17 +72,8 @@ fn ask_password(
     answer
 }
 
-fn drain(setup: &Setup, cx: &mut TestAppContext) {
-    loop {
-        // Finish queued vault work before polling futures on the test scheduler.
-        match block_on(setup.service.list()) {
-            Ok(_) | Err(VaultError::Locked) => {}
-            Err(error) => panic!("vault worker barrier failed: {error}"),
-        }
-        if !cx.executor().tick() {
-            break;
-        }
-    }
+fn drain(_setup: &Setup, cx: &mut TestAppContext) {
+    cx.run_until_parked();
 }
 
 fn wait(setup: &Setup, cx: &mut TestAppContext) {
@@ -124,7 +99,7 @@ fn unlocking_the_vault_answers_the_waiting_prompt_with_the_saved_secret(cx: &mut
     }));
     assert!(cx.update(|cx| setup.terminal.read(cx).awaiting_vault()));
 
-    block_on(setup.service.unlock(Secret::new(MASTER))).unwrap();
+    setup.store.unlock();
     wait(&setup, cx);
     let secret = answer
         .now_or_never()
@@ -149,7 +124,7 @@ fn a_prompt_that_ended_is_not_answered_after_unlocking(cx: &mut TestAppContext) 
             terminal.handle_event(Event::Closed(CloseReason::ClosedByUser), cx)
         })
     });
-    block_on(setup.service.unlock(Secret::new(MASTER))).unwrap();
+    setup.store.unlock();
     wait(&setup, cx);
     assert!(
         !matches!(answer.try_recv(), Ok(Some(Some(_)))),

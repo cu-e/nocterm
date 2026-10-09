@@ -100,14 +100,14 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.right_panel_maximized {
+        if self.right_panel.maximized() {
             return tile(
                 cards,
-                div()
+                Self::forward_commands(div(), cx)
                     .id("workspace-right-panel")
                     .test_support()
                     .size_full()
-                    .when_some(self.right_panel.as_ref(), |body, panel| {
+                    .when_some(self.right_panel.handle.as_ref(), |body, panel| {
                         body.child(cached(panel.view()))
                     }),
             );
@@ -128,11 +128,11 @@ impl Workspace {
                     .size_range(widths.right_panel_range.clone())
                     .child(tile(
                         cards,
-                        div()
+                        Self::forward_commands(div(), cx)
                             .id("workspace-right-panel")
                             .test_support()
                             .size_full()
-                            .when_some(self.right_panel.as_ref(), |body, panel| {
+                            .when_some(self.right_panel.handle.as_ref(), |body, panel| {
                                 body.child(cached(panel.view()))
                             }),
                     )),
@@ -163,7 +163,7 @@ impl Workspace {
             // On the canvas, the title bar is part of the backdrop.
             .when_some(cards, |bar, cards| bar.bg(cards.canvas).border_b_0())
             .child(
-                h_flex()
+                Self::forward_commands(h_flex(), cx)
                     .size_full()
                     .min_w_0()
                     .gap_1()
@@ -227,11 +227,12 @@ impl Workspace {
     }
 
     fn render_sidebar(&self, on_right: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar = Self::forward_commands(v_flex(), cx);
         let theme = cx.theme();
         let panel = self.panels.get(self.active_panel);
         let floating = FloatingCards::get(cx).is_some();
 
-        v_flex()
+        sidebar
             .size_full()
             .text_color(theme.sidebar_foreground)
             // A card brings its own fill and outline.
@@ -265,70 +266,75 @@ impl Workspace {
     }
 
     pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let footer = Self::forward_commands(div(), cx);
         let theme = cx.theme();
         let floating = FloatingCards::get(cx).is_some();
-        div().id("workspace-footer").w_full().flex_shrink_0().child(
-            h_flex()
-                .gap_1()
-                .px_2()
-                .py_1()
-                // On the canvas the gap above already separates the footer.
-                .when(!floating, |footer| {
-                    footer.border_t_1().border_color(theme.sidebar_border)
-                })
-                .children(self.panels.iter().enumerate().map(|(ix, panel)| {
-                    Button::new(("sidebar-panel", ix))
-                        .ghost()
-                        .small()
-                        .icon(panel.icon(cx))
-                        .tooltip(panel.title(cx))
-                        .when_some(panel.badge(cx), Button::label)
-                        .selected(self.sidebar_open && ix == self.active_panel)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            // The shown panel's button hides the sidebar.
-                            if this.sidebar_open && this.active_panel == ix {
-                                this.toggle_sidebar(window, cx);
-                            } else {
-                                this.activate_panel(ix, window, cx);
-                            }
-                        }))
-                }))
-                .children(self.status_views(StatusSide::Leading))
-                .child(div().flex_1())
-                .child(nocterm_ui::notice::NoticeBar::new())
-                .children(self.status_views(StatusSide::Trailing))
-                .child(
-                    Button::new("toggle-local-terminal")
-                        .ghost()
-                        .small()
-                        .icon(IconName::SquareTerminal)
-                        .tooltip("Local Terminal")
-                        .selected(self.local_terminal_is_visible(cx))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_local_terminal(window, cx)
-                        })),
-                )
-                .when(self.right_panel_is_available(), |footer| {
-                    footer.child(
-                        Button::new("toggle-right-panel")
+        footer
+            .id("workspace-footer")
+            .w_full()
+            .flex_shrink_0()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    // On the canvas the gap above already separates the footer.
+                    .when(!floating, |footer| {
+                        footer.border_t_1().border_color(theme.sidebar_border)
+                    })
+                    .children(self.panels.iter().enumerate().map(|(ix, panel)| {
+                        Button::new(("sidebar-panel", ix))
                             .ghost()
                             .small()
-                            .icon(if self.right_panel_attention {
-                                IconName::ShieldCheck
-                            } else {
-                                IconName::PanelRight
-                            })
-                            .tooltip(if self.right_panel_attention {
-                                "AI Agents: permission required"
-                            } else {
-                                "AI Agents"
-                            })
-                            .selected(self.right_panel_open)
+                            .icon(panel.icon(cx))
+                            .tooltip(panel.title(cx))
+                            .when_some(panel.badge(cx), Button::label)
+                            .selected(self.sidebar_open && ix == self.active_panel)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                // The shown panel's button hides the sidebar.
+                                if this.sidebar_open && this.active_panel == ix {
+                                    this.toggle_sidebar(window, cx);
+                                } else {
+                                    this.activate_panel(ix, window, cx);
+                                }
+                            }))
+                    }))
+                    .children(self.status_views(StatusSide::Leading))
+                    .child(div().flex_1())
+                    .child(nocterm_ui::notice::NoticeBar::new())
+                    .children(self.status_views(StatusSide::Trailing))
+                    .child(
+                        Button::new("toggle-local-terminal")
+                            .ghost()
+                            .small()
+                            .icon(IconName::SquareTerminal)
+                            .tooltip("Local Terminal")
+                            .selected(self.local_terminal_is_visible(cx))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_right_panel(window, cx)
+                                this.toggle_local_terminal(window, cx)
                             })),
                     )
-                }),
-        )
+                    .when(self.right_panel_is_available(), |footer| {
+                        footer.child(
+                            Button::new("toggle-right-panel")
+                                .ghost()
+                                .small()
+                                .icon(if self.right_panel.attention {
+                                    IconName::ShieldCheck
+                                } else {
+                                    IconName::PanelRight
+                                })
+                                .tooltip(if self.right_panel.attention {
+                                    "AI Agents: permission required"
+                                } else {
+                                    "AI Agents"
+                                })
+                                .selected(self.right_panel.open())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_right_panel(window, cx)
+                                })),
+                        )
+                    }),
+            )
     }
 }

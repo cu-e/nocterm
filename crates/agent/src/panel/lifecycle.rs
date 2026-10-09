@@ -5,7 +5,7 @@ use crate::{
     thread::{AgentThread, Attachment},
 };
 use gpui_kit::{AppContext as _, Context, Entity, Focusable as _, Window};
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::time::Duration;
 impl AgentPanel {
     pub(super) fn reset_chat_view(&mut self, cx: &mut Context<Self>) {
@@ -63,7 +63,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(_launch) = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
+        let Some(_launch) = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
             .get(&id)
             .cloned()
         else {
@@ -80,7 +80,7 @@ impl AgentPanel {
         let thread = cx.new(|cx| AgentThread::new(id, self.workspace.clone(), cx));
         if let Some(id) = active {
             thread.update(cx, |thread, _| {
-                thread.attachments.push(Attachment::Terminal(id))
+                thread.composer.attachments.push(Attachment::Terminal(id))
             });
         }
         self.track(&thread, window, cx);
@@ -112,7 +112,9 @@ impl AgentPanel {
             return;
         };
         thread.update(cx, |thread, _| thread.apply_restart(data));
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(&thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(&thread), cx)
+        });
         thread.update(cx, |thread, cx| {
             thread.save(cx);
             cx.notify();
@@ -153,7 +155,9 @@ impl AgentPanel {
     /// Explicit activation is reserved for work, never for opening history.
     #[cfg(test)]
     pub(super) fn wake(&mut self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) {
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(thread), cx)
+        });
         thread.update(cx, |thread, cx| thread.request_activation(cx));
     }
     pub(super) fn track(
@@ -162,7 +166,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(thread), cx)
+        });
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.window = Some(handle));

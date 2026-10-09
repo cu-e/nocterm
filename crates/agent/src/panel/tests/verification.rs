@@ -24,13 +24,14 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                assert_eq!(thread.queue.len(), 2);
-                let retained = thread.queue[0].saved.id;
+                assert_eq!(thread.composer.queue.len(), 2);
+                let retained = thread.composer.queue[0].saved.id;
                 thread.send_now(retained, cx);
                 thread.send("new first".into(), cx);
                 thread.send("new second".into(), cx);
                 thread.send("new third".into(), cx);
                 let ids = thread
+                    .composer
                     .queue
                     .iter()
                     .map(|prompt| prompt.saved.id)
@@ -86,6 +87,7 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
@@ -189,9 +191,9 @@ fn prompt_transport_failure_keeps_remaining_queue_and_rejects_new_dispatch(
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
         assert!(thread.ended());
-        assert!(thread.queue_paused);
-        assert_eq!(thread.queue[0].saved.text, "retained");
-        thread.send_now(thread.queue[0].saved.id, cx);
+        assert!(thread.composer.queue_paused);
+        assert_eq!(thread.composer.queue[0].saved.text, "retained");
+        thread.send_now(thread.composer.queue[0].saved.id, cx);
         assert!(!thread.submit("another".into(), None, cx).unwrap());
     });
     cx.run_until_parked();
@@ -275,7 +277,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     std::fs::write(&chats, "blocks directory creation").unwrap();
     complete_active(&f, cx);
     cx.update(|cx| {
-        assert!(thread.read(cx).queue_paused);
+        assert!(thread.read(cx).composer.queue_paused);
         assert!(thread.read(cx).status_error);
     });
     cx.update_window(f.handle, |_, window, cx| {
@@ -289,7 +291,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         1,
         "cancelling edit resumed a queue paused by storage failure"
     );
-    cx.update(|cx| assert_eq!(thread.read(cx).queue.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer.queue.len(), 1));
 }
 
 #[gpui_kit::test]
@@ -322,7 +324,7 @@ fn cancelling_queue_edit_does_not_resume_after_explicit_stop(cx: &mut TestAppCon
         1,
         "cancelling edit resumed a queue explicitly stopped by the user"
     );
-    cx.update(|cx| assert_eq!(thread.read(cx).queue.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer.queue.len(), 1));
 }
 
 fn disk_chat(f: &Fixture, id: &str) -> nocterm_ai::history::SavedChat {

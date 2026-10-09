@@ -12,14 +12,20 @@ pub mod mcp;
 pub mod redact;
 pub mod registry;
 pub mod sandbox;
+mod settings;
 #[cfg(feature = "test-support")]
 pub mod testing;
 pub mod thread;
+pub mod time;
 pub mod tool_display;
 pub mod tools;
 pub mod usage;
 pub use connection::*;
 pub use registry::{AgentLaunch, AgentRegistry};
+pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings};
+pub use settings::{
+    AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode,
+};
 pub use tools::*;
 #[cfg(test)]
 mod tests;

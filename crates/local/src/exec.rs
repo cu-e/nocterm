@@ -42,6 +42,7 @@ impl HostExec for LocalExec {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn start(request: ExecRequest) -> Result<ExecOutput, ExecError> {
     let mut command = Command::new(&request.program);
     command

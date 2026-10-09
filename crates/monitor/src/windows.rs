@@ -8,9 +8,9 @@
 
 use std::{fmt::Write as _, time::Duration};
 
+use crate::MonitorMetric;
 use base64::Engine as _;
 use nocterm_session::ExecRequest;
-use nocterm_settings::MonitorMetric;
 
 use crate::{
     CpuTimes, DiskCounters, Filesystem, HostInfo, MetricSet, NetworkCounters, Reading, Temperature,
@@ -110,6 +110,7 @@ fn script(metrics: MetricSet, interval: Duration) -> String {
 }
 
 /// Turns a frame's lines into a reading.
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn parse(lines: &[String]) -> Reading {
     let mut reading = Reading::default();
     let mut host = HostInfo::default();

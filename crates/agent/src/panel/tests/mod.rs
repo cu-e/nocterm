@@ -10,6 +10,7 @@ use nocterm_ai::{
     BridgeRegistration, ConnectRequest, ToolBridge, acp,
 };
 
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{
     Item, ItemEvent, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
     Workspace,
@@ -344,6 +345,7 @@ struct Fixture {
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     fixture_with_width(cx, 26.)
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let (commands, bridge, connector, events, sender) = {
@@ -376,7 +378,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         gpui_kit::init(cx);
         let mut tokens = nocterm_ui::DesignTokens::builtin();
         tokens.layout.agent_panel_width = width;
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             tokens,
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
@@ -393,6 +395,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
                 codex_home: Some(directory.path().join("codex")),
                 workdir: directory.path().join("work"),
             },
+            &ui,
             cx,
         );
         let mut panel = None;

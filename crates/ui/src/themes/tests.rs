@@ -1,7 +1,8 @@
 use super::*;
-use crate::{ActiveDesign, TerminalStyle, edit_settings, hsla, init};
+use crate::{ActiveDesign, TerminalStyle, hsla, init};
+use crate::{AppearanceMode, AppearanceSettings};
 use gpui_kit::{TestAppContext, component::Theme};
-use nocterm_settings::{AppearanceMode, Settings};
+use nocterm_settings::SettingsDocument;
 #[gpui_kit::test]
 async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
@@ -15,9 +16,12 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
     let expected = base.clone();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        let mut settings = Settings::default();
-        settings.appearance.mode = AppearanceMode::Dark;
-        init(base, SettingsStore::in_memory(settings), cx);
+        let appearance = AppearanceSettings {
+            mode: AppearanceMode::Dark,
+            ..AppearanceSettings::default()
+        };
+        let settings = SettingsStore::in_memory(SettingsDocument::default()).with(appearance);
+        init(base, settings, cx);
         init_themes(dirs.clone(), ThemeCatalog::load(&dirs), cx);
     });
     let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -26,9 +30,11 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
         cx.observe_global::<Design>(move |_| count.set(count.get() + 1))
             .detach();
     });
-    cx.update(|cx| edit_settings(cx, |s| s.appearance.dark_theme = Some("Custom".into())))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<AppearanceSettings>(|s| s.dark_theme = Some("Custom".into()))
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
@@ -49,15 +55,17 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
     });
     assert_eq!(notifications.get(), 1);
     for name in [Some("Missing".to_owned()), None] {
-        cx.update(|cx| edit_settings(cx, move |s| s.appearance.dark_theme = name))
+        cx.update(|cx| cx.update_setting::<AppearanceSettings>(move |s| s.dark_theme = name))
             .await
             .unwrap();
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.design(), &expected));
     }
-    cx.update(|cx| edit_settings(cx, |s| s.appearance.light_theme = Some("Custom".into())))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<AppearanceSettings>(|s| s.light_theme = Some("Custom".into()))
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update(|cx| assert_eq!(cx.design(), &expected));
     assert_eq!(notifications.get(), 2);
@@ -84,7 +92,7 @@ async fn a_superseded_reload_cannot_publish_the_previous_catalogue(cx: &mut Test
         gpui_kit::init(cx);
         init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(Settings::default()),
+            SettingsStore::in_memory(SettingsDocument::default()),
             cx,
         );
         init_themes(old_dirs.clone(), ThemeCatalog::load(&old_dirs), cx);
@@ -114,6 +122,7 @@ async fn a_superseded_reload_cannot_publish_the_previous_catalogue(cx: &mut Test
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn sparse_imports_composite_over_the_component_background_without_override_leaks(
     cx: &mut TestAppContext,
 ) {
@@ -160,23 +169,27 @@ async fn sparse_imports_composite_over_the_component_background_without_override
     .unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        init(base, SettingsStore::in_memory(Settings::default()), cx);
+        init(
+            base,
+            SettingsStore::in_memory(SettingsDocument::default()),
+            cx,
+        );
         init_themes(dirs.clone(), ThemeCatalog::load(&dirs), cx);
     });
     for dark in [false, true] {
         for source in ["sparse", "interface", "terminal"] {
             let name = format!("{} {source}", if dark { "dark" } else { "light" });
             cx.update(|cx| {
-                edit_settings(cx, move |s| {
-                    s.appearance.mode = if dark {
+                cx.update_setting::<AppearanceSettings>(move |s| {
+                    s.mode = if dark {
                         AppearanceMode::Dark
                     } else {
                         AppearanceMode::Light
                     };
                     if dark {
-                        s.appearance.dark_theme = Some(name);
+                        s.dark_theme = Some(name);
                     } else {
-                        s.appearance.light_theme = Some(name);
+                        s.light_theme = Some(name);
                     }
                 })
             })

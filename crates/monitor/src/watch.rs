@@ -50,7 +50,7 @@ impl Watch {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use nocterm_settings::MonitorMetric;
+    use crate::MonitorMetric;
 
     use super::*;
     use crate::platform::tests::Scripted;

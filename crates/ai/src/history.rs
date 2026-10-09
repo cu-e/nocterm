@@ -5,14 +5,11 @@
 //! reopened after a restart. The terminal context sent with each prompt is
 //! never part of the transcript, so it is never saved.
 
-use std::{
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{acp, thread::Entry};
+use crate::{acp, thread::Entry, time::now};
 
 mod budget;
 mod size;
@@ -241,13 +238,6 @@ pub fn load_all(dir: &Path) -> Vec<SavedChat> {
     chats.sort_by_key(|chat| std::cmp::Reverse((chat.pinned, chat.updated)));
     chats.truncate(MAX_RESTORED);
     chats
-}
-
-/// Seconds since the Unix epoch.
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 #[cfg(test)]

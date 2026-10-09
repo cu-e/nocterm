@@ -363,6 +363,7 @@ struct FileJob {
     local: PathBuf,
     remote: String,
 }
+#[expect(clippy::cognitive_complexity, reason = "predates the limit")]
 async fn run(batch: Arc<Batch>, slots: Arc<Semaphore>) {
     if batch.cancelled() {
         batch.progress.lock().state = TransferState::Cancelled;
@@ -536,6 +537,7 @@ async fn discover_one(
     }
     Ok(())
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn upload_file(batch: &Batch, job: FileJob) -> Result<bool, FsError> {
     let fs = batch.request.fs();
     let Some((destination, _reservation)) = reserve_destination(batch, &job.remote).await? else {

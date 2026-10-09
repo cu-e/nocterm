@@ -6,7 +6,7 @@ use nocterm_ai::{
     thread::{Entry, ThreadChange},
     tool_display::{self, ToolDisplay},
 };
-use nocterm_ui::ActiveSettings as _;
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::TerminalEntry;
 
 use super::{AgentThread, bridge_server_name};
@@ -187,7 +187,11 @@ impl AgentThread {
         let server = bridge_server_name(registration.id);
         let destination = self.tool_destination(request, entry, cx);
         let mut display = ToolDisplay::new(request, destination);
-        if cx.settings().ai.approval.redact_secrets {
+        if cx
+            .setting::<nocterm_ai::AiSettings>()
+            .approval
+            .redact_secrets
+        {
             display.redact();
         }
         display.destination = display

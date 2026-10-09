@@ -15,6 +15,7 @@ pub mod format;
 mod frame;
 mod history;
 mod linux;
+mod metric;
 mod metrics;
 mod platform;
 mod reading;
@@ -31,4 +32,4 @@ pub use reading::{
 pub use sampler::{DiskRates, NetworkRates, Sampler, Snapshot, Usage};
 pub use watch::Watch;
 
-pub use nocterm_settings::MonitorMetric;
+pub use metric::MonitorMetric;

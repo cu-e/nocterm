@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 impl AgentThread {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn run_command(
         &mut self,
         entry: TerminalEntry,

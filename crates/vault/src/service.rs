@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender},
     },
     thread,
@@ -31,6 +31,54 @@ struct State {
     exists: AtomicBool,
     published_epoch: AtomicU64,
     auto_lock_secs: AtomicU64,
+    /// Counts changes of [`VaultStatus`]; `changed` wakes its listeners.
+    revision: AtomicU64,
+    /// The status last published, as `VaultStatus as u8`.
+    published: AtomicU8,
+    changed: event_listener::Event,
+}
+impl State {
+    /// Wakes listeners if the status changed since it was last published.
+    fn publish(&self) {
+        let status = self.status() as u8;
+        if self.published.swap(status, Ordering::SeqCst) != status {
+            self.revision.fetch_add(1, Ordering::SeqCst);
+            self.changed.notify(usize::MAX);
+        }
+    }
+    fn status(&self) -> VaultStatus {
+        if self.is_unlocked() {
+            VaultStatus::Unlocked
+        } else if self.exists.load(Ordering::SeqCst) {
+            VaultStatus::Locked
+        } else {
+            VaultStatus::Missing
+        }
+    }
+    fn is_unlocked(&self) -> bool {
+        self.unlocked.load(Ordering::SeqCst)
+            && self.published_epoch.load(Ordering::SeqCst) == self.epoch.load(Ordering::SeqCst)
+    }
+    async fn changed(&self, seen: u64) -> u64 {
+        loop {
+            // Listening before checking means no change is missed.
+            let listener = self.changed.listen();
+            let now = self.revision.load(Ordering::SeqCst);
+            if now != seen {
+                return now;
+            }
+            listener.await;
+        }
+    }
+}
+
+/// Whether the vault exists and can answer requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum VaultStatus {
+    Missing,
+    Locked,
+    Unlocked,
 }
 
 /// Thread-safe provider. No method waits for a KDF or file I/O on the caller.
@@ -57,7 +105,11 @@ impl VaultService {
             exists: AtomicBool::new(path.exists()),
             published_epoch: AtomicU64::new(0),
             auto_lock_secs: AtomicU64::new(auto_lock.as_secs().max(1)),
+            revision: AtomicU64::new(0),
+            published: AtomicU8::new(u8::MAX),
+            changed: event_listener::Event::new(),
         });
+        state.publish();
         let (sender, receiver) = mpsc::sync_channel::<Job>(8);
         let worker_state = state.clone();
         thread::Builder::new()
@@ -80,6 +132,7 @@ impl VaultService {
                         vault.lock();
                         epoch = worker_state.epoch.fetch_add(1, Ordering::SeqCst) + 1;
                         worker_state.unlocked.store(false, Ordering::SeqCst);
+                        worker_state.publish();
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
                         Ok(job) => {
@@ -100,6 +153,7 @@ impl VaultService {
                                 .unlocked
                                 .store(vault.is_unlocked(), Ordering::SeqCst);
                             worker_state.exists.store(vault.exists(), Ordering::SeqCst);
+                            worker_state.publish();
                             touched = Instant::now();
                         }
                         Err(RecvTimeoutError::Timeout) => {}
@@ -113,12 +167,37 @@ impl VaultService {
         })
     }
     pub fn is_unlocked(&self) -> bool {
-        self.state.unlocked.load(Ordering::SeqCst)
-            && self.state.published_epoch.load(Ordering::SeqCst)
-                == self.state.epoch.load(Ordering::SeqCst)
+        self.state.is_unlocked()
     }
     pub fn exists(&self) -> bool {
         self.state.exists.load(Ordering::SeqCst)
+    }
+    pub fn status(&self) -> VaultStatus {
+        self.state.status()
+    }
+    /// The current change count, to pass to [`Self::changed`].
+    pub fn revision(&self) -> u64 {
+        self.state.revision.load(Ordering::SeqCst)
+    }
+    /// Completes with the new change count once it differs from `seen`.
+    pub fn changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        let state = self.state.clone();
+        async move { state.changed(seen).await }.boxed()
+    }
+    /// Completes once the vault is unlocked, by any path. Waiting does not
+    /// keep the worker alive.
+    pub fn wait_unlocked(&self) -> BoxFuture<'static, ()> {
+        let state = self.state.clone();
+        async move {
+            loop {
+                let seen = state.revision.load(Ordering::SeqCst);
+                if state.is_unlocked() {
+                    return;
+                }
+                state.changed(seen).await;
+            }
+        }
+        .boxed()
     }
     pub fn set_auto_lock(&self, duration: Duration) {
         self.state
@@ -128,6 +207,7 @@ impl VaultService {
     pub fn lock(&self) {
         self.state.epoch.fetch_add(1, Ordering::SeqCst);
         self.state.unlocked.store(false, Ordering::SeqCst);
+        self.state.publish();
         // Wake the worker. If its bounded queue is full, the next job already
         // wakes it and will observe the changed epoch before accessing secrets.
         let _ = self.jobs.try_send(Job {
@@ -154,6 +234,7 @@ impl VaultService {
                 state.exists.store(vault.exists(), Ordering::SeqCst);
                 state.published_epoch.store(epoch, Ordering::SeqCst);
                 state.unlocked.store(vault.is_unlocked(), Ordering::SeqCst);
+                state.publish();
                 let _ = sender.send(result);
             }),
         };
@@ -227,3 +308,6 @@ impl VaultService {
         self.request(move |vault| vault.delete(id))
     }
 }
+
+#[cfg(test)]
+mod tests;

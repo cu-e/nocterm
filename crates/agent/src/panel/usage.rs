@@ -120,6 +120,7 @@ impl AgentPanel {
         })
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(report) = self.usage_report(cx) else {
             return div().into_any_element();
@@ -247,7 +248,7 @@ impl AgentPanel {
 
         if !report.limits.is_empty() || report.limits_hint.is_some() {
             let mut limits = section("Plan limits", cx);
-            let now = nocterm_ai::history::now();
+            let now = nocterm_ai::time::now();
             for limit in &report.limits {
                 limits = limits.child(limit_row(limit, now, cx));
             }

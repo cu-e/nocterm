@@ -22,7 +22,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread.read(cx).attachments,
+            thread.read(cx).composer.attachments,
             vec![Attachment::Terminal(f.terminal)]
         );
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
@@ -38,9 +38,11 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).state.entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes>0);assert_eq!(thread.read(cx).tool_bytes,0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -99,15 +101,18 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
                 codex_home: None,
                 workdir: f._directory.path().join("pending"),
             },
+            &nocterm_ui::UiReady::installed(cx).unwrap(),
             cx,
         )
     });
     new_chat(&f, cx);
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(cancelled.load(Ordering::SeqCst), 0);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     assert_eq!(cancelled.load(Ordering::SeqCst), 1);
 }
@@ -118,13 +123,8 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     let f = fixture(cx);
     new_chat(&f, cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings
-                .ai
-                .agents
-                .entry("codex".into())
-                .or_default()
-                .command = Some("other-agent".into())
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.agents.entry("codex".into()).or_default().command = Some("other-agent".into())
         })
     })
     .await
@@ -134,8 +134,8 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     new_chat(&f, cx);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings.ai.agents.get_mut("codex").unwrap().enabled = false
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.agents.get_mut("codex").unwrap().enabled = false
         })
     })
     .await
@@ -188,7 +188,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |s| s.ai.enabled = false))
+    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = false))
         .await
         .unwrap();
     cx.run_until_parked();
@@ -200,7 +200,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     assert_eq!(f.bridge.revoked.lock().unwrap().len(), 1);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |s| s.ai.enabled = true))
+    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = true))
         .await
         .unwrap();
     cx.run_until_parked();
@@ -224,7 +224,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
         thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
-    let (tx, rx) = oneshot::channel();
+    let (tx, rx) = nocterm_ai::PermissionResponder::channel();
     let request = serde_json::from_value(serde_json::json!({
         "sessionId": session, "toolCall": {"toolCallId":"call", "title":"Read"},
         "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
@@ -443,7 +443,10 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
     let commands = f.commands.clone();
     cx.update(|cx| {
         crate::runtime::Runtime::global(cx).update(cx, |runtime, _| {
-            runtime.services.terminal_auth = Some(Arc::new(move |_, request, _, _| {
+            runtime.services.terminal_auth = true;
+        });
+        cx.set_global(crate::TerminalAuth(Some(Arc::new(
+            move |_, request, _, _| {
                 let mut requests = captured.lock().unwrap();
                 requests.push(request);
                 let (send, receive) = oneshot::channel();
@@ -452,8 +455,8 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
                     send.send(Ok(())).unwrap();
                 }
                 receive
-            }));
-        });
+            },
+        ))));
     });
     new_chat(&f, cx);
     cx.update(|cx| {
@@ -540,4 +543,35 @@ fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppCont
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_dropped_lease_shuts_its_agent_down(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
+    thread.update(cx, |thread, _| drop(thread.lease.take().unwrap()));
+    cx.run_until_parked();
+    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[gpui_kit::test]
+fn a_permission_no_thread_takes_is_cancelled(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let (respond, answer) = nocterm_ai::PermissionResponder::channel();
+    let request = serde_json::from_value(serde_json::json!({
+        "sessionId": "unknown-session", "toolCall": {"toolCallId":"call", "title":"Read"},
+        "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
+    }))
+    .unwrap();
+    f.events
+        .try_send(AgentEvent::Permission { request, respond })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        futures::executor::block_on(answer).unwrap(),
+        acp::RequestPermissionOutcome::Cancelled
+    );
 }

@@ -30,9 +30,9 @@ mod groups;
 mod items;
 mod layout;
 mod local_dock;
-mod tabs;
-use local_dock::LocalOpener;
 mod openers;
+mod tabs;
+pub use openers::SessionFactory;
 mod panels;
 mod panes;
 mod right_panel;
@@ -40,8 +40,8 @@ mod sessions;
 mod terminal_target;
 
 use crate::{
-    CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
-    PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
+    CloseTab, Item, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab, PanelHandle,
+    PreviousTab, SessionContext, ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -92,7 +92,6 @@ pub enum TabCloseScope {
     All,
 }
 
-type SessionOpener = Rc<dyn Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>)>;
 type ActionRegistration = Box<dyn Fn(Div, &mut Context<Workspace>) -> Div>;
 type MenuBuilder = Rc<dyn Fn(&Workspace, &Window, &App) -> Vec<Menu>>;
 
@@ -118,7 +117,6 @@ pub struct Workspace {
     _dock_observer: Subscription,
     selected_local_id: Option<EntityId>,
     local_terminal_height: Option<Pixels>,
-    local_opener: Option<LocalOpener>,
     local_header_click_origin: Rc<Cell<Option<EntityId>>>,
     items: Vec<OpenItem>,
     tab_groups: crate::tab_groups::TabGroups<PanelId, gpui_kit::component::dock::NodeId>,
@@ -127,16 +125,10 @@ pub struct Workspace {
     active_panel: usize,
     sidebar_open: bool,
     body: layout::Body,
-    right_panel: Option<Box<dyn crate::right_panel::RightPanelHandle>>,
-    right_panel_open: bool,
-    right_panel_attention: bool,
-    right_panel_available: bool,
-    right_panel_maximized: bool,
-    right_panel_subscription: Option<Subscription>,
+    right_panel: right_panel::RightPanelSlot,
     new_tab_menu: Option<NewTabMenu>,
     new_tab_menu_open: bool,
-    session_opener: Option<SessionOpener>,
-    program_opener: Option<openers::ProgramOpener>,
+    factory: openers::Factory,
     actions: Vec<ActionRegistration>,
     status_views: Vec<(chrome::StatusSide, AnyView)>,
     /// The active session as last announced, to announce only changes.
@@ -149,7 +141,6 @@ pub struct Workspace {
     connection_directory: Option<Rc<dyn crate::ConnectionDirectory>>,
     /// Sessions running without a tab, opened for agents.
     background: Vec<background::BackgroundItem>,
-    background_opener: Option<background::BackgroundOpener>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -191,7 +182,6 @@ impl Workspace {
             selected_local_id: None,
             local_terminal_height: None,
             local_header_click_origin: Rc::default(),
-            local_opener: None,
             focus_handle: cx.focus_handle(),
             items: Vec::new(),
             tab_groups: Default::default(),
@@ -200,16 +190,10 @@ impl Workspace {
             active_panel: 0,
             sidebar_open: true,
             body: layout::Body::default(),
-            right_panel: None,
-            right_panel_open: false,
-            right_panel_attention: false,
-            right_panel_available: false,
-            right_panel_maximized: false,
-            right_panel_subscription: None,
+            right_panel: right_panel::RightPanelSlot::default(),
             new_tab_menu: None,
             new_tab_menu_open: false,
-            session_opener: None,
-            program_opener: None,
+            factory: Rc::new(openers::NoFactory),
             actions: Vec::new(),
             status_views: Vec::new(),
             announced_session: None,
@@ -220,15 +204,7 @@ impl Workspace {
             last_command_item: None,
             connection_directory: None,
             background: Vec::new(),
-            background_opener: None,
         };
-        macro_rules! item_action {
-            ($action:ty, $command:ident) => {
-                this.register_action::<$action>(|this, _, window, cx| {
-                    this.dispatch_item_command(ItemCommand::$command, window, cx);
-                });
-            };
-        }
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
         });
@@ -238,19 +214,6 @@ impl Workspace {
         this.register_action::<crate::SelectAll>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx)
         });
-        item_action!(crate::ClearSelection, ClearSelection);
-        item_action!(crate::Find, Find);
-        item_action!(crate::FindNext, FindNext);
-        item_action!(crate::FindPrevious, FindPrevious);
-        item_action!(crate::FindNextSelection, FindNextSelection);
-        item_action!(crate::DisconnectSession, Disconnect);
-        item_action!(crate::ReconnectSession, Reconnect);
-        item_action!(crate::StartRecording, StartRecording);
-        item_action!(crate::StopRecording, StopRecording);
-        item_action!(crate::SessionSettings, SessionSettings);
-        item_action!(gpui_kit::component::input::Copy, Copy);
-        item_action!(gpui_kit::component::input::Paste, Paste);
-        item_action!(gpui_kit::component::input::SelectAll, SelectAll);
         this.register_action::<crate::CopyConnectionName>(|this, _, window, cx| {
             if let Some(title) = this.command_title(window, cx) {
                 cx.write_to_clipboard(ClipboardItem::new_string(title.to_string()));
@@ -353,6 +316,7 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
@@ -388,7 +352,7 @@ impl Render for Workspace {
             )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
-                    this.set_right_panel_maximized(!this.right_panel_maximized, cx)
+                    this.set_right_panel_maximized(!this.right_panel.maximized(), cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &crate::MoveTabLeft, window, cx| {

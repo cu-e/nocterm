@@ -448,6 +448,7 @@ impl Focusable for PathInput {
     }
 }
 impl Render for PathInput {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let shown: SharedString = self
             .directory

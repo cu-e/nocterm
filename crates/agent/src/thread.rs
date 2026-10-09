@@ -1,17 +1,20 @@
-use crate::runtime::Runtime;
-use futures::{FutureExt as _, channel::oneshot};
+use crate::runtime::{Runtime, SessionLease};
+use futures::FutureExt as _;
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
 };
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeCall, BridgeRegistration, acp, approval::ApprovalGrants,
-    context::OpaqueIds, thread::ThreadState,
+    AgentInfo, BridgeCall, acp, approval::ApprovalGrants, context::OpaqueIds, thread::ThreadState,
 };
 use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
+mod client;
+mod composer;
+pub(crate) use client::client;
+pub(crate) use composer::Composer;
 mod execution;
 mod permissions;
 mod prompt;
@@ -25,6 +28,7 @@ mod saved;
 mod session;
 mod tool_context;
 mod tools;
+mod updates;
 #[cfg(test)]
 pub(crate) use saved::chat_title;
 
@@ -48,7 +52,7 @@ pub(crate) struct SignInWait {
 }
 pub(crate) struct PendingPermission {
     pub request: acp::RequestPermissionRequest,
-    pub respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+    pub respond: nocterm_ai::PermissionResponder,
     pub generation: u64,
     pub explanation: Option<&'static str>,
 }
@@ -70,13 +74,6 @@ pub(crate) struct Fork {
     restore: Option<Restore>,
     attachments: Vec<Attachment>,
 }
-pub(crate) struct SessionLease {
-    pub session: Option<acp::SessionId>,
-    pub commands: Option<Arc<dyn AgentCommands>>,
-    pub registration: Option<BridgeRegistration>,
-    pub connection_key: u64,
-    pub workdir: Option<PathBuf>,
-}
 
 pub(crate) struct AgentThread {
     pub lease: Option<SessionLease>,
@@ -97,7 +94,8 @@ pub(crate) struct AgentThread {
     /// The name the user gave the chat.
     pub name: Option<String>,
     pub pinned: bool,
-    pub draft: Option<String>,
+    /// The input state, kept apart from the conversation.
+    pub composer: Composer,
     draft_changed: bool,
     /// A snapshot was queued for history, or this chat was restored.
     history_queued: bool,
@@ -120,17 +118,10 @@ pub(crate) struct AgentThread {
     /// The window of the panel showing this chat; background sessions open
     /// there.
     pub window: Option<AnyWindowHandle>,
-    pub attachments: Vec<Attachment>,
     /// Sessions this chat opened without a tab; closed with the chat.
     pub background: Vec<EntityId>,
     /// Background sessions waiting for the user to sign in from the chat.
     pub sign_ins: Vec<SignInWait>,
-    pub images: Vec<nocterm_ai::images::PromptImage>,
-    pub queue: Vec<queue::QueuedPrompt>,
-    pub queue_paused: bool,
-    /// Composer edits suspend dispatch independently of stops and errors.
-    pub queue_editing: bool,
-    composer_defaults: Option<attachments::ComposerDefaults>,
     pub prompt_attachments: Option<Vec<Attachment>>,
     pub dirty_rows: std::collections::HashSet<usize>,
     storage_dirty: std::collections::HashSet<usize>,
@@ -146,7 +137,6 @@ pub(crate) struct AgentThread {
     pub tool_bytes: usize,
     pub epoch: u64,
     pub turn: u64,
-    pub next_queue_id: u64,
     ids: OpaqueIds,
     /// Ids of attached servers without a session, as agents see them.
     server_ids: OpaqueIds,
@@ -157,6 +147,7 @@ pub(crate) struct AgentThread {
     _release: Subscription,
 }
 impl AgentThread {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         agent_id: String,
         workspace: WeakEntity<Workspace>,
@@ -169,16 +160,14 @@ impl AgentThread {
             let revision = this.document_revision;
             this.cancel_execution();
             this.cancel_pending();
-            let lease = this.lease.take();
+            // The lease releases its connection when it is dropped.
+            drop(this.lease.take());
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| {
                     if let Some(chat) = snapshot {
                         runtime.save_chat(chat, id, revision, cx);
                     }
                     runtime.unregister_document(id);
-                    if let Some(lease) = lease {
-                        runtime.release_lease(id, lease, cx);
-                    }
                 });
             });
             if let Some(window) = this.window {
@@ -231,7 +220,7 @@ impl AgentThread {
             restore: None,
             name: None,
             pinned: false,
-            draft: None,
+            composer: Composer::default(),
             draft_changed: false,
             history_queued: false,
             draft_save: None,
@@ -248,14 +237,8 @@ impl AgentThread {
             info: None,
             workspace,
             window: None,
-            attachments: Vec::new(),
             background: Vec::new(),
             sign_ins: Vec::new(),
-            images: Vec::new(),
-            queue: Vec::new(),
-            queue_paused: false,
-            queue_editing: false,
-            composer_defaults: None,
             prompt_attachments: None,
             dirty_rows: Default::default(),
             storage_dirty: Default::default(),
@@ -270,7 +253,6 @@ impl AgentThread {
             tool_bytes: 0,
             epoch: 0,
             turn: 0,
-            next_queue_id: 1,
             ids: Default::default(),
             server_ids: OpaqueIds::with_prefix("s"),
             grants: Default::default(),
@@ -287,8 +269,7 @@ impl AgentThread {
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
         self.state.entries.is_empty()
-            && self.queue.is_empty()
-            && self.draft.is_none()
+            && self.composer.is_empty()
             && self.name.is_none()
             && !self.generating
             && self.permissions.is_empty()
@@ -306,7 +287,7 @@ impl AgentThread {
         self.generating = false;
         self.auth_required = false;
         self.authenticating = false;
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.connecting_session = false;
         self.status = nocterm_ai::redact::redact(message);
         self.status_error = true;
@@ -319,7 +300,7 @@ impl AgentThread {
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
         self.cancel_execution();
         self.finish_pending_tools();
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.auth_required = true;
         self.authenticating = false;
         self.generating = false;
@@ -328,6 +309,7 @@ impl AgentThread {
         self.cancel_pending();
         cx.notify();
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn authenticate(
         &mut self,
         method: acp::AuthMethodId,
@@ -356,7 +338,7 @@ impl AgentThread {
             acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
             acp::AuthMethod::Terminal(method) => {
                 let runtime = Runtime::global(cx);
-                let Some(opener) = runtime.read(cx).services.terminal_auth.clone() else {
+                let Some(opener) = crate::TerminalAuth::opener(cx) else {
                     return;
                 };
                 let Some(request) = self
@@ -439,11 +421,8 @@ impl AgentThread {
         }
     }
     fn cancel_pending(&mut self) {
-        for permission in self.permissions.drain(..) {
-            let _ = permission
-                .respond
-                .send(acp::RequestPermissionOutcome::Cancelled);
-        }
+        // Dropped responders answer `Cancelled`.
+        self.permissions.clear();
         for call in self.tools.drain(..) {
             let _ = call.respond.send(Err("Request cancelled.".into()));
         }
@@ -532,7 +511,7 @@ impl AgentThread {
     /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
         self.cancel_execution();
-        self.queue_paused = true;
+        self.composer.queue_paused = true;
         self.finish_pending_tools();
         self.cancel_pending();
         self.stopped = true;
@@ -565,12 +544,13 @@ impl AgentThread {
     }
     pub(crate) fn attach(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
         if let Some(index) = self
+            .composer
             .attachments
             .iter()
             .position(|value| value == &attachment)
         {
-            self.attachments.remove(index);
-            if self.composer_defaults.is_none() {
+            self.composer.attachments.remove(index);
+            if !self.composer.editing() {
                 if let Some(attached) = &mut self.prompt_attachments {
                     attached.retain(|value| value != &attachment);
                 }
@@ -582,7 +562,7 @@ impl AgentThread {
                 }
             }
         } else {
-            self.attachments.push(attachment);
+            self.composer.attachments.push(attachment);
         }
         self.save(cx);
         cx.notify();

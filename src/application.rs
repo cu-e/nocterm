@@ -8,7 +8,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_core::Paths;
-use nocterm_ui::ActiveSettings as _;
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{About, CloseWindow, LogsDirectory, NewWindow, ProfilesDirectory, Quit};
 
 // release-please's authoritative version file, also used by packaging.
@@ -72,12 +72,16 @@ pub(crate) fn register(paths: Paths, vault_ready: bool, cx: &mut App) {
         open_directory(directory, cx);
     });
     cx.on_action(|_: &LogsDirectory, cx| {
-        let directory = cx.settings().logging.directory.clone().unwrap_or_else(|| {
-            cx.global::<ApplicationState>()
-                .paths
-                .state_dir()
-                .join("logs")
-        });
+        let directory = cx
+            .setting::<nocterm_session::LoggingOptions>()
+            .directory
+            .clone()
+            .unwrap_or_else(|| {
+                cx.global::<ApplicationState>()
+                    .paths
+                    .state_dir()
+                    .join("logs")
+            });
         open_directory(directory, cx);
     });
 }

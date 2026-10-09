@@ -30,6 +30,11 @@ cc = "1"
 [dev-dependencies]
 tokio = { version = "1.20", features = ["rt", "macros"]}
 
+# Nocterm: `num-derive` expands to `num_traits` paths, which cargo-machete
+# cannot see; see NOCTERM_PATCH.md.
+[package.metadata.cargo-machete]
+ignored = ["num-traits"]
+
 [package.metadata.docs.rs]
 targets = [
     "x86_64-apple-darwin",

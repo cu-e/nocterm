@@ -93,6 +93,7 @@ mod tests {
         history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt},
     };
     #[test]
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn bounded_wire_and_cached_budget_match_actual_acp_json_and_exact_limit() {
         let mut chat = SavedChat::new("agent\"\\\n界".into());
         chat.title = Some("title\u{0}\n".into());

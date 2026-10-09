@@ -1,6 +1,6 @@
 //! Which metrics a watch collects.
 
-use nocterm_settings::MonitorMetric;
+use crate::MonitorMetric;
 
 /// A set of [`MonitorMetric`]s, cheap to copy and compare.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

@@ -48,10 +48,10 @@ impl AgentPanel {
                     }
                     match result {
                         Ok(images) => {
-                            let mut collection = thread.images.clone();
+                            let mut collection = thread.composer.images.clone();
                             collection.extend(images);
                             match validate_collection(&collection) {
-                                Ok(()) => thread.images = collection,
+                                Ok(()) => thread.composer.images = collection,
                                 Err(error) => panel.error = Some(error),
                             }
                         }

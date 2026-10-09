@@ -2,6 +2,7 @@
 use super::*;
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn a_real_rpc_marks_only_missing_rollout_restoration_unavailable() {
     futures::executor::block_on(async {
         let script = r#"

@@ -1,9 +1,9 @@
 //! Real ACP and bridge routing intersections, without manually attaching display metadata.
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::ApprovalPolicy;
 use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
-use nocterm_settings::ApprovalPolicy;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -65,14 +65,15 @@ fn update(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &mut TestAppContext) {
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
     let program = Arc::new(Program::default());
     *f.access.executor.borrow_mut() = Some(program.clone());
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.terminal_write = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
         .detach()
     });
@@ -200,7 +201,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
                 .any(|text| text == "Exit status: 7")
         );
     });
-    cx.update(|cx| thread.update(cx, |thread, _| thread.attachments.clear()));
+    cx.update(|cx| thread.update(cx, |thread, _| thread.composer.attachments.clear()));
     update(&f, &session, acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
         "provider-call", acp::ToolCallUpdateFields::new().title("Different destination")
             .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),
@@ -229,9 +230,9 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
 fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.terminal_read = ApprovalPolicy::Allow;
-            settings.ai.approval.terminal_write = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.terminal_read = ApprovalPolicy::Allow;
+            settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
         .detach()
     });
@@ -239,7 +240,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    let (respond, mut receive) = oneshot::channel();
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
             request: serde_json::from_value(json!({"sessionId":session,"toolCall":{
@@ -254,8 +255,8 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     assert!(receive.try_recv().unwrap().is_none());
     cx.update(|cx| assert_eq!(thread.read(cx).permissions.len(), 1));
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.agent_permissions = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })
         .detach()
     });

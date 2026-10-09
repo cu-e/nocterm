@@ -10,7 +10,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_settings::{Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS};
+use nocterm_session::{Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS};
 type Choice = Entity<SelectState<SearchableVec<&'static str>>>;
 pub struct SessionOptionsEditor {
     inherit: bool,
@@ -27,6 +27,7 @@ pub struct SessionOptionsEditor {
     _subscriptions: Vec<Subscription>,
 }
 impl SessionOptionsEditor {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn new(
         options: SessionOptions,
         inherit: bool,

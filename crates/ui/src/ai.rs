@@ -5,8 +5,9 @@
 //! [`observe_ai_enabled`] to stop what it started when the switch goes off.
 
 use gpui_kit::{App, Subscription};
+use nocterm_ai::AiSettings;
 
-use crate::{ActiveSettings as _, SettingsStore};
+use crate::SettingsExt as _;
 
 /// Whether AI features are switched on.
 pub trait ActiveAi {
@@ -15,7 +16,7 @@ pub trait ActiveAi {
 
 impl ActiveAi for App {
     fn ai_enabled(&self) -> bool {
-        self.settings().ai.enabled
+        self.setting::<AiSettings>().enabled
     }
 }
 
@@ -29,11 +30,10 @@ pub fn observe_ai_enabled(
     mut on_change: impl FnMut(bool, &mut App) + 'static,
 ) -> Subscription {
     let mut enabled = cx.ai_enabled();
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let now = cx.ai_enabled();
-        if now != enabled {
-            enabled = now;
-            on_change(now, cx);
+    cx.observe_setting::<AiSettings>(move |ai, cx| {
+        if ai.enabled != enabled {
+            enabled = ai.enabled;
+            on_change(enabled, cx);
         }
     })
 }
@@ -42,17 +42,19 @@ pub fn observe_ai_enabled(
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
+    use crate::TerminalSettings;
     use gpui_kit::TestAppContext;
-    use nocterm_settings::Settings;
+    use nocterm_settings::SettingsDocument;
 
-    use crate::{SettingsStore, update_settings};
+    use crate::{SettingsStore, register_setting};
 
     use super::*;
 
     fn install(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.set_global(SettingsStore::in_memory(Settings::default()));
+            cx.set_global(SettingsStore::in_memory(SettingsDocument::default()));
             crate::settings::init(cx);
+            register_setting::<AiSettings>(cx);
         });
     }
 
@@ -61,7 +63,7 @@ mod tests {
         install(cx);
         cx.update(|cx| assert!(cx.ai_enabled()));
 
-        cx.update(|cx| update_settings(cx, |settings| settings.ai.enabled = false))
+        cx.update(|cx| cx.update_setting::<AiSettings>(|ai| ai.enabled = false))
             .await
             .unwrap();
 
@@ -76,26 +78,26 @@ mod tests {
         let subscription = cx
             .update(|cx| observe_ai_enabled(cx, move |enabled, _| log.borrow_mut().push(enabled)));
 
-        cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true))
-            .await
-            .unwrap();
-        assert!(seen.borrow().is_empty());
-
-        cx.update(|cx| update_settings(cx, |settings| settings.ai.enabled = false))
-            .await
-            .unwrap();
         cx.update(|cx| {
-            update_settings(cx, |settings| settings.ai.default_agent = Some("x".into()))
+            cx.update_setting::<TerminalSettings>(|terminal| terminal.copy_on_select = true)
         })
         .await
         .unwrap();
-        cx.update(|cx| update_settings(cx, |settings| settings.ai.enabled = true))
+        assert!(seen.borrow().is_empty());
+
+        cx.update(|cx| cx.update_setting::<AiSettings>(|ai| ai.enabled = false))
+            .await
+            .unwrap();
+        cx.update(|cx| cx.update_setting::<AiSettings>(|ai| ai.default_agent = Some("x".into())))
+            .await
+            .unwrap();
+        cx.update(|cx| cx.update_setting::<AiSettings>(|ai| ai.enabled = true))
             .await
             .unwrap();
         assert_eq!(*seen.borrow(), [false, true]);
 
         drop(subscription);
-        cx.update(|cx| update_settings(cx, |settings| settings.ai.enabled = false))
+        cx.update(|cx| cx.update_setting::<AiSettings>(|ai| ai.enabled = false))
             .await
             .unwrap();
         assert_eq!(*seen.borrow(), [false, true]);
