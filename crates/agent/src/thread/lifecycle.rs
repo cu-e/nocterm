@@ -52,7 +52,8 @@ impl AgentThread {
             || self.composer.dispatchable()
     }
     pub(crate) fn request_activation(&mut self, cx: &mut Context<Self>) {
-        if self.activation_pending || self.lease.is_some() || self.ended() {
+        if self.archive.is_some() || self.activation_pending || self.lease.is_some() || self.ended()
+        {
             return;
         }
         self.activation_pending = true;

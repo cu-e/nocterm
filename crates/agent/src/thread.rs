@@ -10,6 +10,7 @@ use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+mod archive;
 mod attachments;
 mod client;
 mod composer;
@@ -90,6 +91,13 @@ pub(crate) struct AgentThread {
     pub updated: u64,
     /// Restored from history and not yet connected.
     pub dormant: bool,
+    pub archive: Option<nocterm_ai::history::ChatSummary>,
+    pub loading_archive: bool,
+    archive_actions: Vec<archive::Loaded>,
+    pending_archive_draft: Option<String>,
+    resident_archive_bytes: usize,
+    pub archive_permit: Option<nocterm_ai::history::HistoryPermit>,
+    execution_watch: Option<Task<()>>,
     pub restore: Option<Restore>,
     /// The name the user gave the chat.
     pub name: Option<String>,
@@ -145,6 +153,7 @@ pub(crate) struct AgentThread {
     live_commands: std::collections::HashMap<String, Arc<nocterm_workspace::LiveCommandLease>>,
     tool_displays: tool_display::ToolDisplays,
     _release: Subscription,
+    _workspace_authority: Option<Subscription>,
 }
 impl AgentThread {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -153,6 +162,9 @@ impl AgentThread {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let authority = workspace
+            .upgrade()
+            .map(|workspace| cx.subscribe(&workspace, |this, _, _, cx| this.revoke_executions(cx)));
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| {
             this.cancel_pending();
@@ -185,26 +197,6 @@ impl AgentThread {
                 });
             }
         });
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if this
-                    .update(cx, |this, cx| {
-                        if !cx.ai_enabled() {
-                            this.cancel_execution();
-                        } else {
-                            this.revoke_executions(cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
         let chat = nocterm_ai::history::SavedChat::new(agent_id.clone());
         Self {
             lease: None,
@@ -218,6 +210,13 @@ impl AgentThread {
             chat_id: chat.id,
             updated: chat.updated,
             dormant: true,
+            archive: None,
+            loading_archive: false,
+            archive_actions: Vec::new(),
+            archive_permit: None,
+            resident_archive_bytes: 0,
+            pending_archive_draft: None,
+            execution_watch: None,
             restore: None,
             name: None,
             pinned: false,
@@ -261,6 +260,7 @@ impl AgentThread {
             live_commands: Default::default(),
             tool_displays: Default::default(),
             _release: release,
+            _workspace_authority: authority,
         }
     }
     /// The session is gone: the chat must be restarted to go on.
@@ -269,7 +269,9 @@ impl AgentThread {
     }
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
-        self.state.entries.is_empty()
+        self.archive.is_none()
+            && !self.pinned
+            && self.state.entries.is_empty()
             && self.composer.is_empty()
             && self.name.is_none()
             && !self.generating

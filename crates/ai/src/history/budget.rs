@@ -4,12 +4,22 @@ use crate::thread::Entry;
 use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct PreparedBudget {
+    pub(super) resident_bytes: usize,
     entries: Arc<Vec<usize>>,
+    memory: Arc<Vec<usize>>,
     prompts: Arc<Vec<usize>>,
 }
 impl PreparedBudget {
     pub(super) fn new(chat: &SavedChat) -> Result<Self, String> {
         Ok(Self {
+            resident_bytes: 0,
+            memory: Arc::new(
+                chat.entries
+                    .iter()
+                    .map(wire::entry_memory)
+                    .collect::<Result<_, _>>()
+                    .map_err(|error| error.to_string())?,
+            ),
             entries: Arc::new(
                 chat.entries
                     .iter()
@@ -31,25 +41,47 @@ impl PreparedBudget {
 }
 #[derive(Default)]
 pub struct HistoryBudget {
+    memory: Vec<usize>,
     entries: Vec<usize>,
 }
 impl HistoryBudget {
+    pub fn resident_bytes(&self) -> usize {
+        self.memory.iter().sum()
+    }
     pub fn restored(prepared: Option<&PreparedBudget>) -> Self {
         Self {
+            memory: prepared.map_or_else(Vec::new, |prepared| (*prepared.memory).clone()),
             entries: prepared.map_or_else(Vec::new, |prepared| (*prepared.entries).clone()),
         }
     }
     pub fn refresh(&mut self, entries: &[Entry], dirty: &[usize]) -> Result<(), String> {
         let old = self.entries.len();
         self.entries.resize(entries.len(), 0);
+        self.memory.resize(entries.len(), 0);
         for index in (old..entries.len())
             .chain(dirty.iter().copied())
             .filter(|index| *index < entries.len())
         {
+            self.memory[index] =
+                wire::entry_memory(&entries[index]).map_err(|error| error.to_string())?;
             self.entries[index] =
                 wire::entry_size(&entries[index]).map_err(|error| error.to_string())?;
         }
         Ok(())
+    }
+    pub fn validate_memory(
+        &self,
+        metadata: &SavedChat,
+        prompts: impl Iterator<Item = usize>,
+    ) -> Result<(), String> {
+        let base = size::structural_size(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
+            .map_err(|error| error.to_string())?;
+        let rows = &self.memory[self.memory.len().saturating_sub(MAX_SAVED_ENTRIES)..];
+        let (count, prompts) =
+            prompts.fold((0, 0), |(count, total), bytes| (count + 1, total + bytes));
+        super::check_memory(
+            base + rows.iter().sum::<usize>() + prompts + if count == 0 { 0 } else { 2048 },
+        )
     }
     /// Metadata has empty entries and queue; cached elements fill those arrays exactly.
     pub fn validate(

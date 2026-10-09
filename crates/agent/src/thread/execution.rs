@@ -53,6 +53,7 @@ impl AgentThread {
         cx.background_executor()
             .spawn(jobs::run(executor, program, state, cancel, timer))
             .detach();
+        self.start_execution_watch(cx);
         let terminal = request.terminal_id.clone();
         let yield_ms = request.yield_ms.unwrap_or(1000);
         self.wait_command(terminal, id, yield_ms, call, cx);
@@ -164,7 +165,10 @@ impl AgentThread {
         })
     }
 
-    pub(super) fn revoke_executions(&mut self, cx: &gpui_kit::App) {
+    pub(crate) fn revoke_executions(&mut self, cx: &gpui_kit::App) {
+        if self.executions.active().next().is_none() && self.live_commands.is_empty() {
+            return;
+        }
         let resolved = self.resolved(cx);
         let revoked = self
             .executions
@@ -191,7 +195,39 @@ impl AgentThread {
         }
     }
 
+    fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
+        if self.execution_watch.is_some() {
+            return;
+        }
+        self.execution_watch = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                let active = this
+                    .update(cx, |this, cx| {
+                        if !cx.ai_enabled() {
+                            this.cancel_execution();
+                        } else {
+                            this.revoke_executions(cx);
+                        }
+                        if this.executions.active().next().is_none() {
+                            this.execution_watch = None;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        }));
+    }
+
     pub(super) fn cancel_execution(&mut self) {
+        self.execution_watch = None;
         self.executions.cancel_all();
         for lease in self.live_commands.values() {
             lease.cancel();

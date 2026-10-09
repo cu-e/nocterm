@@ -15,6 +15,7 @@ pub(crate) struct QueuedPrompt {
     pub image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
     pub attachments: Vec<Attachment>,
     pub encoded_len: usize,
+    pub memory_len: usize,
 }
 
 impl QueuedPrompt {
@@ -42,7 +43,9 @@ impl QueuedPrompt {
                 _ => None,
             })
             .collect();
+        let memory_len = nocterm_ai::history::prompt_memory(&saved).unwrap_or(usize::MAX);
         Self {
+            memory_len,
             saved: Arc::new(saved),
             attachments,
             image_keys: Arc::new(image_keys),
@@ -94,6 +97,9 @@ impl AgentThread {
         replace: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<bool, String> {
+        if self.archive.is_some() {
+            return Err("Wait for the saved chat to finish loading.".into());
+        }
         if !cx.ai_enabled() || self.auth_required || self.ended() {
             return Ok(false);
         }
@@ -133,12 +139,20 @@ impl AgentThread {
         } else {
             queue.push(prompt);
         }
+        if queue.len() > 1024
+            || self.composer.images.len() > 128
+            || saved_attachment_count(&queue) > 1024
+        {
+            return Err("Too many queued messages, images or attachments in this chat.".into());
+        }
         self.refresh_storage_budget()?;
         let mut metadata = self.history_metadata(cx);
         // Sending moves ordinary text into the queue: budget it once.
         if replace.is_none() {
             metadata.draft = None;
         }
+        self.storage_budget
+            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
         self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
         self.composer.accept(queue, replace.is_some());
@@ -203,6 +217,14 @@ pub(crate) fn restore_attachments(values: &[SavedAttachment]) -> Vec<Attachment>
             SavedAttachment::LocalTerminal(title) => Attachment::UnavailableLocal(title.clone()),
         })
         .collect()
+}
+
+fn saved_attachment_count(queue: &[QueuedPrompt]) -> usize {
+    queue
+        .iter()
+        .map(|prompt| prompt.saved.attachments.len())
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

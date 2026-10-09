@@ -22,3 +22,23 @@ features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called
 outside workspace updates, because opening a connection updates the workspace.
+
+Saved history starts as a catalogue of at most 200 metadata rows, with transcript
+files as the source of truth and rebuildable metadata sidecars. Opening or
+editing a row loads its document in the background. A shared loading permit
+bounds hydration and archive search, including payloads awaiting GUI delivery;
+inactive, clean documents can be evicted under a conservative 64 MiB resident
+budget. Collection limits and a structural preflight also bound allocation from
+small JSON elements, independently of the 32 MiB file limit.
+
+The client supplies a saved session's directory before connection startup.
+Background startup resolves and validates that directory once, and the resulting
+root is used for the process, sandbox and resumed or fresh ACP session. Dormant
+documents have no maintenance timer. Workspace events revoke execution access;
+an execution watchdog runs only while structured commands are active.
+
+Quit freezes normal writers and captures final immutable documents and deletion
+tombstones before windows disappear. Serialization, ordered disk writes and
+process cleanup then run in the background without consulting the application.
+Active and already-closing processes start cleanup concurrently. Persistence and
+cleanup share a bounded shutdown deadline; failures and timeouts are logged.

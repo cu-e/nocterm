@@ -28,6 +28,11 @@ impl SessionClient for ThreadClient {
         let thread = thread.read(cx);
         Some(ClientState {
             chat_id: thread.chat_id.clone(),
+            workdir: thread
+                .restore
+                .as_ref()
+                .filter(|restore| !thread.state.entries.is_empty() && restore.workdir.is_absolute())
+                .map(|restore| restore.workdir.clone()),
             agent_id: thread.agent_id.clone(),
             session: thread.session().clone(),
             busy: thread.session_busy(),

@@ -118,6 +118,13 @@ impl AgentPanel {
                         if panel.composer.revision != revision {
                             return;
                         }
+                        if panel.current().unwrap().read(cx).archive.is_some() {
+                            panel.composer.loading = Some((id, String::new()));
+                            panel
+                                .input
+                                .update(cx, |input, cx| input.set_value("", window, cx));
+                            return;
+                        }
                         let draft = panel
                             .current()
                             .unwrap()

@@ -25,7 +25,38 @@ impl AgentPanel {
             .iter()
             .position(|thread| thread.entity_id() == id);
         self.reset_chat_view(cx);
+        if let Some(thread) = self
+            .current()
+            .filter(|thread| thread.read(cx).archive.is_some())
+        {
+            let panel = cx.weak_entity();
+            let revision = self.composer.revision;
+            thread.update(cx, |thread, cx| {
+                thread.load_archive(cx, move |_, cx| {
+                    cx.defer(move |cx| {
+                        let _ = panel.update(cx, |panel, cx| {
+                            if panel
+                                .current()
+                                .is_some_and(|thread| thread.entity_id() == id)
+                            {
+                                if panel.composer.revision == revision {
+                                    panel.load_composer(cx);
+                                } else {
+                                    let text = panel.input.read(cx).value().to_string();
+                                    if let Some(thread) = panel.current() {
+                                        thread.update(cx, |thread, cx| thread.set_draft(text, cx));
+                                    }
+                                }
+                            }
+                            panel.trim_resident_history(cx);
+                            cx.notify();
+                        });
+                    });
+                })
+            });
+        }
         self.load_composer(cx);
+        self.trim_resident_history(cx);
         cx.notify();
     }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -130,27 +161,69 @@ impl AgentPanel {
         if !cx.ai_enabled() {
             return;
         }
-        let Some(mut chats) =
-            Runtime::global(cx).update(cx, |runtime, _| runtime.take_saved_chats())
-        else {
-            return;
-        };
-        if chats.is_empty() {
-            return;
-        }
-        chats.reverse();
-        let restored: Vec<_> = chats
-            .into_iter()
-            .map(|chat| {
+        let (chats, catalog) = Runtime::global(cx).update(cx, |runtime, _| {
+            (runtime.take_saved_chats(), runtime.take_saved_catalog())
+        });
+        let mut restored = Vec::new();
+        if let Some(chats) = chats {
+            for chat in chats.into_iter().rev() {
                 let thread = cx.new(|cx| AgentThread::restored(chat, self.workspace.clone(), cx));
                 self.track(&thread, window, cx);
-                thread
-            })
-            .collect();
+                restored.push(thread);
+            }
+        }
+        if let Some(catalog) = catalog {
+            for summary in catalog.into_iter().rev() {
+                if self
+                    .threads
+                    .iter()
+                    .chain(&restored)
+                    .any(|thread| thread.read(cx).chat_id == summary.id)
+                {
+                    continue;
+                }
+                let thread =
+                    cx.new(|cx| AgentThread::archived(summary, self.workspace.clone(), cx));
+                self.track(&thread, window, cx);
+                restored.push(thread);
+            }
+        }
         let count = restored.len();
         self.threads.splice(0..0, restored);
         self.active = self.active.map(|active| active + count);
+        if count > 0 {
+            self.search_archives(cx);
+        }
         cx.notify();
+    }
+    pub(super) fn trim_resident_history(&mut self, cx: &mut Context<Self>) {
+        const BUDGET: usize = 64 * 1024 * 1024;
+        let active = self.current().map(|thread| thread.entity_id());
+        let mut resident: usize = self
+            .threads
+            .iter()
+            .map(|thread| thread.read(cx).resident_history_bytes())
+            .sum();
+        let mut candidates = self.threads.clone();
+        candidates.sort_by_key(|thread| thread.read(cx).updated);
+        for thread in candidates {
+            if resident <= BUDGET {
+                break;
+            }
+            if Some(thread.entity_id()) == active {
+                continue;
+            }
+            let bytes = thread.read(cx).resident_history_bytes();
+            let query = self.history_search.read(cx).value().trim().to_lowercase();
+            let matched = !query.is_empty() && thread.read(cx).state.mentions(&query);
+            let chat_id = thread.read(cx).chat_id.clone();
+            if thread.update(cx, |thread, cx| thread.evict_history(cx)) {
+                resident = resident.saturating_sub(bytes);
+                if matched {
+                    self.archive_matches.insert(chat_id);
+                }
+            }
+        }
     }
     /// Explicit activation is reserved for work, never for opening history.
     #[cfg(test)]
@@ -173,7 +246,11 @@ impl AgentPanel {
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.window = Some(handle));
         self.subscriptions
-            .push(cx.observe_in(thread, window, |this, _, window, cx| {
+            .push(cx.observe_in(thread, window, |this, loaded, window, cx| {
+                this.trim_resident_history(cx);
+                loaded.update(cx, |thread, _| {
+                    thread.archive_permit = None;
+                });
                 this.refresh_commands(window, cx);
                 let panel = cx.weak_entity();
                 window.defer(cx, move |window, cx| {

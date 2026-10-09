@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 use crate::{acp, thread::Entry, time::now};
 
 mod budget;
+mod catalog;
+mod decode;
+mod loading;
+mod preflight;
+pub use catalog::{ChatSummary, load, load_catalog};
+pub use loading::{HistoryGate, HistoryPermit};
 mod size;
 mod wire;
 pub use budget::{HistoryBudget, PreparedBudget};
@@ -40,9 +46,9 @@ pub enum SavedAttachment {
 pub struct SavedPrompt {
     pub id: u64,
     pub text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "decode::images")]
     pub images: Vec<acp::ContentBlock>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "decode::attachments")]
     pub attachments: Vec<SavedAttachment>,
 }
 
@@ -80,16 +86,31 @@ pub struct SavedChat {
     pub draft: Option<String>,
     /// Seconds since the Unix epoch.
     pub updated: u64,
+    #[serde(deserialize_with = "decode::entries")]
     pub entries: Vec<Entry>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "decode::prompts"
+    )]
     pub queue: Vec<SavedPrompt>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "decode::attachments"
+    )]
     pub attachments: Vec<SavedAttachment>,
     /// When each entry began, aligned with `entries`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "decode::times"
+    )]
     pub times: Vec<u64>,
     #[serde(skip)]
     prepared: Option<PreparedBudget>,
+    #[serde(skip)]
+    archived_draft: bool,
 }
 
 impl SavedChat {
@@ -113,15 +134,48 @@ impl SavedChat {
             attachments: Vec::new(),
             times: Vec::new(),
             prepared: None,
+            archived_draft: false,
         }
     }
 
+    /// A draft edit made before the archived transcript has been hydrated.
+    pub fn archive_draft(id: String, agent_id: String, text: String, updated: u64) -> Self {
+        let mut chat = Self::new(agent_id);
+        chat.id = id;
+        chat.draft = (!text.is_empty()).then_some(text);
+        chat.updated = updated;
+        chat.archived_draft = true;
+        chat
+    }
     /// Reject a prompt before accepting it if it could not be read back.
     pub fn validate_size(&self) -> Result<(), String> {
+        self.validate_collections()?;
+        let queue = (!self.queue.is_empty()).then_some(&self.queue);
+        check_memory(
+            size::structural_size(&wire::Wire::new(self, queue))
+                .map_err(|error| error.to_string())?,
+        )?;
         let queue = (!self.queue.is_empty()).then_some(&self.queue);
         check_size(
             size::encoded_len(&wire::Wire::new(self, queue)).map_err(|error| error.to_string())?,
         )
+    }
+    fn validate_collections(&self) -> Result<(), String> {
+        if self.queue.len() > 1024
+            || self.attachments.len() > 1024
+            || self
+                .queue
+                .iter()
+                .any(|prompt| prompt.images.len() > 128 || prompt.attachments.len() > 1024)
+        {
+            return Err("This chat exceeds the saved collection limit.".into());
+        }
+        Ok(())
+    }
+    pub fn resident_bytes(&self) -> usize {
+        self.prepared
+            .as_ref()
+            .map_or(0, |prepared| prepared.resident_bytes)
     }
     pub fn prepared_budget(&self) -> Option<&PreparedBudget> {
         self.prepared.as_ref()
@@ -136,6 +190,16 @@ impl SavedChat {
     pub fn bounded_entries(entries: &[Entry]) -> Vec<Entry> {
         wire::clone_entries(entries)
     }
+}
+fn check_memory(bytes: usize) -> Result<(), String> {
+    if bytes > preflight::LIMIT {
+        Err("This chat exceeds the structural memory limit. Shorten the message or remove attachments.".into())
+    } else {
+        Ok(())
+    }
+}
+pub fn prompt_memory(prompt: &SavedPrompt) -> Result<usize, String> {
+    size::structural_size(prompt).map_err(|error| error.to_string())
 }
 fn check_size(bytes: usize) -> Result<(), String> {
     if bytes as u64 > MAX_FILE_BYTES {
@@ -163,16 +227,39 @@ pub fn prompt_size(prompt: &SavedPrompt) -> Result<usize, String> {
 }
 /// Called on the background writer; one physical serialization, followed by the size check.
 pub fn save_shared(dir: &Path, chat: &SharedChat) -> Result<(), String> {
+    if chat.metadata.archived_draft {
+        let mut original = load(dir, &chat.id)?;
+        original.draft = chat.metadata.draft.clone();
+        original.updated = chat.updated;
+        return save(dir, &original);
+    }
+    if chat.queue.len() > 1024
+        || chat
+            .queue
+            .iter()
+            .any(|prompt| prompt.images.len() > 128 || prompt.attachments.len() > 1024)
+    {
+        return Err("This chat exceeds the saved collection limit.".into());
+    }
+    chat.metadata.validate_collections()?;
     let prompts = wire::Prompts(&chat.queue);
     let queue = (!chat.queue.is_empty()).then_some(&prompts);
-    write(dir, &chat.metadata, &wire::Wire::new(&chat.metadata, queue))
+    write(
+        dir,
+        &chat.metadata,
+        &wire::Wire::new(&chat.metadata, queue),
+        !chat.queue.is_empty(),
+    )
 }
-fn write(dir: &Path, chat: &SavedChat, value: &impl Serialize) -> Result<(), String> {
+fn write(dir: &Path, chat: &SavedChat, value: &impl Serialize, queued: bool) -> Result<(), String> {
     let path = file(dir, &chat.id).ok_or("invalid chat id")?;
     let text = serde_json::to_string(value).map_err(|error| error.to_string())?;
     check_size(text.len())?;
+    preflight::check(text.as_bytes())?;
     nocterm_core::paths::ensure_private_dir(dir).map_err(|error| error.to_string())?;
-    nocterm_core::persist::save_text(&path, &text).map_err(|error| error.to_string())
+    nocterm_core::persist::save_text(&path, &text).map_err(|error| error.to_string())?;
+    catalog::update_cache(dir, chat, queued);
+    Ok(())
 }
 
 /// Whether `id` can name a chat file: a UUID, nothing that walks paths.
@@ -186,8 +273,17 @@ fn file(dir: &Path, id: &str) -> Option<PathBuf> {
 
 /// Writes `chat` into `dir`, creating `dir` private to the user.
 pub fn save(dir: &Path, chat: &SavedChat) -> Result<(), String> {
+    if chat.archived_draft {
+        return Err("An archived draft patch requires the shared document writer.".into());
+    }
+    chat.validate_collections()?;
     let queue = (!chat.queue.is_empty()).then_some(&chat.queue);
-    write(dir, chat, &wire::Wire::new(chat, queue))
+    write(
+        dir,
+        chat,
+        &wire::Wire::new(chat, queue),
+        !chat.queue.is_empty(),
+    )
 }
 
 /// Removes the chat `id` from `dir`; a missing file is not an error.
@@ -195,49 +291,33 @@ pub fn delete(dir: &Path, id: &str) -> Result<(), String> {
     let path = file(dir, id).ok_or("invalid chat id")?;
     match std::fs::remove_file(path) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
-        _ => Ok(()),
+        _ => {
+            catalog::delete_cache(dir, id);
+            Ok(())
+        }
     }
 }
 
 /// The chats saved in `dir`, pinned first, then newest first. Unreadable
 /// files are skipped.
 pub fn load_all(dir: &Path) -> Vec<SavedChat> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut chats: Vec<SavedChat> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "json")
-                && entry
-                    .metadata()
-                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_FILE_BYTES)
+    let mut bytes = 0;
+    load_catalog(dir)
+        .into_iter()
+        .filter_map(|row| {
+            // Compatibility API for callers needing payloads; production uses the catalog.
+            if bytes + row.bytes > 64 * 1024 * 1024 {
+                return None;
+            }
+            let chat = load(dir, &row.id).ok()?;
+            let resident = chat.resident_bytes() as u64;
+            if bytes + resident > 64 * 1024 * 1024 {
+                return None;
+            }
+            bytes += resident;
+            Some(chat)
         })
-        .filter_map(|entry| {
-            let text = std::fs::read_to_string(entry.path()).ok()?;
-            let mut chat: SavedChat = serde_json::from_str(&text).ok()?;
-            chat.prepared = Some(PreparedBudget::new(&chat).ok()?);
-            let name_matches = entry
-                .path()
-                .file_stem()
-                .is_some_and(|stem| *stem == *chat.id);
-            (chat.version == VERSION
-                && valid_id(&chat.id)
-                && name_matches
-                && (!chat.entries.is_empty()
-                    || !chat.queue.is_empty()
-                    || chat.draft.as_ref().is_some_and(|draft| !draft.is_empty())
-                    || chat.name.is_some()
-                    || chat.pinned))
-                .then_some(chat)
-        })
-        .collect();
-    chats.sort_by_key(|chat| std::cmp::Reverse((chat.pinned, chat.updated)));
-    chats.truncate(MAX_RESTORED);
-    chats
+        .collect()
 }
 
 #[cfg(test)]

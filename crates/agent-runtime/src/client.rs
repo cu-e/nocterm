@@ -55,6 +55,8 @@ pub enum SessionEvent {
 /// What the runtime reads about a chat to schedule its connection.
 pub struct ClientState {
     pub chat_id: String,
+    /// Restored chat directory, resolved before process and sandbox launch.
+    pub workdir: Option<PathBuf>,
     pub agent_id: String,
     pub session: Option<acp::SessionId>,
     /// Whether the session is doing work that closing it would interrupt.

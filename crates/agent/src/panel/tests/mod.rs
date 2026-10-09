@@ -22,9 +22,16 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
+
+fn shutdown_runtime(cx: &mut TestAppContext) {
+    let task = cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+    cx.foreground_executor().block_test(task);
+}
 #[derive(Default)]
 struct Commands {
     sessions: AtomicU64,
+    new_dirs: Mutex<Vec<std::path::PathBuf>>,
+    restore_dirs: Mutex<Vec<std::path::PathBuf>>,
     session_gate: Mutex<Option<oneshot::Receiver<()>>>,
     close_gate: Mutex<Option<oneshot::Receiver<()>>>,
     closed: Mutex<Vec<acp::SessionId>>,
@@ -47,6 +54,7 @@ impl AgentCommands for Commands {
         &self,
         request: acp::NewSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        self.new_dirs.lock().unwrap().push(request.cwd.clone());
         self.servers.lock().unwrap().push(request.mcp_servers);
         let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
@@ -67,6 +75,7 @@ impl AgentCommands for Commands {
         &self,
         request: nocterm_ai::RestoreSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        self.restore_dirs.lock().unwrap().push(request.cwd.clone());
         self.restores
             .lock()
             .unwrap()
@@ -157,13 +166,23 @@ struct Connector {
     commands: Arc<Commands>,
     events: async_channel::Receiver<AgentEvent>,
     connects: AtomicUsize,
+    roots: Mutex<
+        Vec<(
+            std::path::PathBuf,
+            Option<nocterm_ai::sandbox::SandboxPolicy>,
+        )>,
+    >,
     event_senders: Mutex<Vec<async_channel::Sender<AgentEvent>>>,
 }
 impl AgentConnector for Connector {
     fn connect(
         &self,
-        _: ConnectRequest,
+        request: ConnectRequest,
     ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
+        self.roots
+            .lock()
+            .unwrap()
+            .push((request.working_directory, request.sandbox));
         self.connects.fetch_add(1, Ordering::SeqCst);
         let commands = self.commands.clone();
         let (sender, events) = async_channel::bounded(256);
@@ -372,6 +391,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             commands: commands.clone(),
             events: rx,
             connects: AtomicUsize::new(0),
+            roots: Default::default(),
             event_senders: Default::default(),
         });
         (
@@ -567,3 +587,5 @@ mod drafts;
 
 mod drafts_intersections;
 mod restoration_intersections;
+
+mod archive;

@@ -25,6 +25,7 @@ use std::{
 use widgets::HEADER_HEIGHT;
 
 mod approvals;
+mod archive_search;
 mod attach;
 mod attachments;
 mod chat;
@@ -76,6 +77,8 @@ pub(crate) struct AgentPanel {
     input: Entity<TextareaState>,
     search: Entity<InputState>,
     history_search: Entity<InputState>,
+    archive_search: Option<Task<()>>,
+    archive_matches: HashSet<String>,
     renaming: Option<history::Renaming>,
     menu: Option<MenuKind>,
     usage_focus: FocusHandle,
@@ -147,8 +150,9 @@ impl AgentPanel {
             cx.notify();
         });
         let history_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
-        let history_search_observer = cx.subscribe(&history_search, |_, _, event, cx| {
+        let history_search_observer = cx.subscribe(&history_search, |this, _, event, cx| {
             if matches!(event, InputEvent::Change) {
+                this.search_archives(cx);
                 cx.notify();
             }
         });
@@ -229,6 +233,8 @@ impl AgentPanel {
             input,
             search,
             history_search,
+            archive_search: None,
+            archive_matches: Default::default(),
             renaming: None,
             menu: None,
             usage_focus,

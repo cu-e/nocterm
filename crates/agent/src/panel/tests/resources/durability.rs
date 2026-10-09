@@ -54,7 +54,7 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     });
     // Native GPUI may drop this cleanup task after its 200ms grace period.
     // Durability must already hold when the synchronous quit callback returns.
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     let read = || nocterm_ai::history::load_all(&f._directory.path().join("chats"));
     assert_eq!(read().len(), 1);
     assert_eq!(read()[0].name.as_deref(), Some("latest unsaved document"));

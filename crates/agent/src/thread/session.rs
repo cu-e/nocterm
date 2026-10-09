@@ -41,12 +41,12 @@ impl AgentThread {
         let restore = self
             .restore
             .clone()
-            .filter(|restore| !self.state.entries.is_empty() && restore.workdir.is_absolute());
-        self.lease.as_mut().expect("starting lease").workdir = Some(
-            restore
-                .as_ref()
-                .map_or_else(|| workdir.clone(), |restore| restore.workdir.clone()),
-        );
+            .filter(|restore| !self.state.entries.is_empty() && restore.workdir.is_absolute())
+            .map(|mut restore| {
+                restore.workdir = workdir.clone();
+                restore
+            });
+        self.lease.as_mut().expect("starting lease").workdir = Some(workdir.clone());
         self.connecting_session = true;
         self.pending_controls.clear();
         let executor = cx.background_executor().clone();
