@@ -5,17 +5,17 @@ use super::*;
 impl Connections {
     pub(super) fn schedule_recents(&mut self, cx: &mut Context<Self>) {
         self.recents_revision = self.recents_revision.wrapping_add(1);
-        if self.closing || self.recents_file.is_none() || self.recents_writer.is_some() {
+        if self.queue.is_closing() || self.recents_file.is_none() || self.recents_writer.is_some() {
             return;
         }
         self.recents_writer = Some(cx.spawn(async move |this, cx| {
             loop {
-                let Ok((path, recents, revision, saving)) = this.update(cx, |this, _| {
+                let Ok((path, recents, revision, writing)) = this.update(cx, |this, _| {
                     (
                         this.recents_file.clone(),
                         this.recents.clone(),
                         this.recents_revision,
-                        this.saving.clone(),
+                        this.queue.begin_write(),
                     )
                 }) else {
                     return;
@@ -23,7 +23,7 @@ impl Connections {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        let _saving = saving;
+                        let _writing = writing;
                         path.map_or(Ok(()), |path| {
                             persist::save(&path, &recents).map_err(|error| error.to_string())
                         })

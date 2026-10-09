@@ -224,7 +224,7 @@ async fn bounded_queue_rejects_overflow_and_shutdown_without_blocking(cx: &mut T
             .unwrap_err()
             .contains("queue is full")
     );
-    writer.update(cx, |writer, _| writer.closing = true);
+    writer.update(cx, |writer, _| writer.queue.close());
     assert!(copy_on_select(cx).await.unwrap_err().contains("closing"));
     release.send(Ok(())).unwrap();
     assert_eq!(tasks.remove(0).await.unwrap(), 1);

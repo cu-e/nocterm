@@ -10,6 +10,7 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-core.workspace = true
 nocterm-session.workspace = true
 nocterm-ai.workspace = true
 nocterm-themes.workspace = true

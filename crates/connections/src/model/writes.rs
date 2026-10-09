@@ -1,5 +1,8 @@
 //! Profile mutations: validation, the ordered write queue and publishing.
 
+use gpui_kit::AsyncApp;
+use nocterm_core::persist::Rejected;
+
 use super::*;
 
 impl Connections {
@@ -75,132 +78,39 @@ impl Connections {
         }
         Ok(profiles)
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn enqueue(
         &mut self,
         mutation: Mutation,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
-        if self.closing {
-            return Task::ready(Err("Connections service is shutting down.".into()));
+        if self.queue.is_closing() {
+            return Task::ready(Err(rejection(Rejected::Closing)));
         }
-        let metadata_bytes = match &mutation {
-            Mutation::Move { group, .. } => group.as_ref().map_or(0, String::len),
-            Mutation::RenameGroup { from, to } => from.len().saturating_add(to.len()),
-            Mutation::Ungroup(group) | Mutation::DeleteGroup { group, .. } => group.len(),
-            Mutation::Credential { target, auth, .. } => target
-                .host
-                .len()
-                .saturating_add(target.user.len())
-                .saturating_add(
-                    serde_json::to_string(auth).map_or(MAX_PROFILE_BYTES + 1, |text| text.len()),
-                ),
-            _ => 0,
-        };
-        if metadata_bytes > MAX_PROFILE_BYTES {
-            return Task::ready(Err(
-                "Connection mutation exceeds the 64 KiB size limit.".into()
-            ));
+        if let Err(error) = check_size(&mutation) {
+            return Task::ready(Err(error));
         }
-        if let Mutation::Save { profile, .. } = &mutation {
-            match toml::to_string(profile.as_ref()) {
-                Ok(text) if text.len() <= MAX_PROFILE_BYTES => {}
-                Ok(_) => {
-                    return Task::ready(Err(
-                        "Connection fields exceed the 64 KiB size limit.".into()
-                    ));
-                }
-                Err(error) => return Task::ready(Err(error.to_string())),
-            }
-        }
-        if self.profiles_file.is_none() && self.pending.is_empty() {
+        if self.profiles_file.is_none() && self.queue.is_empty() {
             let result = self
                 .candidate(&mutation)
                 .map(|profiles| self.publish(profiles, &mutation, cx));
             return Task::ready(result);
         }
-        if self.pending.len() >= MAX_PENDING_WRITES {
-            return Task::ready(Err(
-                "Connection save queue is full. Wait for pending saves to finish and retry.".into(),
-            ));
-        }
         let (done, result) = oneshot::channel();
-        self.pending.push_back(PendingWrite { mutation, done });
-        if self.writer.is_none() {
-            self.writer = Some(cx.spawn(async move |this, cx| {
-                loop {
-                    let next = this.update(cx, |this, _| {
-                        let Some(pending) = this.pending.pop_front() else {
-                            this.writer = None;
-                            return None;
-                        };
-                        let candidate = this.candidate(&pending.mutation);
-                        let path = if candidate
-                            .as_ref()
-                            .is_ok_and(|profiles| profiles == &this.profiles)
-                        {
-                            None
-                        } else {
-                            this.profiles_file.clone()
-                        };
-                        Some(Write {
-                            pending,
-                            candidate,
-                            path,
-                            saving: this.saving.clone(),
-                            #[cfg(test)]
-                            writer: this.test_writer.clone(),
-                        })
-                    });
-                    let Ok(Some(write)) = next else {
-                        break;
-                    };
-                    let Write {
-                        pending,
-                        candidate,
-                        path,
-                        saving,
-                        #[cfg(test)]
-                        writer,
-                    } = write;
-                    let result = match candidate {
-                        Ok(profiles) => {
-                            let (profiles, result) = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    let _saving = saving;
-                                    #[cfg(test)]
-                                    let result = if let Some(writer) = writer {
-                                        writer(profiles.clone()).await
-                                    } else {
-                                        write_profiles(path, &profiles)
-                                    };
-                                    #[cfg(not(test))]
-                                    let result = write_profiles(path, &profiles);
-                                    (profiles, result)
-                                })
-                                .await;
-                            match result {
-                                Ok(()) => this
-                                    .update(cx, |this, cx| {
-                                        this.publish(profiles, &pending.mutation, cx);
-                                        Ok(())
-                                    })
-                                    .unwrap_or_else(|_| {
-                                        Err("Connections service closed during saving.".into())
-                                    }),
-                                Err(error) => Err(error),
-                            }
-                        }
-                        Err(error) => Err(error),
-                    };
-                    let _ = this.update(cx, |this, cx| {
-                        this.profile_persistence_error = result.clone().err();
-                        cx.notify();
-                    });
-                    let _ = pending.done.send(result);
-                }
-            }));
+        match self.queue.push(PendingWrite { mutation, done }) {
+            Err(rejected) => return Task::ready(Err(rejection(rejected))),
+            Ok(false) => {}
+            Ok(true) => {
+                self.writer = Some(cx.spawn(async move |this, cx| {
+                    while let Some(write) = next_write(&this, cx) {
+                        let (done, result) = save(write, &this, cx).await;
+                        let _ = this.update(cx, |this, cx| {
+                            this.profile_persistence_error = result.clone().err();
+                            cx.notify();
+                        });
+                        let _ = done.send(result);
+                    }
+                }))
+            }
         }
         cx.spawn(async move |_, _| {
             result
@@ -241,4 +151,108 @@ impl Connections {
         }
         cx.notify();
     }
+}
+
+fn rejection(rejected: Rejected) -> String {
+    match rejected {
+        Rejected::Closing => "Connections service is shutting down.",
+        Rejected::Full => {
+            "Connection save queue is full. Wait for pending saves to finish and retry."
+        }
+    }
+    .into()
+}
+
+/// Rejects mutations whose text would not fit in a profile.
+fn check_size(mutation: &Mutation) -> Result<(), String> {
+    let metadata_bytes = match mutation {
+        Mutation::Move { group, .. } => group.as_ref().map_or(0, String::len),
+        Mutation::RenameGroup { from, to } => from.len().saturating_add(to.len()),
+        Mutation::Ungroup(group) | Mutation::DeleteGroup { group, .. } => group.len(),
+        Mutation::Credential { target, auth, .. } => target
+            .host
+            .len()
+            .saturating_add(target.user.len())
+            .saturating_add(
+                serde_json::to_string(auth).map_or(MAX_PROFILE_BYTES + 1, |text| text.len()),
+            ),
+        _ => 0,
+    };
+    if metadata_bytes > MAX_PROFILE_BYTES {
+        return Err("Connection mutation exceeds the 64 KiB size limit.".into());
+    }
+    if let Mutation::Save { profile, .. } = mutation {
+        let text = toml::to_string(profile.as_ref()).map_err(|error| error.to_string())?;
+        if text.len() > MAX_PROFILE_BYTES {
+            return Err("Connection fields exceed the 64 KiB size limit.".into());
+        }
+    }
+    Ok(())
+}
+
+/// Rebases the oldest queued mutation on the profiles saved so far.
+fn next_write(this: &WeakEntity<Connections>, cx: &mut AsyncApp) -> Option<Write> {
+    this.update(cx, |this, _| {
+        let Some(pending) = this.queue.take() else {
+            this.writer = None;
+            return None;
+        };
+        let candidate = this.candidate(&pending.mutation);
+        let path = if candidate
+            .as_ref()
+            .is_ok_and(|profiles| profiles == &this.profiles)
+        {
+            None
+        } else {
+            this.profiles_file.clone()
+        };
+        Some(Write {
+            pending,
+            candidate,
+            path,
+            writing: this.queue.begin_write(),
+            #[cfg(test)]
+            writer: this.test_writer.clone(),
+        })
+    })
+    .ok()
+    .flatten()
+}
+
+/// Writes one mutation off the main thread and publishes it once saved.
+async fn save(
+    write: Write,
+    this: &WeakEntity<Connections>,
+    cx: &mut AsyncApp,
+) -> (oneshot::Sender<Result<(), String>>, Result<(), String>) {
+    let Write {
+        pending,
+        candidate,
+        path,
+        writing,
+        #[cfg(test)]
+        writer,
+    } = write;
+    let profiles = match candidate {
+        Ok(profiles) => profiles,
+        Err(error) => return (pending.done, Err(error)),
+    };
+    let (profiles, result) = cx
+        .background_executor()
+        .spawn(async move {
+            let _writing = writing;
+            #[cfg(test)]
+            if let Some(writer) = writer {
+                let result = writer(profiles.clone()).await;
+                return (profiles, result);
+            }
+            let result = write_profiles(path, &profiles);
+            (profiles, result)
+        })
+        .await;
+    let result = result.and_then(|()| {
+        this.update(cx, |this, cx| this.publish(profiles, &pending.mutation, cx))
+            .map_err(|_| "Connections service closed during saving.".to_string())
+    });
+    (pending.done, result)
 }

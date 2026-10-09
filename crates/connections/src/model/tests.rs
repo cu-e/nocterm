@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::VecDeque, fs};
 
 use super::*;
 
@@ -463,7 +463,7 @@ async fn queue_admission_and_shutdown_refusal_are_explicit(cx: &mut gpui_kit::Te
         (pending, rejected)
     });
     assert!(rejected.await.unwrap_err().contains("queue is full"));
-    entity.update(cx, |c, _| c.closing = true);
+    entity.update(cx, |c, _| c.queue.close());
     assert!(
         entity
             .update(cx, |c, cx| c.save_profile(profile("Shutdown"), cx))

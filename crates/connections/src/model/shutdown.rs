@@ -1,9 +1,6 @@
 //! Finishing connection writes when the application quits.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use futures::future::{Either, select};
 use gpui_kit::{App, Entity};
@@ -20,12 +17,12 @@ const BUDGET: Duration = Duration::from_millis(180);
 /// state captured here; queued profile writes can no longer run.
 pub(super) fn save_on_quit(connections: Entity<Connections>, cx: &mut App) {
     cx.on_app_quit(move |cx| {
-        let (saving, queued, recents) = connections.update(cx, |this, _| {
-            this.closing = true;
+        let (in_flight, queued, recents) = connections.update(cx, |this, _| {
+            let queued = this.queue.close();
             let recents = (this.recents_revision != this.recents_written_revision)
                 .then(|| this.recents_file.clone().map(|path| (path, this.recents.clone())))
                 .flatten();
-            (this.saving.clone(), this.pending.len(), recents)
+            (this.queue.in_flight(), queued, recents)
         });
         let executor = cx.background_executor().clone();
         async move {
@@ -33,8 +30,7 @@ pub(super) fn save_on_quit(connections: Entity<Connections>, cx: &mut App) {
                 tracing::warn!(queued, "connection changes queued at shutdown were not saved");
             }
             let deadline = Instant::now() + BUDGET;
-            // One reference is the model's, one is ours; the rest are writes.
-            while Arc::strong_count(&saving) > 2 {
+            while in_flight.count() > 0 {
                 if Instant::now() >= deadline {
                     tracing::warn!(
                         "timed out saving connections during shutdown; queued writes may be incomplete"

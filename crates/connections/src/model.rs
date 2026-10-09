@@ -1,8 +1,11 @@
-use std::{collections::VecDeque, path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use futures::channel::oneshot;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task, WeakEntity, Window};
-use nocterm_core::{Paths, persist};
+use nocterm_core::{
+    Paths,
+    persist::{self, WriteQueue, Writing},
+};
 use nocterm_session::{Auth, CredentialId, Target};
 use nocterm_workspace::{SessionSpec, Workspace};
 
@@ -64,7 +67,7 @@ struct Write {
     pending: PendingWrite,
     candidate: Result<Profiles, String>,
     path: Option<PathBuf>,
-    saving: Arc<()>,
+    writing: Writing,
     #[cfg(test)]
     writer: Option<ProfileWriter>,
 }
@@ -79,15 +82,11 @@ pub struct Connections {
     load_error: Option<String>,
     profile_persistence_error: Option<String>,
     recents_persistence_error: Option<String>,
-    pending: VecDeque<PendingWrite>,
+    queue: WriteQueue<PendingWrite>,
     writer: Option<Task<()>>,
     recents_writer: Option<Task<()>>,
     recents_revision: u64,
     recents_written_revision: u64,
-    /// Cloned into every disk write; a count above one means a write is in
-    /// flight. Shutdown polls it because the app cannot be read while quitting.
-    saving: Arc<()>,
-    closing: bool,
     #[cfg(test)]
     test_writer: Option<ProfileWriter>,
 }
@@ -117,13 +116,11 @@ impl Connections {
             load_error: None,
             profile_persistence_error: None,
             recents_persistence_error: None,
-            pending: VecDeque::new(),
+            queue: WriteQueue::new(MAX_PENDING_WRITES),
             writer: None,
             recents_writer: None,
             recents_revision: 0,
             recents_written_revision: 0,
-            saving: Arc::new(()),
-            closing: false,
             #[cfg(test)]
             test_writer: None,
         }

@@ -5318,6 +5318,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-ai",
+ "nocterm-core",
  "nocterm-design",
  "nocterm-session",
  "nocterm-settings",

@@ -31,7 +31,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
-| `nocterm-ui` | ui | `nocterm-ai`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
+| `nocterm-ui` | ui | `nocterm-ai`, `nocterm-core`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential vault and bounded worker service. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
@@ -125,6 +125,7 @@ graph TD
     nocterm_themes --> nocterm_design
     nocterm_transfers --> nocterm_session
     nocterm_ui --> nocterm_ai
+    nocterm_ui --> nocterm_core
     nocterm_ui --> nocterm_design
     nocterm_ui --> nocterm_session
     nocterm_ui --> nocterm_settings
