@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::{TerminalCall, acp};
 
-use super::{operation, parse};
+use super::{deserialize, operation, parse};
 
 const SERVER_PREFIX: &str = "nocterm-";
 
@@ -69,17 +69,23 @@ fn explicit_identity(call: &acp::ToolCall) -> Option<Option<Identity<'_>>> {
 /// Only exact names or a consistent explicit MCP envelope establish the request
 /// format. Neither establishes an execution destination.
 pub fn envelope(call: &acp::ToolCall, server: &str) -> Option<TerminalCall> {
-    envelope_of(call, registration(server)?)
+    envelope_of(call, registration(server)?, parse)
 }
 
-fn envelope_of(call: &acp::ToolCall, registration: &str) -> Option<TerminalCall> {
+/// `read` turns the tool's arguments into a request: strictly when matching
+/// requests the bridge executed, by shape alone when only showing one.
+fn envelope_of(
+    call: &acp::ToolCall,
+    registration: &str,
+    read: fn(&str, serde_json::Value) -> Option<TerminalCall>,
+) -> Option<TerminalCall> {
     let named = explicit_identity(call)?;
     if named.is_some_and(|named| named.registration != registration) {
         return None;
     }
     let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) else {
         // Hermes omits the input of a call without arguments.
-        return parse(named?.tool, json!({}));
+        return read(named?.tool, json!({}));
     };
     if ["server", "tool", "arguments"]
         .iter()
@@ -92,9 +98,9 @@ fn envelope_of(call: &acp::ToolCall, registration: &str) -> Option<TerminalCall>
         {
             return None;
         }
-        return parse(tool, input.get("arguments")?.clone());
+        return read(tool, input.get("arguments")?.clone());
     }
-    parse(named?.tool, input.clone())
+    read(named?.tool, input.clone())
 }
 
 pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
@@ -111,7 +117,9 @@ pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
     Some(named.tool)
 }
 
+/// What a Nocterm tool row asked for, for display. Requests the bridge
+/// rejected, such as a timeout beyond its limit, are shown all the same.
 pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
     let named = explicit_identity(call)??;
-    envelope_of(call, named.registration)
+    envelope_of(call, named.registration, deserialize)
 }

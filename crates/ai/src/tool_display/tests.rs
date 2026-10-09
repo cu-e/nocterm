@@ -142,7 +142,6 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
         json!({"server":"nocterm-170", "tool":"exec_command", "arguments":{"terminal_id":"t1", "program":"true"}}),
         json!({"server":"nocterm-17", "tool":"send_input", "arguments":{"terminal_id":"t1", "text":"foreign"}}),
         json!({"server":"nocterm-17", "arguments":{"terminal_id":"t1", "program":"true"}}),
-        json!({"terminal_id":"t1", "program":""}),
     ] {
         let call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
         assert!(requested_call(&call).is_none());
@@ -197,4 +196,23 @@ fn malformed_and_foreign_hermes_names_keep_the_provider_label() {
     call.name = Some("mcp__nocterm-4__run_command".into());
     assert!(envelope(&call, "nocterm-3").is_none());
     assert!(envelope(&call, "nocterm-4").is_none());
+}
+
+#[test]
+fn a_request_the_bridge_rejected_is_still_shown_but_never_matched() {
+    // From a Codex chat: a build with a timeout past the bridge's limit.
+    let arguments = json!({"terminal_id":"t1", "program":"/bin/sh",
+        "args":["-c","cargo build --release"], "timeout_ms":1_800_000, "yield_ms":1000});
+    for input in [
+        json!({"server":"nocterm-11", "tool":"exec_command", "arguments":arguments}),
+        json!({"terminal_id":"t1", "program":""}),
+    ] {
+        let call = acp::ToolCall::new("c1", "mcp.nocterm-11.exec_command").raw_input(input);
+        assert!(requested_call(&call).unwrap().validate().is_err());
+        assert!(header(&call).starts_with("Nocterm · Execute program"));
+        assert!(
+            envelope(&call, "nocterm-11").is_none(),
+            "only requests the bridge would run are matched to its records"
+        );
+    }
 }

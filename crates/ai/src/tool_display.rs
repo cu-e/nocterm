@@ -104,12 +104,15 @@ pub fn request(call: &TerminalCall) -> (&'static str, Value) {
     }
 }
 
+/// A request the bridge would execute: well formed and within its limits.
 pub fn parse(tool: &str, args: Value) -> Option<TerminalCall> {
     let call = deserialize(tool, args)?;
     call.validate().ok()?;
     Some(call)
 }
 
+/// A well-formed request, whether or not the bridge accepted it. Only for
+/// showing what an agent asked for: a rejected request is still worth reading.
 fn deserialize(tool: &str, args: Value) -> Option<TerminalCall> {
     let call = match tool {
         "list_terminals" if args == json!({}) => TerminalCall::ListTerminals,

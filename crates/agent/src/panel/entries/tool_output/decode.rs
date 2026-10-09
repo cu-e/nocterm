@@ -53,10 +53,18 @@ fn fenced(value: &Value) -> Option<Value> {
 }
 
 /// Hermes reports a failed MCP call as `{"error": message}`.
+/// Hermes `{"error": text}` and Codex `{"result": null, "error": {"message": text}}`.
 fn provider_error(value: &Value) -> Option<&str> {
     let object = value.as_object()?;
-    (object.len() == 1).then_some(())?;
-    object.get("error")?.as_str()
+    match object.len() {
+        1 => object.get("error")?.as_str(),
+        2 if object.get("result")?.is_null() => {
+            let error = object.get("error")?.as_object()?;
+            (error.len() == 1).then_some(())?;
+            error.get("message")?.as_str()
+        }
+        _ => None,
+    }
 }
 
 fn nested(value: &Value) -> Option<Value> {
