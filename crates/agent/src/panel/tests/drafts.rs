@@ -149,7 +149,11 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     .unwrap();
     cx.update(|cx| assert_eq!(thread.read(cx).composer.draft.as_deref(), Some("  ")));
     set_input(&f, "kept when offline", cx);
-    thread.update(cx, |thread, _| thread.auth_required = true);
+    thread.update(cx, |thread, _| {
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::SignInRequired)
+    });
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
@@ -160,7 +164,11 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
             Some("kept when offline")
         )
     });
-    thread.update(cx, |thread, _| thread.auth_required = false);
+    thread.update(cx, |thread, _| {
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::Ready)
+    });
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
@@ -253,7 +261,9 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let text = "x".repeat(17 * 1024 * 1024);
     thread.update(cx, |thread, cx| {
-        thread.generating = true;
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::Prompting);
         thread.set_draft(text.clone(), cx);
         assert_eq!(thread.submit(text, None, cx), Ok(true));
         assert!(thread.composer.draft.is_none());

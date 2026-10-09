@@ -100,7 +100,7 @@ impl AgentThread {
         if self.archive.is_some() {
             return Err("Wait for the saved chat to finish loading.".into());
         }
-        if !cx.ai_enabled() || self.auth_required || self.ended() {
+        if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.composer.images.is_empty() {
@@ -161,7 +161,7 @@ impl AgentThread {
             self.draft_changed = false;
         }
         self.persist(cx);
-        if !self.generating && replace.is_none() {
+        if !self.lifecycle.generating() && replace.is_none() {
             self.composer.queue_paused = false;
             self.dispatch_next(cx);
         }
@@ -170,7 +170,10 @@ impl AgentThread {
     }
 
     pub(crate) fn dispatch_next(&mut self, cx: &mut Context<Self>) {
-        if !self.composer.dispatchable() || self.generating || self.auth_required || self.ended() {
+        if !self.composer.dispatchable()
+            || self.lifecycle.generating()
+            || self.lifecycle.sign_in_required()
+        {
             return;
         }
         if self.persistence_error.is_some()
@@ -180,6 +183,9 @@ impl AgentThread {
         }
         if self.session().is_none() {
             self.request_activation(cx);
+            return;
+        }
+        if self.lifecycle.phase() != nocterm_ai::session::SessionPhase::Ready {
             return;
         }
         let Some(prompt) = self.composer.take_next() else {
@@ -195,13 +201,13 @@ impl AgentThread {
         if !self.composer.move_to_front(id) {
             return;
         }
-        if self.generating {
+        if self.lifecycle.generating() {
             self.stop(cx);
         }
         self.composer.queue_paused = false;
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
-        if !self.generating {
+        if !self.lifecycle.generating() {
             self.dispatch_next(cx);
         }
         cx.notify();

@@ -109,7 +109,7 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     });
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).auth_required);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
         assert_eq!(thread.read(cx).composer.queue[0].saved.text, "third");
     });
     assert_eq!(texts(&f), ["first", "second"]);
@@ -232,7 +232,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).auth_required);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
         assert_eq!(
             thread.read(cx).snapshot(cx).unwrap().session_id,
             saved.session_id

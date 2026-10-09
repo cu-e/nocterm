@@ -41,6 +41,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.name = Some("pending extracted snapshot".into());
@@ -178,6 +179,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.name = Some("extracted old snapshot".into());

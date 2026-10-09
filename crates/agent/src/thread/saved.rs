@@ -33,7 +33,6 @@ impl AgentThread {
         if self.pending_archive_draft.is_none() {
             self.updated = chat.updated;
         }
-        self.dormant = true;
         self.status = "Saved chat".into();
         self.state.entries = chat.entries;
         self.state.times = chat.times;

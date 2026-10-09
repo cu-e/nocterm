@@ -48,6 +48,10 @@ struct Commands {
     restore_errors: Mutex<std::collections::VecDeque<AgentError>>,
     /// The MCP servers each new session was given.
     servers: Mutex<Vec<Vec<acp::McpServer>>>,
+    /// The configuration options every session reports.
+    config: Mutex<Vec<acp::SessionConfigOption>>,
+    /// Each configuration change asked for.
+    config_requests: Mutex<Vec<acp::SetSessionConfigOptionRequest>>,
 }
 impl AgentCommands for Commands {
     fn new_session(
@@ -59,6 +63,7 @@ impl AgentCommands for Commands {
         let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
         let auth_required = self.auth_required.load(Ordering::SeqCst);
+        let config = self.config.lock().unwrap().clone();
         async move {
             if let Some(gate) = gate {
                 let _ = gate.await;
@@ -66,7 +71,8 @@ impl AgentCommands for Commands {
             if auth_required {
                 Err(AgentError::AuthRequired("Sign in to continue".into()))
             } else {
-                Ok(acp::NewSessionResponse::new(format!("s{id}")))
+                Ok(acp::NewSessionResponse::new(format!("s{id}"))
+                    .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
             }
         }
         .boxed()
@@ -113,9 +119,15 @@ impl AgentCommands for Commands {
     }
     fn set_config_option(
         &self,
-        _: acp::SetSessionConfigOptionRequest,
+        request: acp::SetSessionConfigOptionRequest,
     ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
-        async { Ok(Vec::new()) }.boxed()
+        let mut config = self.config.lock().unwrap();
+        if let Some(value) = nocterm_ai::session_config::ConfigValue::from_acp(&request.value) {
+            nocterm_ai::session_config::choose(&mut config, &request.config_id.0, &value);
+        }
+        let options = config.clone();
+        self.config_requests.lock().unwrap().push(request);
+        async move { Ok(options) }.boxed()
     }
     fn authenticate(&self, _: acp::AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
         self.authentications.fetch_add(1, Ordering::SeqCst);
@@ -477,6 +489,15 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         _directory: directory,
     }
 }
+/// Connects chats on their first message instead of when shown, for tests
+/// of what happens before a chat connects.
+fn lazy_start(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.warm_start = false)
+            .detach()
+    });
+    cx.run_until_parked();
+}
 fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(fixture.handle, |_, window, cx| {
         fixture.panel.update(cx, |panel, cx| {
@@ -572,6 +593,7 @@ mod tool_presentation;
 mod tool_sections;
 mod tool_wrappers;
 mod usage_dismissal;
+mod warm_start;
 
 mod flow;
 
@@ -586,6 +608,8 @@ mod execution;
 mod drafts;
 
 mod drafts_intersections;
+mod keep_alive;
+mod recovery;
 mod restoration_intersections;
 
 mod archive;

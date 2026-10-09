@@ -67,6 +67,8 @@ pub struct ClientState {
     pub activation_pending: bool,
     /// Whether the chat's previous session is still closing.
     pub closing: bool,
+    /// Whether a panel shows the chat; its idle connection is kept.
+    pub shown: bool,
 }
 
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.

@@ -65,7 +65,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     });
     cx.update(|cx| {
         let thread = thread.read(cx);
-        assert!(thread.dormant);
+        assert!(thread.dormant());
         assert_eq!(thread.state.entries.len(), 2);
         assert!(thread.session().is_none());
     });

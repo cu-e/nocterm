@@ -38,7 +38,7 @@ impl AgentThread {
         self.loading_archive = true;
         self.status = "Loading saved chat…".into();
         let id = self.chat_id.clone();
-        let epoch = self.epoch;
+        let ticket = self.lifecycle.ticket();
         let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
         let gate = Runtime::global(cx).read(cx).history_gate.clone();
         let loading = cx.background_executor().spawn(async move {
@@ -48,7 +48,7 @@ impl AgentThread {
         cx.spawn(async move |this, cx| {
             let (result, permit) = loading.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch
+                if !this.lifecycle.session_current(ticket)
                     || !cx.ai_enabled()
                     || this.archive.is_none()
                     || !Runtime::global(cx)

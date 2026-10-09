@@ -193,7 +193,7 @@ impl AgentThread {
         mut update: acp::SessionUpdate,
     ) -> ThreadChange {
         self.tool_displays
-            .prepare(self.turn, self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries.len());
         tool_display::strip_provider_meta(&mut update);
         let change = self.state.apply(update);
         let changed = self.tool_displays.normalize(&mut self.state.entries);
@@ -231,11 +231,11 @@ impl AgentThread {
             display.redact();
         }
         self.tool_displays
-            .prepare(self.turn, self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries.len());
         call.display_token = self
             .tool_displays
             .record_raw(server, (tool.into(), arguments), display)
-            .map(|id| (self.turn, id));
+            .map(|id| (self.lifecycle.turn(), id));
         self.normalize_tool_displays();
         cx.notify();
     }
@@ -246,8 +246,8 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         if !cx.ai_enabled()
-            || !self.accept_updates
-            || self.stopped
+            || !self.lifecycle.accepts_updates()
+            || self.lifecycle.stopped()
             || self.registration().as_ref().map(|value| value.id) != Some(rejected.registration_id)
         {
             return;
@@ -263,7 +263,7 @@ impl AgentThread {
             display.redact();
         }
         self.tool_displays
-            .prepare(self.turn, self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries.len());
         self.tool_displays
             .record_raw(server, (rejected.tool, rejected.arguments), display);
         self.normalize_tool_displays();
@@ -279,7 +279,7 @@ impl AgentThread {
     }
 
     pub(super) fn finalize_tool_displays(&mut self) {
-        if self.tool_displays.turn != Some(self.turn) {
+        if self.tool_displays.turn != Some(self.lifecycle.turn()) {
             return;
         }
         for record in &mut self.tool_displays.records {

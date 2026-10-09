@@ -61,7 +61,7 @@ impl AgentThread {
                                 .into(),
                         );
                     }
-                    if !this.accept_updates || !cx.ai_enabled() {
+                    if !this.lifecycle.accepts_updates() || !cx.ai_enabled() {
                         return Err("Command observation cancelled.".into());
                     }
                     let (_, entry, _) = this

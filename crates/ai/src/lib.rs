@@ -12,6 +12,8 @@ pub mod mcp;
 pub mod redact;
 pub mod registry;
 pub mod sandbox;
+pub mod session;
+pub mod session_config;
 mod settings;
 #[cfg(feature = "test-support")]
 pub mod testing;

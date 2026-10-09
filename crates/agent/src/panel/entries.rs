@@ -120,7 +120,7 @@ impl AgentPanel {
         let live = entry_is_live(
             &thread.read(cx).state.entries,
             index,
-            thread.read(cx).generating && thread.read(cx).accept_updates,
+            thread.read(cx).lifecycle.generating() && thread.read(cx).lifecycle.accepts_updates(),
         );
         let mut row = v_flex()
             .id(("agent-entry", index))
@@ -186,8 +186,9 @@ impl AgentPanel {
                 let full_text = text.clone();
                 let text = self.stream.text(index, text);
                 row = row.group(MESSAGE_GROUP).child(
-                    chat_markdown(("agent-message", index), safe_markdown(&text))
-                        .stream_fade(thread.read(cx).generating || self.stream.pending()),
+                    chat_markdown(("agent-message", index), safe_markdown(&text)).stream_fade(
+                        thread.read(cx).lifecycle.generating() || self.stream.pending(),
+                    ),
                 );
                 if !live {
                     row = row.child(self.render_message_actions(

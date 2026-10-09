@@ -2,7 +2,8 @@
 use super::AgentThread;
 use crate::runtime::{Runtime, SessionLease};
 use gpui_kit::Context;
-use nocterm_ai::{AgentCommands, BridgeRegistration, acp};
+use nocterm_ai::{AgentCommands, AiSettings, BridgeRegistration, acp, session::SessionPhase};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::{
     path::PathBuf,
     sync::{
@@ -40,10 +41,7 @@ impl AgentThread {
         OperationGuard(self.operation_count.clone())
     }
     pub(crate) fn session_busy(&self) -> bool {
-        self.connecting_session
-            || self.generating
-            || self.auth_required
-            || self.authenticating
+        self.lifecycle.busy()
             || !self.permissions.is_empty()
             || !self.tools.is_empty()
             || self.operation_count.load(Ordering::Acquire) != 0
@@ -51,18 +49,42 @@ impl AgentThread {
             || self.live_commands.values().any(|lease| lease.is_active())
             || self.composer.dispatchable()
     }
+    /// Asks the runtime for a connection. A failed chat recovers this way.
     pub(crate) fn request_activation(&mut self, cx: &mut Context<Self>) {
-        if self.archive.is_some() || self.activation_pending || self.lease.is_some() || self.ended()
-        {
+        if self.archive.is_some() || self.lease.is_some() || !self.lifecycle.queue() {
             return;
         }
-        self.activation_pending = true;
+        self.status_error = false;
         self.status = "Waiting for an agent slot…".into();
         let owner = super::client(&cx.entity());
         cx.defer(move |cx| {
             Runtime::global(cx).update(cx, |runtime, cx| runtime.request_activation(owner, cx));
         });
         cx.notify();
+    }
+    /// A panel starts or stops showing the chat. With warm start on, a
+    /// shown chat connects at once, so its model and options can be chosen
+    /// before the first message. A chat hidden before it was admitted gives
+    /// up its place unless it has messages to send. A failed or released
+    /// chat waits for the next message.
+    pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.shown = shown;
+        if !shown {
+            if !self.composer.dispatchable() && self.lifecycle.withdraw() {
+                self.status.clear();
+                cx.notify();
+            }
+            return;
+        }
+        // A chat restored from history, stopped by a failure or unable to
+        // save waits paused; it connects on the user's next message.
+        if cx.ai_enabled()
+            && cx.setting::<AiSettings>().sessions.warm_start
+            && self.lifecycle.phase() == SessionPhase::Detached
+            && !self.composer.queue_paused
+        {
+            self.request_activation(cx);
+        }
     }
     /// Detaches ACP without touching background terminals, execution jobs or shell leases.
     pub(crate) fn detach_session(&mut self, cx: &mut Context<Self>) {
@@ -73,11 +95,7 @@ impl AgentThread {
         if self.lease.take().is_none() {
             return;
         }
-        self.closing_session = true;
-        self.epoch += 1;
-        self.dormant = true;
-        self.connecting_session = false;
-        self.activation_pending = false;
+        self.lifecycle.detach();
         self.pending_controls.clear();
         self.grants.clear();
     }
@@ -85,19 +103,13 @@ impl AgentThread {
         self.composer.queue_paused = true;
         self.cancel_pending();
         self.finalize_tool_displays();
-        self.generating = false;
-        self.auth_required = false;
-        self.authenticating = false;
         self.detach_session(cx);
-        self.accept_updates = true;
-        self.stopped = false;
+        self.lifecycle.release();
         self.status = "Agent resources released. Conversation retained.".into();
         cx.notify();
     }
     pub(crate) fn begin_lease(&mut self, lease: SessionLease) {
         self.lease = Some(lease);
-        self.dormant = false;
-        self.activation_pending = false;
-        self.connecting_session = true;
+        self.lifecycle.leased();
     }
 }

@@ -67,7 +67,7 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     );
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
-        assert!(thread.read(cx).generating);
+        assert!(thread.read(cx).lifecycle.generating());
         assert!(!thread.read(cx).status_error);
         assert_eq!(
             thread.read(cx).composer.queue[0].saved.text,

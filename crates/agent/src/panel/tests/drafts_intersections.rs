@@ -95,7 +95,7 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
     adopt(&f, saved, cx);
     let shutdown = cx.update(|cx| {
         let thread = f.panel.read(cx).threads[0].clone();
-        assert!(thread.read(cx).dormant);
+        assert!(thread.read(cx).dormant());
         assert!(thread.read(cx).session().is_none());
         thread.update(cx, |thread, cx| {
             thread.set_draft("latest dormant text".into(), cx)

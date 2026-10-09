@@ -90,14 +90,17 @@ impl AgentThread {
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let epoch = self.epoch;
+        let ticket = self.lifecycle.ticket();
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
             let until = Instant::now() + Duration::from_millis(yield_ms);
             loop {
                 let result = this.update(cx, |this, cx| {
-                    if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
+                    if !this.lifecycle.session_current(ticket)
+                        || !this.lifecycle.accepts_updates()
+                        || !cx.ai_enabled()
+                    {
                         return Err("Chat is unavailable.".to_owned());
                     }
                     this.revoke_executions(cx);

@@ -11,16 +11,21 @@ pub struct AgentSessionSettings {
     /// Maximum warm idle sessions. Zero releases every idle session.
     #[schemars(extend("minimum" = 0, "maximum" = 64))]
     pub max_idle: usize,
-    /// Release a session after this many idle seconds.
-    #[schemars(extend("minimum" = 1, "maximum" = 3600))]
+    /// Release a session after this many idle seconds. The chat a panel
+    /// shows keeps its session regardless.
+    #[schemars(extend("minimum" = 1, "maximum" = 86400))]
     pub idle_timeout_secs: u64,
+    /// Connect a chat when a panel shows it, so its model and options can be
+    /// chosen before the first message. Off connects on the first message.
+    pub warm_start: bool,
 }
 impl Default for AgentSessionSettings {
     fn default() -> Self {
         Self {
             max_live: 4,
-            max_idle: 2,
-            idle_timeout_secs: 90,
+            max_idle: 3,
+            idle_timeout_secs: 1800,
+            warm_start: true,
         }
     }
 }
@@ -28,7 +33,7 @@ impl AgentSessionSettings {
     pub(crate) fn sanitize(&mut self) {
         self.max_live = self.max_live.clamp(1, 64);
         self.max_idle = self.max_idle.min(self.max_live);
-        self.idle_timeout_secs = self.idle_timeout_secs.clamp(1, 3600);
+        self.idle_timeout_secs = self.idle_timeout_secs.clamp(1, 86400);
     }
 }
 
@@ -91,6 +96,7 @@ mod tests {
                 max_live: 0,
                 max_idle: usize::MAX,
                 idle_timeout_secs: 0,
+                warm_start: false,
             };
             ai.resources = AgentResourceSettings {
                 memory_high_mb: u64::MAX,
@@ -105,7 +111,8 @@ mod tests {
             AgentSessionSettings {
                 max_live: 1,
                 max_idle: 1,
-                idle_timeout_secs: 1
+                idle_timeout_secs: 1,
+                warm_start: false,
             }
         );
         assert_eq!(ai.resources.memory_high_mb, 64);

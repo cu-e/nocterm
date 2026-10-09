@@ -384,7 +384,7 @@ impl AgentPanel {
                             .w_full()
                             .min_w_0()
                             .gap_1()
-                            .child(if chat.generating {
+                            .child(if chat.lifecycle.generating() {
                                 gpui_kit::component::spinner::Spinner::new()
                                     .small()
                                     .color(cx.theme().muted_foreground)

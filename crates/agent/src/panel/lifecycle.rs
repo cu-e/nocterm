@@ -20,10 +20,16 @@ impl AgentPanel {
         self.menu = None;
     }
     pub(super) fn select_thread(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
+        if let Some(previous) = self.current() {
+            previous.update(cx, |thread, cx| thread.set_shown(false, cx));
+        }
         self.active = self
             .threads
             .iter()
             .position(|thread| thread.entity_id() == id);
+        if let Some(current) = self.current() {
+            current.update(cx, |thread, cx| thread.set_shown(true, cx));
+        }
         self.reset_chat_view(cx);
         if let Some(thread) = self
             .current()
@@ -90,7 +96,7 @@ impl AgentPanel {
     pub(super) fn new_thread_connection(
         &mut self,
         id: String,
-        _fresh: bool,
+        restarting: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -108,7 +114,13 @@ impl AgentPanel {
             .and_then(|workspace| workspace.read(cx).active_terminal(cx));
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
-        let thread = cx.new(|cx| AgentThread::new(id, self.workspace.clone(), cx));
+        let thread = cx.new(|cx| {
+            let mut thread = AgentThread::new(id, self.workspace.clone(), cx);
+            if !restarting {
+                thread.adopt_agent_config(cx);
+            }
+            thread
+        });
         if let Some(id) = active {
             thread.update(cx, |thread, _| {
                 thread.composer.attachments.push(Attachment::Terminal(id))

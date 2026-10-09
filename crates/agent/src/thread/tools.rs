@@ -23,7 +23,7 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(180);
 impl AgentThread {
     pub(crate) fn handle_tool(&mut self, mut call: BridgeCall, cx: &mut Context<Self>) {
         if !cx.ai_enabled()
-            || !self.accept_updates
+            || !self.lifecycle.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             self.finish(call, Err("Chat is unavailable.".into()));
@@ -85,7 +85,7 @@ impl AgentThread {
                 .any(|(server, _)| server.server_id == id),
             (None, None) => true,
         };
-        if !cx.ai_enabled() || !self.accept_updates || !attached {
+        if !cx.ai_enabled() || !self.lifecycle.accepts_updates() || !attached {
             self.finish(
                 call,
                 Err(unreachable("Terminal was detached or chat is unavailable.")),
@@ -106,7 +106,7 @@ impl AgentThread {
     fn execute_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
         // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
         if !cx.ai_enabled()
-            || !self.accept_updates
+            || !self.lifecycle.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             self.finish(call, Err("Chat is unavailable.".into()));
@@ -212,7 +212,7 @@ impl AgentThread {
         };
         let workspace = self.workspace.clone();
         let profile = summary.id.to_string();
-        let epoch = self.epoch;
+        let ticket = self.lifecycle.ticket();
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
@@ -233,7 +233,7 @@ impl AgentThread {
                 return;
             };
             let _ = this.update(cx, |this, _| this.background.push(item));
-            let result = wait_until_connected(&this, &workspace, window, item, epoch, cx).await;
+            let result = wait_until_connected(&this, &workspace, window, item, ticket, cx).await;
             if result.is_err() {
                 close_background(&workspace, window, item, cx);
                 let _ = this.update(cx, |this, _| this.background.retain(|id| *id != item));
@@ -299,7 +299,7 @@ async fn wait_until_connected(
     workspace: &WeakEntity<nocterm_workspace::Workspace>,
     window: gpui_kit::AnyWindowHandle,
     item: EntityId,
-    epoch: u64,
+    ticket: nocterm_ai::session::Ticket,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
@@ -311,7 +311,10 @@ async fn wait_until_connected(
             .await;
         let step = this
             .update(cx, |this, cx| {
-                if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
+                if !this.lifecycle.session_current(ticket)
+                    || !this.lifecycle.accepts_updates()
+                    || !cx.ai_enabled()
+                {
                     return Err("The chat stopped before the server connected.".to_owned());
                 }
                 let entry = this

@@ -27,6 +27,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-agent-runtime = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

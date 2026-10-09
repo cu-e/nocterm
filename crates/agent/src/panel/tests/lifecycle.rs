@@ -163,6 +163,7 @@ fn favorites_latest_snapshot_is_persisted_in_order(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     new_chat(&f, cx);
     let (handle, workspace, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -267,7 +268,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(!thread.read(cx).generating);
+        assert!(!thread.read(cx).lifecycle.generating());
         assert!(!thread.read(cx).ended());
         assert_eq!(thread.read(cx).status, "Stopped");
         assert!(
@@ -306,7 +307,7 @@ fn authentication_controls_follow_required_state_and_create_session_after_click(
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).auth_required);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
         assert!(
             thread.read(cx).registration().is_some(),
             "auth-required must preserve bridge for retry"
@@ -319,7 +320,7 @@ fn authentication_controls_follow_required_state_and_create_session_after_click(
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(!thread.read(cx).auth_required);
+        assert!(!thread.read(cx).lifecycle.sign_in_required());
         assert!(thread.read(cx).session().is_some());
         assert_eq!(thread.read(cx).status, "Ready");
         assert!(window.try_find("authenticate-sign-in").is_none());
@@ -381,8 +382,8 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).auth_required);
-        assert!(!thread.read(cx).generating);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(!thread.read(cx).lifecycle.generating());
         let statuses = thread
             .read(cx)
             .state
@@ -411,8 +412,8 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).auth_required);
-        assert!(!thread.read(cx).authenticating);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(!thread.read(cx).lifecycle.signing_in());
         assert_eq!(thread.read(cx).status, "Sign-in failed");
         assert!(thread.read(cx).session().is_some());
         f.commands
@@ -425,7 +426,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(!thread.read(cx).auth_required);
+        assert!(!thread.read(cx).lifecycle.sign_in_required());
         assert!(thread.read(cx).session().is_some());
         assert!(window.try_find("authenticate-sign-in").is_none());
     })
@@ -481,8 +482,8 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).auth_required);
-        assert!(!thread.read(cx).authenticating);
+        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(!thread.read(cx).lifecycle.signing_in());
         assert_eq!(thread.read(cx).status, "Sign-in cancelled");
         window.click("authenticate-setup", cx);
     })
@@ -491,7 +492,7 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        assert!(!thread.read(cx).auth_required);
+        assert!(!thread.read(cx).lifecycle.sign_in_required());
         assert!(thread.read(cx).session().is_some());
         assert!(window.try_find("authenticate-setup").is_none());
     })
@@ -520,13 +521,12 @@ fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppCont
             let thread = f.panel.read(cx).current().unwrap();
             thread.update(cx, |thread, cx| {
                 thread.state.entries = ["pending", "in_progress", "completed", "failed"].into_iter().map(|status| nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":status,"title":"Tool", "status":status})).unwrap())).collect();
-                thread.generating = true;
-                thread.accept_updates = true;
+                thread.lifecycle.force_phase(nocterm_ai::session::SessionPhase::Prompting);
                 if fail { thread.fail("Adapter error", cx); } else { thread.stop(cx); }
                 for (index, entry) in thread.state.entries.iter().enumerate() {
                     let nocterm_ai::thread::Entry::Tool(call) = entry else { panic!() };
                     assert_eq!(call.status, if index == 2 { acp::ToolCallStatus::Completed } else { acp::ToolCallStatus::Failed });
-                    assert!(!crate::panel::widgets::entry_is_live(&thread.state.entries, index, thread.generating && thread.accept_updates));
+                    assert!(!crate::panel::widgets::entry_is_live(&thread.state.entries, index, thread.lifecycle.generating() && thread.lifecycle.accepts_updates()));
                 }
             });
         });

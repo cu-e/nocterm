@@ -1,3 +1,4 @@
+mod admission;
 mod client;
 mod documents;
 mod lease;
@@ -241,6 +242,30 @@ impl Runtime {
     ) {
         self.favorites.toggle(agent, option, value);
         self.save_state(cx);
+    }
+    /// Keeps the configuration options `agent` reported, for chats that
+    /// have not connected yet.
+    pub fn remember_options(
+        &mut self,
+        agent: &str,
+        options: &[nocterm_ai::acp::SessionConfigOption],
+        cx: &mut Context<Self>,
+    ) {
+        if self.favorites.remember_options(agent, options) {
+            self.save_state(cx);
+        }
+    }
+    /// Keeps a model or reasoning effort choice for `agent`'s next chats.
+    pub fn remember_choice(
+        &mut self,
+        agent: &str,
+        option: &nocterm_ai::acp::SessionConfigOption,
+        value: &nocterm_ai::session_config::ConfigValue,
+        cx: &mut Context<Self>,
+    ) {
+        if self.favorites.remember_choice(agent, option, value) {
+            self.save_state(cx);
+        }
     }
     /// Remembers `agent` as the one new chats start with by default.
     pub fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
