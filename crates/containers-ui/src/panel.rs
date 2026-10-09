@@ -23,7 +23,7 @@ use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, ShellSyntax, Workspace};
 
 use crate::{
-    model::{ContainersModel, Status},
+    model::{ActionIntent, ContainersModel, Status},
     ops::Op,
 };
 
@@ -142,8 +142,11 @@ impl ContainersPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let panel = cx.entity().downgrade();
         let Subject { kind, name, ids } = subject;
+        let Some(intent) = self.model.read(cx).intent(action, ids) else {
+            return;
+        };
+        let panel = cx.entity().downgrade();
         let description = match kind {
             Kind::Container => "It is stopped and deleted. Its volumes are kept.",
             Kind::Project => "Its containers are stopped and deleted. Their volumes are kept.",
@@ -152,15 +155,15 @@ impl ContainersPanel {
         let noun = kind.noun();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let panel = panel.clone();
-            let ids = ids.clone();
+            let intent = intent.clone();
             alert
                 .title(format!("Remove {noun} “{name}”?"))
                 .description(description)
                 .ok_text("Remove")
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
-                    let ids = ids.clone();
-                    let _ = panel.update(cx, |this, cx| this.perform(action, ids, window, cx));
+                    let intent = intent.clone();
+                    let _ = panel.update(cx, |this, cx| this.perform_intent(intent, window, cx));
                     true
                 })
         });
@@ -176,6 +179,29 @@ impl ContainersPanel {
         let done = self
             .model
             .update(cx, |model, cx| model.perform(action, ids, cx));
+        self.report_action(action, done, window, cx);
+    }
+
+    fn perform_intent(
+        &mut self,
+        intent: ActionIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = intent.action;
+        let done = self
+            .model
+            .update(cx, |model, cx| model.perform_intent(intent, cx));
+        self.report_action(action, done, window, cx);
+    }
+
+    fn report_action(
+        &self,
+        action: Action,
+        done: gpui_kit::Task<Result<(), ContainersError>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window
             .spawn(cx, async move |cx| {
                 if let Err(error) = done.await {

@@ -2,6 +2,7 @@ use super::*;
 
 impl Emulator {
     /// Writes the current viewport into `frame`.
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn snapshot(&self, frame: &mut Frame) {
         let content = self.term.renderable_content();
         let cols = usize::from(self.size.cols);

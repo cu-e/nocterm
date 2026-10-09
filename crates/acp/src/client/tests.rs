@@ -4,6 +4,7 @@ use serde_json::json;
 
 #[cfg(unix)]
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn legacy_models_use_real_set_model_and_preserve_selection_after_errors() {
     futures::executor::block_on(async {
         let directory = tempfile::tempdir().unwrap();
@@ -184,6 +185,7 @@ for line in sys.stdin:
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn sdk_channel_initializes_streams_permissions_and_config() {
     futures::executor::block_on(async {
         let (client_transport, agent_transport) = Channel::duplex();
@@ -245,7 +247,7 @@ fn sdk_channel_initializes_streams_permissions_and_config() {
                     }
                     AgentEvent::Permission { respond, .. } => {
                         assert!(streamed);
-                        let _ = respond.send(acp::RequestPermissionOutcome::Cancelled);
+                        respond.respond(acp::RequestPermissionOutcome::Cancelled);
                         return Ok::<_, acp::Error>(());
                     }
                     _ => panic!("Unexpected event"),
@@ -408,6 +410,7 @@ fn sdk_cancel_remains_dispatchable_during_generation() {
     });
 }
 #[test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn closes_sessions_only_when_agent_advertises_support() {
     for advertised in [false, true] {
         futures::executor::block_on(async {

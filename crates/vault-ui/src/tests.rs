@@ -5,7 +5,7 @@ use gpui_kit::{
     test::TestWindowExt as _,
 };
 use nocterm_session::Secret;
-use nocterm_settings::Settings;
+use nocterm_settings::SettingsDocument;
 use nocterm_ui::SettingsStore;
 use nocterm_vault::{
     DeviceAvailability, DeviceCapability, DeviceUnlockProvider, VaultError, VaultService,
@@ -37,7 +37,7 @@ fn setup_with_device(
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Settings::default()),
+            SettingsStore::in_memory(SettingsDocument::default()),
             cx,
         );
         let service = init_with_device_unlock(path, device, cx).unwrap();
@@ -280,7 +280,7 @@ fn embedded_form_checks_confirmation_and_clears_fields_before_async_create(
 
 #[gpui_kit::test]
 fn options_save_the_lock_delay_and_reject_values_out_of_range(cx: &mut TestAppContext) {
-    use nocterm_ui::ActiveSettings as _;
+    use nocterm_ui::SettingsExt as _;
     let directory = tempfile::tempdir().unwrap();
     let (handle, view, _) = setup(cx, directory.path().join("vault"));
     cx.update_window(handle, |_, window, cx| {
@@ -295,7 +295,7 @@ fn options_save_the_lock_delay_and_reject_values_out_of_range(cx: &mut TestAppCo
             view.save_auto_lock(cx);
             assert!(view.auto_lock_error.is_none());
         });
-        assert_eq!(cx.settings().vault.auto_lock_minutes, 30);
+        assert_eq!(cx.setting::<crate::VaultSettings>().auto_lock_minutes, 30);
     })
     .unwrap();
 }

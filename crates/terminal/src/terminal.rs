@@ -1,3 +1,4 @@
+mod find;
 mod input;
 mod output;
 mod presentation;
@@ -14,8 +15,9 @@ use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
     SessionError, Transport,
 };
-use nocterm_settings::{CursorShape, TerminalSettings};
-use nocterm_ui::{ActiveSettings as _, SettingsStore};
+use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
+use nocterm_ui::{CursorShape, TerminalSettings};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
@@ -143,9 +145,11 @@ impl Terminal {
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let options = emulator_options(&cx.settings().terminal);
+        let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
         let mut this = Self {
-            codec: crate::codec::TextCodec::new(cx.settings().terminal.charset),
+            codec: crate::codec::TextCodec::new(
+                cx.setting::<nocterm_ui::TerminalSettings>().charset,
+            ),
             input_error: RefCell::default(),
             text_error: None,
             recording: None,
@@ -174,7 +178,7 @@ impl Terminal {
             _pump: None,
             sync_timer: None,
             _settings: cx.observe_global::<SettingsStore>(|this, cx| {
-                let options = emulator_options(&cx.settings().terminal);
+                let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
                 this.emulator.set_options(options);
                 this.refresh_find(cx);
                 this.emit_output(cx);
@@ -232,6 +236,7 @@ impl Terminal {
     // ── Session ──────────────────────────────────────────────────────────────
 
     /// Opens a new session, replacing the current one.
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(&mut self, cx: &mut Context<Self>) {
         self.close();
         if let Err(error) = self.spec.options.validate() {
@@ -241,19 +246,18 @@ impl Terminal {
             );
             return;
         }
-        let settings = cx.settings();
         self.codec = crate::codec::TextCodec::new(
             self.spec
                 .options
                 .charset
-                .unwrap_or(settings.terminal.charset),
+                .unwrap_or(cx.setting::<TerminalSettings>().charset),
         );
         self.recording_options = self
             .spec
             .options
             .logging
             .clone()
-            .unwrap_or_else(|| settings.logging.clone());
+            .unwrap_or_else(|| cx.setting::<LoggingOptions>().clone());
         if self.local_transport.is_some() {
             self.recording_options.auto_start = false;
         }
@@ -263,12 +267,12 @@ impl Terminal {
             self.spec
                 .launch
                 .clone()
-                .unwrap_or_else(|| shell_launch(&settings.local))
+                .unwrap_or_else(|| shell_launch(cx.setting::<LocalShellSettings>()))
         } else {
             self.spec
                 .launch
                 .clone()
-                .unwrap_or_else(|| shell_launch(&settings.ssh.launch))
+                .unwrap_or_else(|| shell_launch(&cx.setting::<SshSettings>().launch))
         };
         self.shell_program = launch.program.clone().unwrap_or_else(|| {
             if self.local {
@@ -296,14 +300,14 @@ impl Terminal {
             );
             return;
         };
-        let settings = cx.settings();
+        let ssh = cx.setting::<SshSettings>().clone();
         let request = ConnectRequest {
             proxy: self
                 .spec
                 .options
                 .proxy
                 .clone()
-                .unwrap_or_else(|| settings.ssh.proxy.clone()),
+                .unwrap_or_else(|| ssh.proxy.clone()),
             launch,
             target: self.spec.target.clone(),
             auth: self.spec.auth.clone(),
@@ -312,10 +316,10 @@ impl Terminal {
                 .options
                 .term
                 .clone()
-                .unwrap_or_else(|| settings.terminal.term.clone()),
+                .unwrap_or_else(|| cx.setting::<TerminalSettings>().term.clone()),
             size: pty_size(self.emulator.size()),
-            connect_timeout: Duration::from_secs(settings.ssh.connect_timeout_secs.into()),
-            keepalive_interval: Some(settings.ssh.keepalive_interval_secs)
+            connect_timeout: Duration::from_secs(ssh.connect_timeout_secs.into()),
+            keepalive_interval: Some(ssh.keepalive_interval_secs)
                 .filter(|secs| *secs > 0)
                 .map(|secs| Duration::from_secs(secs.into())),
         };
@@ -430,8 +434,8 @@ impl Terminal {
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
                     if text.len() <= 1024 * 1024
-                        && cx.settings().terminal.clipboard_write
-                            == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
+                        && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                            == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                     {
                         cx.emit(TerminalEvent::ClipboardWrite(text));
                     }
@@ -575,199 +579,6 @@ impl Terminal {
     pub fn set_palette(&mut self, palette: Palette) {
         self.emulator.set_palette(palette);
     }
-
-    pub fn find(&self) -> &FindState {
-        &self.find
-    }
-
-    pub fn begin_find(
-        &mut self,
-        query: String,
-        direction: SearchDirection,
-        anchor: Option<SearchPoint>,
-        cx: &mut Context<Self>,
-    ) {
-        self.find_task = None;
-        self.emulator.clear_search();
-        self.find = FindState {
-            options: self.find.options,
-            query: query
-                .chars()
-                .take(nocterm_vt::MAX_SEARCH_QUERY + 1)
-                .collect(),
-            ..Default::default()
-        };
-        self.scan_find(direction, anchor, Duration::ZERO, cx);
-    }
-
-    pub fn set_find_options(&mut self, options: SearchOptions, cx: &mut Context<Self>) {
-        if self.find.options == options {
-            return;
-        }
-        self.find.options = options;
-        let anchor = self.find.result.active.map(|found| found.start);
-        self.scan_find(SearchDirection::Stay, anchor, Duration::ZERO, cx);
-    }
-
-    pub fn find_next(&mut self, previous: bool, cx: &mut Context<Self>) {
-        let anchor = self.find.result.active.map(|m| m.start);
-        self.scan_find(
-            if previous {
-                SearchDirection::Previous
-            } else {
-                SearchDirection::Next
-            },
-            anchor,
-            Duration::ZERO,
-            cx,
-        );
-    }
-
-    pub fn clear_find(&mut self, cx: &mut Context<Self>) {
-        self.find_task = None;
-        self.find = FindState {
-            options: self.find.options,
-            ..Default::default()
-        };
-        self.emulator.clear_search();
-        self.emit_output(cx);
-    }
-
-    fn refresh_find(&mut self, cx: &mut Context<Self>) {
-        if self.find.query.is_empty() {
-            return;
-        }
-        // A running task owns its restart throttle. Continuous output must not
-        // keep postponing the start of every attempt indefinitely.
-        if self.find.searching {
-            return;
-        }
-        let anchor = self.find.result.active.map(|m| m.start);
-        self.scan_find(
-            SearchDirection::Stay,
-            anchor,
-            Duration::from_millis(100),
-            cx,
-        );
-    }
-
-    fn scan_find(
-        &mut self,
-        direction: SearchDirection,
-        anchor: Option<SearchPoint>,
-        delay: Duration,
-        cx: &mut Context<Self>,
-    ) {
-        self.find_task = None;
-        self.find.error = None;
-        self.find.result = SearchResult::default();
-        self.emulator.clear_search();
-        if self.find.query.is_empty() {
-            self.find.searching = false;
-            self.find.result = SearchResult::default();
-            self.emit_output(cx);
-            return;
-        }
-        let mut scan = match self.emulator.search_with_options(
-            &self.find.query,
-            self.find.options,
-            direction,
-            anchor,
-        ) {
-            Ok(scan) => scan,
-            Err(error) => {
-                self.find.error = Some(error);
-                self.find.searching = false;
-                self.emit_output(cx);
-                return;
-            }
-        };
-        self.find.searching = true;
-        self.emit_output(cx);
-        self.find_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(delay).await;
-            let mut restart = delay != Duration::ZERO;
-            let mut previewed = None;
-            loop {
-                let progress = this.update(cx, |this, cx| {
-                    if restart {
-                        let Ok(fresh) = this.emulator.search_with_options(
-                            &this.find.query,
-                            this.find.options,
-                            direction,
-                            anchor,
-                        ) else {
-                            return SearchProgress::Invalidated;
-                        };
-                        scan = fresh;
-                        restart = false;
-                        previewed = None;
-                    }
-                    let progress = scan.step(&this.emulator, 4_096);
-                    if matches!(progress, SearchProgress::Searching)
-                        && let Some(found) = scan.provisional()
-                        && previewed != Some(found)
-                    {
-                        previewed = Some(found);
-                        this.find.result.active = Some(found);
-                        this.emulator.show_search_match(found);
-                        this.emit_output(cx);
-                    }
-                    if let SearchProgress::Failed(error) = &progress {
-                        this.find.error = Some(error.clone());
-                        this.find.result = SearchResult::default();
-                        this.find.searching = false;
-                        this.find_task = None;
-                        this.emulator.clear_search();
-                        this.emit_output(cx);
-                    }
-                    if let SearchProgress::Complete(result) = progress {
-                        this.find.result = result;
-                        this.find.searching = false;
-                        this.find_task = None;
-                        if let Some(active) = result.active
-                            && previewed != Some(active)
-                        {
-                            this.emulator.show_search_match(active);
-                        }
-                        this.emit_output(cx);
-                    }
-                    progress
-                });
-                match progress {
-                    Ok(SearchProgress::Work(work)) => {
-                        let result = cx
-                            .background_executor()
-                            .spawn(async move { work.run() })
-                            .await;
-                        let accepted =
-                            this.update(cx, |this, _| scan.accept_work(&this.emulator, result));
-                        if matches!(accepted, Ok(SearchProgress::Invalidated)) {
-                            restart = true;
-                            cx.background_executor()
-                                .timer(Duration::from_millis(100))
-                                .await;
-                        } else if accepted.is_err() {
-                            break;
-                        }
-                        // A batch can contain many short logical lines; no per-line timer.
-                    }
-                    Ok(SearchProgress::Searching) => {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(1))
-                            .await
-                    }
-                    Ok(SearchProgress::Invalidated) => {
-                        restart = true;
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
-                    }
-                    _ => break,
-                }
-            }
-        }));
-    }
 }
 
 impl Drop for Terminal {
@@ -797,7 +608,7 @@ pub(crate) fn emulator_options(settings: &TerminalSettings) -> EmulatorOptions {
     }
 }
 
-fn shell_launch(settings: &nocterm_settings::ShellSettings) -> nocterm_session::ShellLaunch {
+fn shell_launch(settings: &nocterm_session::ShellSettings) -> nocterm_session::ShellLaunch {
     nocterm_session::ShellLaunch {
         program: settings.program.clone(),
         args: settings.args.clone(),
@@ -807,318 +618,14 @@ fn shell_launch(settings: &nocterm_settings::ShellSettings) -> nocterm_session::
     }
 }
 
-#[cfg(test)]
-mod local_tests {
-    use super::*;
-    use futures::FutureExt as _;
-    use gpui_kit::{AppContext as _, TestAppContext};
-    use std::{path::Path, sync::Mutex};
-
-    struct FakeTransport(Arc<Mutex<Option<nocterm_session::SessionDriver>>>);
-    impl nocterm_session::Transport for FakeTransport {
-        fn open(&self, _: ConnectRequest) -> Session {
-            let (session, driver) = nocterm_session::channel(None);
-            *self.0.lock().unwrap() = Some(driver);
-            session
-        }
-    }
-
-    #[gpui_kit::test]
-    fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext) {
-        use std::{cell::RefCell, rc::Rc};
-        let result = Rc::new(RefCell::new(Vec::new()));
-        let captured = result.clone();
-        let terminal = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let mut settings = nocterm_settings::Settings::default();
-            settings.logging.auto_start = true;
-            nocterm_ui::init(
-                nocterm_ui::DesignTokens::builtin(),
-                SettingsStore::in_memory(settings),
-                cx,
-            );
-            cx.new(|cx| {
-                Terminal::new_local_command(
-                    nocterm_session::ShellLaunch {
-                        program: Some("test-agent".into()),
-                        args: vec!["--setup".into()],
-                        integration: false,
-                        ..Default::default()
-                    },
-                    "Auth Hermes".into(),
-                    Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
-                    move |reason, _| captured.borrow_mut().push(reason),
-                    cx,
-                )
-            })
-        });
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                assert_eq!(terminal.spec.title, "Auth Hermes");
-                assert_eq!(terminal.spec.launch.as_ref().unwrap().args, vec!["--setup"]);
-                assert!(!terminal.recording_options.auto_start);
-                terminal.handle_event(Event::Connected, cx);
-                terminal.start_recording(cx);
-                assert!(!terminal.is_recording());
-                terminal.handle_event(Event::Closed(CloseReason::Exited(Some(0))), cx);
-                terminal.disconnect(cx);
-            })
-        });
-        assert_eq!(*result.borrow(), vec![CloseReason::Exited(Some(0))]);
-    }
-
-    #[gpui_kit::test]
-    fn command_completion_reports_cancel_and_drop_cancels_receiver(cx: &mut TestAppContext) {
-        use futures::channel::oneshot;
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            nocterm_ui::init(
-                nocterm_ui::DesignTokens::builtin(),
-                SettingsStore::in_memory(Default::default()),
-                cx,
-            );
-        });
-        for disconnect in [true, false] {
-            let (send, receive) = oneshot::channel();
-            let terminal = cx.update(|cx| {
-                cx.new(|cx| {
-                    Terminal::new_local_command(
-                        nocterm_session::ShellLaunch::default(),
-                        "Auth".into(),
-                        Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
-                        move |reason, _| {
-                            let _ = send.send(reason);
-                        },
-                        cx,
-                    )
-                })
-            });
-            if disconnect {
-                cx.update(|cx| terminal.update(cx, |terminal, cx| terminal.disconnect(cx)));
-                assert_eq!(
-                    receive.now_or_never().unwrap().unwrap(),
-                    CloseReason::ClosedByUser
-                );
-            } else {
-                cx.update(|_| drop(terminal));
-                cx.run_until_parked();
-                assert!(receive.now_or_never().unwrap().is_err());
-            }
-        }
-    }
-
-    #[gpui_kit::test]
-    fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(
-        cx: &mut TestAppContext,
-    ) {
-        let driver = Arc::new(Mutex::new(None));
-        let captured = driver.clone();
-        let terminal = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let mut settings = nocterm_settings::Settings::default();
-            settings.local.program = Some("/bin/bash".into());
-            nocterm_ui::init(
-                nocterm_ui::DesignTokens::builtin(),
-                SettingsStore::in_memory(settings),
-                cx,
-            );
-            crate::init_local(
-                Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
-                cx,
-            );
-            cx.new(Terminal::new_local)
-        });
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.handle_event(Event::Connected, cx);
-                assert!(
-                    terminal
-                        .change_directory(Path::new("/tmp/a"), cx)
-                        .unwrap_err()
-                        .contains("busy")
-                );
-                terminal.handle_event(
-                    Event::Output(b"\x1b]7;file://localhost/home/egor\x07\x1b]133;A\x07".to_vec()),
-                    cx,
-                );
-                assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/egor")));
-                nocterm_ui::update_settings(cx, |s| s.local.program = Some("pwsh".into()))
-                    .now_or_never()
-                    .unwrap()
-                    .unwrap();
-                terminal
-                    .change_directory(Path::new("/tmp/a' $(id)"), cx)
-                    .unwrap();
-                assert!(
-                    terminal.change_directory(Path::new("/tmp/b"), cx).is_err(),
-                    "must wait for the next prompt"
-                );
-            })
-        });
-        let driver = driver.lock().unwrap().take().unwrap();
-        assert_eq!(
-            futures::executor::block_on(driver.next_command()),
-            Some(nocterm_session::Command::Input(
-                b"cd -- '/tmp/a'\\'' $(id)'\r".to_vec()
-            ))
-        );
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
-                terminal.send(b"unfinished".to_vec());
-                assert!(
-                    terminal
-                        .change_directory(Path::new("/tmp/c"), cx)
-                        .unwrap_err()
-                        .contains("unfinished")
-                );
-            })
-        });
-    }
-}
-
 mod program;
 mod pump;
 
 #[cfg(test)]
 mod credential_tests;
-
 #[cfg(test)]
-mod recording_tests {
-    use super::*;
-    use gpui_kit::{AppContext as _, TestAppContext};
-    use nocterm_session::{Auth, Command, Reply, SecretRequest, Target};
-    #[gpui_kit::test]
-    fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
-        cx: &mut TestAppContext,
-    ) {
-        use futures::FutureExt as _;
-        let (session, driver) = nocterm_session::channel(None);
-        let terminal = cx.update(|cx| {
-            gpui_kit::init(cx);
-            nocterm_ui::init(
-                nocterm_ui::DesignTokens::builtin(),
-                SettingsStore::in_memory(Default::default()),
-                cx,
-            );
-            cx.new(|cx| {
-                let mut terminal = Terminal::new(
-                    SessionSpec {
-                        profile: None,
-                        options: Default::default(),
-                        title: "test".into(),
-                        target: Target::new("me", "host", 22),
-                        auth: Auth::Password,
-                        launch: None,
-                        credential: None,
-                    },
-                    cx,
-                );
-                terminal.session = Some(session);
-                terminal.status = Status::Connected;
-                terminal
-            })
-        });
-        let paste = format!("\x1b[200~{}\x1b[201~", "x".repeat(4 * 1024 * 1024));
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.send_text(&paste, cx);
-                assert!(terminal.text_error().unwrap().contains("4 MiB"));
-            });
-        });
-        assert!(driver.next_command().now_or_never().is_none());
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.send_text("\x1b[200~small\x1b[201~", cx);
-                assert!(terminal.text_error().is_none());
-            })
-        });
-        assert_eq!(
-            futures::executor::block_on(driver.next_command()),
-            Some(Command::Input(b"\x1b[200~small\x1b[201~".to_vec()))
-        );
-    }
-    #[gpui_kit::test]
-    fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
-        cx: &mut TestAppContext,
-    ) {
-        let directory = tempfile::tempdir().unwrap();
-        let (session, driver) = nocterm_session::channel(None);
-        let terminal = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let mut settings = nocterm_settings::Settings::default();
-            settings.logging.auto_start = true;
-            nocterm_ui::init(
-                nocterm_ui::DesignTokens::builtin(),
-                SettingsStore::in_memory(settings),
-                cx,
-            );
-            crate::init_recording(directory.path().into(), cx);
-            cx.new(|cx| {
-                Terminal::new(
-                    SessionSpec {
-                        profile: None,
-                        options: Default::default(),
-                        title: "test".into(),
-                        target: Target::new("me", "host", 22),
-                        auth: Auth::Password,
-                        launch: None,
-                        credential: None,
-                    },
-                    cx,
-                )
-            })
-        });
-        let (reply, answer) = Reply::channel();
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.handle_event(
-                    Event::Prompt(Prompt::Secret {
-                        request: SecretRequest::Password {
-                            target: terminal.spec.target.clone(),
-                            retry: false,
-                        },
-                        reply,
-                    }),
-                    cx,
-                );
-                assert!(
-                    terminal.recording_status().is_none(),
-                    "do not open logs during authentication"
-                );
-                terminal.answer_secret(Some(Secret::new("never-log-auth-password")), cx);
-                terminal.session = Some(session);
-                terminal.handle_event(Event::Connected, cx);
-                terminal.send_text("never-log-input", cx);
-                terminal.handle_event(Event::Output("Привет output\n".as_bytes().to_vec()), cx);
-                terminal.handle_event(Event::Closed(CloseReason::ClosedByUser), cx);
-            })
-        });
-        assert_eq!(
-            futures::executor::block_on(answer)
-                .unwrap()
-                .unwrap()
-                .expose(),
-            "never-log-auth-password"
-        );
-        assert_eq!(
-            futures::executor::block_on(driver.next_command()),
-            Some(Command::Input(b"never-log-input".to_vec()))
-        );
-        for _ in 0..200 {
-            if cx.update(|cx| terminal.read(cx).recording_status().unwrap().finished) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        let status = cx.update(|cx| terminal.read(cx).recording_status().unwrap());
-        assert!(status.finished);
-        assert!(status.error.is_none());
-        assert_eq!(
-            std::fs::read(status.path.unwrap()).unwrap(),
-            "Привет output\n".as_bytes()
-        );
-    }
-}
+mod local_tests;
+#[cfg(test)]
+mod recording_tests;
 
 mod prompts;

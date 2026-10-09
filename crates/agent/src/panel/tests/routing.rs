@@ -1,7 +1,7 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
-use crate::thread::bridge_server_name;
+use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
 
 fn server_names(f: &Fixture) -> Vec<String> {
@@ -34,6 +34,8 @@ fn run(
     let (respond, response) = oneshot::channel();
     (
         BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id: registration,
             call: TerminalCall::RunCommand(RunCommand {
                 terminal_id: terminal.into(),
@@ -83,7 +85,7 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
             thread.name = Some("first".into());
             // The first chat has no terminals.
             thread.attach(Attachment::Terminal(f.terminal), cx);
-            assert!(thread.attachments.is_empty());
+            assert!(thread.composer.attachments.is_empty());
         })
     });
     new_chat(&f, cx);
@@ -97,6 +99,8 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     let (respond, listed) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id: second_id,
             call: TerminalCall::ListTerminals,
             respond,

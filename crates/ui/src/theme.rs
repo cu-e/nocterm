@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use crate::AppearanceMode;
 use gpui_kit::{
     App, WindowAppearance,
     component::{
@@ -10,10 +11,9 @@ use gpui_kit::{
     px,
 };
 use nocterm_design::{Color, DesignTokens};
-use nocterm_settings::AppearanceMode;
 use serde_json::Value;
 
-use crate::{ActiveDesign, ActiveSettings, Design};
+use crate::{ActiveDesign, Design, SettingsExt};
 
 /// Rebuilds the component theme from the design tokens and the user's
 /// appearance setting, and repaints every window.
@@ -25,7 +25,7 @@ pub fn apply_theme(cx: &mut App) {
         height: px(tokens.layout.button_height * rem),
         padding: px(tokens.layout.button_padding * rem),
     });
-    let dark = match cx.settings().appearance.mode {
+    let dark = match cx.setting::<crate::AppearanceSettings>().mode {
         AppearanceMode::System => matches!(
             cx.window_appearance(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark

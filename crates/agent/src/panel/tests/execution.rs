@@ -60,6 +60,8 @@ fn submit(
     let (respond, response) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,
@@ -318,11 +320,11 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let id = start(&f, &thread, &terminal, cx);
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            assert!(!thread.generating);
+            assert!(!thread.lifecycle.generating());
             thread.stop(cx);
-            assert!(thread.stopped);
+            assert!(thread.lifecycle.stopped());
             assert!(
-                thread.accept_updates,
+                thread.lifecycle.accepts_updates(),
                 "idle Stop preserves access to retained command results"
             );
         })
@@ -334,13 +336,13 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         "cancelled"
     );
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.agent_permissions = nocterm_settings::ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.agent_permissions = nocterm_ai::ApprovalPolicy::Allow;
         })
         .detach();
     });
     cx.run_until_parked();
-    let (respond, mut permission) = oneshot::channel();
+    let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             let request = serde_json::from_value(serde_json::json!({
@@ -367,12 +369,12 @@ fn releasing_acp_while_generating_preserves_document_owned_execution(cx: &mut Te
     let _id = start(&f, &thread, &terminal, cx);
     thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
     cx.run_until_parked();
-    cx.update(|cx| assert!(thread.read(cx).generating));
+    cx.update(|cx| assert!(thread.read(cx).lifecycle.generating()));
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).lease.is_none());
-        assert!(!thread.read(cx).generating);
+        assert!(!thread.read(cx).lifecycle.generating());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert!(
@@ -421,8 +423,10 @@ fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mu
 fn disabling_ai_cancels_execution_and_revokes_chat_access(cx: &mut TestAppContext) {
     let (f, thread, programs, terminal) = setup(cx);
     start(&f, &thread, &terminal, cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .detach();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+    })
+    .detach();
     cx.run_until_parked();
     assert!(programs.closed(0));
     cx.update(|cx| assert!(thread.read(cx).registration().is_none()));

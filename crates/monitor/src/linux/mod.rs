@@ -8,8 +8,8 @@ mod parse;
 
 use std::{fmt::Write as _, time::Duration};
 
+use crate::MonitorMetric;
 use nocterm_session::ExecRequest;
-use nocterm_settings::MonitorMetric;
 
 pub(crate) use parse::parse;
 

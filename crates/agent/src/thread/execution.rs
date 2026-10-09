@@ -3,7 +3,7 @@ use super::AgentThread;
 use gpui_kit::Context;
 use nocterm_ai::{BridgeCall, TerminalCall};
 use nocterm_session::ExecRequest;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::TerminalEntry;
 use std::{
     sync::Arc,
@@ -25,7 +25,7 @@ impl AgentThread {
         let executor = match entry.access.executor(cx) {
             Ok(executor) => executor,
             Err(error) => {
-                let _ = call.respond.send(Err(error));
+                self.finish(call, Err(error));
                 return;
             }
         };
@@ -35,7 +35,7 @@ impl AgentThread {
         {
             Ok(job) => job,
             Err(error) => {
-                let _ = call.respond.send(Err(error));
+                self.finish(call, Err(error));
                 return;
             }
         };
@@ -53,6 +53,7 @@ impl AgentThread {
         cx.background_executor()
             .spawn(jobs::run(executor, program, state, cancel, timer))
             .detach();
+        self.start_execution_watch(cx);
         let terminal = request.terminal_id.clone();
         let yield_ms = request.yield_ms.unwrap_or(1000);
         self.wait_command(terminal, id, yield_ms, call, cx);
@@ -78,7 +79,7 @@ impl AgentThread {
                 job.cancel(jobs::State::Cancelled);
                 self.command_payload(&request.command_id, job.snapshot(), cx)
             });
-        let _ = call.respond.send(result);
+        self.finish(call, result);
     }
 
     fn wait_command(
@@ -89,14 +90,17 @@ impl AgentThread {
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let epoch = self.epoch;
+        let ticket = self.lifecycle.ticket();
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
             let until = Instant::now() + Duration::from_millis(yield_ms);
             loop {
                 let result = this.update(cx, |this, cx| {
-                    if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
+                    if !this.lifecycle.session_current(ticket)
+                        || !this.lifecycle.accepts_updates()
+                        || !cx.ai_enabled()
+                    {
                         return Err("Chat is unavailable.".to_owned());
                     }
                     this.revoke_executions(cx);
@@ -114,11 +118,17 @@ impl AgentThread {
                             .await
                     }
                     Ok(Ok(Some(payload))) => {
-                        let _ = call.respond.send(Ok(payload));
+                        let _ = this.update(cx, |this, cx| {
+                            this.finish(call, Ok(payload));
+                            cx.notify();
+                        });
                         break;
                     }
                     Ok(Err(error)) => {
-                        let _ = call.respond.send(Err(error));
+                        let _ = this.update(cx, |this, cx| {
+                            this.finish(call, Err(error));
+                            cx.notify();
+                        });
                         break;
                     }
                     Err(_) => {
@@ -138,7 +148,11 @@ impl AgentThread {
         cx: &gpui_kit::App,
     ) -> serde_json::Value {
         let redact = |text: String| {
-            if cx.settings().ai.approval.redact_secrets {
+            if cx
+                .setting::<nocterm_ai::AiSettings>()
+                .approval
+                .redact_secrets
+            {
                 nocterm_ai::redact::redact(&text)
             } else {
                 text
@@ -154,7 +168,10 @@ impl AgentThread {
         })
     }
 
-    pub(super) fn revoke_executions(&mut self, cx: &gpui_kit::App) {
+    pub(crate) fn revoke_executions(&mut self, cx: &gpui_kit::App) {
+        if self.executions.active().next().is_none() && self.live_commands.is_empty() {
+            return;
+        }
         let resolved = self.resolved(cx);
         let revoked = self
             .executions
@@ -181,7 +198,39 @@ impl AgentThread {
         }
     }
 
+    fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
+        if self.execution_watch.is_some() {
+            return;
+        }
+        self.execution_watch = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                let active = this
+                    .update(cx, |this, cx| {
+                        if !cx.ai_enabled() {
+                            this.cancel_execution();
+                        } else {
+                            this.revoke_executions(cx);
+                        }
+                        if this.executions.active().next().is_none() {
+                            this.execution_watch = None;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        }));
+    }
+
     pub(super) fn cancel_execution(&mut self) {
+        self.execution_watch = None;
         self.executions.cancel_all();
         for lease in self.live_commands.values() {
             lease.cancel();

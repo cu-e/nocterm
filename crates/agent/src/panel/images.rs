@@ -25,7 +25,7 @@ impl AgentPanel {
         }
         self.composer.pending_images += 1;
         cx.notify();
-        let epoch = thread.read(cx).epoch;
+        let ticket = thread.read(cx).lifecycle.ticket();
         let id = thread.entity_id();
         let revision = self.composer.revision;
         let thread = thread.downgrade();
@@ -43,15 +43,15 @@ impl AgentPanel {
                 }
                 panel.composer.pending_images = panel.composer.pending_images.saturating_sub(1);
                 let _ = thread.update(cx, |thread, cx| {
-                    if thread.epoch != epoch {
+                    if !thread.lifecycle.session_current(ticket) {
                         return;
                     }
                     match result {
                         Ok(images) => {
-                            let mut collection = thread.images.clone();
+                            let mut collection = thread.composer.images.clone();
                             collection.extend(images);
                             match validate_collection(&collection) {
-                                Ok(()) => thread.images = collection,
+                                Ok(()) => thread.composer.images = collection,
                                 Err(error) => panel.error = Some(error),
                             }
                         }

@@ -17,6 +17,7 @@ fn tick(cx: &mut TestAppContext, seconds: u64) {
 #[gpui_kit::test]
 fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     let first = draft(&f, cx);
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -48,9 +49,11 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
 #[gpui_kit::test]
 async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     let first = draft(&f, cx);
     first.update(cx, |thread, cx| thread.send("first".into(), cx));
     cx.run_until_parked();
@@ -65,14 +68,14 @@ async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppCon
     cx.update(|cx| {
         assert!(first.read(cx).lease.is_none());
         assert!(second.read(cx).lease.is_none());
-        assert_eq!(second.read(cx).queue.len(), 1);
+        assert_eq!(second.read(cx).composer.queue.len(), 1);
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
     close.send(()).unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
-    cx.update(|cx| assert!(second.read(cx).generating));
+    cx.update(|cx| assert!(second.read(cx).lifecycle.generating()));
     complete_active(&f, cx);
 }
 #[gpui_kit::test]
@@ -81,19 +84,23 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.idle_timeout_secs = 2)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.sessions.idle_timeout_secs = 2
+        })
     })
     .await
     .unwrap();
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    // Another chat is shown; the shown one keeps its session.
+    thread.update(cx, |thread, _| thread.shown = false);
     let guard = cx.update(|cx| thread.read(cx).hold_operation());
     tick(cx, 5);
     cx.update(|cx| assert!(thread.read(cx).lease.is_some()));
     drop(guard);
     thread.update(cx, |thread, cx| {
-        thread.queue_paused = true;
-        thread.queue.push(crate::thread::QueuedPrompt::new(
+        thread.composer.queue_paused = true;
+        thread.composer.queue.push(crate::thread::QueuedPrompt::new(
             nocterm_ai::history::SavedPrompt {
                 id: 1,
                 text: "paused".into(),
@@ -108,8 +115,8 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
     tick(cx, 3);
     cx.update(|cx| {
         assert!(thread.read(cx).lease.is_none());
-        assert_eq!(thread.read(cx).queue.len(), 1);
-        assert!(thread.read(cx).queue_paused);
+        assert_eq!(thread.read(cx).composer.queue.len(), 1);
+        assert!(thread.read(cx).composer.queue_paused);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
         assert!(f.access.sent.borrow().is_empty());
     });
@@ -139,9 +146,11 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
 #[gpui_kit::test]
 async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     first.update(cx, |thread, _| thread.name = Some("keep".into()));
@@ -155,7 +164,7 @@ async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert!(first.read(cx).status.contains("could not be confirmed"));
-        assert_eq!(second.read(cx).queue.len(), 1);
+        assert_eq!(second.read(cx).composer.queue.len(), 1);
         assert!(second.read(cx).lease.is_none());
     });
 }
@@ -177,16 +186,16 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
-        assert!(thread.read(cx).closing_session);
+        assert!(thread.read(cx).lifecycle.closing());
         assert!(thread.read(cx).lease.is_none());
-        assert_eq!(thread.read(cx).queue[0].saved.text, "resume");
+        assert_eq!(thread.read(cx).composer.queue[0].saved.text, "resume");
     });
     close.send(()).unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     cx.update(|cx| {
-        assert!(!thread.read(cx).closing_session);
-        assert!(thread.read(cx).generating);
+        assert!(!thread.read(cx).lifecycle.closing());
+        assert!(thread.read(cx).lifecycle.generating());
     });
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -197,6 +206,7 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
 #[gpui_kit::test]
 fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     let blocked = f._directory.path().join("not-a-directory");
     std::fs::write(&blocked, b"file").unwrap();
     cx.update(|cx| {
@@ -208,8 +218,8 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     cx.update(|cx| {
         assert!(thread.read(cx).persistence_error.is_some());
-        assert!(thread.read(cx).queue_paused);
-        assert_eq!(thread.read(cx).queue[0].saved.text, "retain me");
+        assert!(thread.read(cx).composer.queue_paused);
+        assert_eq!(thread.read(cx).composer.queue[0].saved.text, "retain me");
         assert_eq!(thread.read(cx).persisted_revision, 0);
     });
     cx.update(|cx| {
@@ -222,7 +232,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert!(thread.read(cx).persistence_error.is_none());
-        assert_eq!(thread.read(cx).queue[0].saved.text, "next");
+        assert_eq!(thread.read(cx).composer.queue[0].saved.text, "next");
     });
     complete_active(&f, cx);
     complete_active(&f, cx);
@@ -230,6 +240,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
 #[gpui_kit::test]
 fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, _| {
         thread
@@ -250,9 +261,11 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     let first = draft(&f, cx);
     first.update(cx, |thread, cx| thread.send("window one".into(), cx));
     cx.run_until_parked();
@@ -281,20 +294,28 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
     second.update(cx, |thread, cx| thread.send("window two".into(), cx));
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
-    cx.update(|cx| assert_eq!(second.read(cx).queue.len(), 1));
+    cx.update(|cx| assert_eq!(second.read(cx).composer.queue.len(), 1));
     complete_active(&f, cx);
     tick(cx, 1);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     cx.update(|cx| {
         assert!(first.read(cx).lease.is_none());
-        assert!(second.read(cx).generating);
+        assert!(second.read(cx).lifecycle.generating());
     });
     complete_active(&f, cx);
 }
 
 #[gpui_kit::test]
-fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(cx: &mut TestAppContext) {
+async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
+    cx: &mut TestAppContext,
+) {
     let f = fixture(cx);
+    // The shown chat is not counted.
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_idle = 1)
+    })
+    .await
+    .unwrap();
     let first = draft(&f, cx);
     first.update(cx, |thread, cx| thread.send("first".into(), cx));
     cx.run_until_parked();
@@ -331,9 +352,9 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings.ai.sessions.max_live = 1;
-            settings.ai.sessions.idle_timeout_secs = 1;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.sessions.max_live = 1;
+            settings.sessions.idle_timeout_secs = 1;
         })
     })
     .await
@@ -349,17 +370,17 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
     tick(cx, 5);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
-        assert!(first.read(cx).connecting_session);
+        assert!(first.read(cx).lifecycle.opening());
         assert!(first.read(cx).lease.is_some());
         assert!(second.read(cx).lease.is_none());
-        assert_eq!(second.read(cx).queue.len(), 1);
+        assert_eq!(second.read(cx).composer.queue.len(), 1);
     });
     start.send(()).unwrap();
     cx.run_until_parked();
     complete_active(&f, cx);
     tick(cx, 1);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
-    cx.update(|cx| assert!(second.read(cx).generating));
+    cx.update(|cx| assert!(second.read(cx).lifecycle.generating()));
     complete_active(&f, cx);
 }
 
@@ -414,6 +435,7 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
 #[gpui_kit::test]
 fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread
@@ -451,6 +473,8 @@ fn releasing_acp_while_generating_does_not_interrupt_the_live_shell(cx: &mut Tes
     let (respond, _response) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call: nocterm_ai::TerminalCall::RunCommand(nocterm_ai::RunCommand {
                 terminal_id,
@@ -490,6 +514,8 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         let (respond, _response) = oneshot::channel();
         thread.handle_tool(
             BridgeCall {
+                arguments: None,
+                display_token: None,
                 registration_id: thread.registration().as_ref().unwrap().id,
                 call: nocterm_ai::TerminalCall::RunCommand(nocterm_ai::RunCommand {
                     terminal_id,
@@ -501,7 +527,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
             },
             cx,
         );
-        assert!(thread.generating);
+        assert!(thread.lifecycle.generating());
         // The default write policy asks first; permit this one command.
         if !thread.tools.is_empty() {
             thread.approve_tool(0, true, false, cx);
@@ -560,6 +586,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let old = draft(&f, cx);
     old.update(cx, |thread, cx| {
         thread
@@ -608,7 +635,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     cx.update(|cx| {
         assert!(replacement.read(cx).persistence_error.is_some());
         assert_eq!(
-            replacement.read(cx).queue[0].saved.text,
+            replacement.read(cx).composer.queue[0].saved.text,
             "new unsaved queue"
         );
     });
@@ -640,7 +667,10 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert!(replacement.read(cx).lease.is_none());
-        assert_eq!(replacement.read(cx).queue[0].saved.text, "second turn");
+        assert_eq!(
+            replacement.read(cx).composer.queue[0].saved.text,
+            "second turn"
+        );
     });
     close.send(()).unwrap();
     cx.run_until_parked();
@@ -649,82 +679,18 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
         *f.commands.restores.lock().unwrap(),
         vec![(acp::SessionId::new("s0"), false)]
     );
-    cx.update(|cx| assert!(replacement.read(cx).generating));
+    cx.update(|cx| assert!(replacement.read(cx).lifecycle.generating()));
     complete_active(&f, cx);
-}
-
-#[gpui_kit::test]
-fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    let thread = draft(&f, cx);
-    thread.update(cx, |thread, _| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "latest dormant document",
-            ))]);
-    });
-    let weak = thread.downgrade();
-    drop(thread);
-    let Fixture {
-        panel,
-        workspace,
-        _directory: directory,
-        ..
-    } = f;
-    drop(panel);
-    drop(workspace);
-    // Exercise GPUI's native shutdown: quit callbacks, window destruction, then bounded task drain.
-    cx.update(App::shutdown);
-    assert!(
-        weak.upgrade().is_none(),
-        "test accidentally retained the document past window destruction"
-    );
-    let chats = nocterm_ai::history::load_all(&directory.path().join("chats"));
-    assert_eq!(chats.len(), 1);
-    assert!(
-        matches!(&chats[0].entries[0], nocterm_ai::thread::Entry::User(blocks) if matches!(&blocks[0], acp::ContentBlock::Text(text) if text.text == "latest dormant document"))
-    );
-}
-
-#[gpui_kit::test]
-fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
-    cx: &mut TestAppContext,
-) {
-    let f = fixture(cx);
-    let thread = draft(&f, cx);
-    thread.update(cx, |thread, cx| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "original content",
-            ))]);
-        thread.name = Some("old snapshot".into());
-        thread.save(cx);
-    });
-    thread.update(cx, |thread, _| {
-        thread.name = Some("latest unsaved document".into())
-    });
-    // Native GPUI may drop this cleanup task after its 200ms grace period.
-    // Durability must already hold when the synchronous quit callback returns.
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
-    let read = || nocterm_ai::history::load_all(&f._directory.path().join("chats"));
-    assert_eq!(read().len(), 1);
-    assert_eq!(read()[0].name.as_deref(), Some("latest unsaved document"));
-    cx.run_until_parked();
-    assert_eq!(
-        read()[0].name.as_deref(),
-        Some("latest unsaved document"),
-        "a stale background snapshot overwrote synchronous quit persistence"
-    );
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
 async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.idle_timeout_secs = 2)
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.sessions.idle_timeout_secs = 2
+        })
     })
     .await
     .unwrap();
@@ -757,12 +723,14 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
         });
     })
     .unwrap();
+    // Another chat is shown; the shown one keeps its session.
+    thread.update(cx, |thread, _| thread.shown = false);
     tick(cx, 1);
     tick(cx, 3);
     cx.update(|cx| {
         assert!(thread.read(cx).lease.is_none());
         assert_eq!(
-            thread.read(cx).draft.as_deref(),
+            thread.read(cx).composer.draft.as_deref(),
             Some("draft retained after idle")
         );
         assert_eq!(thread.read(cx).state.entries.len(), 1);
@@ -784,3 +752,5 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     });
     assert!(f.access.sent.borrow().is_empty());
 }
+
+mod durability;

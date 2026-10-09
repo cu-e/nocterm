@@ -65,7 +65,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     });
     cx.update(|cx| {
         let thread = thread.read(cx);
-        assert!(thread.dormant);
+        assert!(thread.dormant());
         assert_eq!(thread.state.entries.len(), 2);
         assert!(thread.session().is_none());
     });
@@ -132,6 +132,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let chats = f._directory.path().join("chats");
@@ -265,8 +266,8 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
             assert!(thread.last_prompt.is_none());
             let session = thread.lease.as_mut().unwrap().session.take();
             thread.send("Queued before the session is ready".into(), cx);
-            assert_eq!(thread.queue.len(), 1);
-            thread.queue.clear();
+            assert_eq!(thread.composer.queue.len(), 1);
+            thread.composer.queue.clear();
             assert!(thread.last_prompt.is_none());
             thread.lease.as_mut().unwrap().session = session;
             let mut option = acp::SessionConfigOption::select(
@@ -294,7 +295,6 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
     cx.update_window(f.handle, |_, window, cx| {
         let id = f.panel.read(cx).current().unwrap().entity_id().as_u64();
         window.render_frame(cx);
-        window.click("agent-history", cx);
         let row = window.find(("history-thread", id)).bounds();
         let delete = window.find(("delete-thread", id)).bounds();
         let history = window.find("agent-history-list").bounds();
@@ -312,6 +312,21 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
         assert!(!f.panel.read(cx).history);
         window.render_frame(cx);
         assert!(f.panel.read(cx).history_tick.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn history_starts_open_beside_the_first_chat(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        let id = f.panel.read(cx).current().unwrap().entity_id().as_u64();
+        window.render_frame(cx);
+        assert!(window.find(("history-thread", id)).visible());
+        window.click("agent-history", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("history-thread", id)).is_none());
     })
     .unwrap();
 }

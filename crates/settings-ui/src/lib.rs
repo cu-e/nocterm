@@ -20,8 +20,8 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_settings::Settings;
-use nocterm_ui::{IconName, SettingsStore, edit_settings, form};
+use nocterm_settings::{SettingsDocument, SettingsSection};
+use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, edit_settings, form};
 use nocterm_workspace::{
     Item, ItemEvent, OpenSettings, SettingsPageHandle, SettingsPageSpec, Workspace,
 };
@@ -215,12 +215,12 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// Adds a text setting saved under `key`.
-    pub(crate) fn add_field(
+    /// Adds a text setting of section `S` saved under `key`.
+    pub(crate) fn add_field<S: SettingsSection>(
         &mut self,
         key: impl Into<SharedString>,
-        read: impl Fn(&Settings) -> String + 'static,
-        write: impl Fn(&mut Settings, &str) -> Result<(), String> + 'static,
+        read: impl Fn(&S) -> String + 'static,
+        write: impl Fn(&mut S, &str) -> Result<(), String> + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -286,13 +286,29 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// Saves a change that needs no validation, such as a switch.
-    pub(crate) fn save(
+    /// Saves a change to section `S` that needs no validation, such as a
+    /// switch.
+    pub(crate) fn save<S: SettingsSection>(
         &mut self,
-        edit: impl FnOnce(&mut Settings) + 'static,
+        edit: impl FnOnce(&mut S) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let task = cx.update_setting::<S>(edit);
+        self.report(task, cx);
+    }
+
+    /// Saves a change spanning several sections.
+    fn save_document(
+        &mut self,
+        edit: impl FnOnce(&mut SettingsDocument) + 'static,
         cx: &mut Context<Self>,
     ) {
         let task = edit_settings(cx, edit);
+        self.report(task, cx);
+    }
+
+    /// Shows the outcome of `task` until the next save.
+    fn report(&mut self, task: gpui_kit::Task<Result<u64, String>>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -319,8 +335,8 @@ impl SettingsView {
         match self.session_options.read(cx).options(cx) {
             Ok(options) => {
                 self.session_options_error = None;
-                self.save(
-                    move |settings| pages::apply_session_options(settings, options),
+                self.save_document(
+                    move |document| pages::apply_session_options(document, options),
                     cx,
                 );
             }
@@ -419,11 +435,27 @@ impl Render for SettingsView {
                 .map(|page| page.view().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
         };
+        let section_errors: Vec<_> = cx
+            .global::<SettingsStore>()
+            .section_errors()
+            .iter()
+            .map(|error| {
+                format!(
+                    "The [{}] section of settings.toml has an error and uses its defaults until it is fixed or changed here: {}",
+                    error.key, error.error
+                )
+            })
+            .collect();
         let content = v_flex()
             .w_full()
             .max_w(form::page_width(cx))
             .px_8()
             .py_6()
+            .children(
+                section_errors
+                    .into_iter()
+                    .map(|error| form::error_text(error, cx)),
+            )
             .when_some(self.error.clone(), |content, error| {
                 content.child(form::error_text(error, cx))
             })

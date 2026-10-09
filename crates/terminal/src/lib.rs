@@ -119,8 +119,7 @@ pub fn open_local(
     workspace.add_local_terminal_at(view, target, window, cx);
 }
 
-/// Opens `spec` without a tab. Install it with
-/// [`Workspace::set_background_session_opener`].
+/// Opens `spec` without a tab.
 pub fn open_background_session(
     workspace: &mut Workspace,
     spec: SessionSpec,
@@ -147,8 +146,7 @@ pub fn open_local_command(
     workspace.add_item(view, window, cx);
 }
 
-/// Opens `spec`'s program in a new tab. Install it with
-/// [`Workspace::set_program_opener`].
+/// Opens `spec`'s program in a new tab.
 pub fn open_program(
     workspace: &mut Workspace,
     spec: ProgramSpec,
@@ -163,7 +161,10 @@ pub fn open_program(
 }
 
 /// Installs the transport terminals open their sessions with.
-pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
+pub fn init(transport: Arc<dyn Transport>, _: &nocterm_ui::UiReady, cx: &mut App) {
+    nocterm_ui::register_setting::<nocterm_session::LoggingOptions>(cx);
+    nocterm_ui::register_setting::<nocterm_session::SshSettings>(cx);
+    nocterm_ui::register_setting::<nocterm_session::LocalShellSettings>(cx);
     // Keep inherited focus traversal and native Copy shortcuts off the screen.
     // Target only native Copy so explicit terminal actions retain precedence.
     cx.bind_keys([
@@ -178,8 +179,49 @@ pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
     cx.set_global(ActiveTransport(transport));
 }
 
-/// Opens `spec` in a new terminal tab. Install it with
-/// [`Workspace::set_session_opener`].
+/// Opens every kind of tab as a terminal; the workspace's session factory.
+pub struct Factory;
+
+impl nocterm_workspace::SessionFactory for Factory {
+    fn open_session(
+        &self,
+        workspace: &mut Workspace,
+        spec: SessionSpec,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        open_session(workspace, spec, window, cx);
+    }
+    fn open_background(
+        &self,
+        workspace: &mut Workspace,
+        spec: SessionSpec,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<gpui_kit::EntityId> {
+        Some(open_background_session(workspace, spec, window, cx))
+    }
+    fn open_local(
+        &self,
+        workspace: &mut Workspace,
+        target: nocterm_workspace::LocalTerminalTarget,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        open_local(workspace, target, window, cx);
+    }
+    fn open_program(
+        &self,
+        workspace: &mut Workspace,
+        spec: ProgramSpec,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        open_program(workspace, spec, window, cx);
+    }
+}
+
+/// Opens `spec` in a new terminal tab.
 pub fn open_session(
     workspace: &mut Workspace,
     spec: SessionSpec,

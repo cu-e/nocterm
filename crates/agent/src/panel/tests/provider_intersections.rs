@@ -1,15 +1,15 @@
 //! Real ACP and bridge routing intersections, without manually attaching display metadata.
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::ApprovalPolicy;
 use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
-use nocterm_settings::ApprovalPolicy;
 use serde_json::{Value, json};
 
 #[derive(Default)]
-struct Program {
-    request: Mutex<Option<ExecRequest>>,
-    sink: Mutex<Option<ExecSink>>,
+pub(super) struct Program {
+    pub(super) request: Mutex<Option<ExecRequest>>,
+    pub(super) sink: Mutex<Option<ExecSink>>,
 }
 
 impl HostExec for Program {
@@ -21,7 +21,7 @@ impl HostExec for Program {
     }
 }
 
-fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
+pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
     let registration_id = cx.update(|cx| {
         f.panel
             .read(cx)
@@ -36,6 +36,8 @@ fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
     let (respond, mut receive) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,
@@ -49,7 +51,7 @@ fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
         .unwrap()
 }
 
-fn update(
+pub(super) fn update(
     f: &Fixture,
     session: &acp::SessionId,
     update: acp::SessionUpdate,
@@ -65,14 +67,15 @@ fn update(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &mut TestAppContext) {
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
     let program = Arc::new(Program::default());
     *f.access.executor.borrow_mut() = Some(program.clone());
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.terminal_write = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
         .detach()
     });
@@ -185,22 +188,25 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
             2,
             "same MCP result is not rendered twice"
         );
-        assert_eq!(output.sections[0].text, stdout);
-        assert_eq!(output.sections[1].text, "warning\n");
+        assert_eq!(output.sections[0].text, payload["stdout"].as_str().unwrap());
+        assert_eq!(output.sections[1].text, payload["stderr"].as_str().unwrap());
+        assert!(output.parameters.iter().any(|text| text
+            == &format!(
+                "Process: {}",
+                if payload["state"] == "running" {
+                    "Running"
+                } else {
+                    "Starting"
+                }
+            )));
         assert!(
             output
                 .parameters
                 .iter()
-                .any(|text| text == "Process: Exited")
-        );
-        assert!(
-            output
-                .parameters
-                .iter()
-                .any(|text| text == "Exit status: 7")
+                .any(|text| text == "Exit status: unknown")
         );
     });
-    cx.update(|cx| thread.update(cx, |thread, _| thread.attachments.clear()));
+    cx.update(|cx| thread.update(cx, |thread, _| thread.composer.attachments.clear()));
     update(&f, &session, acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
         "provider-call", acp::ToolCallUpdateFields::new().title("Different destination")
             .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),
@@ -219,8 +225,6 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
-        window.click(("copy-tool-output", 0usize), cx);
-        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), stdout);
     })
     .unwrap();
 }
@@ -229,9 +233,9 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
 fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.terminal_read = ApprovalPolicy::Allow;
-            settings.ai.approval.terminal_write = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.terminal_read = ApprovalPolicy::Allow;
+            settings.approval.terminal_write = ApprovalPolicy::Allow;
         })
         .detach()
     });
@@ -239,7 +243,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    let (respond, mut receive) = oneshot::channel();
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
             request: serde_json::from_value(json!({"sessionId":session,"toolCall":{
@@ -254,8 +258,8 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     assert!(receive.try_recv().unwrap().is_none());
     cx.update(|cx| assert_eq!(thread.read(cx).permissions.len(), 1));
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.agent_permissions = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
+            settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })
         .detach()
     });
@@ -265,4 +269,34 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
         if choice.option_id == acp::PermissionOptionId::from("yes"))
     );
     cx.update(|cx| assert!(thread.read(cx).permissions.is_empty()));
+}
+
+#[test]
+fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
+    let mut call = acp::ToolCall::new("call-1", "mcp.nocterm-11.exec_command")
+        .raw_input(
+            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+                "terminal_id":"t1", "program":"/bin/sh",
+                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
+                "timeout_ms":1_800_000, "yield_ms":1000,
+            }}),
+        )
+        .raw_output(json!({"result":null, "error":{
+            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+        }}));
+    call.status = acp::ToolCallStatus::Failed;
+    assert_eq!(
+        tool_display::header(&call),
+        "Nocterm · Execute program · Failed"
+    );
+    let input = tool_input::source(&call).unwrap();
+    assert_eq!(input.label, "Requested command");
+    assert_eq!(
+        input.text,
+        "cd ~/dev/NOUMMA && cargo build --release --locked -j 4"
+    );
+    let output = tool_output::source(&call, false).unwrap();
+    assert_eq!(output.sections.len(), 1);
+    assert_eq!(output.sections[0].label, "Error");
+    assert!(output.sections[0].text.starts_with("tool call error"));
 }

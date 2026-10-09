@@ -10,6 +10,9 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-core.workspace = true
+nocterm-session.workspace = true
+nocterm-ai.workspace = true
 nocterm-themes.workspace = true
 nocterm-design.workspace = true
 nocterm-settings.workspace = true
@@ -22,6 +25,7 @@ tracing.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 gpui-kit = {workspace = true,features = ["test-support"]}
 tempfile.workspace = true
 

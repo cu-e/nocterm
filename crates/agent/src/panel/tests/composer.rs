@@ -105,6 +105,7 @@ fn attach_menu_lists_servers_under_their_folders(cx: &mut TestAppContext) {
         assert!(
             thread
                 .read(cx)
+                .composer
                 .attachments
                 .contains(&Attachment::Group("homelab".into()))
         );
@@ -233,6 +234,7 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
                 .current()
                 .unwrap()
                 .read(cx)
+                .composer
                 .attachments
                 .is_empty()
         );
@@ -305,6 +307,7 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
@@ -324,7 +327,9 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                         "Inspecting the current terminal carefully before running commands".into(),
                     ),
                 ];
-                thread.generating = true;
+                thread
+                    .lifecycle
+                    .force_phase(nocterm_ai::session::SessionPhase::Prompting);
                 cx.notify();
             });
     });
@@ -369,7 +374,9 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                thread.generating = false;
+                thread
+                    .lifecycle
+                    .force_phase(nocterm_ai::session::SessionPhase::Ready);
                 cx.notify();
             });
     });
@@ -387,6 +394,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                 .current()
                 .unwrap()
                 .read(cx)
+                .composer
                 .attachments
                 .is_empty()
         );

@@ -87,21 +87,9 @@ impl AgentPanel {
             .as_ref()
             .and_then(|info| info.profile.as_ref())
             .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
-        let through_server = summary.is_some_and(|summary| {
-            thread
-                .read(cx)
-                .attachments
-                .iter()
-                .any(|attachment| match attachment {
-                    Attachment::Connection(id) => summary.id.as_ref() == id,
-                    Attachment::Group(group) => summary
-                        .group
-                        .as_ref()
-                        .is_some_and(|name| name.as_ref() == group),
-                    Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => false,
-                })
-        });
-        let selected = thread.read(cx).attachments.contains(&attachment) || through_server;
+        let explicit = thread.read(cx).composer.attachments.contains(&attachment);
+        let covering = summary.and_then(|summary| covering(thread.read(cx), summary, &attachment));
+        let selected = explicit || covering.is_some();
         let icon = summary.and_then(|summary| summary.icon.clone());
         let connected = info
             .as_ref()
@@ -118,11 +106,16 @@ impl AgentPanel {
         .flex_1()
         .min_w_0()
         .selected(selected)
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if let Some(thread) = this.current() {
-                thread.update(cx, |thread, cx| thread.attach(attachment.clone(), cx));
-            }
-        }));
+        .when_some(covering.clone(), |row, through| {
+            row.tooltip(format!("{} · attached with {through}", entry.title))
+        })
+        .when(explicit || covering.is_none(), |row| {
+            row.on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(thread) = this.current() {
+                    thread.update(cx, |thread, cx| thread.attach(attachment.clone(), cx));
+                }
+            }))
+        });
         let mut line = h_flex().w_full().gap_1().child(row);
         if entry.background {
             let workspace = self.workspace.clone();
@@ -155,7 +148,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Group(group.to_owned());
-        let selected = thread.read(cx).attachments.contains(&attachment);
+        let selected = thread.read(cx).composer.attachments.contains(&attachment);
         menu_row(
             SharedString::from(format!("attach-group-{group}")),
             group.to_owned(),
@@ -184,13 +177,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Connection(summary.id.to_string());
-        let in_group = summary.group.as_ref().is_some_and(|group| {
-            thread
-                .read(cx)
-                .attachments
-                .contains(&Attachment::Group(group.to_string()))
-        });
-        let selected = thread.read(cx).attachments.contains(&attachment) || in_group;
+        let explicit = thread.read(cx).composer.attachments.contains(&attachment);
+        let covering = covering(thread.read(cx), summary, &attachment);
+        let selected = explicit || covering.is_some();
         let id = summary.id.to_string();
         let directory = directory.clone();
         let workspace = self.workspace.clone();
@@ -218,19 +207,21 @@ impl AgentPanel {
                 .when_some(summary.flag.clone(), |row, flag| {
                     row.child(flag_image(flag))
                 })
-                .tooltip(if online {
-                    format!("{} · open", summary.name)
-                } else {
-                    format!("{} · agents connect in the background", summary.name)
+                .tooltip(match &covering {
+                    Some(through) => format!("{} · attached with {through}", summary.name),
+                    None if online => format!("{} · open", summary.name),
+                    None => format!("{} · agents connect in the background", summary.name),
                 })
                 .flex_1()
                 .min_w_0()
                 .selected(selected)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(thread) = this.current() {
-                        thread.update(cx, |thread, cx| thread.attach(attachment.clone(), cx));
-                    }
-                })),
+                .when(explicit || covering.is_none(), |row| {
+                    row.on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(thread) = this.current() {
+                            thread.update(cx, |thread, cx| thread.attach(attachment.clone(), cx));
+                        }
+                    }))
+                }),
             )
             .child(
                 Button::new(SharedString::from(format!("open-connection-{id}")))
@@ -253,6 +244,22 @@ impl AgentPanel {
             )
             .into_any_element()
     }
+}
+
+/// Another of the chat's attachments that already gives the agent `summary`,
+/// named for a row shown selected through it. Such a row does not toggle: a
+/// click would only add a duplicate that outlives the broader attachment.
+fn covering(thread: &AgentThread, summary: &ConnectionSummary, own: &Attachment) -> Option<String> {
+    thread
+        .composer
+        .attachments
+        .iter()
+        .filter(|attachment| *attachment != own && attachment.covers_server(summary))
+        .find_map(|attachment| match attachment {
+            Attachment::Group(group) => Some(format!("folder {group}")),
+            Attachment::Connection(_) => Some(summary.name.to_string()),
+            Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => None,
+        })
 }
 
 fn heading(text: &'static str, cx: &Context<AgentPanel>) -> AnyElement {

@@ -10,8 +10,8 @@ use gpui_kit::{
     px, relative, rems,
 };
 use nocterm_ai::{acp, thread::Entry};
-use nocterm_ui::ActiveSettings as _;
 use nocterm_ui::IconName;
+use nocterm_ui::SettingsExt as _;
 
 use super::{
     AgentPanel, CachedImage,
@@ -103,6 +103,7 @@ impl AgentPanel {
         }
         self.image_view(key)
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_entry(
         &mut self,
         index: usize,
@@ -119,7 +120,7 @@ impl AgentPanel {
         let live = entry_is_live(
             &thread.read(cx).state.entries,
             index,
-            thread.read(cx).generating && thread.read(cx).accept_updates,
+            thread.read(cx).lifecycle.generating() && thread.read(cx).lifecycle.accepts_updates(),
         );
         let mut row = v_flex()
             .id(("agent-entry", index))
@@ -185,8 +186,9 @@ impl AgentPanel {
                 let full_text = text.clone();
                 let text = self.stream.text(index, text);
                 row = row.group(MESSAGE_GROUP).child(
-                    chat_markdown(("agent-message", index), safe_markdown(&text))
-                        .stream_fade(thread.read(cx).generating || self.stream.pending()),
+                    chat_markdown(("agent-message", index), safe_markdown(&text)).stream_fade(
+                        thread.read(cx).lifecycle.generating() || self.stream.pending(),
+                    ),
                 );
                 if !live {
                     row = row.child(self.render_message_actions(
@@ -262,7 +264,11 @@ impl AgentPanel {
                         IconName::Wrench,
                         {
                             let title = nocterm_ai::tool_display::header(call);
-                            if cx.settings().ai.approval.redact_secrets {
+                            if cx
+                                .setting::<nocterm_ai::AiSettings>()
+                                .approval
+                                .redact_secrets
+                            {
                                 nocterm_ai::redact::redact(&title)
                             } else {
                                 title
@@ -283,16 +289,23 @@ impl AgentPanel {
                 );
                 if expanded {
                     if let Some(input) = tool_input::source(call) {
-                        let input = if cx.settings().ai.approval.redact_secrets {
+                        let input = if cx
+                            .setting::<nocterm_ai::AiSettings>()
+                            .approval
+                            .redact_secrets
+                        {
                             input.redact()
                         } else {
                             input
                         };
                         row = row.child(tool_input::render(index, input, cx));
                     }
-                    if let Some(output) =
-                        tool_output::source(call, cx.settings().ai.approval.redact_secrets)
-                    {
+                    if let Some(output) = tool_output::source(
+                        call,
+                        cx.setting::<nocterm_ai::AiSettings>()
+                            .approval
+                            .redact_secrets,
+                    ) {
                         row = row.child(tool_output::render(index, output, cx));
                     }
                 }

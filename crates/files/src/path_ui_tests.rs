@@ -133,6 +133,7 @@ fn clicking_remote_location_and_enter_uses_remote_fs_and_keeps_failed_file_draft
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut TestAppContext) {
     use gpui_kit::component::{Theme, ThemeMode};
     let directory = tempfile::tempdir().unwrap();

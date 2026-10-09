@@ -15,7 +15,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _, IconName, SettingsStore};
+use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
@@ -25,6 +25,7 @@ use std::{
 use widgets::HEADER_HEIGHT;
 
 mod approvals;
+mod archive_search;
 mod attach;
 mod attachments;
 mod chat;
@@ -64,6 +65,7 @@ pub(crate) struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     threads: Vec<Entity<AgentThread>>,
     active: Option<usize>,
+    /// Whether the history column is beside the chat; it starts open.
     history: bool,
     /// How much opening the history column widened the panel.
     widened: Option<gpui_kit::Pixels>,
@@ -75,6 +77,8 @@ pub(crate) struct AgentPanel {
     input: Entity<TextareaState>,
     search: Entity<InputState>,
     history_search: Entity<InputState>,
+    archive_search: Option<Task<()>>,
+    archive_matches: HashSet<String>,
     renaming: Option<history::Renaming>,
     menu: Option<MenuKind>,
     usage_focus: FocusHandle,
@@ -98,6 +102,7 @@ pub(crate) struct AgentPanel {
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -145,8 +150,9 @@ impl AgentPanel {
             cx.notify();
         });
         let history_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
-        let history_search_observer = cx.subscribe(&history_search, |_, _, event, cx| {
+        let history_search_observer = cx.subscribe(&history_search, |this, _, event, cx| {
             if matches!(event, InputEvent::Change) {
+                this.search_archives(cx);
                 cx.notify();
             }
         });
@@ -219,7 +225,7 @@ impl AgentPanel {
             workspace,
             threads: Vec::new(),
             active: None,
-            history: false,
+            history: true,
             widened: None,
             splits: [right_split, left_split],
             docked_left: false,
@@ -227,6 +233,8 @@ impl AgentPanel {
             input,
             search,
             history_search,
+            archive_search: None,
+            archive_matches: Default::default(),
             renaming: None,
             menu: None,
             usage_focus,
@@ -271,7 +279,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
+        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>());
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
@@ -279,7 +287,11 @@ impl AgentPanel {
             .last_agent
             .as_ref()
             .filter(known)
-            .or(cx.settings().ai.default_agent.as_ref().filter(known))
+            .or(cx
+                .setting::<nocterm_ai::AiSettings>()
+                .default_agent
+                .as_ref()
+                .filter(known))
             .cloned()
             .or_else(|| registry.iter().next().map(|launch| launch.id.clone()))
     }
@@ -423,6 +435,7 @@ impl RightPanel for AgentPanel {
     }
 }
 impl Render for AgentPanel {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         if self.history && !self.threads.is_empty() {

@@ -10,8 +10,8 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_settings::AppearanceMode;
-use nocterm_ui::{ActiveSettings as _, edit_settings, notice};
+use nocterm_ui::AppearanceMode;
+use nocterm_ui::{SettingsExt as _, notice};
 use nocterm_workspace::{ChangeColorScheme, ChangeTheme, Workspace};
 
 use super::{choices, selection};
@@ -65,7 +65,7 @@ fn open_theme(window: &mut Window, cx: &mut App) {
 }
 
 fn open_scheme(window: &mut Window, cx: &mut App) {
-    let current = cx.settings().appearance.mode;
+    let current = cx.setting::<nocterm_ui::AppearanceSettings>().mode;
     let options = [
         ("System", AppearanceMode::System),
         ("Light", AppearanceMode::Light),
@@ -120,16 +120,16 @@ fn open(
 }
 
 fn save(choice: Choice, window: &mut Window, cx: &mut App) {
-    let task = edit_settings(cx, move |settings| match choice {
+    let task = cx.update_setting::<nocterm_ui::AppearanceSettings>(move |settings| match choice {
         Choice::Theme { dark, name } => {
             let name = (name != "Nocterm Default").then_some(name);
             if dark {
-                settings.appearance.dark_theme = name;
+                settings.dark_theme = name;
             } else {
-                settings.appearance.light_theme = name;
+                settings.light_theme = name;
             }
         }
-        Choice::Scheme(mode) => settings.appearance.mode = mode,
+        Choice::Scheme(mode) => settings.mode = mode,
     });
     window
         .spawn(cx, async move |cx| {

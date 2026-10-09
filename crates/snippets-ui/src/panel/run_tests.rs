@@ -213,6 +213,7 @@ fn click_row(id: SharedString, count: usize, window: &mut Window, cx: &mut App) 
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_actions(
     cx: &mut TestAppContext,
 ) {
@@ -366,6 +367,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn run_refuses_authentication_alternate_closed_and_background_terminals(cx: &mut TestAppContext) {
     let (handle, panel) = fixture(cx);
     let original = snippet();

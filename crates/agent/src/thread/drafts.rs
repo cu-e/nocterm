@@ -5,13 +5,16 @@ use std::{sync::Arc, time::Duration};
 
 impl AgentThread {
     pub(crate) fn set_draft(&mut self, text: String, cx: &mut Context<Self>) {
-        let draft = (!text.is_empty()).then_some(text);
-        if self.draft == draft {
+        if self.archive.is_some() {
+            self.pending_archive_draft = Some(text);
+            self.updated = nocterm_ai::time::now();
             return;
         }
-        self.draft = draft;
+        if !self.composer.set_draft(text) {
+            return;
+        }
         self.draft_changed = true;
-        self.updated = nocterm_ai::history::now();
+        self.updated = nocterm_ai::time::now();
         if self.draft_save.is_none() {
             self.draft_save = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor()
@@ -30,6 +33,19 @@ impl AgentThread {
     }
 
     pub(crate) fn flush_snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
+        if self.archive.is_some() {
+            return self.pending_archive_draft.as_ref().map(|text| {
+                Arc::new(nocterm_ai::history::SharedChat {
+                    metadata: nocterm_ai::history::SavedChat::archive_draft(
+                        self.chat_id.clone(),
+                        self.agent_id.clone(),
+                        text.clone(),
+                        self.updated,
+                    ),
+                    queue: Vec::new(),
+                })
+            });
+        }
         self.shared_snapshot(cx).or_else(|| {
             (self.history_queued || self.draft_changed).then(|| {
                 Arc::new(nocterm_ai::history::SharedChat {
@@ -46,6 +62,9 @@ impl AgentThread {
         &self,
         cx: &App,
     ) -> Option<Arc<nocterm_ai::history::SharedChat>> {
+        if self.archive.is_some() {
+            return None;
+        }
         self.shared_snapshot(cx).or_else(|| {
             self.draft_changed.then(|| {
                 Arc::new(nocterm_ai::history::SharedChat {

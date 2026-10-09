@@ -40,6 +40,7 @@ impl RowVisual {
         )
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&self, hovered: bool, actions: AnyElement, cx: &App) -> Div {
         let theme = cx.theme();
         let profile = &self.profile;

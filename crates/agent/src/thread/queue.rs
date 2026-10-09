@@ -15,6 +15,7 @@ pub(crate) struct QueuedPrompt {
     pub image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
     pub attachments: Vec<Attachment>,
     pub encoded_len: usize,
+    pub memory_len: usize,
 }
 
 impl QueuedPrompt {
@@ -42,7 +43,9 @@ impl QueuedPrompt {
                 _ => None,
             })
             .collect();
+        let memory_len = nocterm_ai::history::prompt_memory(&saved).unwrap_or(usize::MAX);
         Self {
+            memory_len,
             saved: Arc::new(saved),
             attachments,
             image_keys: Arc::new(image_keys),
@@ -94,30 +97,40 @@ impl AgentThread {
         replace: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<bool, String> {
-        if !cx.ai_enabled() || self.auth_required || self.ended() {
+        if self.archive.is_some() {
+            return Err("Wait for the saved chat to finish loading.".into());
+        }
+        if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.images.is_empty() {
+        if text.trim().is_empty() && self.composer.images.is_empty() {
             return Ok(false);
         }
-        let id = replace.unwrap_or(self.next_queue_id);
+        let id = replace.unwrap_or(self.composer.next_queue_id());
         let saved = SavedPrompt {
             id,
             text,
             images: Vec::new(),
-            attachments: self.stable_attachments(&self.attachments, cx),
+            attachments: self.stable_attachments(&self.composer.attachments, cx),
         };
         let mut saved = saved;
         let encoded_len = nocterm_ai::history::prompt_size(&saved)?
             + self
+                .composer
                 .images
                 .iter()
                 .map(|image| image.encoded_len())
                 .sum::<usize>()
-            + self.images.len().saturating_sub(1);
-        saved.images = self.images.iter().map(|image| image.content()).collect();
-        let prompt = QueuedPrompt::prepared(saved, self.attachments.clone(), Some(encoded_len));
-        let mut queue = self.queue.clone();
+            + self.composer.images.len().saturating_sub(1);
+        saved.images = self
+            .composer
+            .images
+            .iter()
+            .map(|image| image.content())
+            .collect();
+        let prompt =
+            QueuedPrompt::prepared(saved, self.composer.attachments.clone(), Some(encoded_len));
+        let mut queue = self.composer.queue.clone();
         if let Some(id) = replace {
             let Some(slot) = queue.iter_mut().find(|prompt| prompt.saved.id == id) else {
                 return Err("This message was already sent.".into());
@@ -126,6 +139,12 @@ impl AgentThread {
         } else {
             queue.push(prompt);
         }
+        if queue.len() > 1024
+            || self.composer.images.len() > 128
+            || saved_attachment_count(&queue) > 1024
+        {
+            return Err("Too many queued messages, images or attachments in this chat.".into());
+        }
         self.refresh_storage_budget()?;
         let mut metadata = self.history_metadata(cx);
         // Sending moves ordinary text into the queue: budget it once.
@@ -133,20 +152,17 @@ impl AgentThread {
             metadata.draft = None;
         }
         self.storage_budget
+            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
+        self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
-        self.queue = queue;
+        self.composer.accept(queue, replace.is_some());
         if replace.is_none() {
-            self.draft = None;
             self.draft_save = None;
             self.draft_changed = false;
         }
-        if replace.is_none() {
-            self.next_queue_id += 1;
-        }
-        self.images.clear();
         self.persist(cx);
-        if !self.generating && replace.is_none() {
-            self.queue_paused = false;
+        if !self.lifecycle.generating() && replace.is_none() {
+            self.composer.queue_paused = false;
             self.dispatch_next(cx);
         }
         cx.notify();
@@ -154,12 +170,9 @@ impl AgentThread {
     }
 
     pub(crate) fn dispatch_next(&mut self, cx: &mut Context<Self>) {
-        if self.queue_paused
-            || self.queue_editing
-            || self.generating
-            || self.queue.is_empty()
-            || self.auth_required
-            || self.ended()
+        if !self.composer.dispatchable()
+            || self.lifecycle.generating()
+            || self.lifecycle.sign_in_required()
         {
             return;
         }
@@ -172,7 +185,12 @@ impl AgentThread {
             self.request_activation(cx);
             return;
         }
-        let prompt = self.queue.remove(0);
+        if self.lifecycle.phase() != nocterm_ai::session::SessionPhase::Ready {
+            return;
+        }
+        let Some(prompt) = self.composer.take_next() else {
+            return;
+        };
         // Context is fixed for this turn, including terminal tool access.
         self.prompt_attachments = Some(prompt.attachments);
         let saved = Arc::unwrap_or_clone(prompt.saved);
@@ -180,18 +198,16 @@ impl AgentThread {
     }
 
     pub(crate) fn send_now(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(index) = self.queue.iter().position(|prompt| prompt.saved.id == id) else {
+        if !self.composer.move_to_front(id) {
             return;
-        };
-        let prompt = self.queue.remove(index);
-        self.queue.insert(0, prompt);
-        if self.generating {
+        }
+        if self.lifecycle.generating() {
             self.stop(cx);
         }
-        self.queue_paused = false;
+        self.composer.queue_paused = false;
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
-        if !self.generating {
+        if !self.lifecycle.generating() {
             self.dispatch_next(cx);
         }
         cx.notify();
@@ -207,6 +223,14 @@ pub(crate) fn restore_attachments(values: &[SavedAttachment]) -> Vec<Attachment>
             SavedAttachment::LocalTerminal(title) => Attachment::UnavailableLocal(title.clone()),
         })
         .collect()
+}
+
+fn saved_attachment_count(queue: &[QueuedPrompt]) -> usize {
+    queue
+        .iter()
+        .map(|prompt| prompt.saved.attachments.len())
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

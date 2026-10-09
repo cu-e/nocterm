@@ -236,6 +236,7 @@ impl Panel for DockItem {
         let color = GROUP_COLORS[self.group_color? % GROUP_PALETTE];
         Some(color(cx.theme()))
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let icon_color = match self.item.tab_state(cx) {
             TabState::Idle => cx.theme().muted_foreground,

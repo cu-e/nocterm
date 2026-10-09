@@ -3,7 +3,7 @@
 use gpui_kit::{App, Hsla, Pixels, Rems, Rgba, SharedString, component::ActiveTheme, px, rems};
 use nocterm_design::Color;
 
-use crate::{ActiveDesign, ActiveSettings};
+use crate::{ActiveDesign, SettingsExt};
 
 /// Everything a terminal view needs to paint, already resolved: a setting
 /// wins over a design token, which wins over the component theme.
@@ -29,7 +29,7 @@ pub struct TerminalStyle {
 impl TerminalStyle {
     pub fn current(cx: &App) -> Self {
         let tokens = cx.design();
-        let settings = &cx.settings().terminal;
+        let settings = cx.setting::<crate::TerminalSettings>();
         let theme = cx.theme();
         let colors = &tokens.palette(theme.is_dark()).terminal;
 

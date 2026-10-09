@@ -41,6 +41,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.name = Some("pending extracted snapshot".into());
@@ -53,7 +54,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
         "background IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     let chats = nocterm_ai::history::load_all(&dir);
     assert_eq!(
         chats.len(),
@@ -87,7 +88,7 @@ fn shutdown_preserves_a_delete_extracted_by_the_writer_after_document_release(
         "delete IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert!(
         nocterm_ai::history::load_all(&dir).is_empty(),
         "quit lost the writer-owned deletion"
@@ -117,7 +118,7 @@ fn shutdown_saves_the_replacement_when_the_old_document_is_retained_elsewhere(
     replacement.update(cx, |thread, _| {
         thread.name = Some("replacement wins".into())
     });
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     let chats = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
     assert_eq!(chats.len(), 1);
     assert_eq!(
@@ -166,7 +167,7 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
         Some("replacement owner"),
         "a stale owner saved over the replacement outside shutdown"
     );
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(
         nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
         Some("replacement owner")
@@ -178,6 +179,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.name = Some("extracted old snapshot".into());
@@ -191,7 +193,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
         thread.save(cx);
     });
     remove_document(&f, thread, cx);
-    cx.update(|cx| drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     let chats = nocterm_ai::history::load_all(&dir);
     assert_eq!(chats.len(), 1);
     assert_eq!(chats[0].name.as_deref(), Some("latest queued snapshot"));

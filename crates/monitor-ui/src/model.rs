@@ -9,11 +9,11 @@
 
 use std::{sync::Arc, time::Duration};
 
+use crate::MonitorSettings;
 use gpui_kit::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use nocterm_monitor::{MetricSet, Platform, Sampler, Watch, detect, local_platform};
 use nocterm_session::{ExecError, HostExec};
-use nocterm_settings::MonitorSettings;
-use nocterm_ui::{ActiveSettings as _, SettingsStore};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Host, HostKey, SessionContext, Workspace, host::follow_active_session};
 
 /// How long a failed or ended watch waits before it is tried again.
@@ -164,7 +164,7 @@ impl HostMonitor {
     /// Starts, restarts or stops the watch to match the session, the
     /// settings and the details.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let settings = cx.settings().monitor.clone();
+        let settings = cx.setting::<crate::MonitorSettings>().clone();
         let host = watched_host(self.session.as_ref(), self.local.as_ref(), &settings);
         let plan = Plan::new(&settings, self.open);
         let history = settings.history_points as usize;

@@ -140,7 +140,7 @@ impl TerminalView {
         self.sync_pointer(cx);
         if self.pointer.selection.is_some() && event.button == MouseButton::Left {
             self.stop_selection();
-            if cx.settings().terminal.copy_on_select {
+            if cx.setting::<nocterm_ui::TerminalSettings>().copy_on_select {
                 self.copy_selection(cx);
             }
             return;

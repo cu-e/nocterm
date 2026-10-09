@@ -10,6 +10,7 @@ use nocterm_ai::{
     BridgeRegistration, ConnectRequest, ToolBridge, acp,
 };
 
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{
     Item, ItemEvent, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
     Workspace,
@@ -21,9 +22,16 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
 };
+
+fn shutdown_runtime(cx: &mut TestAppContext) {
+    let task = cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+    cx.foreground_executor().block_test(task);
+}
 #[derive(Default)]
 struct Commands {
     sessions: AtomicU64,
+    new_dirs: Mutex<Vec<std::path::PathBuf>>,
+    restore_dirs: Mutex<Vec<std::path::PathBuf>>,
     session_gate: Mutex<Option<oneshot::Receiver<()>>>,
     close_gate: Mutex<Option<oneshot::Receiver<()>>>,
     closed: Mutex<Vec<acp::SessionId>>,
@@ -40,16 +48,22 @@ struct Commands {
     restore_errors: Mutex<std::collections::VecDeque<AgentError>>,
     /// The MCP servers each new session was given.
     servers: Mutex<Vec<Vec<acp::McpServer>>>,
+    /// The configuration options every session reports.
+    config: Mutex<Vec<acp::SessionConfigOption>>,
+    /// Each configuration change asked for.
+    config_requests: Mutex<Vec<acp::SetSessionConfigOptionRequest>>,
 }
 impl AgentCommands for Commands {
     fn new_session(
         &self,
         request: acp::NewSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        self.new_dirs.lock().unwrap().push(request.cwd.clone());
         self.servers.lock().unwrap().push(request.mcp_servers);
         let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
         let auth_required = self.auth_required.load(Ordering::SeqCst);
+        let config = self.config.lock().unwrap().clone();
         async move {
             if let Some(gate) = gate {
                 let _ = gate.await;
@@ -57,7 +71,8 @@ impl AgentCommands for Commands {
             if auth_required {
                 Err(AgentError::AuthRequired("Sign in to continue".into()))
             } else {
-                Ok(acp::NewSessionResponse::new(format!("s{id}")))
+                Ok(acp::NewSessionResponse::new(format!("s{id}"))
+                    .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
             }
         }
         .boxed()
@@ -66,6 +81,7 @@ impl AgentCommands for Commands {
         &self,
         request: nocterm_ai::RestoreSessionRequest,
     ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        self.restore_dirs.lock().unwrap().push(request.cwd.clone());
         self.restores
             .lock()
             .unwrap()
@@ -103,9 +119,15 @@ impl AgentCommands for Commands {
     }
     fn set_config_option(
         &self,
-        _: acp::SetSessionConfigOptionRequest,
+        request: acp::SetSessionConfigOptionRequest,
     ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
-        async { Ok(Vec::new()) }.boxed()
+        let mut config = self.config.lock().unwrap();
+        if let Some(value) = nocterm_ai::session_config::ConfigValue::from_acp(&request.value) {
+            nocterm_ai::session_config::choose(&mut config, &request.config_id.0, &value);
+        }
+        let options = config.clone();
+        self.config_requests.lock().unwrap().push(request);
+        async move { Ok(options) }.boxed()
     }
     fn authenticate(&self, _: acp::AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
         self.authentications.fetch_add(1, Ordering::SeqCst);
@@ -156,13 +178,23 @@ struct Connector {
     commands: Arc<Commands>,
     events: async_channel::Receiver<AgentEvent>,
     connects: AtomicUsize,
+    roots: Mutex<
+        Vec<(
+            std::path::PathBuf,
+            Option<nocterm_ai::sandbox::SandboxPolicy>,
+        )>,
+    >,
     event_senders: Mutex<Vec<async_channel::Sender<AgentEvent>>>,
 }
 impl AgentConnector for Connector {
     fn connect(
         &self,
-        _: ConnectRequest,
+        request: ConnectRequest,
     ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
+        self.roots
+            .lock()
+            .unwrap()
+            .push((request.working_directory, request.sandbox));
         self.connects.fetch_add(1, Ordering::SeqCst);
         let commands = self.commands.clone();
         let (sender, events) = async_channel::bounded(256);
@@ -189,6 +221,7 @@ struct Bridge {
     revoked: Arc<Mutex<Vec<u64>>>,
     stops: AtomicUsize,
     calls: async_channel::Receiver<BridgeCall>,
+    rejections: async_channel::Receiver<nocterm_ai::BridgeRejection>,
 }
 impl ToolBridge for Bridge {
     fn register(&self) -> Result<BridgeRegistration, String> {
@@ -196,13 +229,19 @@ impl ToolBridge for Bridge {
         let revoked = self.revoked.clone();
         Ok(BridgeRegistration::new(
             id,
-            "fake".into(),
-            "test-token".into(),
+            nocterm_ai::BridgeLaunch {
+                program: "/fake/nocterm".into(),
+                args: vec!["agent-bridge".into()],
+                env: vec![("NOCTERM_BRIDGE_TOKEN".into(), "test-token".into())],
+            },
             Arc::new(move |id| revoked.lock().unwrap().push(id)),
         ))
     }
     fn calls(&self) -> async_channel::Receiver<BridgeCall> {
         self.calls.clone()
+    }
+    fn rejections(&self) -> async_channel::Receiver<nocterm_ai::BridgeRejection> {
+        self.rejections.clone()
     }
     fn stop(&self) {
         self.stops.fetch_add(1, Ordering::SeqCst);
@@ -339,30 +378,42 @@ struct Fixture {
     terminal: gpui_kit::EntityId,
     /// Tool calls as the terminal bridge delivers them.
     calls: async_channel::Sender<BridgeCall>,
+    rejections: async_channel::Sender<nocterm_ai::BridgeRejection>,
     _directory: tempfile::TempDir,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     fixture_with_width(cx, 26.)
 }
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
-    let (commands, bridge, connector, events, sender) = {
+    let (commands, bridge, connector, events, sender, rejection_sender) = {
         let commands = Arc::new(Commands::default());
         let (events, rx) = async_channel::bounded(256);
         let (sender, calls) = async_channel::bounded(16);
+        let (rejection_sender, rejections) = async_channel::bounded(16);
         let bridge = Arc::new(Bridge {
             next: AtomicU64::new(1),
             revoked: Default::default(),
             stops: AtomicUsize::new(0),
             calls,
+            rejections,
         });
         let connector = Arc::new(Connector {
             commands: commands.clone(),
             events: rx,
             connects: AtomicUsize::new(0),
+            roots: Default::default(),
             event_senders: Default::default(),
         });
-        (commands, bridge, connector, events, sender)
+        (
+            commands,
+            bridge,
+            connector,
+            events,
+            sender,
+            rejection_sender,
+        )
     };
     let access = Rc::new(Access {
         executor: Default::default(),
@@ -376,7 +427,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         gpui_kit::init(cx);
         let mut tokens = nocterm_ui::DesignTokens::builtin();
         tokens.layout.agent_panel_width = width;
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             tokens,
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
@@ -393,6 +444,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
                 codex_home: Some(directory.path().join("codex")),
                 workdir: directory.path().join("work"),
             },
+            &ui,
             cx,
         );
         let mut panel = None;
@@ -433,8 +485,18 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         access,
         terminal,
         calls: sender,
+        rejections: rejection_sender,
         _directory: directory,
     }
+}
+/// Connects chats on their first message instead of when shown, for tests
+/// of what happens before a chat connects.
+fn lazy_start(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.warm_start = false)
+            .detach()
+    });
+    cx.run_until_parked();
 }
 fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(fixture.handle, |_, window, cx| {
@@ -509,7 +571,9 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 }
 
 mod approvals;
+mod bridge_outcomes;
 mod composer;
+mod hermes;
 mod history;
 mod invalidation;
 mod labels;
@@ -522,10 +586,14 @@ mod resources;
 mod restoration;
 mod routing;
 mod servers;
+mod tool_corpus;
 mod tool_input;
 mod tool_output;
 mod tool_presentation;
+mod tool_sections;
+mod tool_wrappers;
 mod usage_dismissal;
+mod warm_start;
 
 mod flow;
 
@@ -540,4 +608,8 @@ mod execution;
 mod drafts;
 
 mod drafts_intersections;
+mod keep_alive;
+mod recovery;
 mod restoration_intersections;
+
+mod archive;

@@ -256,7 +256,7 @@ fn scan_unix(
 mod tests {
     use super::*;
     fn policy() -> Policy {
-        Policy::local(&nocterm_settings::IndexingSettings::default())
+        Policy::local(&crate::IndexingSettings::default())
     }
     #[test]
     fn excluded_folders_are_counted_but_not_entered() {

@@ -11,6 +11,7 @@ mod registration;
 mod remote;
 mod remote_pane;
 mod row;
+mod settings;
 mod settings_page;
 mod statistics;
 #[cfg(test)]
@@ -35,7 +36,7 @@ use gpui_kit::{
 use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
-use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
+use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _};
 use nocterm_workspace::{
     FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
 };
@@ -44,6 +45,10 @@ use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 pub use registration::{OpenExplorerSettings, ShowTransfers, ToggleExplorer, register};
+pub use settings::{
+    ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,
+    OpenSettings, Opener,
+};
 pub use settings_page::ExplorerPage;
 
 /// Supplies the lazy Explorer page to the application Settings host.
@@ -397,9 +402,9 @@ impl FilesPanel {
     }
 }
 /// The user's indexing settings; the defaults where none are installed.
-fn indexing(cx: &App) -> nocterm_settings::IndexingSettings {
+fn indexing(cx: &App) -> crate::IndexingSettings {
     if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.settings().explorer.indexing.clone()
+        cx.setting::<crate::ExplorerSettings>().indexing.clone()
     } else {
         Default::default()
     }
@@ -422,7 +427,11 @@ impl Render for FilesPanel {
         if self.local.requested.is_none() {
             let initial = cx
                 .has_global::<nocterm_ui::SettingsStore>()
-                .then(|| cx.settings().local.cwd.clone())
+                .then(|| {
+                    cx.setting::<nocterm_session::LocalShellSettings>()
+                        .cwd
+                        .clone()
+                })
                 .flatten()
                 .map(PathBuf::from)
                 .or_else(local::home);

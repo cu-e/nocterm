@@ -74,7 +74,7 @@ impl Body {
                 let state = cx.new(|_| ResizableState::default());
                 let subscription =
                     cx.subscribe(&state, move |this, state, _: &ResizablePanelEvent, cx| {
-                        if this.right_panel_maximized {
+                        if this.right_panel.maximized() {
                             return;
                         }
                         let sizes = state.read(cx).sizes().clone();
@@ -128,7 +128,7 @@ impl Workspace {
     pub(super) fn arrangement(&self, cx: &gpui_kit::App) -> Arrangement {
         Arrangement {
             sidebar: self.sidebar_open,
-            side_panel: self.right_panel_open && self.right_panel_available,
+            side_panel: self.right_panel.open(),
             swapped: Self::sides_swapped(cx),
         }
     }
@@ -142,7 +142,7 @@ impl Workspace {
     pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
         let swapped = !Self::sides_swapped(cx);
         LayoutMemory::set_flag(SWAPPED, swapped, cx);
-        if let Some(panel) = &self.right_panel {
+        if let Some(panel) = &self.right_panel.handle {
             panel.set_docked_left(swapped, cx);
         }
         cx.notify();
@@ -156,7 +156,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.right_panel_maximized || !self.right_panel_open {
+        if self.right_panel.maximized() || !self.right_panel.open() {
             return;
         }
         let arrangement = self.arrangement(cx);

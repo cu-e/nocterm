@@ -11,13 +11,13 @@ use nocterm_session::{
     CloseReason, ConnectRequest, Event, Prompt, Reply, Secret, SecretRequest, Session,
     SessionDriver, Transport,
 };
-use nocterm_terminal::{TerminalView, open_session};
-use nocterm_ui::ActiveSettings as _;
+use nocterm_terminal::TerminalView;
 use nocterm_workspace::{SessionSpec, Workspace};
 
 mod menu_tabs;
 mod shortcuts;
 mod terminal_events;
+mod titlebar;
 mod vault;
 
 #[derive(Default)]
@@ -76,23 +76,13 @@ fn fixture_with_vault(
     }
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal) = cx.update(|cx| {
-        gpui_kit::init(cx);
-        cx.set_reduce_motion(true);
+        let mut settings = nocterm_settings::SettingsDocument::default();
         let directory = tempfile::tempdir().unwrap();
-        let mut settings = nocterm_settings::Settings::default();
-        settings.local.cwd = Some(directory.path().to_string_lossy().into_owned());
-        let vault_path = directory.path().join("vault.bin");
-        let paths = nocterm_core::Paths::rooted_at(directory.path());
-        cx.set_global(FixtureDirectory {
-            _directory: directory,
+        settings.update::<nocterm_session::LocalShellSettings>(|section| {
+            section.cwd = Some(directory.path().to_string_lossy().into_owned())
         });
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(settings),
-            cx,
-        );
-        if vault_ready {
-            let service = nocterm_vault_ui::init(vault_path, cx).unwrap();
+        let booted = boot(directory, settings, transport.clone(), vault_ready, cx);
+        if let Some(service) = booted.vault {
             // Creates the vault with a master password and leaves it locked.
             cx.set_global(FixtureVault(Box::new(move || {
                 futures::executor::block_on(
@@ -102,45 +92,7 @@ fn fixture_with_vault(
                 service.lock();
             })));
         }
-        nocterm_terminal::init(transport.clone(), cx);
-        nocterm_connections::init(None, cx);
-        nocterm_snippets_ui::init(None, cx);
-        nocterm_agent::init(
-            nocterm_agent::AgentServices {
-                terminal_auth: None,
-                private_dirs: Vec::new(),
-                shared_dirs: Vec::new(),
-                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
-                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
-                state_file: paths.state_dir().join("agents.toml"),
-                chats_dir: paths.state_dir().join("agent-chats"),
-                codex_home: None,
-                workdir: paths.state_dir().join("agent-workspace"),
-            },
-            cx,
-        );
-        crate::keymap::load(None, cx);
-        super::application::register(paths, vault_ready, cx);
-        let (window, workspace) =
-            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| {
-                    let mut workspace = Workspace::new(window, cx);
-                    workspace.set_session_opener(open_session);
-                    nocterm_connections::register(&mut workspace, window, cx);
-                    super::register_settings(&mut workspace, vault_ready);
-                    nocterm_files::register(&mut workspace, window, cx);
-                    nocterm_snippets_ui::register(&mut workspace, window, cx);
-                    nocterm_monitor_ui::register(&mut workspace, window, cx);
-                    nocterm_agent::register(&mut workspace, window, cx);
-                    workspace.set_menu_builder(super::app_menus::build, window, cx);
-                    if vault_ready && cx.settings().vault.prompt_on_startup {
-                        let pages = vec![nocterm_vault_ui::settings_page()];
-                        nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
-                    }
-                    workspace
-                })
-            })
-            .unwrap();
+        let (window, workspace) = open_workspace(vault_ready, cx);
         let terminal = window
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -169,6 +121,72 @@ fn fixture_with_vault(
     (window, workspace, terminal, transport)
 }
 
+/// Installs the application's globals as the application does, with the
+/// state in `directory` and nothing persisted.
+fn boot(
+    directory: tempfile::TempDir,
+    settings: nocterm_settings::SettingsDocument,
+    transport: Arc<MockTransport>,
+    vault: bool,
+    cx: &mut gpui_kit::App,
+) -> crate::bootstrap::Booted {
+    let paths = nocterm_core::Paths::rooted_at(directory.path());
+    let vault = vault.then(|| crate::bootstrap::VaultSetup {
+        file: directory.path().join("vault.bin"),
+        device_unlock: false,
+    });
+    cx.set_global(FixtureDirectory {
+        _directory: directory,
+    });
+    let booted = crate::bootstrap::bootstrap(
+        crate::bootstrap::Services {
+            tokens: nocterm_ui::DesignTokens::builtin(),
+            settings: nocterm_ui::SettingsStore::in_memory(settings),
+            persist: false,
+            transport,
+            local: false,
+            themes: None,
+            agent: nocterm_agent::AgentServices {
+                terminal_auth: None,
+                private_dirs: Vec::new(),
+                shared_dirs: Vec::new(),
+                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
+                bridge: Arc::new(nocterm_acp::BridgeServer::new(
+                    paths.clone(),
+                    nocterm_acp::RelayCommand {
+                        program: std::env::current_exe().expect("test executable"),
+                        args: vec![crate::AGENT_BRIDGE.into()],
+                    },
+                )),
+                state_file: paths.state_dir().join("agents.toml"),
+                chats_dir: paths.state_dir().join("agent-chats"),
+                codex_home: None,
+                workdir: paths.state_dir().join("agent-workspace"),
+            },
+            paths,
+            vault,
+        },
+        cx,
+    );
+    cx.set_reduce_motion(true);
+    booted
+}
+
+/// Opens a window with the application's workspace.
+fn open_workspace(
+    vault_ready: bool,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| {
+            let mut workspace = Workspace::new(window, cx);
+            crate::bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
+            workspace
+        })
+    })
+    .unwrap()
+}
+
 fn emit(cx: &mut TestAppContext, transport: &MockTransport, index: usize, event: Event) {
     let driver = transport.drivers.lock().unwrap()[index].clone();
     cx.background_executor
@@ -177,268 +195,6 @@ fn emit(cx: &mut TestAppContext, transport: &MockTransport, index: usize, event:
         })
         .detach();
     cx.run_until_parked();
-}
-
-#[gpui_kit::test]
-fn titlebar_find_and_settings_keep_their_field_focus(cx: &mut TestAppContext) {
-    let (handle, workspace, terminal, _) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        for (index, label) in ["Session", "Edit", "Search", "Window", "Help"]
-            .iter()
-            .enumerate()
-        {
-            assert_eq!(
-                window
-                    .within("app-menu-bar")
-                    .within(index)
-                    .find("menu")
-                    .label(),
-                Some(*label)
-            );
-        }
-        window
-            .within("app-menu-bar")
-            .within(2usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(0usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("find-previous").is_some());
-        assert!(terminal.read(cx).focus_handle(cx).is_focused(window));
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").hover(6usize, cx);
-        window.render_frame(cx);
-        window
-            .within("submenu")
-            .within("popup-menu")
-            .click(0usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let settings = workspace
-            .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
-            .unwrap();
-        assert!(settings.read(cx).focus_handle(cx).is_focused(window));
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn titlebar_about_and_new_window_use_application_actions(cx: &mut TestAppContext) {
-    let (first, workspace, _, transport) = fixture(cx);
-    cx.update_window(first, |_, window, cx| {
-        window.activate_window();
-        window.render_frame(cx);
-        window
-            .within("app-menu-bar")
-            .within(4usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(0usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(first, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("about-close").is_some());
-        window.click("about-close", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(first, |_, window, cx| {
-        window.render_frame(cx);
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(1usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    let second = cx.update(|cx| {
-        let windows = cx.windows();
-        assert_eq!(windows.len(), 2);
-        assert_eq!(
-            transport.drivers.lock().unwrap().len(),
-            1,
-            "opening a window does not start another connection"
-        );
-        assert!(workspace.read(cx).active_session(cx).unwrap().connected);
-        *windows.iter().find(|window| **window != first).unwrap()
-    });
-    cx.update_window(second, |_, window, cx| {
-        window.activate_window();
-        window.render_frame(cx);
-        window.dispatch_action(Box::new(nocterm_workspace::CloseWindow), cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(cx.windows(), vec![first]);
-        assert!(workspace.read(cx).active_session(cx).unwrap().connected);
-    });
-}
-
-#[gpui_kit::test]
-fn titlebar_commands_follow_bottom_screen_focus_while_find_remains_open(cx: &mut TestAppContext) {
-    let (handle, workspace, central, transport) = fixture(cx);
-    let bottom = cx
-        .update_window(handle, |_, window, cx| {
-            let local_transport = transport.clone();
-            nocterm_terminal::init_local(Arc::new(move |_| local_transport.clone()), cx);
-            let bottom = cx.new(|cx| TerminalView::new_local(window, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_local_terminal(bottom.clone(), window, cx);
-            });
-            bottom
-        })
-        .unwrap();
-    cx.simulate_window_resize(
-        handle,
-        gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(800.)),
-    );
-    emit(cx, &transport, 1, Event::Connected);
-    let grid_focus = bottom.read_with(cx, |bottom, cx| bottom.focus_handle(cx));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(grid_focus.is_focused(window));
-        window
-            .within("app-menu-bar")
-            .within(2usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(0usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("find-previous").is_some());
-        assert!(bottom.read(cx).focus_handle(cx).is_focused(window));
-        // TerminalElement is a canvas rather than an observed component. Send
-        // native pointer events inside the bottom grid, above the footer.
-        let position = gpui_kit::point(
-            window.viewport_size().width - gpui_kit::px(100.),
-            window.viewport_size().height - gpui_kit::px(70.),
-        );
-        window.dispatch_event(
-            gpui_kit::MouseDownEvent {
-                button: gpui_kit::MouseButton::Left,
-                position,
-                modifiers: Default::default(),
-                click_count: 1,
-                first_mouse: false,
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.dispatch_event(
-            gpui_kit::MouseUpEvent {
-                button: gpui_kit::MouseButton::Left,
-                position,
-                modifiers: Default::default(),
-                click_count: 1,
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.render_frame(cx);
-        assert!(
-            grid_focus.is_focused(window),
-            "the click must actually focus the bottom terminal screen"
-        );
-        assert!(
-            window.try_find("find-previous").is_some(),
-            "the Find bar remains mounted"
-        );
-        window
-            .within("app-menu-bar")
-            .within(1usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(9usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.read(|cx| {
-        assert_eq!(
-            cx.read_from_clipboard().unwrap().text().as_deref(),
-            Some("Local terminal"),
-            "Copy Connection Name must target the focused bottom screen despite its open Find bar"
-        );
-    });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(3usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.read(|cx| {
-        assert!(!bottom.read(cx).terminal().read(cx).is_connected());
-        assert!(
-            central.read(cx).terminal().read(cx).is_connected(),
-            "Disconnect from the bottom screen must preserve the central remote session"
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn titlebar_close_window_retires_connected_session_and_releases_its_models(
-    cx: &mut TestAppContext,
-) {
-    let (handle, workspace, terminal, transport) = fixture(cx);
-    let driver = transport.drivers.lock().unwrap()[0].clone();
-    let workspace_weak = workspace.downgrade();
-    let terminal_weak = terminal.downgrade();
-    // Keep only the references a running application owns, so closing the
-    // window must dispose its entities and retire its session driver.
-    drop(workspace);
-    drop(terminal);
-    cx.update_window(handle, |_, window, cx| {
-        window.activate_window();
-        window.render_frame(cx);
-        window
-            .within("app-menu-bar")
-            .within(0usize)
-            .click("menu", cx);
-        window.render_frame(cx);
-        window.within("popup-menu").click(10usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        assert!(cx.windows().is_empty());
-        assert!(
-            workspace_weak.upgrade().is_none(),
-            "the closed window must release its Workspace"
-        );
-        assert!(
-            terminal_weak.upgrade().is_none(),
-            "the closed window must release its TerminalView"
-        );
-    });
-    assert!(
-        driver.closed().now_or_never().is_some(),
-        "closing the window must retire the connected session"
-    );
 }
 
 #[gpui_kit::test]
@@ -503,6 +259,7 @@ fn secret_prompt_keeps_tab_navigation(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn delayed_secret_prompt_preserves_other_tab_focus_and_restores_input_on_activation(
     cx: &mut TestAppContext,
 ) {
@@ -669,7 +426,7 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
 fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_ui::update_settings;
+    use nocterm_ui::SettingsExt as _;
     let (window, workspace, _, _) = fixture(cx);
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
@@ -691,7 +448,8 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
             .find_item::<nocterm_settings_ui::SettingsView>()
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
-        update_settings(cx, |settings| settings.ai.enabled = false).detach();
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+            .detach();
         window.render_frame(cx);
     })
     .unwrap();
@@ -725,7 +483,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
             ..Default::default()
         });
         source.credential = Some(markers[3].parse().unwrap());
-        source.options.proxy = Some(nocterm_settings::ProxyConfig::HttpConnect {
+        source.options.proxy = Some(nocterm_session::ProxyConfig::HttpConnect {
             host: markers[2].into(),
             port: 8080,
         });

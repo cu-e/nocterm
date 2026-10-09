@@ -7,6 +7,7 @@ use gpui_kit::{
 };
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn native_append_tails_reorder_the_last_group_position_and_preserve_empty_targets(
     cx: &mut TestAppContext,
 ) {
@@ -135,6 +136,7 @@ fn native_append_tails_reorder_the_last_group_position_and_preserve_empty_target
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn source_and_preview_keep_server_metadata_and_dimensions_without_shifting_target(
     cx: &mut TestAppContext,
 ) {

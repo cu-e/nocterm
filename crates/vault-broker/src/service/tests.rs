@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::atomic::AtomicUsize,
 };
-use zbus::{connection::Builder, object_server::SignalEmitter, zvariant::OwnedObjectPath};
+use zbus::{Proxy, connection::Builder, object_server::SignalEmitter, zvariant::OwnedObjectPath};
 struct Bus {
     _config: std::path::PathBuf,
     child: Child,
@@ -227,6 +227,7 @@ async fn key_expiry_runs_while_unrelated_name_ownership_keeps_changing() {
     );
 }
 #[tokio::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn private_bus_requires_actual_verification_before_key_release() {
     let bus = Bus::new();
     let service = connect(&bus).await;

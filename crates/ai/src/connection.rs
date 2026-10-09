@@ -10,7 +10,7 @@ pub struct ConnectRequest {
     /// Run the agent isolated under this policy; `None` runs it directly.
     pub sandbox: Option<crate::sandbox::SandboxPolicy>,
     /// Limits for the complete agent process tree.
-    pub resources: nocterm_settings::AgentResourceSettings,
+    pub resources: crate::AgentResourceSettings,
     /// Cancellation must return only after any startup process tree is stopped.
     pub cancellation: ConnectionCancellation,
 }
@@ -132,12 +132,42 @@ pub enum AgentEvent {
     Session(acp::SessionNotification),
     Permission {
         request: acp::RequestPermissionRequest,
-        respond: oneshot::Sender<acp::RequestPermissionOutcome>,
+        respond: PermissionResponder,
     },
     Exited {
         code: Option<i32>,
         stderr_tail: String,
     },
+}
+
+/// The answer to one permission request.
+///
+/// Dropping it unanswered answers `Cancelled`, so a request that nobody
+/// handles, or whose thread or dialog is closed, never leaves the agent
+/// waiting.
+#[derive(Debug)]
+pub struct PermissionResponder(Option<oneshot::Sender<acp::RequestPermissionOutcome>>);
+
+impl PermissionResponder {
+    /// A responder and the receiver its answer arrives on.
+    pub fn channel() -> (Self, oneshot::Receiver<acp::RequestPermissionOutcome>) {
+        let (sender, receiver) = oneshot::channel();
+        (Self(Some(sender)), receiver)
+    }
+
+    pub fn respond(mut self, outcome: acp::RequestPermissionOutcome) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(outcome);
+        }
+    }
+}
+
+impl Drop for PermissionResponder {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(acp::RequestPermissionOutcome::Cancelled);
+        }
+    }
 }
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -161,27 +191,49 @@ pub type ConnectError = AgentError;
 pub trait ToolBridge: Send + Sync + 'static {
     fn register(&self) -> Result<BridgeRegistration, String>;
     fn calls(&self) -> async_channel::Receiver<BridgeCall>;
+    fn rejections(&self) -> async_channel::Receiver<BridgeRejection> {
+        let (sender, receiver) = async_channel::bounded(1);
+        sender.close();
+        receiver
+    }
     fn stop(&self);
+}
+/// How an agent starts the relay to a chat's bridge. The adapter that owns the
+/// bridge decides the command; the chat only hands it to the agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BridgeLaunch {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 pub struct BridgeRegistration {
     pub id: u64,
-    pub endpoint: String,
-    pub token: String,
+    launch: BridgeLaunch,
     revoke: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 impl BridgeRegistration {
-    pub fn new(
-        id: u64,
-        endpoint: String,
-        token: String,
-        revoke: Arc<dyn Fn(u64) + Send + Sync>,
-    ) -> Self {
+    pub fn new(id: u64, launch: BridgeLaunch, revoke: Arc<dyn Fn(u64) + Send + Sync>) -> Self {
         Self {
             id,
-            endpoint,
-            token,
+            launch,
             revoke: Some(revoke),
         }
+    }
+    pub fn launch(&self) -> &BridgeLaunch {
+        &self.launch
+    }
+    /// The chat's terminal tools server, as the agent should start it.
+    pub fn mcp_server(&self) -> acp::McpServer {
+        let BridgeLaunch { program, args, env } = self.launch.clone();
+        acp::McpServer::Stdio(
+            acp::McpServerStdio::new(crate::tool_display::bridge_server_name(self.id), program)
+                .args(args)
+                .env(
+                    env.into_iter()
+                        .map(|(name, value)| acp::EnvVariable::new(name, value))
+                        .collect(),
+                ),
+        )
     }
     pub fn revoke(&mut self) {
         if let Some(revoke) = self.revoke.take() {
@@ -194,8 +246,43 @@ impl Drop for BridgeRegistration {
         self.revoke();
     }
 }
+pub struct BridgeRejection {
+    pub registration_id: u64,
+    pub tool: String,
+    pub arguments: serde_json::Value,
+    pub error: String,
+}
+
 pub struct BridgeCall {
     pub registration_id: u64,
     pub call: TerminalCall,
+    pub arguments: Option<serde_json::Value>,
+    /// Assigned at chat intake; identifies a particular request within its turn.
+    pub display_token: Option<(u64, u64)>,
     pub respond: oneshot::Sender<Result<serde_json::Value, String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::executor::block_on;
+
+    #[test]
+    fn a_dropped_responder_answers_cancelled() {
+        let (responder, answer) = PermissionResponder::channel();
+        drop(responder);
+        assert_eq!(
+            block_on(answer).unwrap(),
+            acp::RequestPermissionOutcome::Cancelled
+        );
+    }
+
+    #[test]
+    fn a_responder_sends_its_outcome_once() {
+        let (responder, answer) = PermissionResponder::channel();
+        let outcome =
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new("allow"));
+        responder.respond(outcome.clone());
+        assert_eq!(block_on(answer).unwrap(), outcome);
+    }
 }

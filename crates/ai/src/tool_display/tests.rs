@@ -142,10 +142,175 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
         json!({"server":"nocterm-170", "tool":"exec_command", "arguments":{"terminal_id":"t1", "program":"true"}}),
         json!({"server":"nocterm-17", "tool":"send_input", "arguments":{"terminal_id":"t1", "text":"foreign"}}),
         json!({"server":"nocterm-17", "arguments":{"terminal_id":"t1", "program":"true"}}),
-        json!({"terminal_id":"t1", "program":""}),
     ] {
         let call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
         assert!(requested_call(&call).is_none());
         assert!(header(&call).starts_with("mcp__nocterm-17__exec_command"));
     }
+}
+
+#[test]
+fn hermes_spelling_shares_identity_with_the_registered_server() {
+    let input = json!({"terminal_id":"t2", "program":"sh", "args":["-c","qm config 9000"]});
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_3_exec_command").raw_input(input.clone());
+    let expected = request(&parse("exec_command", input).unwrap());
+    assert_eq!(request(&envelope(&call, "nocterm-3").unwrap()), expected);
+    assert_eq!(request(&requested_call(&call).unwrap()), expected);
+    assert!(envelope(&call, "nocterm-30").is_none());
+    assert!(header(&call).starts_with("Nocterm · Execute program"));
+    assert_eq!(bridge_server_name(3), "nocterm-3");
+}
+
+#[test]
+fn hermes_omits_the_input_of_calls_without_arguments() {
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_list_terminals");
+    assert!(matches!(
+        envelope(&call, "nocterm-12"),
+        Some(TerminalCall::ListTerminals)
+    ));
+    assert!(header(&call).starts_with("Nocterm · List terminals"));
+    // A tool that needs arguments is not complete without them.
+    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_run_command");
+    assert!(envelope(&call, "nocterm-12").is_none());
+    assert!(header(&call).starts_with("Nocterm · Run command"));
+}
+
+#[test]
+fn malformed_and_foreign_hermes_names_keep_the_provider_label() {
+    for title in [
+        "mcp_nocterm_x_run_command",
+        "mcp_nocterm_3run_command",
+        "mcp_nocterm_3_unknown",
+        "mcp_github_run_command",
+        "mcp_nocterm_3_exec_command_extra",
+    ] {
+        let call = acp::ToolCall::new("h1", title)
+            .raw_input(json!({"terminal_id":"t1", "command":"true"}));
+        assert!(requested_call(&call).is_none(), "{title}");
+        assert!(envelope(&call, "nocterm-3").is_none(), "{title}");
+        assert!(header(&call).starts_with(title), "{title}");
+    }
+    let mut call = acp::ToolCall::new("h1", "mcp_nocterm_3_run_command")
+        .raw_input(json!({"terminal_id":"t1", "command":"true"}));
+    call.name = Some("mcp__nocterm-4__run_command".into());
+    assert!(envelope(&call, "nocterm-3").is_none());
+    assert!(envelope(&call, "nocterm-4").is_none());
+}
+
+#[test]
+fn a_request_the_bridge_rejected_is_still_shown_but_never_matched() {
+    // From a Codex chat: a build with a timeout past the bridge's limit.
+    let arguments = json!({"terminal_id":"t1", "program":"/bin/sh",
+        "args":["-c","cargo build --release"], "timeout_ms":1_800_000, "yield_ms":1000});
+    for input in [
+        json!({"server":"nocterm-11", "tool":"exec_command", "arguments":arguments}),
+        json!({"terminal_id":"t1", "program":""}),
+    ] {
+        let call = acp::ToolCall::new("c1", "mcp.nocterm-11.exec_command").raw_input(input);
+        assert!(requested_call(&call).unwrap().validate().is_err());
+        assert!(header(&call).starts_with("Nocterm · Execute program"));
+        assert!(
+            envelope(&call, "nocterm-11").is_none(),
+            "only requests the bridge would run are matched to its records"
+        );
+    }
+}
+
+#[test]
+fn v1_metadata_and_unparseable_v2_requests_remain_readable() {
+    let mut call = acp::ToolCall::new("old", "provider");
+    call.meta = Some(
+        [(
+            META_KEY.into(),
+            json!({"version":1,"tool":"list_terminals","arguments":{},"destination":null}),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    assert!(ToolDisplay::from_call(&call).unwrap().outcome.is_none());
+    let display = ToolDisplay::requested("unknown_tool".into(), json!({"bad":true}));
+    display.attach(&mut call);
+    assert!(
+        ToolDisplay::from_call(&call)
+            .unwrap()
+            .display_request()
+            .is_none()
+    );
+}
+
+#[test]
+fn outcome_budget_counts_serialized_escaping_for_success_and_error() {
+    let mut display = ToolDisplay::requested("list_terminals".into(), json!({}));
+    display.finish(Ok(json!({"context":"ok"})));
+    assert!(matches!(display.outcome, Some(ToolOutcome::Ok(_))));
+    display.finish(Ok(json!("\n".repeat(140_000))));
+    assert!(display.outcome.is_none());
+    display.finish(Err("password=secret".into()));
+    let Some(ToolOutcome::Err(error)) = &display.outcome else {
+        panic!("error outcome");
+    };
+    assert!(!error.contains("secret"));
+    display.finish(Err("\n".repeat(140_000)));
+    assert!(display.outcome.is_none());
+}
+
+#[test]
+fn outcome_budget_accepts_the_exact_boundary_and_rejects_one_more_byte() {
+    let limit = 256 * 1024;
+    for success in [false, true] {
+        let empty = if success {
+            ToolOutcome::Ok(json!(""))
+        } else {
+            ToolOutcome::Err(String::new())
+        };
+        let overhead = serde_json::to_vec(&empty).unwrap().len();
+        let mut display = ToolDisplay::requested("list_terminals".into(), json!({}));
+        for extra in [0, 1] {
+            let text = "x".repeat(limit - overhead + extra);
+            let result = if success { Ok(json!(text)) } else { Err(text) };
+            display.finish(result);
+            assert_eq!(display.outcome.is_some(), extra == 0);
+            if let Some(outcome) = &display.outcome {
+                assert_eq!(serde_json::to_vec(outcome).unwrap().len(), limit);
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_matching_preserves_rejected_unknown_tools_and_original_arguments() {
+    for title in [
+        "mcp.nocterm-3.typo",
+        "mcp__nocterm-3__typo",
+        "mcp_nocterm_3_typo",
+    ] {
+        let call = acp::ToolCall::new("bad", title).raw_input(json!({"wrong":true}));
+        assert_eq!(
+            raw_envelope(&call, "nocterm-3"),
+            Some(("typo".into(), json!({"wrong":true})))
+        );
+        assert!(raw_envelope(&call, "nocterm-4").is_none());
+        assert!(envelope(&call, "nocterm-3").is_none());
+    }
+}
+
+#[test]
+fn old_hermes_server_names_are_display_only() {
+    for tool in ["exec_command", "list_terminals"] {
+        let input = if tool == "exec_command" {
+            json!({"terminal_id":"t1","program":"sh"})
+        } else {
+            json!({})
+        };
+        let call = acp::ToolCall::new("old", format!("mcp_nocterm_{tool}")).raw_input(input);
+        assert!(requested_call(&call).is_some());
+        assert!(header(&call).starts_with("Nocterm"));
+        assert!(envelope(&call, "nocterm-3").is_none());
+        assert!(raw_envelope(&call, "nocterm-3").is_none());
+    }
+    let mut call = acp::ToolCall::new("old", "mcp_nocterm_exec_command")
+        .raw_input(json!({"terminal_id":"t1","program":"sh"}));
+    call.name = Some("mcp.nocterm-3.exec_command".into());
+    assert!(requested_call(&call).is_none());
+    assert!(envelope(&call, "nocterm-3").is_none());
 }

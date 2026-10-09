@@ -161,7 +161,11 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                         .unwrap(),
                     ];
                     thread.state.entries = vec![Entry::Tool(call)];
-                    thread.generating = live;
+                    thread.lifecycle.force_phase(if live {
+                        nocterm_ai::session::SessionPhase::Prompting
+                    } else {
+                        nocterm_ai::session::SessionPhase::Ready
+                    });
                     thread.mark_dirty(0);
                     cx.notify();
                 });

@@ -86,6 +86,7 @@ impl KeymapView {
             .into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn row(&self, index: usize, row: Row, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, border, accent) = (

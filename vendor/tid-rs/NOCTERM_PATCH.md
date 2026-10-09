@@ -37,3 +37,8 @@ and [authentication context key](https://developer.apple.com/documentation/secur
 
 Native macOS CI builds/links an adapter test executable, then exercises metadata
 validation without requesting authentication. Linux cannot verify Apple linking.
+
+
+`Cargo.toml` lists `num-traits` under `[package.metadata.cargo-machete] ignored`:
+the `num-derive` macros expand to `num_traits` paths that cargo-machete cannot
+see in the source. Metadata only; the build is unchanged.

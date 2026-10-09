@@ -1,3 +1,5 @@
+pub mod catalog;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub const MAX_READ_LINES: usize = 2000;

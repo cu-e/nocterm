@@ -1,11 +1,11 @@
-//! Appearance commands exercised through the real palette from a connected terminal.
+//! AppearanceSettings commands exercised through the real palette from a connected terminal.
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, TestAppContext, WindowAppearance,
     component::{IndexPath, Theme},
     test::TestWindowExt as _,
 };
-use nocterm_settings::AppearanceMode;
-use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, TerminalStyle, edit_settings, hsla};
+use nocterm_ui::{ActiveDesign as _, SettingsExt as _, TerminalStyle, hsla};
+use nocterm_ui::{AppearanceMode, AppearanceSettings};
 
 use super::super::fixture;
 
@@ -65,15 +65,16 @@ fn install_catalog(cx: &mut TestAppContext) -> tempfile::TempDir {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_terminal(
     cx: &mut TestAppContext,
 ) {
     let (handle, workspace, _, _) = fixture(cx);
     let _directory = install_catalog(cx);
     cx.update(|cx| {
-        edit_settings(cx, |s| {
-            s.appearance.mode = AppearanceMode::Dark;
-            s.appearance.light_theme = Some("GUI Light".into());
+        cx.update_setting::<AppearanceSettings>(|s| {
+            s.mode = AppearanceMode::Dark;
+            s.light_theme = Some("GUI Light".into());
         })
     })
     .await
@@ -112,13 +113,16 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
     .unwrap();
     choose(handle, "GUI Dark", cx);
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.mode, AppearanceMode::Dark);
         assert_eq!(
-            cx.settings().appearance.dark_theme.as_deref(),
+            cx.setting::<AppearanceSettings>().mode,
+            AppearanceMode::Dark
+        );
+        assert_eq!(
+            cx.setting::<AppearanceSettings>().dark_theme.as_deref(),
             Some("GUI Dark")
         );
         assert_eq!(
-            cx.settings().appearance.light_theme.as_deref(),
+            cx.setting::<AppearanceSettings>().light_theme.as_deref(),
             Some("GUI Light")
         );
         let background = "#123456".parse().unwrap();
@@ -136,39 +140,45 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
     enter(handle, cx);
     choose(handle, "Nocterm Default", cx);
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.dark_theme, None);
+        assert_eq!(cx.setting::<AppearanceSettings>().dark_theme, None);
         assert_eq!(cx.design().dark, nocterm_ui::DesignTokens::builtin().dark);
     });
 
     // The slot is fixed when opening, even if appearance changes in another view.
     palette(handle, "change theme", cx);
     enter(handle, cx);
-    cx.update(|cx| edit_settings(cx, |s| s.appearance.mode = AppearanceMode::Light))
+    cx.update(|cx| cx.update_setting::<AppearanceSettings>(|s| s.mode = AppearanceMode::Light))
         .await
         .unwrap();
     frames(handle, cx);
     choose(handle, "GUI Dark", cx);
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.mode, AppearanceMode::Light);
         assert_eq!(
-            cx.settings().appearance.dark_theme.as_deref(),
+            cx.setting::<AppearanceSettings>().mode,
+            AppearanceMode::Light
+        );
+        assert_eq!(
+            cx.setting::<AppearanceSettings>().dark_theme.as_deref(),
             Some("GUI Dark")
         );
         assert_eq!(
-            cx.settings().appearance.light_theme.as_deref(),
+            cx.setting::<AppearanceSettings>().light_theme.as_deref(),
             Some("GUI Light")
         );
     });
-    cx.update(|cx| edit_settings(cx, |s| s.appearance.light_theme = None))
+    cx.update(|cx| cx.update_setting::<AppearanceSettings>(|s| s.light_theme = None))
         .await
         .unwrap();
     palette(handle, "change theme", cx);
     enter(handle, cx);
     choose(handle, "GUI Light", cx);
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.mode, AppearanceMode::Light);
         assert_eq!(
-            cx.settings().appearance.light_theme.as_deref(),
+            cx.setting::<AppearanceSettings>().mode,
+            AppearanceMode::Light
+        );
+        assert_eq!(
+            cx.setting::<AppearanceSettings>().light_theme.as_deref(),
             Some("GUI Light")
         );
         assert_eq!(
@@ -185,9 +195,9 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
     let (handle, _, _, _) = fixture(cx);
     let _directory = install_catalog(cx);
     cx.update(|cx| {
-        edit_settings(cx, |s| {
-            s.appearance.dark_theme = Some("GUI Dark".into());
-            s.appearance.light_theme = Some("GUI Light".into());
+        cx.update_setting::<AppearanceSettings>(|s| {
+            s.dark_theme = Some("GUI Dark".into());
+            s.light_theme = Some("GUI Light".into());
         })
     })
     .await
@@ -201,13 +211,13 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
         enter(handle, cx);
         choose(handle, label, cx);
         cx.update(|cx| {
-            assert_eq!(cx.settings().appearance.mode, mode);
+            assert_eq!(cx.setting::<AppearanceSettings>().mode, mode);
             assert_eq!(
-                cx.settings().appearance.dark_theme.as_deref(),
+                cx.setting::<AppearanceSettings>().dark_theme.as_deref(),
                 Some("GUI Dark")
             );
             assert_eq!(
-                cx.settings().appearance.light_theme.as_deref(),
+                cx.setting::<AppearanceSettings>().light_theme.as_deref(),
                 Some("GUI Light")
             );
             let dark = match mode {
@@ -223,13 +233,13 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
         });
     }
     for query in ["color scheme", "change theme"] {
-        let before = cx.update(|cx| cx.settings().clone());
+        let before = cx.update(|cx| cx.global::<nocterm_ui::SettingsStore>().document().clone());
         palette(handle, query, cx);
         enter(handle, cx);
         cx.update_window(handle, |_, window, cx| window.press("escape", cx))
             .unwrap();
         frames(handle, cx);
-        cx.update(|cx| assert_eq!(cx.settings(), &before));
+        cx.update(|cx| assert_eq!(cx.global::<nocterm_ui::SettingsStore>().document(), &before));
         cx.update_window(handle, |_, window, _| {
             assert!(window.try_find("dialog").is_none())
         })
@@ -249,8 +259,8 @@ fn theme_commands_are_available_with_only_nocterm_default(cx: &mut TestAppContex
     .unwrap();
     choose(handle, "Nocterm Default", cx);
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.dark_theme, None);
-        assert_eq!(cx.settings().appearance.light_theme, None);
+        assert_eq!(cx.setting::<AppearanceSettings>().dark_theme, None);
+        assert_eq!(cx.setting::<AppearanceSettings>().light_theme, None);
     });
 }
 
@@ -261,7 +271,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     let (handle, _, _, _) = fixture(cx);
     let directory = tempfile::tempdir().unwrap();
     let before = cx.update(|cx| {
-        let settings = cx.settings().clone();
+        let settings = cx.global::<nocterm_ui::SettingsStore>().document().clone();
         cx.set_global(nocterm_ui::SettingsStore::new(
             settings.clone(),
             nocterm_settings::SettingsFile::new(directory.path()),
@@ -276,7 +286,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     palette(handle, "color scheme", cx);
     enter(handle, cx);
     choose(handle, "Dark", cx);
-    cx.update(|cx| assert_eq!(cx.settings(), &before));
+    cx.update(|cx| assert_eq!(cx.global::<nocterm_ui::SettingsStore>().document(), &before));
     cx.update_window(handle, |_, window, cx| {
         assert!(nocterm_ui::notice::count(window, cx) > notices)
     })

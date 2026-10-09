@@ -1,8 +1,8 @@
 //! Folder statistics for both Explorer halves: what may be counted, the
 //! running count and the remote walk. The local walk is in `local.rs`.
 
+use crate::IndexingSettings;
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
-use nocterm_settings::IndexingSettings;
 use parking_lot::Mutex;
 use std::{
     path::Path,

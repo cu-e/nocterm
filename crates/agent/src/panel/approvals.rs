@@ -315,6 +315,7 @@ impl AgentPanel {
             .into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn tool_card(
         &self,
         thread: &Entity<AgentThread>,

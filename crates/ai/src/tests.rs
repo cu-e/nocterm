@@ -1,8 +1,8 @@
+use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
 use crate::{
     acp, approval::ApprovalGrants, context::*, env::*, favorites::*, images::*, mcp::*,
     registry::*, thread::*, tools::*,
 };
-use nocterm_settings::{AgentServerSettings, AiSettings, ApprovalSettings};
 use serde_json::json;
 #[test]
 fn registry_merges_overrides_and_rejects_invalid_entries() {
@@ -124,7 +124,7 @@ fn mcp_requires_initialization_validates_input_and_never_echoes_bad_payload() {
     );
     m.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
     assert!(
-        matches!(m.handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_terminal","arguments":{"terminal_id":"t1","lines":2001}}}"#),McpStep::Reply(v) if v["error"]["code"]==-32602)
+        matches!(m.handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_terminal","arguments":{"terminal_id":"t1","lines":2001}}}"#),McpStep::Rejected { error, .. } if !error.is_empty())
     );
     assert!(matches!(
         m.handle(

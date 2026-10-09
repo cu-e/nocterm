@@ -8,6 +8,7 @@ use gpui_kit::{
 use nocterm_ui::ActiveDesign as _;
 
 impl PathInput {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_popup(
         &self,
         window: &Window,

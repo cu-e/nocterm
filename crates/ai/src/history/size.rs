@@ -6,9 +6,14 @@ use serde::{
 use std::io;
 
 pub(super) fn encoded_len(value: &impl Serialize) -> Result<usize, serde_json::Error> {
-    let mut counter = Counter(0);
+    let mut counter = Counter(0, 0);
     value.serialize(&mut counter)?;
     Ok(counter.0)
+}
+pub(super) fn structural_size(value: &impl Serialize) -> Result<usize, serde_json::Error> {
+    let mut counter = Counter(0, 0);
+    value.serialize(&mut counter)?;
+    Ok(counter.1)
 }
 /// Examine sixteen bytes at once; ordinary UTF-8 and base64 need no escaping.
 fn string_len(text: &str) -> usize {
@@ -36,7 +41,7 @@ fn string_len(text: &str) -> usize {
     }
     length + remainder.iter().copied().map(extra).sum::<usize>()
 }
-struct Counter(usize);
+struct Counter(usize, usize);
 struct Compound<'a> {
     counter: &'a mut Counter,
     first: bool,
@@ -58,6 +63,7 @@ impl Compound<'_> {
 macro_rules! number {
     ($name:ident, $ty:ty) => {
         fn $name(self, value: $ty) -> Result<(), Self::Error> {
+            self.1 += 512;
             self.0 += serde_json::to_string(&value)?.len();
             Ok(())
         }
@@ -74,6 +80,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
     type SerializeStruct = Compound<'a>;
     type SerializeStructVariant = Compound<'a>;
     fn serialize_bool(self, value: bool) -> Result<(), Self::Error> {
+        self.1 += 512;
         self.0 += if value { 4 } else { 5 };
         Ok(())
     }
@@ -93,6 +100,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         self.serialize_str(value.encode_utf8(&mut [0; 4]))
     }
     fn serialize_str(self, value: &str) -> Result<(), Self::Error> {
+        self.1 += 512 + value.len() * 2;
         self.0 += string_len(value);
         Ok(())
     }
@@ -110,6 +118,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         value.serialize(self)
     }
     fn serialize_unit(self) -> Result<(), Self::Error> {
+        self.1 += 512;
         self.0 += 4;
         Ok(())
     }
@@ -138,10 +147,12 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
+        self.1 += 1536 + variant.len() * 2;
         self.0 += string_len(variant) + 3;
         value.serialize(self)
     }
     fn serialize_seq(self, _: Option<usize>) -> Result<Compound<'a>, Self::Error> {
+        self.1 += 512;
         self.0 += 1;
         Ok(Compound {
             counter: self,
@@ -166,6 +177,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         _: usize,
     ) -> Result<Compound<'a>, Self::Error> {
+        self.1 += 1536 + variant.len() * 2;
         self.0 += string_len(variant) + 3;
         Ok(Compound {
             counter: self,
@@ -174,6 +186,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         })
     }
     fn serialize_map(self, _: Option<usize>) -> Result<Compound<'a>, Self::Error> {
+        self.1 += 512;
         self.0 += 1;
         Ok(Compound {
             counter: self,
@@ -191,6 +204,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         _: usize,
     ) -> Result<Compound<'a>, Self::Error> {
+        self.1 += 1536 + variant.len() * 2;
         self.0 += string_len(variant) + 3;
         Ok(Compound {
             counter: self,
@@ -226,6 +240,7 @@ impl SerializeMap for Compound<'_> {
     type Error = serde_json::Error;
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
         self.comma();
+        let old = self.counter.0;
         self.counter.0 += match serde_json::to_value(key)? {
             serde_json::Value::String(text) => string_len(&text),
             serde_json::Value::Number(number) => number.to_string().len() + 2,
@@ -242,6 +257,7 @@ impl SerializeMap for Compound<'_> {
                 )));
             }
         } + 1;
+        self.counter.1 += 512 + self.counter.0.saturating_sub(old + 3) * 2;
         Ok(())
     }
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
@@ -260,6 +276,7 @@ impl SerializeStruct for Compound<'_> {
         value: &T,
     ) -> Result<(), Self::Error> {
         self.comma();
+        self.counter.1 += 512 + key.len() * 2;
         self.counter.0 += string_len(key) + 1;
         value.serialize(&mut *self.counter)
     }

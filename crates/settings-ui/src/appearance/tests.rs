@@ -44,6 +44,7 @@ impl ThemeRegistry for FakeRegistry {
     }
 }
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn browser_explicit_actions_install_pick_and_uninstall(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let dirs = ThemeDirs {
@@ -101,7 +102,9 @@ async fn browser_explicit_actions_install_pick_and_uninstall(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            cx.settings().appearance.dark_theme.as_deref(),
+            cx.setting::<nocterm_ui::AppearanceSettings>()
+                .dark_theme
+                .as_deref(),
             Some("Fake Dark")
         )
     });
@@ -121,8 +124,14 @@ async fn browser_explicit_actions_install_pick_and_uninstall(cx: &mut TestAppCon
     view.update(cx, |view, cx| installed::remove(view, "fake".into(), cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(cx.settings().appearance.dark_theme, None);
-        assert_eq!(cx.settings().appearance.light_theme, None);
+        assert_eq!(
+            cx.setting::<nocterm_ui::AppearanceSettings>().dark_theme,
+            None
+        );
+        assert_eq!(
+            cx.setting::<nocterm_ui::AppearanceSettings>().light_theme,
+            None
+        );
         assert_eq!(choices(Appearance::Dark, cx), ["Nocterm Default"]);
     });
 }
@@ -182,9 +191,9 @@ async fn uninstall_preserves_selection_when_a_duplicate_pack_survives(cx: &mut T
     }
     let (_, view) = initialized_browser(cx, &dirs, fake_registry());
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.appearance.dark_theme = Some("Fake Dark".into());
-            settings.appearance.light_theme = Some("Fake Light".into());
+        cx.update_setting::<nocterm_ui::AppearanceSettings>(|settings| {
+            settings.dark_theme = Some("Fake Dark".into());
+            settings.light_theme = Some("Fake Light".into());
         })
     })
     .await
@@ -193,11 +202,15 @@ async fn uninstall_preserves_selection_when_a_duplicate_pack_survives(cx: &mut T
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            cx.settings().appearance.dark_theme.as_deref(),
+            cx.setting::<nocterm_ui::AppearanceSettings>()
+                .dark_theme
+                .as_deref(),
             Some("Fake Dark")
         );
         assert_eq!(
-            cx.settings().appearance.light_theme.as_deref(),
+            cx.setting::<nocterm_ui::AppearanceSettings>()
+                .light_theme
+                .as_deref(),
             Some("Fake Light")
         );
         assert_eq!(

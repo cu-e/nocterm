@@ -62,7 +62,7 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
     new_chat(&f, cx);
     let id = cx.update(|cx| f.panel.read(cx).current().unwrap().read(cx).chat_id.clone());
     set_input(&f, "last keystroke", cx);
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(saved_value(&f, &id)["draft"], "last keystroke");
 }
 
@@ -104,13 +104,14 @@ fn clear_save_and_quit_in_one_update_cannot_resurrect_an_old_draft(cx: &mut Test
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert_eq!(saved_value(&f, &id)["draft"], "old text");
-    cx.update(|cx| {
+    let shutdown = cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.set_draft(String::new(), cx);
             thread.save(cx);
         });
-        drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))
     });
+    cx.foreground_executor().block_test(shutdown);
     cx.run_until_parked();
     assert!(nocterm_ai::history::load_all(&f._directory.path().join("chats")).is_empty());
     assert!(saved_value(&f, &id)["draft"].is_null());
@@ -146,22 +147,35 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
     .unwrap();
-    cx.update(|cx| assert_eq!(thread.read(cx).draft.as_deref(), Some("  ")));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer.draft.as_deref(), Some("  ")));
     set_input(&f, "kept when offline", cx);
-    thread.update(cx, |thread, _| thread.auth_required = true);
+    thread.update(cx, |thread, _| {
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::SignInRequired)
+    });
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
     .unwrap();
-    cx.update(|cx| assert_eq!(thread.read(cx).draft.as_deref(), Some("kept when offline")));
-    thread.update(cx, |thread, _| thread.auth_required = false);
+    cx.update(|cx| {
+        assert_eq!(
+            thread.read(cx).composer.draft.as_deref(),
+            Some("kept when offline")
+        )
+    });
+    thread.update(cx, |thread, _| {
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::Ready)
+    });
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).draft.is_none());
+        assert!(thread.read(cx).composer.draft.is_none());
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
         assert_eq!(thread.read(cx).state.entries.len(), 1);
     });
@@ -180,14 +194,14 @@ fn rapid_new_chats_do_not_copy_the_previous_visible_text(cx: &mut TestAppContext
             panel.new_thread("codex".into(), window, cx);
             panel.new_thread("codex".into(), window, cx);
             assert_eq!(panel.threads.len(), 2);
-            assert!(panel.current().unwrap().read(cx).draft.is_none());
+            assert!(panel.current().unwrap().read(cx).composer.draft.is_none());
         });
     })
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
-        assert_eq!(first.read(cx).draft.as_deref(), Some("owner A"));
+        assert_eq!(first.read(cx).composer.draft.as_deref(), Some("owner A"));
     });
 }
 
@@ -212,8 +226,11 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(first.read(cx).draft.as_deref(), Some("new user text"));
-        assert_eq!(second.read(cx).draft.as_deref(), Some("B draft"));
+        assert_eq!(
+            first.read(cx).composer.draft.as_deref(),
+            Some("new user text")
+        );
+        assert_eq!(second.read(cx).composer.draft.as_deref(), Some("B draft"));
         assert_eq!(
             f.panel.read(cx).input.read(cx).value().as_ref(),
             "new user text"
@@ -244,18 +261,20 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let text = "x".repeat(17 * 1024 * 1024);
     thread.update(cx, |thread, cx| {
-        thread.generating = true;
+        thread
+            .lifecycle
+            .force_phase(nocterm_ai::session::SessionPhase::Prompting);
         thread.set_draft(text.clone(), cx);
         assert_eq!(thread.submit(text, None, cx), Ok(true));
-        assert!(thread.draft.is_none());
-        assert_eq!(thread.queue.len(), 1);
+        assert!(thread.composer.draft.is_none());
+        assert_eq!(thread.composer.queue.len(), 1);
         // The accepted queued payload already uses over half of the budget.
         // A second payload must fail without removing its composer draft.
         let next = "y".repeat(17 * 1024 * 1024);
         thread.set_draft(next.clone(), cx);
         assert!(thread.submit(next, None, cx).is_err());
-        assert!(thread.draft.is_some());
-        assert_eq!(thread.queue.len(), 1);
+        assert!(thread.composer.draft.is_some());
+        assert_eq!(thread.composer.queue.len(), 1);
     });
 }
 
@@ -293,7 +312,7 @@ fn a_retained_restarted_model_cannot_overwrite_the_replacement_draft(cx: &mut Te
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert_eq!(saved_value(&f, &id)["draft"], "replacement draft");
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(saved_value(&f, &id)["draft"], "replacement draft");
     cx.update(|_| drop(old));
     cx.run_until_parked();
@@ -317,14 +336,16 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
         });
     })
     .unwrap();
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     let value = saved_value(&f, &id);
     assert_eq!(value["draft"], "last pending edit");
     assert_eq!(value["entries"].as_array().unwrap().len(), 2);
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(saved_value(&f, &id), value);
     cx.update(|cx| assert!(thread.read(cx).state.entries.is_empty()));
 }
@@ -351,7 +372,7 @@ fn untouched_chats_do_not_leave_history_files_when_replaced(cx: &mut TestAppCont
 fn untouched_chat_does_not_create_a_history_file_on_quit(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     cx.run_until_parked();
     assert_eq!(history_file_count(&f), 0);
 }
@@ -362,9 +383,11 @@ async fn disabling_ai_with_an_untouched_chat_does_not_create_a_history_file(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     assert_eq!(history_file_count(&f), 0);
 }

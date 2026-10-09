@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::MonitorSettings;
 use futures::executor::block_on;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
@@ -10,8 +11,8 @@ use gpui_kit::{
 };
 use nocterm_monitor::MonitorMetric;
 use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Target};
-use nocterm_settings::{MonitorSettings, Settings};
-use nocterm_ui::{DesignTokens, SettingsStore, edit_settings};
+use nocterm_settings::SettingsDocument;
+use nocterm_ui::{DesignTokens, SettingsExt as _, SettingsStore};
 use nocterm_workspace::{HostKey, Item, ItemEvent, SessionContext, Workspace};
 
 use crate::model::{HostMonitor, Plan, Status, watched_host};
@@ -186,7 +187,7 @@ fn fixture(
         gpui_kit::init(cx);
         nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(Settings::default()),
+            SettingsStore::in_memory(SettingsDocument::default()),
             cx,
         );
         let (window, workspace) =
@@ -292,7 +293,10 @@ fn settings_switch_the_monitor_off_and_hosts_without_a_script_say_so(cx: &mut Te
     assert_eq!(status(cx, &monitor), Status::Unsupported("Darwin".into()));
     assert!(!local.reading(0));
 
-    cx.update(|cx| edit_settings(cx, |settings| settings.monitor.enabled = false).detach());
+    cx.update(|cx| {
+        cx.update_setting::<crate::MonitorSettings>(|settings| settings.enabled = false)
+            .detach()
+    });
     cx.run_until_parked();
     assert_eq!(status(cx, &monitor), Status::Off);
     assert_eq!(mac.programs(), ["uname"]);

@@ -10,6 +10,7 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-session.workspace = true
 nocterm-themes.workspace = true
 nocterm-ai.workspace = true
 nocterm-settings.workspace = true
@@ -18,7 +19,6 @@ nocterm-workspace.workspace = true
 gpui-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-futures.workspace = true
 
 [lints]
 workspace = true

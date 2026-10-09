@@ -144,6 +144,21 @@ impl AgentPanel {
         let Some(source) = self.index_of(id).map(|index| self.threads[index].clone()) else {
             return;
         };
+        if source.read(cx).archive.is_some() {
+            let panel = cx.weak_entity();
+            let handle = window.window_handle();
+            source.update(cx, |thread, cx| {
+                thread.load_archive(cx, move |_, cx| {
+                    cx.defer(move |cx| {
+                        let _ = handle.update(cx, |_, window, cx| {
+                            let _ = panel
+                                .update(cx, |panel, cx| panel.fork_thread_at(id, last, window, cx));
+                        });
+                    });
+                })
+            });
+            return;
+        }
         let fork = match last {
             Some(last) => source.read(cx).fork_at(last + 1),
             None => source.read(cx).fork(),
@@ -225,6 +240,7 @@ impl AgentPanel {
                 query.is_empty()
                     || thread.title().to_lowercase().contains(&query)
                     || thread.state.mentions(&query)
+                    || self.archive_matches.contains(&thread.chat_id)
             })
             .cloned()
             .collect()
@@ -278,6 +294,7 @@ impl AgentPanel {
         history.into_any_element()
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_history_row(
         &self,
         thread: &Entity<AgentThread>,
@@ -291,11 +308,14 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.state.entries.is_empty() && chat.draft.is_none() {
+        let when = if chat.archive.as_ref().is_none_or(|row| !row.has_content)
+            && chat.state.entries.is_empty()
+            && chat.composer.draft.is_none()
+        {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
-                nocterm_ai::history::now().saturating_sub(chat.updated),
+                nocterm_ai::time::now().saturating_sub(chat.updated),
             )))
         };
         let model = chat.model().unwrap_or_default();
@@ -364,7 +384,7 @@ impl AgentPanel {
                             .w_full()
                             .min_w_0()
                             .gap_1()
-                            .child(if chat.generating {
+                            .child(if chat.lifecycle.generating() {
                                 gpui_kit::component::spinner::Spinner::new()
                                     .small()
                                     .color(cx.theme().muted_foreground)

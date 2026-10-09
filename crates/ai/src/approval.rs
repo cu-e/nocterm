@@ -1,5 +1,5 @@
+use crate::{ApprovalPolicy, ApprovalSettings};
 use crate::{TerminalCall, ToolCapability};
-use nocterm_settings::{ApprovalPolicy, ApprovalSettings};
 use std::collections::BTreeSet;
 #[derive(Default)]
 pub struct ApprovalGrants {

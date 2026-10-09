@@ -64,6 +64,7 @@ fn folder_id(group: Option<&str>) -> String {
     )
 }
 impl SnippetEditor {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn attachments_page(&self, cx: &mut Context<Self>) -> AnyElement {
         let directory = self
             .workspace

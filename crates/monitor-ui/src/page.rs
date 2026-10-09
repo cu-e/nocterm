@@ -2,6 +2,9 @@
 
 use std::{ops::RangeInclusive, time::Duration};
 
+use crate::{
+    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorSettings,
+};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
     Task, Window,
@@ -15,11 +18,8 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{
-    MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorMetric,
-    MonitorSettings, Settings,
-};
-use nocterm_ui::{ActiveSettings as _, SettingsStore, edit_settings, form};
+use nocterm_monitor::MonitorMetric;
+use nocterm_ui::{SettingsExt as _, SettingsStore, form};
 use nocterm_workspace::SettingsPage;
 
 /// How long typing must pause before a number saves.
@@ -46,7 +46,7 @@ impl Number {
         window: &mut Window,
         cx: &mut Context<MonitorPage>,
     ) -> Self {
-        let value = *field(&mut cx.settings().monitor.clone());
+        let value = *field(&mut cx.setting::<MonitorSettings>().clone());
         let input = cx.new(|cx| InputState::new(window, cx).default_value(value.to_string()));
         let typed = cx.subscribe_in(&input, window, move |page, _, event, window, cx| {
             let number = &mut page.numbers[index];
@@ -92,7 +92,7 @@ impl Number {
 
     /// Shows a value saved elsewhere, unless the user is editing this field.
     fn sync(&mut self, window: &mut Window, cx: &mut App) {
-        let value = (self.field)(&mut cx.settings().monitor.clone()).to_string();
+        let value = (self.field)(&mut cx.setting::<MonitorSettings>().clone()).to_string();
         let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         if focused || self.debounce.is_some() || self.input.read(cx).value() == value.as_str() {
             return;
@@ -157,8 +157,8 @@ impl MonitorPage {
         match text.parse::<u32>() {
             Ok(value) if number.range.contains(&value) => {
                 number.error = None;
-                if *field(&mut cx.settings().monitor.clone()) != value {
-                    edit_settings(cx, move |settings| *field(&mut settings.monitor) = value)
+                if *field(&mut cx.setting::<MonitorSettings>().clone()) != value {
+                    cx.update_setting::<MonitorSettings>(move |settings| *field(settings) = value)
                         .detach();
                 }
             }
@@ -213,14 +213,15 @@ pub(crate) fn toggle(list: &mut Vec<MonitorMetric>, metric: MonitorMetric, on: b
 fn switch(
     id: impl Into<gpui_kit::ElementId>,
     checked: bool,
-    edit: impl Fn(&mut Settings, bool) + Clone + 'static,
+    edit: impl Fn(&mut MonitorSettings, bool) + Clone + 'static,
     cx: &mut Context<MonitorPage>,
 ) -> Switch {
     Switch::new(id)
         .checked(checked)
         .on_click(cx.listener(move |_, checked: &bool, _, cx| {
             let (checked, edit) = (*checked, edit.clone());
-            edit_settings(cx, move |settings| edit(settings, checked)).detach();
+            cx.update_setting::<MonitorSettings>(move |monitor| edit(monitor, checked))
+                .detach();
             cx.notify();
         }))
 }
@@ -241,8 +242,9 @@ fn description(metric: MonitorMetric) -> &'static str {
 }
 
 impl Render for MonitorPage {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let monitor = cx.settings().monitor.clone();
+        let monitor = cx.setting::<MonitorSettings>().clone();
         let general = [
             form::row(
                 "Show the host monitor",
@@ -250,7 +252,7 @@ impl Render for MonitorPage {
                 switch(
                     "monitor-enabled",
                     monitor.enabled,
-                    |s, on| s.monitor.enabled = on,
+                    |s, on| s.enabled = on,
                     cx,
                 ),
                 cx,
@@ -258,12 +260,7 @@ impl Render for MonitorPage {
             form::row(
                 "Watch this computer",
                 "Monitor the local machine while no remote session is active.",
-                switch(
-                    "monitor-local",
-                    monitor.local,
-                    |s, on| s.monitor.local = on,
-                    cx,
-                ),
+                switch("monitor-local", monitor.local, |s, on| s.local = on, cx),
                 cx,
             ),
         ];
@@ -303,7 +300,7 @@ impl Render for MonitorPage {
                         switch(
                             SharedString::from(format!("{prefix}-{metric:?}")),
                             list.contains(&metric),
-                            move |s, on| toggle(pick(&mut s.monitor), metric, on),
+                            move |s, on| toggle(pick(s), metric, on),
                             cx,
                         ),
                         cx,

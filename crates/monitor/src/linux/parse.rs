@@ -18,6 +18,11 @@ const VIRTUAL_FILESYSTEMS: &[&str] = &[
 const VIRTUAL_MOUNTS: &[&str] = &["/proc", "/sys", "/dev", "/run", "/snap", "/var/lib/docker"];
 
 /// Turns a frame's lines into a reading.
+#[expect(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    reason = "predates the limit"
+)]
 pub(crate) fn parse(lines: &[String]) -> Reading {
     let mut reading = Reading::default();
     let mut section = "";

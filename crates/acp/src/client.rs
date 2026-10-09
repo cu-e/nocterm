@@ -42,6 +42,7 @@ impl Drop for ConnectingGuard {
 }
 
 impl AgentConnector for AcpConnector {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(
         &self,
         request: ConnectRequest,
@@ -523,7 +524,7 @@ fn client_builder_with_models(
         )
         .on_receive_request(
             async move |request: acp::RequestPermissionRequest, responder, connection| {
-                let (respond, answer) = oneshot::channel();
+                let (respond, answer) = nocterm_ai::PermissionResponder::channel();
                 permission_tx
                     .try_send(AgentEvent::Permission { request, respond })
                     .map_err(|_| acp::Error::internal_error())?;

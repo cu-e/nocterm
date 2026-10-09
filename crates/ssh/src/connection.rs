@@ -98,6 +98,7 @@ pub(crate) async fn run(
     driver.emit(Event::Closed(reason)).await;
 }
 
+#[expect(clippy::cognitive_complexity, reason = "predates the limit")]
 async fn session(
     config: &SshConfig,
     request: &ConnectRequest,

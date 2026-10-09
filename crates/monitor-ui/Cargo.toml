@@ -10,6 +10,8 @@ publish = false
 layer = "feature"
 
 [dependencies]
+schemars.workspace = true
+serde.workspace = true
 nocterm-monitor.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
@@ -21,5 +23,6 @@ gpui-kit.workspace = true
 workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 futures.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

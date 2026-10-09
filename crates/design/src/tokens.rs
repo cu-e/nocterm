@@ -356,6 +356,7 @@ impl DesignTokens {
         if dark { &self.dark } else { &self.light }
     }
 
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn validate(&self) -> Result<(), TokenError> {
         if self.name.trim().is_empty() {
             return Err(invalid("name", "must not be empty"));

@@ -64,6 +64,7 @@ impl Render for Fixture {
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn native_drag_retains_source_dimensions_label_payload_and_pointer_offset(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);

@@ -1,6 +1,6 @@
 use gpui_kit::{AppContext as _, Entity, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_keymap::Keymap;
-use nocterm_settings::Settings;
+use nocterm_settings::SettingsDocument;
 use nocterm_ui::SettingsStore;
 
 use crate::KeymapView;
@@ -17,7 +17,7 @@ fn setup(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<KeymapVi
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Settings::default()),
+            SettingsStore::in_memory(SettingsDocument::default()),
             cx,
         );
         Keymap::init(DEFAULTS, None, cx);

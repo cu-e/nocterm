@@ -117,6 +117,9 @@ impl Serialize for Prompts<'_> {
         seq.end()
     }
 }
+pub(super) fn entry_memory(entry: &Entry) -> Result<usize, serde_json::Error> {
+    super::size::structural_size(&bounded(entry))
+}
 pub(super) fn entry_size(entry: &Entry) -> Result<usize, serde_json::Error> {
     super::size::encoded_len(&bounded(entry))
 }

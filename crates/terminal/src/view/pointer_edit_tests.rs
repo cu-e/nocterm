@@ -79,7 +79,7 @@ fn clear_selection_cancels_edge_autoscroll_without_changing_viewport(cx: &mut Te
     assert!(selection(&view, cx).is_some());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.execute(ItemCommand::ClearSelection, window, cx)
+            v.clear_selection(&nocterm_workspace::ClearSelection, window, cx)
         });
     })
     .unwrap();

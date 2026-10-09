@@ -1,0 +1,3 @@
+# Complexity limits for new code; see [workspace.lints.clippy] in Cargo.toml.
+too-many-lines-threshold = 80
+cognitive-complexity-threshold = 20

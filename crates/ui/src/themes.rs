@@ -1,5 +1,5 @@
 //! Catalogue publication and selection resolution, independent of Settings UI.
-use crate::{ActiveSettings, Design, SettingsStore};
+use crate::{Design, SettingsExt, SettingsStore};
 use gpui_kit::{App, BorrowAppContext as _, Global, Task, component::ThemeColor};
 use nocterm_design::DesignTokens;
 use nocterm_themes::{Appearance, ThemeCatalog, ThemeDirs};
@@ -39,9 +39,10 @@ fn resolve(cx: &mut App) {
     let mut tokens = design.base.clone();
     let mut imported = [false; 2];
     let builtin = DesignTokens::builtin();
+    let appearance = cx.setting::<crate::AppearanceSettings>();
     for (appearance, name) in [
-        (Appearance::Light, &cx.settings().appearance.light_theme),
-        (Appearance::Dark, &cx.settings().appearance.dark_theme),
+        (Appearance::Light, &appearance.light_theme),
+        (Appearance::Dark, &appearance.dark_theme),
     ] {
         let Some(name) = name else {
             continue;

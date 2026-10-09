@@ -1,20 +1,10 @@
 //! Local shell capability and native bottom visibility, sharing the tab registry.
 use super::*;
 use crate::LocalTerminalTarget;
-pub(super) type LocalOpener =
-    Rc<dyn Fn(&mut Workspace, LocalTerminalTarget, &mut Window, &mut Context<Workspace>)>;
 impl Workspace {
-    pub fn set_local_terminal_opener(
-        &mut self,
-        opener: impl Fn(&mut Workspace, LocalTerminalTarget, &mut Window, &mut Context<Workspace>)
-        + 'static,
-    ) {
-        self.local_opener = Some(Rc::new(opener));
-    }
     pub(crate) fn new_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(opener) = self.local_opener.clone() {
-            opener(self, LocalTerminalTarget::Bottom, window, cx);
-        }
+        self.factory()
+            .open_local(self, LocalTerminalTarget::Bottom, window, cx);
     }
     pub(crate) fn new_local_terminal_from(
         &mut self,
@@ -25,9 +15,8 @@ impl Workspace {
         if self.item_location(id, cx).is_none() {
             return;
         }
-        if let Some(opener) = self.local_opener.clone() {
-            opener(self, LocalTerminalTarget::Beside(id), window, cx);
-        }
+        self.factory()
+            .open_local(self, LocalTerminalTarget::Beside(id), window, cx);
     }
     pub fn set_local_terminal<T: crate::LocalTerminal>(
         &mut self,

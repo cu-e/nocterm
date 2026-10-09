@@ -1,34 +1,48 @@
-//! Programs run on this computer, for readers that ask a host about itself.
+//! Programs run on this computer, with process lifetime owned by a worker.
 
 use std::{
     io::{Read, Write},
-    process::{Child, Command, Stdio},
-    sync::Arc,
+    process::{ChildStderr, ChildStdin, ChildStdout},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
 
 use futures::{FutureExt, channel::oneshot, executor::block_on, select};
 use nocterm_session::{
-    ErrorTail, ExecError, ExecFuture, ExecOutput, ExecRequest, HostExec, Session, ShellLaunch,
-    TerminalRequest,
+    ErrorTail, ExecError, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Session,
+    ShellLaunch, TerminalRequest,
 };
 
+mod process;
+#[cfg(all(test, unix))]
+mod tests;
+
 const READ_BUFFER: usize = 16 * 1024;
-/// How often a program that closed its output is checked for having exited.
 const EXIT_POLL: Duration = Duration::from_millis(10);
-/// How long standard error may stay open after the program exited, held by
-/// something it left running.
 const ERROR_GRACE: Duration = Duration::from_millis(200);
 
-/// Runs programs on the local computer, without a console window.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LocalExec;
 
 impl HostExec for LocalExec {
     fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-        let started = start(request);
-        Box::pin(async move { started })
+        Box::pin(async move {
+            let (ready, started) = oneshot::channel();
+            spawn("nocterm-exec-start", move || {
+                if !ready.is_canceled() {
+                    // If the future was dropped during spawn, sending drops
+                    // the output and the supervisor immediately cancels it.
+                    let _ = ready.send(start(request));
+                }
+            })?;
+            started
+                .await
+                .map_err(|error| ExecError::Failed(error.to_string()))?
+        })
     }
 
     fn terminal(&self, request: TerminalRequest) -> Session {
@@ -43,96 +57,111 @@ impl HostExec for LocalExec {
 }
 
 fn start(request: ExecRequest) -> Result<ExecOutput, ExecError> {
-    let mut command = Command::new(&request.program);
-    command
-        .args(&request.args)
-        .stdin(if request.stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        // Its own group, so stopping it also stops whatever it started.
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let mut child = command.spawn().map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => ExecError::NotFound(request.program.clone()),
-        _ => ExecError::Failed(format!("{}: {error}", request.program)),
-    })?;
-    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        stop(&mut child);
+    let mut process = process::Process::spawn(&request)?;
+    let (Some(stdout), Some(stderr)) = (process.stdout(), process.stderr()) else {
         return Err(ExecError::Failed("no output pipe".into()));
     };
-    if let (Some(input), Some(mut stdin)) = (request.stdin, child.stdin.take()) {
-        // A separate thread: a large input must not wait for output to drain.
-        // Dropping the pipe afterwards closes the program's input.
-        spawn("nocterm-exec-in", move || {
-            let _ = stdin.write_all(&input);
-        })?;
+    if let (Some(input), Some(stdin)) = (request.stdin, process.stdin()) {
+        write_input(stdin, input)?;
     }
-
     let (sink, output) = ExecOutput::channel();
     let sink = Arc::new(sink);
-    let (finished, ended) = oneshot::channel::<()>();
-    let reader = sink.clone();
-    spawn("nocterm-exec-out", move || {
-        let mut buffer = vec![0; READ_BUFFER];
-        loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => {
-                    if !block_on(reader.send(buffer[..read].to_vec())) {
-                        break;
-                    }
-                }
-            }
-        }
-        drop(finished);
-    })?;
-    let (errors_read, errors) = std::sync::mpsc::channel();
-    spawn("nocterm-exec-err", move || {
-        let mut tail = ErrorTail::default();
-        let mut buffer = [0; 1024];
-        while let Ok(read @ 1..) = stderr.read(&mut buffer) {
-            tail.push(&buffer[..read]);
-        }
-        let _ = errors_read.send(tail);
-    })?;
+    let stopped = Arc::new(AtomicBool::new(false));
+    let drained = read_output(stdout, sink.clone(), stopped.clone())?;
+    let errors = read_errors(stderr, stopped.clone())?;
     spawn("nocterm-exec-wait", move || {
-        let drained = block_on(async {
+        // Observe the leader independently from pipe EOF: descendants may
+        // retain both output pipes after the leader has exited.
+        let natural = loop {
+            if sink.is_closed() {
+                break false;
+            }
+            match process.exited() {
+                Ok(true) => break true,
+                Ok(false) => thread::sleep(EXIT_POLL),
+                Err(_) => break false,
+            }
+        };
+        let status = process.stop().filter(|_| natural);
+        stopped.store(true, Ordering::Release);
+        block_on(async {
             select! {
-                () = sink.closed().fuse() => false,
-                _ = ended.fuse() => true,
+                _ = drained.fuse() => (),
+                () = sink.closed().fuse() => (),
             }
         });
-        // The output ended; the program normally exits right after.
-        let status = if drained {
-            loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status.code().and_then(|c| u32::try_from(c).ok()),
-                    Ok(None) if !sink.is_closed() => thread::sleep(EXIT_POLL),
-                    Ok(None) | Err(_) => break None,
-                }
-            }
-        } else {
-            None
-        };
-        stop(&mut child);
         let tail = errors.recv_timeout(ERROR_GRACE).unwrap_or_default();
         sink.finish(tail.exit(status));
     })?;
     Ok(output)
+}
+
+fn write_input(mut stdin: ChildStdin, input: Vec<u8>) -> Result<(), ExecError> {
+    spawn("nocterm-exec-in", move || {
+        let _ = stdin.write_all(&input);
+    })
+}
+
+fn read_output(
+    mut stdout: ChildStdout,
+    sink: Arc<ExecSink>,
+    stopped: Arc<AtomicBool>,
+) -> Result<oneshot::Receiver<()>, ExecError> {
+    #[cfg(unix)]
+    process::nonblocking(&stdout)?;
+    let (finished, drained) = oneshot::channel();
+    spawn("nocterm-exec-out", move || {
+        let mut buffer = vec![0; READ_BUFFER];
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    if !block_on(sink.send(buffer[..read].to_vec())) {
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stopped.load(Ordering::Acquire) || sink.is_closed() {
+                        break;
+                    }
+                    thread::sleep(EXIT_POLL);
+                }
+                Err(_) => break,
+            }
+        }
+        drop(finished);
+    })?;
+    Ok(drained)
+}
+
+fn read_errors(
+    mut stderr: ChildStderr,
+    stopped: Arc<AtomicBool>,
+) -> Result<std::sync::mpsc::Receiver<ErrorTail>, ExecError> {
+    #[cfg(unix)]
+    process::nonblocking(&stderr)?;
+    let (send, errors) = std::sync::mpsc::channel();
+    spawn("nocterm-exec-err", move || {
+        let mut tail = ErrorTail::default();
+        let mut buffer = [0; 1024];
+        loop {
+            match stderr.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => tail.push(&buffer[..read]),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stopped.load(Ordering::Acquire) {
+                        break;
+                    }
+                    thread::sleep(EXIT_POLL);
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = send.send(tail);
+    })?;
+    Ok(errors)
 }
 
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), ExecError> {
@@ -141,107 +170,4 @@ fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> Result<(), ExecErr
         .spawn(body)
         .map(drop)
         .map_err(|error| ExecError::Failed(error.to_string()))
-}
-
-/// Ends the program, if it still runs, and reaps it.
-fn stop(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(None)) {
-        #[cfg(unix)]
-        {
-            use nix::{sys::signal, unistd::Pid};
-            if let Ok(group) = i32::try_from(child.id()) {
-                let _ = signal::killpg(Pid::from_raw(group), signal::Signal::SIGKILL);
-            }
-        }
-        let _ = child.kill();
-    }
-    let _ = child.wait();
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::time::{Duration, Instant};
-
-    use super::*;
-
-    fn collect(mut output: ExecOutput) -> String {
-        block_on(async {
-            let mut collected = Vec::new();
-            while let Some(chunk) = output.next().await {
-                collected.extend(chunk);
-            }
-            String::from_utf8(collected).unwrap()
-        })
-    }
-
-    #[test]
-    fn runs_a_script_from_its_input() {
-        let request = ExecRequest::new("sh")
-            .arg("-s")
-            .stdin("echo one; echo \"$((40 + 2))\"\n");
-        let output = block_on(LocalExec.exec(request)).unwrap();
-        assert_eq!(collect(output), "one\n42\n");
-    }
-
-    #[test]
-    fn dropping_the_output_stops_the_program_and_its_children() {
-        let marker = tempfile::tempdir().unwrap();
-        let file = marker.path().join("alive");
-        let script = format!(
-            "echo started; (sleep 0.3; touch '{}') & wait",
-            file.display()
-        );
-        let request = ExecRequest::new("sh").arg("-c").arg(script);
-        let mut output = block_on(LocalExec.exec(request)).unwrap();
-        assert_eq!(block_on(output.next()).as_deref(), Some(&b"started\n"[..]));
-        drop(output);
-        thread::sleep(Duration::from_millis(600));
-        assert!(!file.exists(), "the background child was stopped too");
-    }
-
-    #[test]
-    fn programs_report_their_exit_and_errors() {
-        let request = ExecRequest::new("sh")
-            .arg("-c")
-            .arg("echo out; echo 'no such container' >&2; exit 3");
-        let collected = block_on(block_on(LocalExec.exec(request)).unwrap().collect(1024));
-        assert_eq!(collected.text(), "out\n");
-        assert_eq!(collected.exit.status, Some(3));
-        assert_eq!(collected.exit.error(), "no such container");
-        let fine = block_on(LocalExec.exec(ExecRequest::new("true"))).unwrap();
-        assert!(block_on(fine.exit()).success());
-    }
-
-    #[test]
-    fn programs_run_on_a_terminal_of_their_own() {
-        use nocterm_session::{CloseReason, Event, PtySize};
-        let session = LocalExec.terminal(TerminalRequest {
-            program: ExecRequest::new("sh")
-                .arg("-c")
-                .arg("test -t 1 && echo on-a-tty; exit 4"),
-            term: "xterm-256color".into(),
-            size: PtySize::default(),
-        });
-        let mut output = String::new();
-        let reason = block_on(async {
-            loop {
-                match session.next_event().await {
-                    Some(Event::Output(bytes)) => output.push_str(&String::from_utf8_lossy(&bytes)),
-                    Some(Event::Closed(reason)) => break reason,
-                    Some(_) => {}
-                    None => panic!("the session ended without saying why"),
-                }
-            }
-        });
-        assert!(output.contains("on-a-tty"), "{output:?}");
-        assert_eq!(reason, CloseReason::Exited(Some(4)));
-    }
-
-    #[test]
-    fn a_missing_program_is_an_error() {
-        let started = Instant::now();
-        let error = block_on(LocalExec.exec(ExecRequest::new("/nonexistent/nocterm"))).unwrap_err();
-        assert_eq!(error, ExecError::NotFound("/nonexistent/nocterm".into()));
-        assert!(started.elapsed() < Duration::from_secs(5));
-    }
 }

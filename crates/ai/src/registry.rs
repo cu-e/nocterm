@@ -1,4 +1,4 @@
-use nocterm_settings::AiSettings;
+use crate::AiSettings;
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AgentLaunch {
@@ -15,6 +15,7 @@ pub struct AgentRegistry {
     pub warnings: Vec<String>,
 }
 impl AgentRegistry {
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn new(settings: &AiSettings) -> Self {
         let mut result = Self::default();
         for (id, name, command, args, inherit) in [

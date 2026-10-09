@@ -7,6 +7,7 @@ use super::{AuthKind, Fields, FormError, ValidationField};
 use crate::store::{Profile, ProfileId};
 
 /// Turns what was typed into a profile, or says what to fix.
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) fn build_profile(
     id: ProfileId,
     fields: &Fields,

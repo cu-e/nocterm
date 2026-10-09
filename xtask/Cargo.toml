@@ -10,8 +10,14 @@ publish = false
 layer = "tooling"
 
 [dependencies]
+nocterm-ai.workspace = true
 nocterm-design.workspace = true
+nocterm-files.workspace = true
+nocterm-monitor-ui.workspace = true
+nocterm-session.workspace = true
 nocterm-settings.workspace = true
+nocterm-ui.workspace = true
+nocterm-vault-ui.workspace = true
 
 anyhow.workspace = true
 serde.workspace = true

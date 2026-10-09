@@ -291,6 +291,7 @@ impl FileDialog {
         };
         self.run(op, window, cx);
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn run(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
         self.pending = true;
         self.error = None;
@@ -395,6 +396,7 @@ impl FileDialog {
             )
             .child(div().flex_1().min_w_0().text_sm().child(value.into()))
     }
+    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn properties(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut content = v_flex().gap_2();
         let Some(m) = &self.metadata else {

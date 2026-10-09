@@ -14,8 +14,10 @@ history and AI Settings; custom agents show a generic icon. A working chat
 shows a spinner in history; its pin remains a separate indicator. Ctrl+N (Cmd+N on macOS) in the panel
 starts a new chat with the agent the last chat was started with (remembered in
 `agents.toml`; before any chat, the default agent); the new-chat menu shows the
-shortcut beside that agent. Agent
-processes and the tool listener start only when needed. The panel can occupy the
+shortcut beside that agent. A chat the panel shows connects at once, so its
+model and options can be chosen before the first message
+(`[ai.sessions] warm_start = false` connects on the first message instead);
+the tool listener starts only when needed. The panel can occupy the
 window's working area; its maximize control keeps the footer and does not change
 the operating system's fullscreen state. Chats are saved and come back after a
 restart (see [Chats and history](#chats-and-history)). Model favorites are
@@ -87,7 +89,10 @@ entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 
 After a restart, saved chats appear in the history without starting their
-agent. Opening history or creating an empty chat does not start an agent or MCP.
+agent. Opening history or a saved chat does not start an agent or MCP; the
+saved chat connects on its next message. A new chat connects as soon as it is
+shown, unless `warm_start` is off. Leaving a chat before the runtime
+admitted it withdraws its request unless it has messages to send.
 Sending a message saves its queue entry before starting the agent and reopens its session with
 `session/resume` (no replay) or `session/load`, whichever the agent advertises.
 Chats containing only a draft or queued messages start a new session even if an
@@ -96,7 +101,11 @@ An agent without restoration, or whose saved session no longer exists, starts
 a new session. A bounded copy of the saved user/assistant conversation accompanies
 the next prompt, and the status explains the fallback. Temporary restoration
 errors are retried once and retain the session descriptor; authentication keeps
-it for retry after sign-in. Attached connections and groups survive restarts;
+it for retry after sign-in. A fork whose copy the agent cannot make starts a new
+session with the copied conversation instead of failing. A chat whose session
+failed reconnects with the next message; after a second failure without a
+completed turn it stops reopening that session and starts a new one with the
+saved conversation. Attached connections and groups survive restarts;
 a remote terminal attachment restores through its saved connection. Local
 shells cannot be reconnected from an earlier process. Saved chats
 load into the first window that opens the panel, so two windows never write the
@@ -179,9 +188,10 @@ use the secondary text color.
 
 Stop cancels the current turn (`session/cancel`). Updates the agent sends after
 answering the cancellation are dropped, and the next prompt continues in the
-same session. Restart chat appears only when the session itself is gone: the
-agent exited, failed, or did not answer the cancellation within 10 seconds. It
-starts a new agent process and keeps the chat, its name and its history file.
+same session. When the session itself is gone (the agent exited, failed, or
+did not answer the cancellation within 10 seconds) the queue pauses; the next
+message or Restart chat starts a new agent process and keeps the chat, its name
+and its history file.
 
 ## Context and controls
 
@@ -222,7 +232,12 @@ window tokens/cost.
 Modes, models, effort and image input depend on the agent's real ACP
 capabilities/configuration. A missing capability does not mean that a default
 model or token count can be invented. Model favorites are keyed by agent,
-configuration option and value. Image input accepts validated PNG, JPEG, GIF and
+configuration option and value. `agents.toml` also keeps the options each agent
+last reported and the model and reasoning effort last chosen for it: a new chat
+shows them before its session opens and starts with that model and effort. A
+choice made before the session opens is applied, one option at a time, before
+the first prompt; a value the agent no longer offers is skipped. Modes are
+chosen per chat and never carried over. Image input accepts validated PNG, JPEG, GIF and
 WebP, at most 5 MiB per image, eight images and 20 MiB per prompt. Decoding is
 bounded to 4096 pixels per axis, 16 million pixels and 64 MiB allocation.
 
@@ -385,9 +400,11 @@ that slot reserved and reports the error. Late startup results whose UI owner
 has disappeared are closed instead of being abandoned.
 
 `[ai.sessions]` controls the policy shared by every window: `max_live = 4` counts
-starting, live and closing sessions; `max_idle = 2` retains warm sessions;
-`idle_timeout_secs = 90` releases idle sessions. Requests wait in their saved FIFO
-queues when the limit is reached, and the oldest idle session yields first.
+starting, live and closing sessions; `max_idle = 3` retains warm sessions;
+`idle_timeout_secs = 1800` releases idle sessions. The chat a panel shows keeps its
+session warm regardless of both and yields only when a waiting chat needs its slot
+and no other idle session is left. Requests wait in their saved FIFO queues when
+the limit is reached, and the oldest idle session yields first.
 Generating, authentication, permissions, bridge calls, configuration requests and
 active command jobs retain a session. A paused queue, composer edit, pin or draft
 does not. Idle release leaves background terminals and shell command ownership
@@ -487,6 +504,10 @@ Hermes.
 The new `[ai]` table uses strict schema validation. Older Nocterm versions that
 do not know this table may reject those settings; keep a backup before opening
 the same settings with an older version.
+
+`agents.toml` rejects unknown fields too: a version older than the stored agent
+options and choices starts without favorites and replaces the file on its next
+save, so the favorites are lost.
 
 Unavailable local terminal references stay visible after reopening, including beside
 working remote attachments. They grant no terminal access and can be removed explicitly.

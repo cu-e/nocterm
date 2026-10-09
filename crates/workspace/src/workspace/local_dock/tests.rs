@@ -20,8 +20,15 @@ impl Focusable for Probe {
     }
 }
 impl Render for Probe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().track_focus(&self.focus)
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .track_focus(&self.focus)
+            .on_action(
+                cx.listener(|this, _: &gpui_kit::component::input::Copy, _, _| {
+                    this.commands.borrow_mut().push(this.cwd.clone())
+                }),
+            )
     }
 }
 impl Item for Probe {
@@ -30,12 +37,6 @@ impl Item for Probe {
     }
     fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.closes.set(self.closes.get() + 1);
-    }
-    fn command_enabled(&self, _: ItemCommand, _: &App) -> bool {
-        true
-    }
-    fn execute(&mut self, _: ItemCommand, _: &mut Window, _: &mut Context<Self>) {
-        self.commands.borrow_mut().push(self.cwd.clone());
     }
 }
 impl crate::LocalTerminal for Probe {
@@ -137,6 +138,7 @@ fn native_header_plus_precedes_zoom_and_blank_double_click_adds_exactly_one(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
     cx: &mut TestAppContext,
 ) {
@@ -198,7 +200,13 @@ fn local_tabs_keep_selected_cwd_commands_order_height_and_individual_close(
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
             assert_eq!(workspace.local_terminal_cwd(cx), Some("/a".into()));
-            workspace.execute_item_command(ItemCommand::Copy, window, cx);
+            workspace.dispatch_command(Box::new(gpui_kit::component::input::Copy), window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
             workspace
                 .change_local_directory("/changed".into(), window, cx)
                 .unwrap();
@@ -369,6 +377,7 @@ fn native_drag_to_free_header_reorders_without_opening_or_closing_sessions(
 }
 
 #[gpui_kit::test]
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
     cx: &mut TestAppContext,
 ) {
