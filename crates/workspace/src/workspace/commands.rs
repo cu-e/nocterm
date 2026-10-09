@@ -1,5 +1,6 @@
 //! Focus-sensitive command routing and window menu lifecycle.
 use super::*;
+use gpui_kit::{Action, InteractiveElement, component::input};
 
 impl Workspace {
     /// Focused visible user Item, then the last visible central context.
@@ -26,56 +27,67 @@ impl Workspace {
             .map(|item| item.handle.clone())
     }
 
-    pub fn item_command_enabled(&self, command: ItemCommand, window: &Window, cx: &App) -> bool {
-        self.command_item(window, cx)
-            .is_some_and(|item| item.command_enabled(command, cx))
+    /// Whether the command item answers `action` now. An Item registers a
+    /// handler only while the command can run, so the last rendered frame is
+    /// the one source of truth for menus, buttons and shortcuts.
+    pub fn command_available(&self, action: &dyn Action, window: &Window, cx: &App) -> bool {
+        // From the workspace root itself no forwarder reaches the item.
+        !self.focus_handle.is_focused(window)
+            && self
+                .command_item(window, cx)
+                .is_some_and(|item| window.is_action_available_in(action, &item.focus_handle(cx)))
     }
 
-    pub fn execute_item_command(
+    /// Runs `action` on the command item after the current dispatch, so its
+    /// handler can move focus freely and update the workspace.
+    pub fn dispatch_command(
         &mut self,
-        command: ItemCommand,
+        action: Box<dyn Action>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(item) = self.command_item(window, cx)
-            && item.command_enabled(command, cx)
-        {
-            item.execute(command, window, cx);
-        }
-    }
-
-    pub(super) fn dispatch_item_command(
-        &mut self,
-        command: ItemCommand,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(item) = self.command_item(window, cx)
-            && item.command_enabled(command, cx)
-        {
-            if matches!(
-                command,
-                ItemCommand::Find | ItemCommand::FindNextSelection | ItemCommand::SessionSettings
-            ) {
-                let workspace = cx.weak_entity();
-                window.defer(cx, move |window, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        let still_open = this
-                            .items
-                            .iter()
-                            .any(|open| open.handle.item_id() == item.item_id());
-                        if still_open
-                            && this.item_visible(item.item_id(), cx)
-                            && item.command_enabled(command, cx)
-                        {
-                            item.execute(command, window, cx);
-                        }
-                    });
-                });
-            } else {
-                item.execute(command, window, cx);
+        let Some(item) = self.command_item(window, cx) else {
+            return;
+        };
+        let workspace = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            let target = workspace.read_with(cx, |this, cx| {
+                this.items
+                    .iter()
+                    .any(|open| open.handle.item_id() == item.item_id())
+                    && this.item_visible(item.item_id(), cx)
+            });
+            if target.unwrap_or(false) {
+                let focus = item.focus_handle(cx);
+                if window.is_action_available_in(action.as_ref(), &focus) {
+                    focus.dispatch_action(action.as_ref(), window, cx);
+                }
             }
+        });
+    }
+
+    /// Hands the commands an Item answers from the workspace's chrome to the
+    /// command item. Never put this on an ancestor of the Items: a handler
+    /// there would make every command look available.
+    pub(super) fn forward_commands<E: InteractiveElement>(element: E, cx: &mut Context<Self>) -> E {
+        fn forward<A: Action, E: InteractiveElement>(element: E, cx: &mut Context<Workspace>) -> E {
+            element.on_action(cx.listener(|this, action: &A, window, cx| {
+                this.dispatch_command(action.boxed_clone(), window, cx)
+            }))
         }
+        let element = forward::<crate::ClearSelection, _>(element, cx);
+        let element = forward::<crate::Find, _>(element, cx);
+        let element = forward::<crate::FindNext, _>(element, cx);
+        let element = forward::<crate::FindPrevious, _>(element, cx);
+        let element = forward::<crate::FindNextSelection, _>(element, cx);
+        let element = forward::<crate::DisconnectSession, _>(element, cx);
+        let element = forward::<crate::ReconnectSession, _>(element, cx);
+        let element = forward::<crate::StartRecording, _>(element, cx);
+        let element = forward::<crate::StopRecording, _>(element, cx);
+        let element = forward::<crate::SessionSettings, _>(element, cx);
+        let element = forward::<input::Copy, _>(element, cx);
+        let element = forward::<input::Paste, _>(element, cx);
+        forward::<input::SelectAll, _>(element, cx)
     }
 
     /// The displayed tab label, including its user-defined alias.

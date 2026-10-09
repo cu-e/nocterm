@@ -1,12 +1,14 @@
-//! Application menus describe commands; feature Items implement their behavior.
+//! Application menus describe commands; feature Items implement their behavior
+//! and decide when it is available by registering handlers.
 
-use gpui_kit::{App, Focusable as _, Menu, MenuItem, Window, component::input};
-use nocterm_workspace::{ItemCommand, Workspace, *};
+use gpui_kit::{Action, App, Focusable as _, Menu, MenuItem, Window, component::input};
+use nocterm_workspace::{Workspace, *};
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Menu> {
     let in_workspace = workspace.focus_handle(cx).contains_focused(window, cx);
-    let enabled = |command| in_workspace && workspace.item_command_enabled(command, window, cx);
+    let enabled =
+        |action: &dyn Action| in_workspace && workspace.command_available(action, window, cx);
     // Cut belongs to native editable fields, never to the terminal screen. Its
     // dispatch path also covers dialog inputs outside the Workspace subtree.
     // During initial window construction no dispatch tree exists yet. State is
@@ -21,15 +23,15 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::action("New Window", NewWindow),
             MenuItem::separator(),
             MenuItem::action("Disconnect Session", DisconnectSession)
-                .disabled(!enabled(ItemCommand::Disconnect)),
+                .disabled(!enabled(&DisconnectSession)),
             MenuItem::action("Reconnect Session", ReconnectSession)
-                .disabled(!enabled(ItemCommand::Reconnect)),
+                .disabled(!enabled(&ReconnectSession)),
             MenuItem::submenu(
                 Menu::new("Log").items([
                     MenuItem::action("Start Recording", StartRecording)
-                        .disabled(!enabled(ItemCommand::StartRecording)),
+                        .disabled(!enabled(&StartRecording)),
                     MenuItem::action("Stop Recording", StopRecording)
-                        .disabled(!enabled(ItemCommand::StopRecording)),
+                        .disabled(!enabled(&StopRecording)),
                     MenuItem::separator(),
                     MenuItem::action("Open Default Logs Directory", LogsDirectory),
                 ]),
@@ -39,7 +41,7 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
                     MenuItem::action("Settings", OpenSettings).disabled(!in_workspace),
                     MenuItem::action("AI Settings", OpenAiSettings).disabled(!in_workspace),
                     MenuItem::action("Session Settings", SessionSettings)
-                        .disabled(!enabled(ItemCommand::SessionSettings)),
+                        .disabled(!enabled(&SessionSettings)),
                     MenuItem::action("Default Session Settings", DefaultSessionSettings)
                         .disabled(!in_workspace),
                     MenuItem::action("Password Vault", OpenVault)
@@ -59,25 +61,21 @@ pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Men
             MenuItem::action("Redo", input::Redo).disabled(!editing),
             MenuItem::separator(),
             MenuItem::action("Cut", input::Cut).disabled(!editing),
-            MenuItem::action("Copy", input::Copy)
-                .disabled(!(editing || enabled(ItemCommand::Copy))),
-            MenuItem::action("Paste", input::Paste)
-                .disabled(!(editing || enabled(ItemCommand::Paste))),
+            MenuItem::action("Copy", input::Copy).disabled(!(editing || enabled(&input::Copy))),
+            MenuItem::action("Paste", input::Paste).disabled(!(editing || enabled(&input::Paste))),
             MenuItem::action("Select All", input::SelectAll)
-                .disabled(!(editing || enabled(ItemCommand::SelectAll))),
-            MenuItem::action("Clear Selection", ClearSelection)
-                .disabled(!enabled(ItemCommand::ClearSelection)),
+                .disabled(!(editing || enabled(&input::SelectAll))),
+            MenuItem::action("Clear Selection", ClearSelection).disabled(!enabled(&ClearSelection)),
             MenuItem::separator(),
             MenuItem::action("Copy Connection Name", CopyConnectionName).disabled(!has_target),
             MenuItem::action("Rename Tab", RenameTab).disabled(!has_target),
         ]),
         Menu::new("Search").items([
-            MenuItem::action("Find", Find).disabled(!enabled(ItemCommand::Find)),
-            MenuItem::action("Find Next", FindNext).disabled(!enabled(ItemCommand::FindNext)),
-            MenuItem::action("Find Previous", FindPrevious)
-                .disabled(!enabled(ItemCommand::FindPrevious)),
+            MenuItem::action("Find", Find).disabled(!enabled(&Find)),
+            MenuItem::action("Find Next", FindNext).disabled(!enabled(&FindNext)),
+            MenuItem::action("Find Previous", FindPrevious).disabled(!enabled(&FindPrevious)),
             MenuItem::action("Find Next Selected Text", FindNextSelection)
-                .disabled(!enabled(ItemCommand::FindNextSelection)),
+                .disabled(!enabled(&FindNextSelection)),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Split View Horizontally", SplitDown).disabled(!can_split),

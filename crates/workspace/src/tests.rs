@@ -2,11 +2,10 @@ use crate::{Item, ItemEvent, LocalTerminal, Workspace};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
-    TestSupportExt as _, Window, WindowOptions,
+    Window, WindowOptions,
     component::{
         Placement, WindowExt as _,
         dock::{DockPlacement, PaneRef},
-        floating::FloatingCards,
     },
     div,
     prelude::*,
@@ -25,8 +24,40 @@ struct Probe {
     target: Option<nocterm_session::Target>,
     connected: bool,
     fs: Option<std::sync::Arc<dyn nocterm_session::RemoteFs>>,
-    commands: Vec<crate::ItemCommand>,
-    executed: Rc<RefCell<Vec<crate::ItemCommand>>>,
+    commands: Vec<Command>,
+    executed: Rc<RefCell<Vec<Command>>>,
+}
+
+/// The commands a [`Probe`] answers while they are in its `commands`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Command {
+    Copy,
+    Paste,
+    Find,
+}
+
+fn record<A: gpui_kit::Action>(
+    command: Command,
+) -> impl Fn(&mut Probe, &A, &mut Window, &mut Context<Probe>) + 'static {
+    move |probe, _, _, _| probe.executed.borrow_mut().push(command)
+}
+
+impl Probe {
+    fn on_commands(&self, element: gpui_kit::Div, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let has = |command| self.commands.contains(&command);
+        element
+            .when(has(Command::Copy), |el| {
+                el.on_action(cx.listener(record::<gpui_kit::component::input::Copy>(Command::Copy)))
+            })
+            .when(has(Command::Paste), |el| {
+                el.on_action(
+                    cx.listener(record::<gpui_kit::component::input::Paste>(Command::Paste)),
+                )
+            })
+            .when(has(Command::Find), |el| {
+                el.on_action(cx.listener(record::<crate::Find>(Command::Find)))
+            })
+    }
 }
 impl EventEmitter<ItemEvent> for Probe {}
 impl Focusable for Probe {
@@ -35,14 +66,16 @@ impl Focusable for Probe {
     }
 }
 impl Render for Probe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.alternate_focus {
-            Some(alternate) => div()
+            Some(alternate) => self
+                .on_commands(div(), cx)
                 .size_full()
                 .child(div().h_1_2().track_focus(&self.focus))
                 .child(div().h_1_2().track_focus(alternate))
                 .into_any_element(),
-            None => div()
+            None => self
+                .on_commands(div(), cx)
                 .size_full()
                 .track_focus(&self.focus)
                 .into_any_element(),
@@ -60,12 +93,6 @@ impl Item for Probe {
     }
     fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.closes.set(self.closes.get() + 1);
-    }
-    fn command_enabled(&self, command: crate::ItemCommand, _: &App) -> bool {
-        self.commands.contains(&command)
-    }
-    fn execute(&mut self, command: crate::ItemCommand, _: &mut Window, _: &mut Context<Self>) {
-        self.executed.borrow_mut().push(command);
     }
 }
 impl LocalTerminal for Probe {
@@ -108,7 +135,7 @@ fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
         target: None,
         connected: true,
         fs: None,
-        commands: vec![crate::ItemCommand::Copy, crate::ItemCommand::Find],
+        commands: vec![Command::Copy, Command::Find],
         executed: Rc::new(RefCell::new(Vec::new())),
     })
 }
@@ -557,11 +584,14 @@ fn alternate_child_focus_tracks_split_and_bottom_command_ownership(cx: &mut Test
                     expected_central.entity_id(),
                     "bottom focus must preserve the active central pane"
                 );
-                workspace.execute_item_command(crate::ItemCommand::Copy, window, cx);
+                workspace.dispatch_command(Box::new(gpui_kit::component::input::Copy), window, cx);
             });
-            assert_eq!(*item.read(cx).executed.borrow(), [crate::ItemCommand::Copy]);
         })
         .unwrap();
+        cx.run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(*item.executed.borrow(), [Command::Copy]);
+        });
     }
 }
 
@@ -690,87 +720,8 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     .unwrap();
 }
 
-pub(super) struct RightProbe {
-    pub(super) focus: FocusHandle,
-    pub(super) maximized: bool,
-}
-impl EventEmitter<crate::RightPanelEvent> for RightProbe {}
-impl Focusable for RightProbe {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for RightProbe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("right-probe")
-            .test_support()
-            .size_full()
-            .track_focus(&self.focus)
-            .child("AI")
-    }
-}
-impl crate::Panel for RightProbe {
-    fn title(&self, _: &App) -> gpui_kit::SharedString {
-        "AI Agents".into()
-    }
-    fn icon(&self, _: &App) -> nocterm_ui::IconName {
-        nocterm_ui::IconName::Bot
-    }
-}
-impl crate::RightPanel for RightProbe {
-    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.maximized = maximized;
-        cx.notify();
-    }
-}
-
-#[gpui_kit::test]
-fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.resize(gpui_kit::size(px(1800.), px(760.)));
-        let panel = cx.new(|cx| RightProbe {
-            focus: cx.focus_handle(),
-            maximized: false,
-        });
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel(panel.clone(), window, cx);
-            workspace.toggle_right_panel(window, cx);
-            assert!(!workspace.right_panel_is_open());
-            workspace.set_right_panel_available(true, window, cx);
-            workspace.toggle_right_panel(window, cx);
-            assert!(workspace.right_panel_is_open());
-            assert!(panel.read(cx).focus.is_focused(window));
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("right-probe").is_some());
-        assert!(window.try_find("empty-new-tab").is_some());
-        assert!(window.try_find("open-settings").is_none());
-        let toggle = window.find("toggle-right-panel").bounds();
-        assert!(toggle.left() > window.find("toggle-local-terminal").bounds().right());
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("empty-new-tab").is_none());
-        assert!(window.try_find("toggle-right-panel").is_some());
-        assert!(panel.read(cx).maximized);
-        let inset = FloatingCards::get(cx).map_or(px(0.), |cards| cards.gap * 2. + px(2.));
-        let probe = window.find("right-probe").bounds().size.width;
-        assert!((probe - (window.viewport_size().width - inset)).abs() < px(2.));
-        workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_available(false, window, cx)
-        });
-        window.render_frame(cx);
-        assert!(window.try_find("toggle-right-panel").is_none());
-        assert!(window.try_find("right-probe").is_none());
-        assert!(window.try_find("empty-new-tab").is_some());
-        assert!(!panel.read(cx).maximized);
-        assert!(workspace.read(cx).focus_handle.is_focused(window));
-    })
-    .unwrap();
-}
-
 #[path = "menu_tests.rs"]
 mod menus;
+#[path = "right_panel_tests.rs"]
+mod right_panel;
+pub(super) use right_panel::RightProbe;

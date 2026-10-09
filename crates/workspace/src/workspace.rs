@@ -40,8 +40,8 @@ mod sessions;
 mod terminal_target;
 
 use crate::{
-    CloseTab, Item, ItemCommand, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab,
-    PanelHandle, PreviousTab, SessionContext, ToggleSidebar,
+    CloseTab, Item, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab, PanelHandle,
+    PreviousTab, SessionContext, ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -155,7 +155,6 @@ pub struct Workspace {
 impl EventEmitter<WorkspaceEvent> for Workspace {}
 
 impl Workspace {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (dock, skin) = DockSkin::dock_area("workspace", None, window, cx);
         skin.set_panel_style(PanelStyle::TabBar, cx);
@@ -223,13 +222,6 @@ impl Workspace {
             background: Vec::new(),
             background_opener: None,
         };
-        macro_rules! item_action {
-            ($action:ty, $command:ident) => {
-                this.register_action::<$action>(|this, _, window, cx| {
-                    this.dispatch_item_command(ItemCommand::$command, window, cx);
-                });
-            };
-        }
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
         });
@@ -239,19 +231,6 @@ impl Workspace {
         this.register_action::<crate::SelectAll>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx)
         });
-        item_action!(crate::ClearSelection, ClearSelection);
-        item_action!(crate::Find, Find);
-        item_action!(crate::FindNext, FindNext);
-        item_action!(crate::FindPrevious, FindPrevious);
-        item_action!(crate::FindNextSelection, FindNextSelection);
-        item_action!(crate::DisconnectSession, Disconnect);
-        item_action!(crate::ReconnectSession, Reconnect);
-        item_action!(crate::StartRecording, StartRecording);
-        item_action!(crate::StopRecording, StopRecording);
-        item_action!(crate::SessionSettings, SessionSettings);
-        item_action!(gpui_kit::component::input::Copy, Copy);
-        item_action!(gpui_kit::component::input::Paste, Paste);
-        item_action!(gpui_kit::component::input::SelectAll, SelectAll);
         this.register_action::<crate::CopyConnectionName>(|this, _, window, cx| {
             if let Some(title) = this.command_title(window, cx) {
                 cx.write_to_clipboard(ClipboardItem::new_string(title.to_string()));

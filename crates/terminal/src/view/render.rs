@@ -384,24 +384,11 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::reconnect))
             .on_action(cx.listener(Self::toggle_recording))
             .child(
-                div()
+                self.on_edit_commands(div(), cx)
                     .key_context(SCREEN_KEY_CONTEXT)
                     .track_focus(&self.focus_handle)
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::paste))
-                    .on_action(cx.listener(|this, _: &native_input::Copy, _, cx| {
-                        cx.stop_propagation();
-                        this.copy_selection(cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &native_input::Paste, window, cx| {
-                        cx.stop_propagation();
-                        this.paste(&Paste, window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &native_input::SelectAll, _, cx| {
-                        cx.stop_propagation();
-                        this.terminal
-                            .update(cx, |t, cx| t.update_emulator(cx, |e| e.select_all()));
-                    }))
                     .size_full()
                     .child(element.render()),
             )
@@ -415,7 +402,7 @@ impl Render for TerminalView {
         let path = recording
             .and_then(|recording| recording.path)
             .map(|path| path.to_string_lossy().into_owned());
-        v_flex()
+        self.on_commands(v_flex(), cx)
             .size_full()
             .min_h_0()
             .children(self.render_find(cx))

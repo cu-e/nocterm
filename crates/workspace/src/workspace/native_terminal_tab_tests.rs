@@ -21,8 +21,15 @@ impl Focusable for Tab {
     }
 }
 impl Render for Tab {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().track_focus(&self.focus)
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let executed = |this: &mut Self| this.executed.set(this.executed.get() + 1);
+        div()
+            .size_full()
+            .track_focus(&self.focus)
+            .on_action(
+                cx.listener(move |this, _: &gpui_kit::component::input::Copy, _, _| executed(this)),
+            )
+            .on_action(cx.listener(move |this, _: &crate::Find, _, _| executed(this)))
     }
 }
 impl Item for Tab {
@@ -36,12 +43,6 @@ impl Item for Tab {
     }
     fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.closed.set(self.closed.get() + 1);
-    }
-    fn command_enabled(&self, _: ItemCommand, _: &App) -> bool {
-        true
-    }
-    fn execute(&mut self, _: ItemCommand, _: &mut Window, _: &mut Context<Self>) {
-        self.executed.set(self.executed.get() + 1);
     }
 }
 impl crate::LocalTerminal for Tab {
@@ -580,9 +581,10 @@ fn hidden_mixed_bottom_cannot_receive_commands_or_close_tab_actions(cx: &mut Tes
                 ws.command_item(window, cx).is_none(),
                 "hidden previous central context must not receive commands"
             );
-            assert!(!ws.item_command_enabled(ItemCommand::Copy, window, cx));
-            assert!(!ws.item_command_enabled(ItemCommand::Find, window, cx));
-            ws.execute_item_command(ItemCommand::Copy, window, cx);
+            let copy = gpui_kit::component::input::Copy;
+            assert!(!ws.command_available(&copy, window, cx));
+            assert!(!ws.command_available(&crate::Find, window, cx));
+            ws.dispatch_command(Box::new(copy), window, cx);
             assert_eq!(
                 ws.active_session(cx).unwrap().target,
                 Target::parse("user@host", None).unwrap()
@@ -611,8 +613,8 @@ fn deferred_find_is_cancelled_when_its_bottom_target_hides_before_delivery(
         });
         window.render_frame(cx);
         ws.update(cx, |ws, cx| {
-            assert!(ws.item_command_enabled(ItemCommand::Find, window, cx));
-            ws.dispatch_item_command(ItemCommand::Find, window, cx);
+            assert!(ws.command_available(&crate::Find, window, cx));
+            ws.dispatch_command(Box::new(crate::Find), window, cx);
             ws.toggle_local_terminal(window, cx);
         });
     })

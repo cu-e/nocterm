@@ -39,7 +39,7 @@ pub use actions::*;
 pub use connection_directory::{ConnectionDirectory, ConnectionSummary};
 pub use file_drag::{FileDrag, RemoteFileDrag};
 pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
-pub use item::{Item, ItemCommand, ItemEvent, ItemHandle, SessionContext, TabState};
+pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::{LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};

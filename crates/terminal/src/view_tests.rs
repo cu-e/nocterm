@@ -107,7 +107,11 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     let driver = transport.drivers.lock().unwrap()[0].clone();
     drain(&driver);
     cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |v, cx| v.execute(ItemCommand::Find, window, cx));
+        view.update(cx, |v, cx| v.find(&nocterm_workspace::Find, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.input("target", cx);
     })
@@ -183,7 +187,7 @@ fn selection_search_and_screen_native_actions_keep_independent_text(cx: &mut Tes
                     e.update_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right);
                 })
             });
-            v.execute(ItemCommand::FindNextSelection, window, cx);
+            v.find_selection(&nocterm_workspace::FindNextSelection, window, cx);
         });
     })
     .unwrap();
@@ -236,7 +240,7 @@ fn live_reconnect_uses_new_options_and_disconnect_cancels_prompts(cx: &mut TestA
                 )
                 .unwrap()
             });
-            v.execute(ItemCommand::Reconnect, window, cx);
+            v.reconnect(&Reconnect, window, cx);
             assert!(!v.terminal.read(cx).session_context().connected);
         });
     })
@@ -262,17 +266,22 @@ fn live_reconnect_uses_new_options_and_disconnect_cancels_prompts(cx: &mut TestA
     );
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.execute(ItemCommand::Disconnect, window, cx);
+            v.disconnect(&nocterm_workspace::DisconnectSession, window, cx);
             let t = v.terminal.read(cx);
             assert!(t.prompt().is_none());
             assert!(t.session_context().fs.is_none());
             assert!(!t.is_connected());
-            assert!(!v.command_enabled(ItemCommand::Disconnect, cx));
-            assert!(v.command_enabled(ItemCommand::Reconnect, cx));
             let mut frame = Frame::default();
             t.emulator().snapshot(&mut frame);
             assert!(!frame.cells.iter().any(|c| c.ch == 's'));
         });
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let focus = view.read(cx).focus_handle.clone();
+        assert!(!window.is_action_available_in(&nocterm_workspace::DisconnectSession, &focus));
+        assert!(window.is_action_available_in(&nocterm_workspace::ReconnectSession, &focus));
     })
     .unwrap();
     assert!(answer.now_or_never().is_some());
@@ -346,7 +355,11 @@ fn osc52_requires_opt_in_and_focus_on_the_actual_terminal_screen(cx: &mut TestAp
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("remote"));
     cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |v, cx| v.execute(ItemCommand::Find, window, cx));
+        view.update(cx, |v, cx| v.find(&nocterm_workspace::Find, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         cx.write_to_clipboard(ClipboardItem::new_string("search".into()));
     })

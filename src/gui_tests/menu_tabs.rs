@@ -38,14 +38,17 @@ impl LocalTerminal for LocalTab {
         Ok(())
     }
 }
+fn find_action(items: &[MenuItem], label: &str) -> Option<bool> {
+    items.iter().find_map(|item| match item {
+        MenuItem::Action { name, disabled, .. } if name.as_ref() == label => Some(!disabled),
+        MenuItem::Submenu(menu) => find_action(&menu.items, label),
+        _ => None,
+    })
+}
 fn enabled(menus: &[Menu], label: &str) -> bool {
     menus
         .iter()
-        .flat_map(|menu| &menu.items)
-        .find_map(|item| match item {
-            MenuItem::Action { name, disabled, .. } if name.as_ref() == label => Some(!disabled),
-            _ => None,
-        })
+        .find_map(|menu| find_action(&menu.items, label))
         .unwrap_or_else(|| panic!("application menu action missing: {label}"))
 }
 fn assert_tab_actions(menus: &[Menu], expected: bool) {
@@ -102,6 +105,60 @@ fn local_only_application_menus_enable_common_tabs_and_disable_hidden_or_outside
         let menus = crate::app_menus::build(workspace.read(cx), window, cx);
         assert_tab_actions(&menus, false);
         assert!(!enabled(&menus, "Split View Vertically"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn session_menu_follows_the_terminal_handlers_and_reaches_it_from_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_session::{CloseReason, Event};
+    let (handle, workspace, terminal, transport) = fixture(cx);
+    super::emit(cx, &transport, 0, Event::Connected);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(enabled(&menus, "Disconnect Session"));
+        assert!(enabled(&menus, "Start Recording"));
+        assert!(!enabled(&menus, "Stop Recording"));
+        assert!(
+            !enabled(&menus, "Find Next"),
+            "nothing has been searched yet"
+        );
+    })
+    .unwrap();
+    super::emit(
+        cx,
+        &transport,
+        0,
+        Event::Closed(CloseReason::Exited(Some(0))),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(!enabled(&menus, "Disconnect Session"));
+        assert!(!enabled(&menus, "Start Recording"));
+        assert!(enabled(&menus, "Reconnect Session"));
+        workspace.update(cx, |workspace, cx| {
+            workspace.activate_panel_of::<nocterm_files::FilesPanel>(window, cx)
+        });
+        window.render_frame(cx);
+        assert!(
+            !terminal
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        );
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(enabled(&menus, "Find"), "the sidebar forwards to the tab");
+        window.dispatch_action(Box::new(nocterm_workspace::Find), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("find-previous").is_some());
     })
     .unwrap();
 }

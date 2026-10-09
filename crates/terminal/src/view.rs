@@ -27,7 +27,7 @@ use nocterm_vt::{
     CellPoint, Frame, KeyPress, Modifiers, MouseEvent, MouseEventKind, Palette, Rgb, Scroll,
     SearchDirection, SelectionKind, encode_focus, encode_key, encode_mouse, encode_paste,
 };
-use nocterm_workspace::{Item, ItemCommand, ItemEvent, SessionContext, SessionSpec, TabState};
+use nocterm_workspace::{Item, ItemEvent, SessionContext, SessionSpec, TabState};
 
 use crate::{
     Copy, KEY_CONTEXT, Paste, Reconnect, SCREEN_KEY_CONTEXT, ScrollPageDown, ScrollPageUp,

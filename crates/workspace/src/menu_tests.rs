@@ -19,8 +19,8 @@ fn standard_menu_opens_and_dispatches_to_the_focused_bottom_terminal(cx: &mut Te
                                 "Copy",
                                 crate::EditCopy,
                             )
-                            .disabled(!workspace.item_command_enabled(
-                                crate::ItemCommand::Copy,
+                            .disabled(!workspace.command_available(
+                                &gpui_kit::component::input::Copy,
                                 window,
                                 cx,
                             ))]),
@@ -58,7 +58,7 @@ fn standard_menu_opens_and_dispatches_to_the_focused_bottom_terminal(cx: &mut Te
     cx.run_until_parked();
     assert_eq!(
         local.read_with(cx, |item, _| item.executed.borrow().clone()),
-        vec![crate::ItemCommand::Copy]
+        vec![Command::Copy]
     );
     assert!(central.read_with(cx, |item, _| item.executed.borrow().is_empty()));
 }
@@ -178,10 +178,16 @@ fn command_routing_prefers_focus_and_rejects_unsupported_commands(cx: &mut TestA
                 workspace.command_item(window, cx).unwrap().item_id(),
                 local.entity_id()
             );
-            assert!(!workspace.item_command_enabled(crate::ItemCommand::Paste, window, cx));
-            workspace.execute_item_command(crate::ItemCommand::Paste, window, cx);
-            assert!(local.read(cx).executed.borrow().is_empty());
+            let paste = gpui_kit::component::input::Paste;
+            assert!(!workspace.command_available(&paste, window, cx));
+            assert!(workspace.command_available(&crate::Find, window, cx));
+            workspace.dispatch_command(Box::new(paste), window, cx);
         });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(local.read(cx).executed.borrow().is_empty());
         window.focus(&a.read(cx).focus_handle(cx), cx);
         window.render_frame(cx);
     })
@@ -193,12 +199,15 @@ fn command_routing_prefers_focus_and_rejects_unsupported_commands(cx: &mut TestA
                 workspace.command_item(window, cx).unwrap().item_id(),
                 a.entity_id()
             );
-            workspace.execute_item_command(crate::ItemCommand::Find, window, cx);
-            assert_eq!(
-                *a.read(cx).executed.borrow(),
-                vec![crate::ItemCommand::Find]
-            );
-            assert!(b.read(cx).executed.borrow().is_empty());
+            workspace.dispatch_command(Box::new(crate::Find), window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(*a.read(cx).executed.borrow(), vec![Command::Find]);
+        assert!(b.read(cx).executed.borrow().is_empty());
+        workspace.update(cx, |workspace, cx| {
             window.focus(&workspace.focus_handle(cx), cx);
             assert_eq!(
                 workspace.command_item(window, cx).unwrap().item_id(),
@@ -268,8 +277,8 @@ fn menu_snapshots_are_window_local_and_refresh_only_on_opening(cx: &mut TestAppC
                         calls.set(calls.get() + 1);
                         vec![gpui_kit::Menu::new("First window").items([
                             gpui_kit::MenuItem::action("Copy", crate::EditCopy).disabled(
-                                !workspace.item_command_enabled(
-                                    crate::ItemCommand::Copy,
+                                !workspace.command_available(
+                                    &gpui_kit::component::input::Copy,
                                     window,
                                     cx,
                                 ),
@@ -428,6 +437,6 @@ fn native_menu_keyboard_navigation_keeps_the_original_item(cx: &mut TestAppConte
     cx.run_until_parked();
     assert_eq!(
         item.read_with(cx, |item, _| item.executed.borrow().clone()),
-        vec![crate::ItemCommand::Find]
+        vec![Command::Find]
     );
 }

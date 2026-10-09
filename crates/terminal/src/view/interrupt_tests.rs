@@ -81,7 +81,11 @@ fn menu_copy_and_search_ctrl_c_still_copy_without_shell_input(cx: &mut TestAppCo
             cx.read_from_clipboard().unwrap().text().as_deref(),
             Some("target")
         );
-        view.update(cx, |v, cx| v.execute(ItemCommand::Find, window, cx));
+        view.update(cx, |v, cx| v.find(&nocterm_workspace::Find, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.input("search term", cx);
         window.dispatch_action(Box::new(native_input::SelectAll), cx);
