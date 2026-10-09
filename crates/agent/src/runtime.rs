@@ -1,7 +1,8 @@
-use crate::thread::AgentThread;
+mod client;
 mod documents;
 mod lease;
 mod lifecycle;
+pub(crate) use client::{Client, ClientState, SessionClient, SessionEvent};
 use gpui_kit::{App, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity, Window};
 pub(crate) use lease::SessionLease;
 use nocterm_ai::{
@@ -61,7 +62,7 @@ struct Connection {
     isolated: bool,
     commands: Option<Arc<dyn AgentCommands>>,
     info: Option<AgentInfo>,
-    users: HashMap<EntityId, WeakEntity<AgentThread>>,
+    users: HashMap<EntityId, Client>,
     serial: u64,
     _events: Option<Task<()>>,
     _connecting: Option<Task<()>>,
@@ -75,15 +76,15 @@ pub(crate) struct Runtime {
     favorites_revision: u64,
     favorites_writer: Option<Task<()>>,
     connections: HashMap<u64, Connection>,
-    documents: HashMap<EntityId, WeakEntity<AgentThread>>,
+    documents: HashMap<EntityId, Client>,
     document_owners: HashMap<String, EntityId>,
-    pending_activation: std::collections::VecDeque<WeakEntity<AgentThread>>,
+    pending_activation: std::collections::VecDeque<Client>,
     closing: HashMap<u64, String>,
     idle_since: HashMap<u64, std::time::Instant>,
     _lifecycle: Option<Task<()>>,
     shutting_down: bool,
     chat_revisions: HashMap<String, (EntityId, u64)>,
-    pub registrations: HashMap<u64, WeakEntity<AgentThread>>,
+    pub registrations: HashMap<u64, Client>,
     /// Chats read from disk and not yet shown by a panel; `None` while reading.
     pub(crate) saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
     /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
@@ -156,12 +157,11 @@ impl Runtime {
                 this.registrations.clear();
                 this.services.bridge.stop();
             }
-            let threads: Vec<_> = this.connections.values()
-                .flat_map(|connection| connection.users.values())
-                .filter_map(WeakEntity::upgrade)
+            let clients: Vec<_> = this.connections.values()
+                .flat_map(|connection| connection.users.values().cloned())
                 .collect();
-            for thread in threads {
-                thread.update(cx, |thread, cx| thread.apply_permission_policy(cx));
+            for client in clients {
+                client.emit(SessionEvent::PolicyChanged, cx);
             }
         });
         let favorites =
@@ -322,16 +322,17 @@ impl Runtime {
         let calls = self.services.bridge.calls();
         self._bridge = Some(cx.spawn(async move |this, cx| {
             while let Ok(call) = calls.recv().await {
-                let thread = this
+                let client = this
                     .read_with(cx, |this, _| {
                         this.registrations
                             .get(&call.registration_id)
-                            .and_then(WeakEntity::upgrade)
+                            .filter(|client| client.alive())
+                            .cloned()
                     })
                     .ok()
                     .flatten();
-                if let Some(thread) = thread {
-                    thread.update(cx, |thread, cx| thread.handle_tool(call, cx));
+                if let Some(client) = client {
+                    cx.update(|cx| client.emit(SessionEvent::Tool(call), cx));
                 } else {
                     let _ = call
                         .respond
@@ -342,15 +343,14 @@ impl Runtime {
     }
     pub(crate) fn register_bridge(
         &mut self,
-        thread: &Entity<AgentThread>,
+        client: &Client,
         cx: &mut Context<Self>,
     ) -> Result<BridgeRegistration, String> {
         if !cx.ai_enabled() {
             return Err("AI is disabled.".into());
         }
         let registration = self.services.bridge.register()?;
-        self.registrations
-            .insert(registration.id, thread.downgrade());
+        self.registrations.insert(registration.id, client.clone());
         self.start_bridge(cx);
         Ok(registration)
     }
@@ -386,9 +386,9 @@ impl Runtime {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn connect(
         &mut self,
-        thread: Entity<AgentThread>,
+        client: Client,
+        chat_id: String,
         launch: AgentLaunch,
-        _fresh: bool,
         cx: &mut Context<Self>,
     ) {
         if !cx.ai_enabled() {
@@ -409,20 +409,15 @@ impl Runtime {
         self.serial += 1;
         self.serial.hash(&mut hasher);
         let key = hasher.finish();
-        let registration = match self.register_bridge(&thread, cx) {
+        let registration = match self.register_bridge(&client, cx) {
             Ok(registration) => registration,
             Err(error) => {
-                thread.update(cx, |thread, cx| thread.fail(&error, cx));
+                client.emit(SessionEvent::Failed(error), cx);
                 return;
             }
         };
-        let lease = SessionLease::new(
-            thread.entity_id(),
-            key,
-            registration,
-            self.lease_releases.clone(),
-        );
-        thread.update(cx, |thread, _| thread.begin_lease(lease));
+        let lease = SessionLease::new(client.id(), key, registration, self.lease_releases.clone());
+        client.emit(SessionEvent::Leased(lease), cx);
         self.serial += 1;
         let serial = self.serial;
         let cancellation = nocterm_ai::ConnectionCancellation::default();
@@ -430,13 +425,13 @@ impl Runtime {
         self.connections.insert(
             key,
             Connection {
-                chat_id: thread.read(cx).chat_id.clone(),
+                chat_id,
                 launch: launch.clone(),
                 workdir: workdir.clone(),
                 isolated,
                 commands: None,
                 info: None,
-                users: HashMap::from([(thread.entity_id(), thread.downgrade())]),
+                users: HashMap::from([(client.id(), client.clone())]),
                 serial,
                 _events: None,
                 _connecting: None,
@@ -501,15 +496,17 @@ impl Runtime {
                             let slot = this.connections.get_mut(&key).expect("checked connection");
                             slot.commands = Some(connection.commands.clone());
                             slot.info = Some(connection.info.clone());
-                            for thread in slot.users.values().filter_map(WeakEntity::upgrade) {
-                                thread.update(cx, |thread, cx| {
-                                    thread.create_session(
-                                        connection.commands.clone(),
-                                        connection.info.clone(),
-                                        slot.workdir.clone(),
-                                        cx,
-                                    )
-                                });
+                            let workdir = slot.workdir.clone();
+                            let clients: Vec<_> = slot.users.values().cloned().collect();
+                            for client in clients {
+                                client.emit(
+                                    SessionEvent::Connected {
+                                        commands: connection.commands.clone(),
+                                        info: Box::new(connection.info.clone()),
+                                        workdir: workdir.clone(),
+                                    },
+                                    cx,
+                                );
                             }
                             slot._events = Some(cx.spawn(async move |this, cx| {
                                 while let Ok(event) = connection.events.recv().await {
@@ -572,19 +569,31 @@ impl Runtime {
                 let Some(connection) = self.connections.get(&key) else {
                     return;
                 };
-                for thread in connection.users.values().filter_map(WeakEntity::upgrade) {
-                    thread.update(cx, |thread, cx| thread.session_update(&notification, cx));
+                let notification = std::rc::Rc::new(notification);
+                let clients: Vec<_> = connection.users.values().cloned().collect();
+                for client in clients {
+                    client.emit(SessionEvent::Update(notification.clone()), cx);
                 }
             }
             AgentEvent::Permission { request, respond } => {
-                let thread = connection
+                let client = connection
                     .users
                     .values()
-                    .filter_map(WeakEntity::upgrade)
-                    .find(|thread| thread.read(cx).session().as_ref() == Some(&request.session_id));
+                    .find(|client| {
+                        client.state(cx).is_some_and(|state| {
+                            state.session.as_ref() == Some(&request.session_id)
+                        })
+                    })
+                    .cloned();
                 // A request no thread takes is answered `Cancelled` on drop.
-                if let Some(thread) = thread {
-                    thread.update(cx, |thread, cx| thread.permission(request, respond, cx));
+                if let Some(client) = client {
+                    client.emit(
+                        SessionEvent::Permission {
+                            request: Box::new(request),
+                            respond,
+                        },
+                        cx,
+                    );
                 }
             }
             AgentEvent::Exited { code, stderr_tail } => self.stop_connection(
@@ -602,25 +611,17 @@ impl Runtime {
             return;
         };
         connection.cancellation.cancel();
-        let threads: Vec<_> = connection
-            .users
-            .values()
-            .filter_map(WeakEntity::upgrade)
-            .collect();
-        for thread in threads {
-            thread.update(cx, |thread, cx| thread.connection_stopped(message, cx));
+        let clients: Vec<_> = connection.users.values().cloned().collect();
+        for client in clients {
+            client.emit(SessionEvent::Stopped(message.to_owned()), cx);
         }
     }
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self.shutting_down = true;
         self.pending_activation.clear();
-        let threads: Vec<_> = self
-            .documents
-            .values()
-            .filter_map(WeakEntity::upgrade)
-            .collect();
-        for thread in threads {
-            thread.update(cx, |thread, cx| thread.release_resources(cx));
+        let clients: Vec<_> = self.documents.values().cloned().collect();
+        for client in clients {
+            client.emit(SessionEvent::Shutdown, cx);
         }
         // GPUI allows quit futures only 200 ms. Durable state must be flushed before returning.
         self.flush_chats(cx);

@@ -57,7 +57,7 @@ impl AgentThread {
         }
         self.activation_pending = true;
         self.status = "Waiting for an agent slot…".into();
-        let owner = cx.entity().downgrade();
+        let owner: crate::runtime::Client = std::rc::Rc::new(cx.entity().downgrade());
         cx.defer(move |cx| {
             Runtime::global(cx).update(cx, |runtime, cx| runtime.request_activation(owner, cx));
         });

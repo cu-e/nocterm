@@ -11,6 +11,8 @@ use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 mod attachments;
+mod client;
+pub(crate) use client::client;
 mod execution;
 mod permissions;
 mod prompt;

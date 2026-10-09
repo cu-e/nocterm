@@ -21,15 +21,10 @@ impl Runtime {
     }
     /// Captures durable state before disabling AI or dropping a panel's documents.
     pub(crate) fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
-        if let Some(thread) = self.documents.get(&id).and_then(WeakEntity::upgrade) {
-            let snapshot = thread.update(cx, |thread, cx| {
-                let chat = thread.flush_snapshot(cx)?;
-                thread.document_revision += 1;
-                Some((chat, thread.document_revision))
-            });
-            if let Some((chat, revision)) = snapshot {
-                self.save_chat(chat, id, revision, cx);
-            }
+        if let Some(client) = self.documents.get(&id).cloned()
+            && let Some((chat, revision)) = client.capture(cx)
+        {
+            self.save_chat(chat, id, revision, cx);
         }
         self.unregister_document(id);
     }
@@ -66,9 +61,11 @@ impl Runtime {
             writes.insert(pending.id.clone(), pending.chat.clone());
         }
         writes.extend(std::mem::take(&mut self.chat_writes));
-        for thread in self.documents.values().filter_map(WeakEntity::upgrade) {
-            if self.document_owners.get(&thread.read(cx).chat_id) == Some(&thread.entity_id())
-                && let Some(chat) = thread.read(cx).flush_snapshot(cx)
+        for client in self.documents.values() {
+            if client
+                .state(cx)
+                .is_some_and(|state| self.document_owners.get(&state.chat_id) == Some(&client.id()))
+                && let Some(chat) = client.snapshot(cx)
                 && !self.deleted_chats.contains(&chat.id)
             {
                 writes.insert(chat.id.clone(), Some(chat));
@@ -103,15 +100,10 @@ impl Runtime {
         if self.deleted_chats.contains(id) || self.document_owners.get(id) != Some(&owner) {
             return;
         }
-        if let Some(thread) = self.documents.get(&owner).and_then(WeakEntity::upgrade) {
-            thread.update(cx, |thread, cx| {
-                if thread.chat_id == id {
-                    thread.persisted_revision = thread.persisted_revision.max(revision);
-                    thread.persistence_error = None;
-                    thread.dispatch_next(cx);
-                    cx.notify();
-                }
-            });
+        if let Some(client) = self.documents.get(&owner).cloned()
+            && client.state(cx).is_some_and(|state| state.chat_id == id)
+        {
+            client.emit(SessionEvent::Saved { revision }, cx);
         }
     }
     fn write_chats(&mut self, cx: &mut Context<Self>) {
@@ -132,14 +124,14 @@ impl Runtime {
                                 this.chat_in_flight = Some(pending.clone());
                                 pending
                             })
-                        },
+                        }
                         None => {
                             this.chat_writer = None;
                             None
                         }
                     }
                 });
-                let Ok(Some(PendingChatWrite {id, chat, revision})) = next else {
+                let Ok(Some(PendingChatWrite { id, chat, revision })) = next else {
                     return;
                 };
                 let dir = dir.clone();
@@ -150,7 +142,9 @@ impl Runtime {
                     .background_executor()
                     .spawn(async move {
                         let gate = chat_io.lock().unwrap_or_else(|error| error.into_inner());
-                        if gate.closing { return Ok(()); }
+                        if gate.closing {
+                            return Ok(());
+                        }
                         match chat {
                             Some(chat) => nocterm_ai::history::save_shared(&dir, &chat),
                             None => nocterm_ai::history::delete(&dir, &id),
@@ -163,16 +157,18 @@ impl Runtime {
                         this.chat_writes.entry(write_id.clone()).or_insert(retry);
                         this.chat_in_flight = None;
                         this.chat_writer = None;
-                        for thread in this.documents.values().filter_map(WeakEntity::upgrade) {
-                            thread.update(cx, |thread, cx| {
-                                if thread.chat_id == write_id {
-                                    thread.persistence_error = Some(error.clone());
-                                    thread.queue_paused = true;
-                                    thread.status = format!("Could not save chat: {error}. Queued messages are retained; check disk space before continuing.");
-                                    thread.status_error = true;
-                                    cx.notify();
-                                }
-                            });
+                        let clients: Vec<_> = this
+                            .documents
+                            .values()
+                            .filter(|client| {
+                                client
+                                    .state(cx)
+                                    .is_some_and(|state| state.chat_id == write_id)
+                            })
+                            .cloned()
+                            .collect();
+                        for client in clients {
+                            client.emit(SessionEvent::SaveFailed(error.clone()), cx);
                         }
                     });
                     return;

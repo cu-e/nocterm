@@ -112,7 +112,9 @@ impl AgentPanel {
             return;
         };
         thread.update(cx, |thread, _| thread.apply_restart(data));
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(&thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(&thread), cx)
+        });
         thread.update(cx, |thread, cx| {
             thread.save(cx);
             cx.notify();
@@ -153,7 +155,9 @@ impl AgentPanel {
     /// Explicit activation is reserved for work, never for opening history.
     #[cfg(test)]
     pub(super) fn wake(&mut self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) {
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(thread), cx)
+        });
         thread.update(cx, |thread, cx| thread.request_activation(cx));
     }
     pub(super) fn track(
@@ -162,7 +166,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.register_document(thread, cx));
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(thread), cx)
+        });
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.window = Some(handle));
