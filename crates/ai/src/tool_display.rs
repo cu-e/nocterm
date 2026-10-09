@@ -1,4 +1,4 @@
-//! Client-owned presentation of validated Nocterm requests. This is saved with
+//! Client-owned presentation of requested Nocterm operations. This is saved with
 //! the transcript so a later profile rename or reconnect cannot rewrite history.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,6 +9,14 @@ pub const META_KEY: &str = "nocterm/tool-display";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub enum ToolOutcome {
+    Pending,
+    Ok(Value),
+    Err(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolDisplay {
     pub version: u8,
     pub tool: String,
@@ -16,24 +24,50 @@ pub struct ToolDisplay {
     pub destination: Option<String>,
     #[serde(default)]
     pub redacted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ToolOutcome>,
 }
 
 impl ToolDisplay {
     pub fn new(call: &TerminalCall, destination: Option<String>) -> Self {
         let (tool, arguments) = request(call);
         Self {
-            version: 1,
+            version: 2,
             tool: tool.into(),
             arguments,
             destination,
             redacted: false,
+            outcome: Some(ToolOutcome::Pending),
         }
+    }
+
+    pub fn requested(tool: String, arguments: Value) -> Self {
+        Self {
+            version: 2,
+            tool,
+            arguments,
+            destination: None,
+            redacted: false,
+            outcome: Some(ToolOutcome::Pending),
+        }
+    }
+
+    pub fn finish(&mut self, result: Result<Value, String>) {
+        let outcome = match result {
+            Ok(value) => ToolOutcome::Ok(value),
+            Err(error) => ToolOutcome::Err(crate::redact::redact(&error)),
+        };
+        self.outcome = serde_json::to_vec(&outcome)
+            .ok()
+            .filter(|bytes| bytes.len() <= 256 * 1024)
+            .map(|_| outcome);
     }
 
     pub fn from_call(call: &acp::ToolCall) -> Option<Self> {
         let value = call.meta.as_ref()?.get(META_KEY)?.clone();
         let display: Self = serde_json::from_value(value).ok()?;
-        (display.version == 1 && display.display_request().is_some()).then_some(display)
+        (display.version == 2 || (display.version == 1 && display.display_request().is_some()))
+            .then_some(display)
     }
 
     /// Display data has already been validated before execution. Redaction can
@@ -46,6 +80,11 @@ impl ToolDisplay {
     pub fn redact(&mut self) {
         let original = self.arguments.clone();
         redact_values(&mut self.arguments);
+        match &mut self.outcome {
+            Some(ToolOutcome::Ok(value)) => redact_values(value),
+            Some(ToolOutcome::Err(error)) => *error = crate::redact::redact(error),
+            _ => {}
+        }
         self.redacted |= self.arguments != original;
     }
 
@@ -67,21 +106,13 @@ impl ToolDisplay {
 }
 
 pub fn operation(tool: &str) -> &'static str {
-    match tool {
-        "list_terminals" => "List terminals",
-        "read_terminal" => "Read terminal",
-        "send_input" => "Send input",
-        "run_command" => "Run command",
-        "open_terminal" => "Connect",
-        "exec_command" => "Execute program",
-        "read_command" => "Read command",
-        "cancel_command" => "Cancel command",
-        _ => "Tool",
-    }
+    crate::tools::catalog::get(tool).map_or("Tool", |spec| spec.label)
 }
 
 mod identity;
-pub use identity::{bridge_server_name, envelope, fallback_tool, requested_call};
+pub use identity::{
+    bridge_server_name, envelope, fallback_tool, raw_envelope, requested_arguments, requested_call,
+};
 
 pub fn header(call: &acp::ToolCall) -> String {
     let title = ToolDisplay::from_call(call)
@@ -92,37 +123,30 @@ pub fn header(call: &acp::ToolCall) -> String {
 }
 
 pub fn request(call: &TerminalCall) -> (&'static str, Value) {
-    match call {
-        TerminalCall::ListTerminals => ("list_terminals", json!({})),
-        TerminalCall::ReadTerminal(v) => ("read_terminal", json!(v)),
-        TerminalCall::SendInput(v) => ("send_input", json!(v)),
-        TerminalCall::RunCommand(v) => ("run_command", json!(v)),
-        TerminalCall::OpenTerminal(v) => ("open_terminal", json!(v)),
-        TerminalCall::ExecCommand(v) => ("exec_command", json!(v)),
-        TerminalCall::ReadCommand(v) => ("read_command", json!(v)),
-        TerminalCall::CancelCommand(v) => ("cancel_command", json!(v)),
-    }
+    let arguments = match call {
+        TerminalCall::ListTerminals => json!({}),
+        TerminalCall::ReadTerminal(v) => json!(v),
+        TerminalCall::SendInput(v) => json!(v),
+        TerminalCall::RunCommand(v) => json!(v),
+        TerminalCall::OpenTerminal(v) => json!(v),
+        TerminalCall::ExecCommand(v) => json!(v),
+        TerminalCall::ReadCommand(v) => json!(v),
+        TerminalCall::CancelCommand(v) => json!(v),
+    };
+    (call.name(), arguments)
 }
 
+/// A request the bridge would execute: well formed and within its limits.
 pub fn parse(tool: &str, args: Value) -> Option<TerminalCall> {
     let call = deserialize(tool, args)?;
     call.validate().ok()?;
     Some(call)
 }
 
+/// A well-formed request, whether or not the bridge accepted it. Only for
+/// showing what an agent asked for: a rejected request is still worth reading.
 fn deserialize(tool: &str, args: Value) -> Option<TerminalCall> {
-    let call = match tool {
-        "list_terminals" if args == json!({}) => TerminalCall::ListTerminals,
-        "read_terminal" => TerminalCall::ReadTerminal(serde_json::from_value(args).ok()?),
-        "send_input" => TerminalCall::SendInput(serde_json::from_value(args).ok()?),
-        "run_command" => TerminalCall::RunCommand(serde_json::from_value(args).ok()?),
-        "open_terminal" => TerminalCall::OpenTerminal(serde_json::from_value(args).ok()?),
-        "exec_command" => TerminalCall::ExecCommand(serde_json::from_value(args).ok()?),
-        "read_command" => TerminalCall::ReadCommand(serde_json::from_value(args).ok()?),
-        "cancel_command" => TerminalCall::CancelCommand(serde_json::from_value(args).ok()?),
-        _ => return None,
-    };
-    Some(call)
+    (crate::tools::catalog::get(tool)?.parse)(args)
 }
 
 fn redact_values(value: &mut Value) {

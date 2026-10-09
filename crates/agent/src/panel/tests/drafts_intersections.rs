@@ -69,7 +69,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     assert_eq!(value["draft"], "draft before disabling AI");
     assert!(value["entries"].as_array().unwrap().is_empty());
     // A retained entity must not replace the saved text with its cleared UI state at quit.
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(thread.read_with(cx, |thread, _| thread.chat_id.clone()), id);
     assert_eq!(disk_value(f._directory.path(), &id), value);
 }
@@ -93,15 +93,16 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
     let id = saved.id.clone();
     saved.draft = Some("saved text".into());
     adopt(&f, saved, cx);
-    cx.update(|cx| {
+    let shutdown = cx.update(|cx| {
         let thread = f.panel.read(cx).threads[0].clone();
-        assert!(thread.read(cx).dormant);
+        assert!(thread.read(cx).dormant());
         assert!(thread.read(cx).session().is_none());
         thread.update(cx, |thread, cx| {
             thread.set_draft("latest dormant text".into(), cx)
         });
-        drop(Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))
     });
+    cx.foreground_executor().block_test(shutdown);
     assert_eq!(
         disk_value(f._directory.path(), &id)["draft"],
         "latest dormant text"
@@ -129,7 +130,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
     cx.run_until_parked();
     cx.update(|cx| assert!(thread.read(cx).status_error));
     type_draft(&f, "latest text after provider failure", cx);
-    drop(cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))));
+    shutdown_runtime(cx);
     assert_eq!(
         disk_value(f._directory.path(), &id)["draft"],
         "latest text after provider failure"

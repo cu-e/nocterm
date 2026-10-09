@@ -40,7 +40,7 @@ impl FakeHost {
         })
     }
 
-    fn ran(&self) -> Vec<String> {
+    pub(crate) fn ran(&self) -> Vec<String> {
         self.ran.lock().unwrap().clone()
     }
 
@@ -160,7 +160,7 @@ fn badge(cx: &mut TestAppContext, fixture: &Fixture) -> Option<SharedString> {
     cx.update(|cx| fixture.panel.read(cx).badge(cx))
 }
 
-fn open_session(cx: &mut TestAppContext, fixture: &Fixture, session: SessionContext) {
+pub(crate) fn open_session(cx: &mut TestAppContext, fixture: &Fixture, session: SessionContext) {
     cx.update_window(fixture.window, |_, window, cx| {
         let item = cx.new(|cx| SessionItem {
             session,
@@ -174,7 +174,7 @@ fn open_session(cx: &mut TestAppContext, fixture: &Fixture, session: SessionCont
     cx.run_until_parked();
 }
 
-fn remote(host: &Arc<FakeHost>, connected: bool) -> SessionContext {
+pub(crate) fn remote(host: &Arc<FakeHost>, connected: bool) -> SessionContext {
     SessionContext::new(Target::parse("user@host", None).unwrap(), None, connected)
         .with_exec(Some(host.clone() as Arc<dyn HostExec>))
 }
@@ -276,4 +276,78 @@ fn nothing_is_listed_without_a_host(cx: &mut TestAppContext) {
         done.now_or_never(),
         Some(Err(ContainersError::Disconnected))
     );
+}
+
+#[gpui_kit::test]
+fn destructive_intents_cannot_move_to_another_host_or_reconnect(cx: &mut TestAppContext) {
+    let local = FakeHost::new(true);
+    let fixture = fixture(cx, Some(local.clone()));
+    let intent = fixture.model.read_with(cx, |model, _| {
+        model
+            .intent(Action::RemoveImage, vec!["same-image".into()])
+            .unwrap()
+    });
+    let another = FakeHost::new(true);
+    open_session(cx, &fixture, remote(&another, true));
+    let done = fixture
+        .model
+        .update(cx, |model, cx| model.perform_intent(intent, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        done.now_or_never(),
+        Some(Err(ContainersError::Disconnected))
+    );
+    assert!(!local.ran().iter().any(|line| line.contains("same-image")));
+    assert!(!another.ran().iter().any(|line| line.contains("same-image")));
+
+    let intent = fixture.model.read_with(cx, |model, _| {
+        model
+            .intent(Action::RemoveImage, vec!["same-image".into()])
+            .unwrap()
+    });
+    // Same target, a new connection/executor.
+    let reconnected = FakeHost::new(true);
+    open_session(cx, &fixture, remote(&reconnected, true));
+    let done = fixture
+        .model
+        .update(cx, |model, cx| model.perform_intent(intent, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        done.now_or_never(),
+        Some(Err(ContainersError::Disconnected))
+    );
+    assert!(
+        !reconnected
+            .ran()
+            .iter()
+            .any(|line| line.contains("same-image"))
+    );
+}
+
+#[gpui_kit::test]
+fn disconnecting_invalidates_captured_intent_and_rejects_new_actions(cx: &mut TestAppContext) {
+    let host = FakeHost::new(true);
+    let fixture = fixture(cx, None);
+    open_session(cx, &fixture, remote(&host, true));
+    let intent = fixture.model.read_with(cx, |model, _| {
+        model.intent(Action::Remove, vec!["a1".into()]).unwrap()
+    });
+    open_session(cx, &fixture, remote(&host, false));
+    assert!(
+        fixture
+            .model
+            .read_with(cx, |model, _| model
+                .intent(Action::Remove, vec!["a1".into()]))
+            .is_none()
+    );
+    let done = fixture
+        .model
+        .update(cx, |model, cx| model.perform_intent(intent, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        done.now_or_never(),
+        Some(Err(ContainersError::Disconnected))
+    );
+    open_session(cx, &fixture, remote(&host, true));
+    assert!(!host.ran().iter().any(|line| line == "docker rm -f a1"));
 }

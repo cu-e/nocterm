@@ -5,7 +5,7 @@
 //! delivered synchronously, in the order the runtime emits them.
 use super::SessionLease;
 use gpui::{App, EntityId};
-use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, PermissionResponder, acp};
+use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 /// What the runtime tells a chat.
@@ -27,6 +27,7 @@ pub enum SessionEvent {
     },
     /// A call to one of the chat's terminal tools.
     Tool(BridgeCall),
+    ToolRejected(BridgeRejection),
     /// The connection ended with `0`.
     Stopped(String),
     /// The connection could not be started.
@@ -40,7 +41,9 @@ pub enum SessionEvent {
     /// The previous session's close finished; a new one may start.
     SessionClosed,
     /// The chat's snapshot at `revision` was written.
-    Saved { revision: u64 },
+    Saved {
+        revision: u64,
+    },
     /// The chat's last snapshot could not be written.
     SaveFailed(String),
     /// The permission settings changed.
@@ -52,6 +55,8 @@ pub enum SessionEvent {
 /// What the runtime reads about a chat to schedule its connection.
 pub struct ClientState {
     pub chat_id: String,
+    /// Restored chat directory, resolved before process and sandbox launch.
+    pub workdir: Option<PathBuf>,
     pub agent_id: String,
     pub session: Option<acp::SessionId>,
     /// Whether the session is doing work that closing it would interrupt.
@@ -62,6 +67,8 @@ pub struct ClientState {
     pub activation_pending: bool,
     /// Whether the chat's previous session is still closing.
     pub closing: bool,
+    /// Whether a panel shows the chat; its idle connection is kept.
+    pub shown: bool,
 }
 
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.

@@ -1,11 +1,6 @@
 //! Document persistence is independent of the live ACP connections.
 use super::*;
 
-#[derive(Default)]
-pub(super) struct ChatIoGate {
-    closing: bool,
-}
-
 #[derive(Clone)]
 pub(super) struct PendingChatWrite {
     id: String,
@@ -18,6 +13,19 @@ impl Runtime {
     /// panels get none, so two windows never write the same chat.
     pub fn take_saved_chats(&mut self) -> Option<Vec<nocterm_ai::history::SavedChat>> {
         self.saved_chats.as_mut().map(std::mem::take)
+    }
+    pub fn take_saved_catalog(&mut self) -> Option<Vec<nocterm_ai::history::ChatSummary>> {
+        self.saved_catalog.take().map(|chats| {
+            chats
+                .into_iter()
+                .filter(|chat| !self.deleted_chats.contains(&chat.id))
+                .collect()
+        })
+    }
+    pub fn document_is_current(&self, chat_id: &str, owner: EntityId) -> bool {
+        !self.shutting_down
+            && !self.deleted_chats.contains(chat_id)
+            && self.document_owners.get(chat_id) == Some(&owner)
     }
     /// Captures durable state before disabling AI or dropping a panel's documents.
     pub fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
@@ -55,7 +63,8 @@ impl Runtime {
     }
     /// Writes every open chat and queued change now, before the application
     /// exits.
-    pub(super) fn flush_chats(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn flush_chats(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.chat_io.freeze();
         let mut writes = HashMap::new();
         if let Some(pending) = &self.chat_in_flight {
             writes.insert(pending.id.clone(), pending.chat.clone());
@@ -74,21 +83,21 @@ impl Runtime {
         for deleted in &self.deleted_chats {
             writes.insert(deleted.clone(), None);
         }
-        let mut gate = self
-            .chat_io
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // Join an active rename and prevent queued background snapshots writing after this flush.
-        gate.closing = true;
-        for (id, chat) in writes {
-            let result = match chat {
-                Some(chat) => nocterm_ai::history::save_shared(&self.services.chats_dir, &chat),
-                None => nocterm_ai::history::delete(&self.services.chats_dir, &id),
-            };
-            if let Err(error) = result {
-                tracing::warn!(%error, "could not save agent chat");
+        let dir = self.services.chats_dir.clone();
+        let gate = self.chat_io.clone();
+        cx.background_executor().spawn(async move {
+            // Serialization and the disk gate are exclusively background work.
+            let _guard = gate.final_write().await;
+            for (id, chat) in writes {
+                let result = match chat {
+                    Some(chat) => nocterm_ai::history::save_shared(&dir, &chat),
+                    None => nocterm_ai::history::delete(&dir, &id),
+                };
+                if let Err(error) = result {
+                    tracing::warn!(%error, "could not save final agent chat");
+                }
             }
-        }
+        })
     }
     pub(super) fn acknowledge_chat(
         &mut self,
@@ -114,6 +123,9 @@ impl Runtime {
         let chat_io = self.chat_io.clone();
         self.chat_writer = Some(cx.spawn(async move |this, cx| {
             loop {
+                if chat_io.is_frozen() {
+                    return;
+                }
                 let next = this.update(cx, |this, _| {
                     let id = this.chat_writes.keys().next().cloned();
                     match id {
@@ -137,20 +149,22 @@ impl Runtime {
                 let dir = dir.clone();
                 let write_id = id.clone();
                 let retry = chat.clone();
-                let chat_io = chat_io.clone();
+                let disk_gate = chat_io.clone();
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        let gate = chat_io.lock().unwrap_or_else(|error| error.into_inner());
-                        if gate.closing {
+                        let Some(_guard) = disk_gate.normal().await else {
                             return Ok(());
-                        }
+                        };
                         match chat {
                             Some(chat) => nocterm_ai::history::save_shared(&dir, &chat),
                             None => nocterm_ai::history::delete(&dir, &id),
                         }
                     })
                     .await;
+                if chat_io.is_frozen() {
+                    return;
+                }
                 if let Err(error) = result {
                     tracing::warn!(%error, "could not save agent chat");
                     let _ = this.update(cx, |this, cx| {

@@ -16,6 +16,8 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
         thread.update(cx, |thread, cx| {
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: registration,
                     call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
                         terminal_id: id,
@@ -108,6 +110,8 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
             thread.update(cx, |thread, cx| {
                 thread.handle_tool(
                     BridgeCall {
+                        arguments: None,
+                        display_token: None,
                         registration_id,
                         call: nocterm_ai::TerminalCall::ReadTerminal(nocterm_ai::ReadTerminal {
                             terminal_id: id.clone(),
@@ -146,6 +150,8 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
                 thread.update(cx, |thread, cx| {
                     thread.handle_tool(
                         BridgeCall {
+                            arguments: None,
+                            display_token: None,
                             registration_id,
                             call: nocterm_ai::TerminalCall::RunCommand(nocterm_ai::RunCommand {
                                 terminal_id: terminal_id.clone(),

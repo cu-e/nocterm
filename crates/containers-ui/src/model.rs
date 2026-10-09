@@ -37,7 +37,19 @@ pub(crate) enum Status {
     Failed(ContainersError),
 }
 
+/// A confirmed operation belongs to one observed host connection. Moving
+/// away, disconnecting or reconnecting invalidates the intent permanently.
+#[derive(Clone)]
+pub(crate) struct ActionIntent {
+    host: Host,
+    engine: Engine,
+    epoch: Arc<()>,
+    pub(crate) action: Action,
+    ids: Vec<String>,
+}
+
 pub(crate) struct ContainersModel {
+    epoch: Arc<()>,
     local: Option<Arc<dyn HostExec>>,
     host: Option<Host>,
     /// The engine the host was found to have.
@@ -56,6 +68,7 @@ impl ContainersModel {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
+            epoch: Arc::new(()),
             local,
             host: None,
             engine: None,
@@ -99,6 +112,7 @@ impl ContainersModel {
             self.engine = None;
             self.snapshot = Snapshot::default();
         }
+        self.epoch = Arc::new(());
         self.host = host;
         self.refresh(cx);
     }
@@ -119,20 +133,64 @@ impl ContainersModel {
         self.task = Some(cx.spawn(async move |this, cx| watch(this, host, engine, cx).await));
     }
 
-    /// Does `action` to `ids` on the current host, then lists it again.
+    pub(crate) fn intent(&self, action: Action, ids: Vec<String>) -> Option<ActionIntent> {
+        let host = self.host.clone()?;
+        if !host.connected {
+            return None;
+        }
+        Some(ActionIntent {
+            host,
+            engine: self.engine?,
+            epoch: self.epoch.clone(),
+            action,
+            ids,
+        })
+    }
+
+    fn accepts(&self, intent: &ActionIntent) -> bool {
+        Arc::ptr_eq(&self.epoch, &intent.epoch)
+            && self.engine == Some(intent.engine)
+            && self
+                .host
+                .as_ref()
+                .is_some_and(|host| host.connected && host.same_as(&intent.host))
+    }
+
+    /// Freezes the current host for an operation that needs no confirmation.
     pub(crate) fn perform(
         &mut self,
         action: Action,
         ids: Vec<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ContainersError>> {
-        let (Some(host), Some(engine)) = (self.host.clone(), self.engine) else {
+        let Some(intent) = self.intent(action, ids) else {
             return Task::ready(Err(ContainersError::Disconnected));
         };
+        self.perform_intent(intent, cx)
+    }
+
+    /// Executes a previously captured intent only while its connection is
+    /// still current. The executor never comes from the newly active host.
+    pub(crate) fn perform_intent(
+        &mut self,
+        intent: ActionIntent,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ContainersError>> {
         cx.spawn(async move |this, cx| {
-            let done = engine.perform(host.exec.as_ref(), action, &ids).await;
-            // Not every engine reports the change itself.
-            let _ = this.update(cx, |this, cx| this.refresh(cx));
+            let accepted = this.update(cx, |this, _| this.accepts(&intent));
+            if !matches!(accepted, Ok(true)) {
+                return Err(ContainersError::Disconnected);
+            }
+            let done = intent
+                .engine
+                .perform(intent.host.exec.as_ref(), intent.action, &intent.ids)
+                .await;
+            // Finishing on A must not interrupt B's watcher.
+            let _ = this.update(cx, |this, cx| {
+                if this.accepts(&intent) {
+                    this.refresh(cx);
+                }
+            });
             done
         })
     }

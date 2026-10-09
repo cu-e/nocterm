@@ -1,4 +1,5 @@
 //! One admission queue and resource policy for every window.
+use super::admission::{IdleConnection, releases};
 use super::lease::ReleasedLease;
 use super::*;
 use std::time::Duration;
@@ -13,13 +14,24 @@ impl Runtime {
         self.document_owners.retain(|_, current| *current != owner);
         self.document_owners.insert(chat_id, owner);
         self.documents.insert(owner, client);
+    }
+    fn start_session_maintenance(&mut self, cx: &mut Context<Self>) {
         if self._lifecycle.is_none() {
             self._lifecycle = Some(cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(Duration::from_secs(1)).await;
-                    if this
-                        .update(cx, |this, cx| this.maintain_sessions(cx))
-                        .is_err()
+                    if !this
+                        .update(cx, |this, cx| {
+                            this.maintain_sessions(cx);
+                            let active = !this.connections.is_empty()
+                                || !this.closing.is_empty()
+                                || !this.pending_activation.is_empty();
+                            if !active {
+                                this._lifecycle = None;
+                            }
+                            active
+                        })
+                        .unwrap_or(false)
                     {
                         break;
                     }
@@ -43,6 +55,7 @@ impl Runtime {
         {
             self.pending_activation.push_back(client);
         }
+        self.start_session_maintenance(cx);
         self.maintain_sessions(cx);
     }
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
@@ -54,35 +67,32 @@ impl Runtime {
         let now = cx.background_executor().now();
         let mut idle = Vec::new();
         for (key, connection) in &self.connections {
-            let busy = connection
+            let states = connection
                 .users
                 .values()
-                .any(|client| client.state(cx).is_some_and(|state| state.busy));
-            if busy {
+                .filter_map(|client| client.state(cx))
+                .collect::<Vec<_>>();
+            if states.iter().any(|state| state.busy) {
                 self.idle_since.remove(key);
             } else {
-                let since = *self.idle_since.entry(*key).or_insert(now);
-                idle.push((*key, since));
+                idle.push(IdleConnection {
+                    key: *key,
+                    since: *self.idle_since.entry(*key).or_insert(now),
+                    shown: states.iter().any(|state| state.shown),
+                });
             }
         }
-        idle.sort_by_key(|(_, since)| *since);
-        let excess = idle.len().saturating_sub(policy.max_idle);
         let needs_slot = !self.pending_activation.is_empty()
             && self.connections.len() + self.closing.len() >= policy.max_live;
-        for (index, (key, since)) in idle.into_iter().enumerate() {
-            if index < excess
-                || now.duration_since(since) >= Duration::from_secs(policy.idle_timeout_secs)
-                || (needs_slot && index == 0)
-            {
-                let clients: Vec<_> = self
-                    .connections
-                    .get(&key)
-                    .into_iter()
-                    .flat_map(|connection| connection.users.values().cloned())
-                    .collect();
-                for client in clients {
-                    client.emit(SessionEvent::Idle, cx);
-                }
+        for key in releases(&idle, &policy, now, needs_slot) {
+            let clients: Vec<_> = self
+                .connections
+                .get(&key)
+                .into_iter()
+                .flat_map(|connection| connection.users.values().cloned())
+                .collect();
+            for client in clients {
+                client.emit(SessionEvent::Idle, cx);
             }
         }
         let mut pending = self.pending_activation.len();
@@ -155,6 +165,9 @@ impl Runtime {
         connection.cancellation.cancel();
         connection.users.remove(&id);
         let commands = lease.commands.take().or_else(|| connection.commands.take());
+        if let Some(commands) = &commands {
+            self.closing_commands.insert(key, commands.clone());
+        }
         let connecting = connection._connecting.take();
         let startup_completion = connection.startup_completion.take();
         cx.spawn(async move |this, cx| {
@@ -196,6 +209,7 @@ impl Runtime {
             drop(connection);
             let _ = this.update(cx, |this, cx| {
                 this.closing.remove(&key);
+                this.closing_commands.remove(&key);
                 if let Some(client) = this.documents.get(&id).cloned() {
                     client.emit(SessionEvent::SessionClosed, cx);
                 }

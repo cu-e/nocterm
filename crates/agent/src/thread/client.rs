@@ -28,12 +28,18 @@ impl SessionClient for ThreadClient {
         let thread = thread.read(cx);
         Some(ClientState {
             chat_id: thread.chat_id.clone(),
+            workdir: thread
+                .restore
+                .as_ref()
+                .filter(|restore| !thread.state.entries.is_empty() && restore.workdir.is_absolute())
+                .map(|restore| restore.workdir.clone()),
             agent_id: thread.agent_id.clone(),
             session: thread.session().clone(),
             busy: thread.session_busy(),
             leased: thread.lease.is_some(),
-            activation_pending: thread.activation_pending,
-            closing: thread.closing_session,
+            activation_pending: thread.lifecycle.queued(),
+            closing: thread.lifecycle.closing(),
+            shown: thread.shown,
         })
     }
     fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
@@ -62,10 +68,10 @@ impl AgentThread {
                 self.permission(*request, respond, cx);
             }
             SessionEvent::Tool(call) => self.handle_tool(call, cx),
+            SessionEvent::ToolRejected(rejected) => self.record_rejected_tool(rejected, cx),
             SessionEvent::Stopped(message) => self.connection_stopped(&message, cx),
             SessionEvent::Failed(message) => self.fail(&message, cx),
             SessionEvent::AgentRemoved => {
-                self.activation_pending = false;
                 self.fail("The agent is no longer configured.", cx);
             }
             SessionEvent::Idle => {
@@ -80,7 +86,7 @@ impl AgentThread {
                 cx.notify();
             }
             SessionEvent::SessionClosed => {
-                self.closing_session = false;
+                self.lifecycle.closed();
                 cx.notify();
             }
             SessionEvent::Saved { revision } => {

@@ -72,6 +72,8 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
             let terminal_id = thread.resolved(cx)[0].0.clone();
             thread.handle_tool(
                 BridgeCall {
+                    arguments: None,
+                    display_token: None,
                     registration_id: thread.registration().as_ref().unwrap().id,
                     call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
                         terminal_id,
@@ -280,8 +282,8 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
         let mut queued = submit(&f, cx, session.clone(), options());
         cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
         cx.update(|cx| {
-            assert!(thread.read(cx).stopped);
-            assert_eq!(thread.read(cx).accept_updates, !generating);
+            assert!(thread.read(cx).lifecycle.stopped());
+            assert_eq!(thread.read(cx).lifecycle.accepts_updates(), !generating);
         });
         assert_eq!(
             queued.try_recv().unwrap(),

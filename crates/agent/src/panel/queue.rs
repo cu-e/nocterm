@@ -118,6 +118,13 @@ impl AgentPanel {
                         if panel.composer.revision != revision {
                             return;
                         }
+                        if panel.current().unwrap().read(cx).archive.is_some() {
+                            panel.composer.loading = Some((id, String::new()));
+                            panel
+                                .input
+                                .update(cx, |input, cx| input.set_value("", window, cx));
+                            return;
+                        }
                         let draft = panel
                             .current()
                             .unwrap()
@@ -160,7 +167,7 @@ impl AgentPanel {
         let draft = self.original_composer_text(cx);
         self.composer.loading = None;
         thread.update(cx, |thread, cx| thread.set_draft(draft.clone(), cx));
-        let epoch = thread.read(cx).epoch;
+        let ticket = thread.read(cx).lifecycle.ticket();
         let ready = prompt.saved.images.is_empty();
         self.composer.edit = Some(QueueEdit {
             thread: thread.entity_id(),
@@ -204,7 +211,7 @@ impl AgentPanel {
                         return;
                     }
                     let _ = owner.update(cx, |thread, cx| {
-                        if thread.epoch != epoch || !cx.ai_enabled() {
+                        if !thread.lifecycle.session_current(ticket) || !cx.ai_enabled() {
                             return;
                         }
                         match result {

@@ -18,9 +18,10 @@
 | `ai.resources.memory_swap_max_mb` | "integer"; 0–1048576 | `1024` | Maximum swap used by each agent tree, in MiB. Zero disables swap. |
 | `ai.resources.tasks_max` | "integer"; 16–65536 | `512` | Maximum processes and threads in each agent tree. |
 | `ai.sandbox` | "off", "workspace" | `"off"` | How agent processes are isolated from the rest of the system. |
-| `ai.sessions.idle_timeout_secs` | "integer"; 1–3600 | `90` | Release a session after this many idle seconds. |
-| `ai.sessions.max_idle` | "integer"; 0–64 | `2` | Maximum warm idle sessions. Zero releases every idle session. |
+| `ai.sessions.idle_timeout_secs` | "integer"; 1–86400 | `1800` | Release a session after this many idle seconds. The chat a panel shows keeps its session regardless. |
+| `ai.sessions.max_idle` | "integer"; 0–64 | `3` | Maximum warm idle sessions. Zero releases every idle session. |
 | `ai.sessions.max_live` | "integer"; 1–64 | `4` | Maximum starting, live and closing sessions, shared by every window. |
+| `ai.sessions.warm_start` | "boolean" | `true` | Connect a chat when a panel shows it, so its model and options can be chosen before the first message. Off connects on the first message. |
 | `ai.working_directory` | ["string","null"] | `null` | Folder agents start in. Unset: a private folder in the application's state directory. Without isolation, agents can read and change any of your files. |
 | `appearance.card_gap` | "number"; 0.0–24.0 | `4.0` | Space between floating cards and around the window's edge, in pixels. |
 | `appearance.card_radius` | "number"; 0.0–24.0 | `10.0` | Corner radius of floating cards, in pixels. |

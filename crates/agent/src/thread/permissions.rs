@@ -40,8 +40,8 @@ impl AgentThread {
         cx: &Context<Self>,
     ) -> bool {
         cx.ai_enabled()
-            && self.accept_updates
-            && !self.stopped
+            && self.lifecycle.accepts_updates()
+            && !self.lifecycle.stopped()
             && self.session().as_ref() == Some(&request.session_id)
     }
 

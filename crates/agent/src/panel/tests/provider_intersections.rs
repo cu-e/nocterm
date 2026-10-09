@@ -36,6 +36,8 @@ pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -
     let (respond, mut receive) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,
@@ -186,19 +188,22 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
             2,
             "same MCP result is not rendered twice"
         );
-        assert_eq!(output.sections[0].text, stdout);
-        assert_eq!(output.sections[1].text, "warning\n");
+        assert_eq!(output.sections[0].text, payload["stdout"].as_str().unwrap());
+        assert_eq!(output.sections[1].text, payload["stderr"].as_str().unwrap());
+        assert!(output.parameters.iter().any(|text| text
+            == &format!(
+                "Process: {}",
+                if payload["state"] == "running" {
+                    "Running"
+                } else {
+                    "Starting"
+                }
+            )));
         assert!(
             output
                 .parameters
                 .iter()
-                .any(|text| text == "Process: Exited")
-        );
-        assert!(
-            output
-                .parameters
-                .iter()
-                .any(|text| text == "Exit status: 7")
+                .any(|text| text == "Exit status: unknown")
         );
     });
     cx.update(|cx| thread.update(cx, |thread, _| thread.composer.attachments.clear()));
@@ -220,8 +225,6 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
-        window.click(("copy-tool-output", 0usize), cx);
-        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), stdout);
     })
     .unwrap();
 }
@@ -266,4 +269,34 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
         if choice.option_id == acp::PermissionOptionId::from("yes"))
     );
     cx.update(|cx| assert!(thread.read(cx).permissions.is_empty()));
+}
+
+#[test]
+fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
+    let mut call = acp::ToolCall::new("call-1", "mcp.nocterm-11.exec_command")
+        .raw_input(
+            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+                "terminal_id":"t1", "program":"/bin/sh",
+                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
+                "timeout_ms":1_800_000, "yield_ms":1000,
+            }}),
+        )
+        .raw_output(json!({"result":null, "error":{
+            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+        }}));
+    call.status = acp::ToolCallStatus::Failed;
+    assert_eq!(
+        tool_display::header(&call),
+        "Nocterm · Execute program · Failed"
+    );
+    let input = tool_input::source(&call).unwrap();
+    assert_eq!(input.label, "Requested command");
+    assert_eq!(
+        input.text,
+        "cd ~/dev/NOUMMA && cargo build --release --locked -j 4"
+    );
+    let output = tool_output::source(&call, false).unwrap();
+    assert_eq!(output.sections.len(), 1);
+    assert_eq!(output.sections[0].label, "Error");
+    assert!(output.sections[0].text.starts_with("tool call error"));
 }

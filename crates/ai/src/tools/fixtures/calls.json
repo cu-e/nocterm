@@ -1,0 +1,98 @@
+[
+  {
+    "name": "list_terminals",
+    "label": "List terminals",
+    "arguments": {},
+    "normalized": {}
+  },
+  {
+    "name": "open_terminal",
+    "label": "Connect",
+    "arguments": {
+      "server_id": "s1"
+    },
+    "normalized": {
+      "server_id": "s1"
+    }
+  },
+  {
+    "name": "read_terminal",
+    "label": "Read terminal",
+    "arguments": {
+      "terminal_id": "t1"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "lines": null,
+      "since": null
+    }
+  },
+  {
+    "name": "send_input",
+    "label": "Send input",
+    "arguments": {
+      "terminal_id": "t1",
+      "text": "ls"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "text": "ls",
+      "press_enter": false
+    }
+  },
+  {
+    "name": "run_command",
+    "label": "Run command",
+    "arguments": {
+      "terminal_id": "t1",
+      "command": "pwd"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "command": "pwd",
+      "timeout_ms": null,
+      "idle_ms": null
+    }
+  },
+  {
+    "name": "exec_command",
+    "label": "Execute program",
+    "arguments": {
+      "terminal_id": "t1",
+      "program": "pwd"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "program": "pwd",
+      "args": [],
+      "stdin": null,
+      "timeout_ms": null,
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "read_command",
+    "label": "Read command",
+    "arguments": {
+      "terminal_id": "t1",
+      "command_id": "cmd1"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "command_id": "cmd1",
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "cancel_command",
+    "label": "Cancel command",
+    "arguments": {
+      "terminal_id": "t1",
+      "command_id": "cmd1"
+    },
+    "normalized": {
+      "terminal_id": "t1",
+      "command_id": "cmd1"
+    }
+  }
+]

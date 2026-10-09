@@ -28,14 +28,14 @@ impl AgentThread {
         let since = match before {
             Ok(before) => before.next_line,
             Err(error) => {
-                let _ = call.respond.send(Err(error));
+                self.finish(call, Err(error));
                 return;
             }
         };
         let lease = match entry.access.begin_live_command(&request.command, cx) {
             Ok(lease) => Arc::new(lease),
             Err(error) => {
-                let _ = call.respond.send(Err(error));
+                self.finish(call, Err(error));
                 return;
             }
         };
@@ -61,7 +61,7 @@ impl AgentThread {
                                 .into(),
                         );
                     }
-                    if !this.accept_updates || !cx.ai_enabled() {
+                    if !this.lifecycle.accepts_updates() || !cx.ai_enabled() {
                         return Err("Command observation cancelled.".into());
                     }
                     let (_, entry, _) = this
@@ -120,7 +120,10 @@ impl AgentThread {
                 }
             });
             drop(lease);
-            let _ = call.respond.send(result);
+            let _ = this.update(cx, |this, cx| {
+                this.finish(call, result);
+                cx.notify();
+            });
         })
         .detach();
     }

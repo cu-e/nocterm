@@ -60,6 +60,8 @@ fn submit(
     let (respond, response) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
             registration_id,
             call,
             respond,
@@ -318,11 +320,11 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let id = start(&f, &thread, &terminal, cx);
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            assert!(!thread.generating);
+            assert!(!thread.lifecycle.generating());
             thread.stop(cx);
-            assert!(thread.stopped);
+            assert!(thread.lifecycle.stopped());
             assert!(
-                thread.accept_updates,
+                thread.lifecycle.accepts_updates(),
                 "idle Stop preserves access to retained command results"
             );
         })
@@ -367,12 +369,12 @@ fn releasing_acp_while_generating_preserves_document_owned_execution(cx: &mut Te
     let _id = start(&f, &thread, &terminal, cx);
     thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
     cx.run_until_parked();
-    cx.update(|cx| assert!(thread.read(cx).generating));
+    cx.update(|cx| assert!(thread.read(cx).lifecycle.generating()));
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).lease.is_none());
-        assert!(!thread.read(cx).generating);
+        assert!(!thread.read(cx).lifecycle.generating());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert!(

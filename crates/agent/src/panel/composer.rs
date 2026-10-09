@@ -65,7 +65,7 @@ impl AgentPanel {
         state: &ThreadState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let generating = thread.read(cx).generating;
+        let generating = thread.read(cx).lifecycle.generating();
         let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
         for option in &state.config_options {
             let id = option.id.to_string();
@@ -281,7 +281,7 @@ impl AgentPanel {
 
     /// Whether the send button stops the running turn instead.
     fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
-        thread.read(cx).generating
+        thread.read(cx).lifecycle.generating()
             && self.input.read(cx).value().trim().is_empty()
             && thread.read(cx).composer.images.is_empty()
             && self.composer.edit.is_none()
@@ -305,7 +305,7 @@ impl AgentPanel {
             })
             .flex_shrink_0()
             .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(thread.read(cx).auth_required || self.preparing_images())
+            .disabled(thread.read(cx).lifecycle.sign_in_required() || self.preparing_images())
             .on_click(cx.listener(|this, _, window, cx| match this.current() {
                 Some(thread) if this.stops(&thread, cx) => {
                     thread.update(cx, |thread, cx| thread.stop(cx));
@@ -336,7 +336,7 @@ impl AgentPanel {
                     .into_any_element(),
             );
         }
-        if thread.read(cx).ended() && !thread.read(cx).generating {
+        if thread.read(cx).ended() && !thread.read(cx).lifecycle.generating() {
             notices.push(
                 Button::new("agent-restart")
                     .label("Restart chat")
@@ -344,7 +344,7 @@ impl AgentPanel {
                     .into_any_element(),
             );
         }
-        if thread.read(cx).auth_required
+        if thread.read(cx).lifecycle.sign_in_required()
             && let Some(info) = &thread.read(cx).info
         {
             let terminal = crate::TerminalAuth::opener(cx).is_some();
@@ -358,7 +358,7 @@ impl AgentPanel {
                         .ghost()
                         .small()
                         .label(format!("Sign in: {}", method.name()))
-                        .disabled(thread.read(cx).authenticating)
+                        .disabled(thread.read(cx).lifecycle.signing_in())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(thread) = this.current() {
                                 thread.update(cx, |thread, cx| {

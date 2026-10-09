@@ -19,8 +19,11 @@ pub(super) fn call(tool: &str, args: Value, output: Value, verified: bool) -> ac
     call.status = acp::ToolCallStatus::Completed;
     call.raw_output = Some(output);
     if verified {
-        ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()))
-            .attach(&mut call);
+        let mut display =
+            ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()));
+        display.version = 1;
+        display.outcome = None;
+        display.attach(&mut call);
     }
     call
 }
@@ -151,21 +154,32 @@ fn live_observation_does_not_invent_an_exit_from_acp_completion_or_idle() {
 }
 
 #[test]
-fn malformed_foreign_unknown_and_mixed_blocks_remain_visible() {
+fn future_fields_malformed_payloads_and_mixed_blocks_remain_readable() {
     let args = json!({"terminal_id":"t1","program":"true"});
-    let mut unknown = exec_result("exited");
-    unknown["future_field"] = json!("keep me");
+    let mut future = exec_result("exited");
+    future["future_field"] = json!("keep me");
+    let output = source(&call("exec_command", args.clone(), future, false), false).unwrap();
+    assert_eq!(output.sections[0].label, "Standard output");
+    assert!(output.parameters.contains(&"future_field: keep me".into()));
     let mixed = json!({"content":[{"type":"text","text":exec_result("running").to_string()},{"type":"image","data":"AA==","mimeType":"image/png"}]});
-    for payload in [
-        unknown,
-        mixed,
-        json!({"stdout":3}),
-        json!({"arbitrary":"keep me"}),
+    let output = source(&call("exec_command", args.clone(), mixed, false), false).unwrap();
+    assert_eq!(output.sections[0].label, "Standard output");
+    assert!(
+        output
+            .sections
+            .iter()
+            .any(|section| section.text.contains("AA=="))
+    );
+    for (payload, expected) in [
+        (json!({"stdout":3}), "stdout: 3"),
+        (json!({"arbitrary":"keep me"}), "arbitrary: keep me"),
     ] {
-        let call = call("exec_command", args.clone(), payload.clone(), false);
         assert_eq!(
-            source(&call, false).unwrap().sections[0].text,
-            serde_json::to_string_pretty(&payload).unwrap()
+            source(&call("exec_command", args.clone(), payload, false), false)
+                .unwrap()
+                .sections[0]
+                .text,
+            expected
         );
     }
     let mut foreign = call("exec_command", args, exec_result("running"), false);
@@ -173,6 +187,11 @@ fn malformed_foreign_unknown_and_mixed_blocks_remain_visible() {
     assert_eq!(
         source(&foreign, false).unwrap().sections[0].label,
         "Tool output"
+    );
+    assert!(
+        source(&foreign, false).unwrap().sections[0]
+            .text
+            .starts_with('{')
     );
 }
 
@@ -193,13 +212,11 @@ fn duplicate_raw_result_does_not_hide_additional_content() {
     call.raw_output =
         Some(nocterm_ai::mcp::tool_result(json!(1), Ok(payload.clone()))["result"].clone());
     assert_eq!(source(&call, false).unwrap().sections.len(), 2);
-    call.raw_output.as_mut().unwrap()["unknown"] = json!("preserve this field");
-    assert!(
-        source(&call, false)
-            .unwrap()
-            .sections
-            .iter()
-            .any(|section| section.text.contains("preserve this field"))
+    call.raw_output.as_mut().unwrap()["unknown"] = json!("provider metadata");
+    assert_eq!(
+        source(&call, false).unwrap().sections.len(),
+        2,
+        "unknown envelope metadata does not duplicate a payload"
     );
     call.raw_output = Some(payload);
 

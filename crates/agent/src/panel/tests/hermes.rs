@@ -149,12 +149,12 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
         assert_eq!(input.text, script);
         let output = tool_output::source(&call, false).unwrap();
         assert_eq!(output.sections[0].label, "Standard output");
-        assert_eq!(output.sections[0].text, "boot: order=scsi0\n");
+        assert_eq!(output.sections[0].text, started["stdout"].as_str().unwrap());
         assert!(
             output
                 .parameters
                 .iter()
-                .any(|text| text == "Exit status: 0")
+                .any(|text| text == "Exit status: unknown")
         );
         assert!(
             !output

@@ -7,12 +7,13 @@ use gpui_kit::{
 };
 use nocterm_ai::{
     acp,
-    tool_display::{self, ToolDisplay},
+    tool_display::{self, ToolDisplay, ToolOutcome},
 };
 use serde_json::Value;
 
 use super::tool_input::{Section, literal_section};
 mod decode;
+pub(super) use decode::readable;
 
 pub(in crate::panel) struct Output {
     pub sections: Vec<Section>,
@@ -61,46 +62,82 @@ fn text(value: &Value) -> String {
         .unwrap_or_else(|| serde_json::to_string_pretty(value).unwrap_or_default())
 }
 
+fn content_value(item: &acp::ToolCallContent) -> Value {
+    match item {
+        acp::ToolCallContent::Content(content) => match &content.content {
+            acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
+            block => serde_json::to_value(block).unwrap_or_default(),
+        },
+        item => serde_json::to_value(item).unwrap_or_default(),
+    }
+}
+
 pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
-    let request = ToolDisplay::from_call(call)
-        .and_then(|display| display.display_request())
-        .or_else(|| tool_display::requested_call(call));
-    let tool = request
+    let display = ToolDisplay::from_call(call);
+    if let Some(display) = &display
+        && let Some(outcome) = &display.outcome
+    {
+        let mut output = match outcome {
+            ToolOutcome::Pending => return None,
+            ToolOutcome::Ok(value) => decode::bridge(&display.tool, value),
+            ToolOutcome::Err(error) => Output::plain("Error", error.clone()),
+        };
+        if redact {
+            output.redact();
+        }
+        return Some(output);
+    }
+    let tool = display
         .as_ref()
-        .map(|request| tool_display::request(request).0);
+        .map(|display| display.tool.as_str())
+        .or_else(|| tool_display::requested_arguments(call).map(|(tool, _)| tool));
     let mut output = Output {
         sections: Vec::new(),
         parameters: Vec::new(),
     };
     let mut content_values = Vec::new();
     for item in &call.content {
-        let value = match item {
-            acp::ToolCallContent::Content(content) => match &content.content {
-                acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
-                block => serde_json::to_value(block).unwrap_or_default(),
-            },
-            item => serde_json::to_value(item).unwrap_or_default(),
-        };
+        let value = content_value(item);
+        if tool.is_some()
+            && call
+                .raw_output
+                .as_ref()
+                .is_some_and(|raw| decode::truncated_preview(&value, raw))
+        {
+            continue;
+        }
         content_values.push(value);
     }
     if let [value] = content_values.as_slice() {
         let decoded = tool.and_then(|tool| decode::known(tool, value, 0));
         output.append(decoded.unwrap_or_else(|| Output::plain("Tool output", text(value))));
     } else if !content_values.is_empty() {
-        output.append(Output::plain(
-            "Tool output",
-            content_values
-                .iter()
-                .map(text)
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        ));
+        if let Some(tool) = tool {
+            for value in &content_values {
+                output.append(
+                    decode::known(tool, value, 0)
+                        .unwrap_or_else(|| Output::plain("Tool output", text(value))),
+                );
+            }
+        } else {
+            output.append(Output::plain(
+                "Tool output",
+                content_values
+                    .iter()
+                    .map(text)
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ));
+        }
     }
     if let Some(raw) = call.raw_output.as_ref().filter(|raw| !raw.is_null()) {
         // Providers often repeat the same result as both content and rawOutput.
         // Suppress only exact text/JSON equivalence, never an unknown extra block.
-        let duplicate =
-            content_values.len() == 1 && decode::equivalent(tool, &content_values[0], raw);
+        let duplicate = match content_values.as_slice() {
+            [] => false,
+            [value] => decode::equivalent(tool, value, raw),
+            values => decode::equivalent(tool, &Value::Array(values.to_vec()), raw),
+        };
         if !duplicate {
             let decoded = tool.and_then(|tool| decode::known(tool, raw, 0));
             output.append(decoded.unwrap_or_else(|| Output::plain("Tool output", text(raw))));

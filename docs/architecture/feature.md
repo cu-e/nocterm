@@ -180,6 +180,9 @@ a change. A container's log and a shell inside it are `ProgramSpec`s opened
 through `Workspace::open_program`; the terminal runs them with
 `ProgramTransport` over `HostExec::terminal`, so no feature opens a
 connection of its own and the tab follows as the same host.
+Destructive confirmation captures the host executor, engine, object IDs and
+connection epoch when the dialog opens. Switching hosts or reconnecting
+invalidates that confirmation; completion refreshes only its original context.
 
 ## Vault
 

@@ -124,7 +124,7 @@ fn mcp_requires_initialization_validates_input_and_never_echoes_bad_payload() {
     );
     m.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
     assert!(
-        matches!(m.handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_terminal","arguments":{"terminal_id":"t1","lines":2001}}}"#),McpStep::Reply(v) if v["error"]["code"]==-32602)
+        matches!(m.handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_terminal","arguments":{"terminal_id":"t1","lines":2001}}}"#),McpStep::Rejected { error, .. } if !error.is_empty())
     );
     assert!(matches!(
         m.handle(

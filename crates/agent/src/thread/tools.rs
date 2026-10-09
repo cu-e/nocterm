@@ -21,16 +21,17 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(180);
 
 impl AgentThread {
-    pub(crate) fn handle_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+    pub(crate) fn handle_tool(&mut self, mut call: BridgeCall, cx: &mut Context<Self>) {
         if !cx.ai_enabled()
-            || !self.accept_updates
+            || !self.lifecycle.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
-            let _ = call.respond.send(Err("Chat is unavailable.".into()));
+            self.finish(call, Err("Chat is unavailable.".into()));
             return;
         }
+        self.record_tool_display(&mut call, None, cx);
         if let Err(error) = call.call.validate() {
-            let _ = call.respond.send(Err(error));
+            self.finish(call, Err(error));
             return;
         }
         if self
@@ -69,7 +70,7 @@ impl AgentThread {
         }
         let call = self.tools.remove(index);
         if !allow {
-            let _ = call.respond.send(Err("User denied this request.".into()));
+            self.finish(call, Err("User denied this request.".into()));
             cx.notify();
             return;
         }
@@ -84,10 +85,11 @@ impl AgentThread {
                 .any(|(server, _)| server.server_id == id),
             (None, None) => true,
         };
-        if !cx.ai_enabled() || !self.accept_updates || !attached {
-            let _ = call.respond.send(Err(unreachable(
-                "Terminal was detached or chat is unavailable.",
-            )));
+        if !cx.ai_enabled() || !self.lifecycle.accepts_updates() || !attached {
+            self.finish(
+                call,
+                Err(unreachable("Terminal was detached or chat is unavailable.")),
+            );
             cx.notify();
             return;
         }
@@ -104,24 +106,21 @@ impl AgentThread {
     fn execute_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
         // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
         if !cx.ai_enabled()
-            || !self.accept_updates
+            || !self.lifecycle.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
-            let _ = call.respond.send(Err("Chat is unavailable.".into()));
+            self.finish(call, Err("Chat is unavailable.".into()));
             return;
         }
         match &call.call {
             TerminalCall::ListTerminals => {
-                self.record_tool_display(&call.call, None, cx);
                 let payload = self.context(cx);
-                let _ = call
-                    .respond
-                    .send(Ok(serde_json::json!({"context":payload})));
+                self.finish(call, Ok(serde_json::json!({"context":payload})));
                 return;
             }
             TerminalCall::OpenTerminal(request) => {
                 let server = request.server_id.clone();
-                self.record_tool_display(&call.call, None, cx);
+
                 self.open_terminal(server, call, cx);
                 return;
             }
@@ -132,12 +131,12 @@ impl AgentThread {
             .into_iter()
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
         else {
-            let _ = call.respond.send(Err(unreachable(
+            self.finish(call, Err(unreachable(
                 "Terminal is not attached or was closed. Call list_terminals for the current ones.",
             )));
             return;
         };
-        self.record_tool_display(&call.call, Some(&entry), cx);
+
         match &call.call {
             TerminalCall::ReadTerminal(request) => {
                 let result = entry
@@ -151,7 +150,7 @@ impl AgentThread {
                         cx,
                     )
                     .map(|tail| self.text_payload(tail, cx));
-                let _ = call.respond.send(result);
+                self.finish(call, result);
             }
             TerminalCall::SendInput(request) => {
                 let text = format!(
@@ -163,7 +162,7 @@ impl AgentThread {
                     .access
                     .send_text(&text, cx)
                     .map(|()| serde_json::json!({"accepted":true}));
-                let _ = call.respond.send(result);
+                self.finish(call, result);
             }
             TerminalCall::RunCommand(request) => {
                 let request = request.clone();
@@ -191,12 +190,15 @@ impl AgentThread {
                     self.server_ids.resolve(&server) == Some(connection.id.as_str())
                 })
             });
-            let _ = call.respond.send(match open {
-                Some((_, _, descriptor)) => Ok(serde_json::json!({"terminal": descriptor})),
-                None => Err(unreachable(
-                    "Unknown server. Call list_terminals for the attached ones.",
-                )),
-            });
+            self.finish(
+                call,
+                match open {
+                    Some((_, _, descriptor)) => Ok(serde_json::json!({"terminal": descriptor})),
+                    None => Err(unreachable(
+                        "Unknown server. Call list_terminals for the attached ones.",
+                    )),
+                },
+            );
             return;
         };
         let (Some(window), Some(directory)) = (
@@ -205,14 +207,12 @@ impl AgentThread {
                 .upgrade()
                 .and_then(|workspace| workspace.read(cx).connection_directory()),
         ) else {
-            let _ = call
-                .respond
-                .send(Err(unreachable("The workspace is unavailable.")));
+            self.finish(call, Err(unreachable("The workspace is unavailable.")));
             return;
         };
         let workspace = self.workspace.clone();
         let profile = summary.id.to_string();
-        let epoch = self.epoch;
+        let ticket = self.lifecycle.ticket();
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
@@ -223,18 +223,25 @@ impl AgentThread {
                 .ok()
                 .flatten();
             let Some(item) = opened else {
-                let _ = call.respond.send(Err(unreachable(
-                    "Could not open a session for this server.",
-                )));
+                let _ = this.update(cx, |this, cx| {
+                    this.finish(
+                        call,
+                        Err(unreachable("Could not open a session for this server.")),
+                    );
+                    cx.notify();
+                });
                 return;
             };
             let _ = this.update(cx, |this, _| this.background.push(item));
-            let result = wait_until_connected(&this, &workspace, window, item, epoch, cx).await;
+            let result = wait_until_connected(&this, &workspace, window, item, ticket, cx).await;
             if result.is_err() {
                 close_background(&workspace, window, item, cx);
                 let _ = this.update(cx, |this, _| this.background.retain(|id| *id != item));
             }
-            let _ = call.respond.send(result);
+            let _ = this.update(cx, |this, cx| {
+                this.finish(call, result);
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -292,7 +299,7 @@ async fn wait_until_connected(
     workspace: &WeakEntity<nocterm_workspace::Workspace>,
     window: gpui_kit::AnyWindowHandle,
     item: EntityId,
-    epoch: u64,
+    ticket: nocterm_ai::session::Ticket,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value, String> {
     let started = Instant::now();
@@ -304,7 +311,10 @@ async fn wait_until_connected(
             .await;
         let step = this
             .update(cx, |this, cx| {
-                if this.epoch != epoch || !this.accept_updates || !cx.ai_enabled() {
+                if !this.lifecycle.session_current(ticket)
+                    || !this.lifecycle.accepts_updates()
+                    || !cx.ai_enabled()
+                {
                     return Err("The chat stopped before the server connected.".to_owned());
                 }
                 let entry = this

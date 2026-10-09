@@ -176,9 +176,7 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn prompt_transport_failure_keeps_remaining_queue_and_rejects_new_dispatch(
-    cx: &mut TestAppContext,
-) {
+fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -189,17 +187,35 @@ fn prompt_transport_failure_keeps_remaining_queue_and_rejects_new_dispatch(
     cx.run_until_parked();
     drop(f.commands.pending.lock().unwrap().take().unwrap());
     cx.run_until_parked();
-    thread.update(cx, |thread, cx| {
+    thread.update(cx, |thread, _| {
         assert!(thread.ended());
         assert!(thread.composer.queue_paused);
         assert_eq!(thread.composer.queue[0].saved.text, "retained");
-        thread.send_now(thread.composer.queue[0].saved.id, cx);
-        assert!(!thread.submit("another".into(), None, cx).unwrap());
     });
+    // Nothing reconnects by itself.
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
     assert_eq!(saved[0].queue[0].text, "retained");
+
+    // Sending reconnects the chat and goes on with its queue.
+    thread.update(cx, |thread, cx| {
+        thread.send_now(thread.composer.queue[0].saved.id, cx);
+        assert!(thread.submit("another".into(), None, cx).unwrap());
+    });
+    cx.run_until_parked();
+    thread.update(cx, |thread, _| {
+        assert!(!thread.ended());
+        assert!(thread.lifecycle.generating());
+        assert_eq!(thread.composer.queue.len(), 1);
+        assert_eq!(thread.composer.queue[0].saved.text, "another");
+    });
+    let prompts = f.commands.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].prompt.iter().any(|block| matches!(
+        block,
+        acp::ContentBlock::Text(text) if text.text == "retained"
+    )));
 }
 
 #[gpui_kit::test]

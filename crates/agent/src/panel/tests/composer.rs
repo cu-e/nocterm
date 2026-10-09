@@ -327,7 +327,9 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                         "Inspecting the current terminal carefully before running commands".into(),
                     ),
                 ];
-                thread.generating = true;
+                thread
+                    .lifecycle
+                    .force_phase(nocterm_ai::session::SessionPhase::Prompting);
                 cx.notify();
             });
     });
@@ -372,7 +374,9 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                thread.generating = false;
+                thread
+                    .lifecycle
+                    .force_phase(nocterm_ai::session::SessionPhase::Ready);
                 cx.notify();
             });
     });

@@ -1,8 +1,11 @@
+mod admission;
 mod client;
 mod documents;
 mod lease;
 mod lifecycle;
 mod settings;
+mod shutdown;
+mod startup;
 pub use client::{Client, ClientState, SessionClient, SessionEvent};
 use gpui::{App, Context, Entity, EntityId, Global, Task};
 pub use lease::SessionLease;
@@ -68,11 +71,14 @@ pub struct Runtime {
     pub favorites_error: Option<String>,
     favorites_revision: u64,
     favorites_writer: Option<Task<()>>,
+    favorites_io: nocterm_core::persist::WriteGate,
     connections: HashMap<u64, Connection>,
     documents: HashMap<EntityId, Client>,
     document_owners: HashMap<String, EntityId>,
     pending_activation: std::collections::VecDeque<Client>,
     closing: HashMap<u64, String>,
+    /// Cleanup ownership survives a foreground close/FIFO barrier.
+    closing_commands: HashMap<u64, Arc<dyn AgentCommands>>,
     idle_since: HashMap<u64, std::time::Instant>,
     _lifecycle: Option<Task<()>>,
     shutting_down: bool,
@@ -80,11 +86,13 @@ pub struct Runtime {
     pub registrations: HashMap<u64, Client>,
     /// Chats read from disk and not yet shown by a panel; `None` while reading.
     pub saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
+    pub history_gate: nocterm_ai::history::HistoryGate,
+    pub saved_catalog: Option<Vec<nocterm_ai::history::ChatSummary>>,
     /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
     chat_writes: HashMap<String, Option<Arc<nocterm_ai::history::SharedChat>>>,
     chat_writer: Option<Task<()>>,
     chat_in_flight: Option<documents::PendingChatWrite>,
-    chat_io: Arc<std::sync::Mutex<documents::ChatIoGate>>,
+    chat_io: nocterm_core::persist::WriteGate,
     /// Deleted chats, never written again by a late save.
     deleted_chats: std::collections::HashSet<String>,
     _loading_chats: Option<Task<()>>,
@@ -111,11 +119,14 @@ impl Runtime {
         let chats_dir = services.chats_dir.clone();
         let loading = cx
             .background_executor()
-            .spawn(async move { nocterm_ai::history::load_all(&chats_dir) });
+            .spawn(async move { nocterm_ai::history::load_catalog(&chats_dir) });
         let loading_chats = cx.spawn(async move |this, cx| {
             let chats = loading.await;
             let _ = this.update(cx, |this, cx| {
-                this.saved_chats = Some(chats);
+                if this.shutting_down {
+                    return;
+                }
+                this.saved_catalog = Some(chats);
                 cx.notify();
             });
         });
@@ -132,6 +143,8 @@ impl Runtime {
         });
         Self {
             saved_chats: None,
+            saved_catalog: None,
+            history_gate: Default::default(),
             chat_writes: HashMap::new(),
             chat_writer: None,
             chat_in_flight: None,
@@ -144,12 +157,14 @@ impl Runtime {
             favorites_error: None,
             favorites_revision: 0,
             favorites_writer: None,
+            favorites_io: Default::default(),
             services,
             connections: HashMap::new(),
             documents: HashMap::new(),
             document_owners: HashMap::new(),
             pending_activation: Default::default(),
             closing: Default::default(),
+            closing_commands: Default::default(),
             idle_since: Default::default(),
             _lifecycle: None,
             shutting_down: false,
@@ -228,6 +243,30 @@ impl Runtime {
         self.favorites.toggle(agent, option, value);
         self.save_state(cx);
     }
+    /// Keeps the configuration options `agent` reported, for chats that
+    /// have not connected yet.
+    pub fn remember_options(
+        &mut self,
+        agent: &str,
+        options: &[nocterm_ai::acp::SessionConfigOption],
+        cx: &mut Context<Self>,
+    ) {
+        if self.favorites.remember_options(agent, options) {
+            self.save_state(cx);
+        }
+    }
+    /// Keeps a model or reasoning effort choice for `agent`'s next chats.
+    pub fn remember_choice(
+        &mut self,
+        agent: &str,
+        option: &nocterm_ai::acp::SessionConfigOption,
+        value: &nocterm_ai::session_config::ConfigValue,
+        cx: &mut Context<Self>,
+    ) {
+        if self.favorites.remember_choice(agent, option, value) {
+            self.save_state(cx);
+        }
+    }
     /// Remembers `agent` as the one new chats start with by default.
     pub fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
         if self.favorites.last_agent.as_deref() == Some(agent) {
@@ -237,13 +276,20 @@ impl Runtime {
         self.save_state(cx);
     }
     fn save_state(&mut self, cx: &mut Context<Self>) {
+        if self.shutting_down {
+            return;
+        }
         self.favorites_revision += 1;
         cx.notify();
         if self.favorites_writer.is_some() {
             return;
         }
+        let gate = self.favorites_io.clone();
         self.favorites_writer = Some(cx.spawn(async move |this, cx| {
             loop {
+                if gate.is_frozen() {
+                    return;
+                }
                 let Ok((state, path, revision)) = this.read_with(cx, |this, _| {
                     (
                         this.favorites.clone(),
@@ -253,9 +299,13 @@ impl Runtime {
                 }) else {
                     return;
                 };
+                let disk_gate = gate.clone();
                 let result = cx
                     .background_executor()
                     .spawn(async move {
+                        let Some(_guard) = disk_gate.normal().await else {
+                            return Ok(());
+                        };
                         if let Some(parent) = path.parent() {
                             nocterm_core::paths::ensure_private_dir(parent)
                                 .map_err(|error| error.to_string())?;
@@ -263,6 +313,9 @@ impl Runtime {
                         state.save(&path)
                     })
                     .await;
+                if gate.is_frozen() {
+                    return;
+                }
                 let done = this
                     .update(cx, |this, cx| {
                         this.favorites_error = result.err();
@@ -318,20 +371,40 @@ impl Runtime {
             return;
         }
         let calls = self.services.bridge.calls();
+        let rejections = self.services.bridge.rejections();
         self._bridge = Some(cx.spawn(async move |this, cx| {
-            while let Ok(call) = calls.recv().await {
+            loop {
+                use futures::future::{Either, select};
+                let event = if rejections.is_closed() && rejections.is_empty() {
+                    match calls.recv().await {
+                        Ok(call) => SessionEvent::Tool(call),
+                        Err(_) => break,
+                    }
+                } else {
+                    match select(Box::pin(calls.recv()), Box::pin(rejections.recv())).await {
+                        Either::Left((Ok(call), _)) => SessionEvent::Tool(call),
+                        Either::Right((Ok(rejected), _)) => SessionEvent::ToolRejected(rejected),
+                        Either::Left((Err(_), _)) => break,
+                        Either::Right((Err(_), _)) => continue,
+                    }
+                };
+                let registration = match &event {
+                    SessionEvent::Tool(call) => call.registration_id,
+                    SessionEvent::ToolRejected(rejected) => rejected.registration_id,
+                    _ => unreachable!(),
+                };
                 let client = this
                     .read_with(cx, |this, _| {
                         this.registrations
-                            .get(&call.registration_id)
+                            .get(&registration)
                             .filter(|client| client.alive())
                             .cloned()
                     })
                     .ok()
                     .flatten();
                 if let Some(client) = client {
-                    cx.update(|cx| client.emit(SessionEvent::Tool(call), cx));
-                } else {
+                    cx.update(|cx| client.emit(event, cx));
+                } else if let SessionEvent::Tool(call) = event {
                     let _ = call
                         .respond
                         .send(Err("Chat was closed or AI is disabled.".into()));
@@ -339,6 +412,7 @@ impl Runtime {
             }
         }));
     }
+
     pub fn register_bridge(
         &mut self,
         client: &Client,
@@ -392,12 +466,25 @@ impl Runtime {
         if !cx.ai_enabled() {
             return;
         }
-        let workdir = cx
-            .ai()
-            .working_directory
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.services.workdir.clone());
+        let workdir = client
+            .state(cx)
+            .and_then(|state| state.workdir)
+            .unwrap_or_else(|| {
+                cx.ai()
+                    .working_directory
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.services.workdir.clone())
+            });
+        if !workdir.is_absolute() {
+            client.emit(
+                SessionEvent::Failed(
+                    "Working directory must be an existing absolute directory.".into(),
+                ),
+                cx,
+            );
+            return;
+        }
         let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         launch.hash(&mut hasher);
@@ -439,37 +526,50 @@ impl Runtime {
         let connector = self.services.connector.clone();
         let private_workdir = workdir == self.services.workdir;
         let terminal_auth = self.services.terminal_auth;
-        let sandbox = isolated.then(|| {
-            nocterm_ai::sandbox::SandboxPolicy::new(
-                &workdir,
-                std::env::home_dir().as_deref(),
-                &self.services.private_dirs,
-                &self.services.shared_dirs,
-            )
-        });
+        let private_dirs = self.services.private_dirs.clone();
+        let shared_dirs = self.services.shared_dirs.clone();
         let resources = cx.ai().resources.clone();
         let future = cx.background_executor().spawn(async move {
-            if private_workdir {
-                nocterm_core::paths::ensure_private_dir(&workdir)
-                    .map_err(|error| nocterm_ai::AgentError::Io(error.to_string()))?;
-            } else if !workdir.is_absolute() || !workdir.is_dir() {
-                return Err(nocterm_ai::AgentError::Io(
-                    "Working directory must be an existing absolute directory.".into(),
-                ));
+            if cancellation.is_cancelled() {
+                return (
+                    Err(nocterm_ai::AgentError::Io(
+                        "Agent startup cancelled.".into(),
+                    )),
+                    workdir,
+                );
             }
-            connector
+            let (effective, sandbox) = match startup::workspace(
+                &workdir,
+                private_workdir,
+                isolated,
+                &private_dirs,
+                &shared_dirs,
+            ) {
+                Ok(root) => root,
+                Err(error) => return (Err(error), workdir),
+            };
+            if cancellation.is_cancelled() {
+                return (
+                    Err(nocterm_ai::AgentError::Io(
+                        "Agent startup cancelled.".into(),
+                    )),
+                    effective,
+                );
+            }
+            let result = connector
                 .connect(ConnectRequest {
                     launch,
-                    working_directory: workdir,
+                    working_directory: effective.clone(),
                     terminal_auth,
                     sandbox,
                     resources,
                     cancellation,
                 })
-                .await
+                .await;
+            (result, effective)
         });
         let connecting = cx.spawn(async move |this, cx| {
-            let result = future.await;
+            let (result, effective) = future.await;
             let uncertain = match &result {
                 Err(nocterm_ai::AgentError::CleanupUnconfirmed(error)) => Some(error.clone()),
                 _ => None,
@@ -491,6 +591,7 @@ impl Runtime {
                     match result {
                         Ok(connection) => {
                             let slot = this.connections.get_mut(&key).expect("checked connection");
+                            slot.workdir = effective;
                             slot.commands = Some(connection.commands.clone());
                             slot.info = Some(connection.info.clone());
                             let workdir = slot.workdir.clone();
@@ -612,34 +713,5 @@ impl Runtime {
         for client in clients {
             client.emit(SessionEvent::Stopped(message.to_owned()), cx);
         }
-    }
-    pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        self.shutting_down = true;
-        self.pending_activation.clear();
-        let clients: Vec<_> = self.documents.values().cloned().collect();
-        for client in clients {
-            client.emit(SessionEvent::Shutdown, cx);
-        }
-        // GPUI allows quit futures only 200 ms. Durable state must be flushed before returning.
-        self.flush_chats(cx);
-        self.chat_writer.take();
-        self.registrations.clear();
-        self.services.bridge.stop();
-        cx.spawn(async move |this, cx| {
-            for _ in 0..100 {
-                if this
-                    .read_with(cx, |this, _| {
-                        this.closing.is_empty() && this.connections.is_empty()
-                    })
-                    .unwrap_or(true)
-                {
-                    return;
-                }
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(100))
-                    .await;
-            }
-            tracing::warn!("Agent cleanup did not complete before application exit");
-        })
     }
 }

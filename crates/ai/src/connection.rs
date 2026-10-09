@@ -191,6 +191,11 @@ pub type ConnectError = AgentError;
 pub trait ToolBridge: Send + Sync + 'static {
     fn register(&self) -> Result<BridgeRegistration, String>;
     fn calls(&self) -> async_channel::Receiver<BridgeCall>;
+    fn rejections(&self) -> async_channel::Receiver<BridgeRejection> {
+        let (sender, receiver) = async_channel::bounded(1);
+        sender.close();
+        receiver
+    }
     fn stop(&self);
 }
 /// How an agent starts the relay to a chat's bridge. The adapter that owns the
@@ -241,9 +246,19 @@ impl Drop for BridgeRegistration {
         self.revoke();
     }
 }
+pub struct BridgeRejection {
+    pub registration_id: u64,
+    pub tool: String,
+    pub arguments: serde_json::Value,
+    pub error: String,
+}
+
 pub struct BridgeCall {
     pub registration_id: u64,
     pub call: TerminalCall,
+    pub arguments: Option<serde_json::Value>,
+    /// Assigned at chat intake; identifies a particular request within its turn.
+    pub display_token: Option<(u64, u64)>,
     pub respond: oneshot::Sender<Result<serde_json::Value, String>>,
 }
 

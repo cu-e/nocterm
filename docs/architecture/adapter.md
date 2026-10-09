@@ -28,6 +28,14 @@ is surfaced in the terminal instead of silently discarding text.
 HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
 
+Structured local commands through `HostExec::exec` start on a worker when their
+future is polled. The worker owns cleanup independently of output delivery or
+the shell's lifetime. Unix exit observation leaves the leader unreaped until
+its process group is stopped, preventing reuse of the group ID; deliberately
+detached process groups are outside that ownership. Windows commands start
+suspended and are attached to a Job Object before execution. Dropping the
+output or startup future cancels the owned command.
+
 ## Device unlock
 
 `nocterm-vault` declares the device-unlock provider contract and owns envelope,

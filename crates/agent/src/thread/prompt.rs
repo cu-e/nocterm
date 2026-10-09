@@ -25,8 +25,9 @@ impl AgentThread {
             return;
         };
         // A new turn: updates count again.
-        self.stopped = false;
-        self.accept_updates = true;
+        let Some(ticket) = self.lifecycle.start_turn() else {
+            return;
+        };
         // ACP adapters inspect the first block for slash commands; local
         // administrative commands may require a single text block.
         let is_command = nocterm_ai::commands::invocation(&text, &self.state.commands).is_some();
@@ -64,24 +65,27 @@ impl AgentThread {
                 .map(config_label)
                 .filter(|model| !model.is_empty()),
         });
-        self.generating = true;
         self.status = "Working…".into();
         self.status_error = false;
-        self.turn += 1;
-        let turn = self.turn;
-        let epoch = self.epoch;
         let future = cx
             .background_executor()
             .spawn(commands.prompt(acp::PromptRequest::new(session, content)));
         cx.spawn(async move |this, cx| {
             let result = future.await;
             let _ = this.update(cx, |this, cx| {
-                if this.epoch != epoch || this.turn != turn || !cx.ai_enabled() {
+                if !cx.ai_enabled() {
                     return;
                 }
-                this.generating = false;
+                let completed = matches!(
+                    &result,
+                    Ok(response) if response.stop_reason != acp::StopReason::Cancelled
+                ) && !this.lifecycle.stopped();
+                if !this.lifecycle.finish_turn(ticket, completed) {
+                    return;
+                }
                 this.prompt_attachments = None;
                 this.cancel_pending();
+                this.finalize_tool_displays();
                 this.persist(cx);
                 match result {
                     Ok(response) => {
@@ -95,15 +99,12 @@ impl AgentThread {
                             Runtime::global(cx)
                                 .update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
                         });
-                        this.status = if this.stopped {
+                        this.status = if this.lifecycle.stopped() {
                             "Stopped".into()
                         } else {
                             format!("{:?}", response.stop_reason)
                         };
-                        if !is_command
-                            && !this.stopped
-                            && response.stop_reason != acp::StopReason::Cancelled
-                        {
+                        if !is_command && completed {
                             this.fallback_history = false;
                             this.persist(cx);
                         }
@@ -115,7 +116,7 @@ impl AgentThread {
                     }
                     // Some agents answer a cancelled prompt with an error; the
                     // session itself goes on.
-                    Err(error) if this.stopped => {
+                    Err(error) if this.lifecycle.stopped() => {
                         tracing::debug!(%error, "stopped prompt ended with an error");
                         this.status = "Stopped".into();
                         this.dispatch_next(cx);

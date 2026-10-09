@@ -1,0 +1,19 @@
+{
+  "toolCallId": "fixture",
+  "title": "mcp__nocterm-17__exec_command",
+  "status": "completed",
+  "rawInput": {
+    "terminal_id": "t1",
+    "program": "sh",
+    "args": [
+      "-c",
+      "printf 'fixture\\n'"
+    ]
+  },
+  "rawOutput": [
+    {
+      "type": "text",
+      "text": "{\"command_id\":\"c1\",\"state\":\"exited\",\"stdout\":\"fixture\\n\",\"stderr\":\"\",\"exit_status\":0,\"total_bytes\":8,\"truncated\":false,\"error\":null}"
+    }
+  ]
+}

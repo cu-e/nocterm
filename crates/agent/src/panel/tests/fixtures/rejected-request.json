@@ -1,0 +1,44 @@
+{
+  "toolCallId": "fixture",
+  "title": "mcp.nocterm-17.exec_command",
+  "status": "failed",
+  "rawInput": {
+    "server": "nocterm-17",
+    "tool": "exec_command",
+    "arguments": {
+      "terminal_id": "t1",
+      "program": "sh",
+      "args": [
+        "-c",
+        "printf 'fixture\\n'"
+      ],
+      "timeout_ms": 1800000
+    }
+  },
+  "rawOutput": {
+    "result": null,
+    "error": {
+      "message": "Provider envelope is ignored"
+    }
+  },
+  "_meta": {
+    "nocterm/tool-display": {
+      "version": 2,
+      "tool": "exec_command",
+      "arguments": {
+        "terminal_id": "t1",
+        "program": "sh",
+        "args": [
+          "-c",
+          "printf 'fixture\\n'"
+        ],
+        "timeout_ms": 1800000
+      },
+      "destination": null,
+      "redacted": false,
+      "outcome": {
+        "Err": "Command timeout exceeds limit"
+      }
+    }
+  }
+}

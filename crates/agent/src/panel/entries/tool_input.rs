@@ -65,11 +65,40 @@ impl Source {
     }
 }
 
+fn requested_label(source: &mut Source) {
+    source.label = match source.label {
+        "Command" => "Requested command",
+        "Input" => "Requested input",
+        "Program" => "Requested program",
+        "Terminal" => "Requested terminal",
+        "Command handle" => "Requested command handle",
+        "Connection" => "Requested connection",
+        _ => "Requested scope",
+    };
+}
+
+fn parameters_source(arguments: &Value) -> Source {
+    Source::plain(
+        "Requested parameters",
+        super::tool_output::readable(arguments),
+        None,
+    )
+}
+
 pub(in crate::panel) fn source(call: &acp::ToolCall) -> Option<Source> {
-    if let Some(display) = ToolDisplay::from_call(call)
-        && let Some(request) = display.display_request()
-    {
-        let mut source = request_source(request);
+    if let Some(display) = ToolDisplay::from_call(call) {
+        let mut source = if let Some(request) = display.display_request() {
+            let mut source = request_source(request);
+            if matches!(
+                display.outcome,
+                Some(nocterm_ai::tool_display::ToolOutcome::Err(_))
+            ) {
+                requested_label(&mut source);
+            }
+            source
+        } else {
+            parameters_source(&display.arguments)
+        };
         if display.redacted {
             source.parameters.push("Secrets hidden".into());
         }
@@ -77,16 +106,11 @@ pub(in crate::panel) fn source(call: &acp::ToolCall) -> Option<Source> {
     }
     if let Some(request) = tool_display::requested_call(call) {
         let mut source = request_source(request);
-        source.label = match source.label {
-            "Command" => "Requested command",
-            "Input" => "Requested input",
-            "Program" => "Requested program",
-            "Terminal" => "Requested terminal",
-            "Command handle" => "Requested command handle",
-            "Connection" => "Requested connection",
-            _ => "Requested scope",
-        };
+        requested_label(&mut source);
         return Some(source);
+    }
+    if let Some((_, arguments)) = tool_display::requested_arguments(call) {
+        return Some(parameters_source(&arguments));
     }
     if let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) {
         let literal = ["command", "script", "code"]
