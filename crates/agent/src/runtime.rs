@@ -573,36 +573,7 @@ impl Runtime {
                     return;
                 };
                 for thread in connection.users.values().filter_map(WeakEntity::upgrade) {
-                    thread.update(cx, |thread, cx| {
-                        if thread.connecting_session && thread.session().is_none() && matches!(notification.update,
-                            acp::SessionUpdate::AvailableCommandsUpdate(_) | acp::SessionUpdate::CurrentModeUpdate(_) | acp::SessionUpdate::ConfigOptionUpdate(_)) {
-                            // Keep the latest control of each kind for each session, without replaying transcript chunks.
-                            thread.pending_controls.retain(|(id, update)| id != &notification.session_id || std::mem::discriminant(update) != std::mem::discriminant(&notification.update));
-                            if thread.pending_controls.len() == 64 { thread.pending_controls.remove(0); }
-                            thread.pending_controls.push((notification.session_id.clone(), notification.update.clone()));
-                        }
-                        if thread.session().as_ref() == Some(&notification.session_id)
-                            && thread.accept_updates
-                            && !matches!(
-                                notification.update,
-                                acp::SessionUpdate::UserMessageChunk(_)
-                            )
-                        {
-                            let index = match &notification.update {
-                                acp::SessionUpdate::ToolCallUpdate(update) => thread.state.entries.iter().position(|entry| matches!(entry, nocterm_ai::thread::Entry::Tool(call) if call.tool_call_id == update.tool_call_id)),
-                                _ => thread.state.entries.len().checked_sub(1),
-                            };
-                            let change = thread.apply_presented_update(notification.update.clone());
-                            if change == nocterm_ai::thread::ThreadChange::Transcript {
-                                if let Some(index) = index { thread.mark_dirty(index); }
-                                if let Some(index) = thread.state.entries.len().checked_sub(1) { thread.mark_dirty(index); }
-                            }
-                            if change == nocterm_ai::thread::ThreadChange::Metadata {
-                                thread.persist(cx);
-                            }
-                            cx.notify();
-                        }
-                    });
+                    thread.update(cx, |thread, cx| thread.session_update(&notification, cx));
                 }
             }
             AgentEvent::Permission { request, respond } => {
@@ -637,14 +608,7 @@ impl Runtime {
             .filter_map(WeakEntity::upgrade)
             .collect();
         for thread in threads {
-            thread.update(cx, |thread, cx| {
-                thread.fail(message, cx);
-                if !cx.ai_enabled() {
-                    thread.state = Default::default();
-                    thread.attachments.clear();
-                    thread.images.clear();
-                }
-            });
+            thread.update(cx, |thread, cx| thread.connection_stopped(message, cx));
         }
     }
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {

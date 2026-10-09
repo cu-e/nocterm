@@ -24,6 +24,7 @@ mod saved;
 mod session;
 mod tool_context;
 mod tools;
+mod updates;
 #[cfg(test)]
 pub(crate) use saved::chat_title;
 
