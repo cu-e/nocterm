@@ -4974,7 +4974,6 @@ dependencies = [
  "image",
  "nocterm-agent-runtime",
  "nocterm-ai",
- "nocterm-core",
  "nocterm-session",
  "nocterm-ui",
  "nocterm-workspace",
