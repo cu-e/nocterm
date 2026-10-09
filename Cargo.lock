@@ -5063,6 +5063,7 @@ name = "nocterm-core"
 version = "0.0.0"
 dependencies = [
  "directories",
+ "futures",
  "nix 0.28.0",
  "serde",
  "tempfile",

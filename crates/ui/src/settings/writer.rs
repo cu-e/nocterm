@@ -2,11 +2,11 @@
 //! it is saved.
 use futures::channel::oneshot;
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task, WeakEntity};
-use nocterm_core::persist::{Rejected, WriteQueue, Writing};
+use nocterm_core::persist::{Rejected, ShutdownDeadline, WriteGate, WriteQueue, Writing};
 use nocterm_settings::{SettingsDocument, SettingsFile};
 #[cfg(test)]
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{SettingsStore, publish};
 
@@ -27,6 +27,8 @@ pub(super) struct Pending {
 pub(super) struct Writer {
     pub(super) queue: WriteQueue<Pending>,
     task: Option<Task<()>>,
+    gate: WriteGate,
+    candidate: Option<(SettingsDocument, Done)>,
     #[cfg(test)]
     pub(super) test_writer: Option<TestWriter>,
 }
@@ -40,6 +42,7 @@ struct Job {
     unchanged: Option<u64>,
     file: Option<SettingsFile>,
     writing: Writing,
+    gate: WriteGate,
     #[cfg(test)]
     test_writer: Option<TestWriter>,
 }
@@ -48,30 +51,42 @@ pub(crate) fn init(cx: &mut App) {
     let writer = cx.new(|_| Writer {
         queue: WriteQueue::new(MAX_PENDING),
         task: None,
+        gate: WriteGate::default(),
+        candidate: None,
         #[cfg(test)]
         test_writer: None,
     });
     cx.set_global(SettingsWriter(writer.clone()));
-    // The app stays borrowed while quit futures run, so only the disk write
-    // already in flight can finish; queued changes are reported as lost.
     cx.on_app_quit(move |cx| {
-        let (in_flight, queued) =
-            writer.update(cx, |writer, _| (writer.queue.in_flight(), writer.queue.close()));
+        let captured = writer.update(cx, |writer, cx| writer.capture_shutdown(cx));
         let executor = cx.background_executor().clone();
+        let deadline = ShutdownDeadline::new(Duration::from_millis(180));
         async move {
-            if queued > 0 {
-                tracing::warn!(queued, "settings changes queued at shutdown were not saved");
-            }
-            let deadline = Instant::now() + Duration::from_millis(180);
-            while in_flight.count() > 0 {
-                if Instant::now() >= deadline {
-                    tracing::warn!("timed out saving settings during shutdown; pending changes may not be saved");
-                    break;
+            let Some((job, acknowledgements)) = captured else {
+                return;
+            };
+            let work = executor.spawn(async move {
+                let gate = job.gate.clone();
+                let _guard = gate.final_write().await;
+                let result = save(job).await;
+                for (done, revision) in acknowledgements {
+                    let _ = done.send(result.clone().map(|()| revision));
                 }
-                executor.timer(Duration::from_millis(10)).await;
+                if let Err(error) = result {
+                    tracing::warn!(%error, "could not save final settings");
+                }
+            });
+            if matches!(
+                futures::future::select(work, executor.timer(deadline.remaining())).await,
+                futures::future::Either::Right(_)
+            ) {
+                tracing::warn!(
+                    "timed out saving settings during shutdown; accepted changes may not be saved"
+                );
             }
         }
-    }).detach();
+    })
+    .detach();
 }
 
 /// Applies `edit` to the settings current when the write runs, so edits made
@@ -87,6 +102,42 @@ pub fn edit_settings(
 }
 
 impl Writer {
+    fn capture_shutdown(&mut self, cx: &mut Context<Self>) -> Option<(Job, Vec<(Done, u64)>)> {
+        self.gate.freeze();
+        self.queue.close();
+        let store = cx.global::<SettingsStore>();
+        let file = store.file.clone();
+        let mut revision = store.revision;
+        let mut document = store.document.clone();
+        let mut acknowledgements = Vec::new();
+        if let Some((candidate, done)) = self.candidate.take() {
+            revision += u64::from(candidate != document);
+            document = candidate;
+            acknowledgements.push((done, revision));
+        }
+        while let Some(pending) = self.queue.take() {
+            let before = document.clone();
+            (pending.edit)(&mut document);
+            revision += u64::from(document != before);
+            acknowledgements.push((pending.done, revision));
+        }
+        if acknowledgements.is_empty() {
+            return None;
+        }
+        Some((
+            Job {
+                document,
+                unchanged: None,
+                file,
+                writing: self.queue.begin_write(),
+                gate: self.gate.clone(),
+                #[cfg(test)]
+                test_writer: self.test_writer.clone(),
+            },
+            acknowledgements,
+        ))
+    }
+
     fn push(&mut self, edit: Edit, cx: &mut Context<Self>) -> Task<Result<u64, String>> {
         if self.queue.is_closing() {
             return Task::ready(Err(rejection(Rejected::Closing)));
@@ -107,9 +158,25 @@ impl Writer {
             Err(rejected) => return Task::ready(Err(rejection(rejected))),
             Ok(false) => {}
             Ok(true) => {
+                let gate = self.gate.clone();
                 self.task = Some(cx.spawn(async move |writer, cx| {
-                    while let Some((done, job)) = next_job(&writer, cx) {
-                        let _ = done.send(write(job, cx).await);
+                    while !gate.is_frozen() {
+                        let Some(job) = next_job(&writer, cx) else {
+                            break;
+                        };
+                        let document = job.document.clone();
+                        let result = write(job, cx).await;
+                        if gate.is_frozen() {
+                            break;
+                        }
+                        let _ = writer.update(cx, |writer, cx| {
+                            if let Some((_, done)) = writer.candidate.take() {
+                                let result = result.map(|unchanged| {
+                                    unchanged.unwrap_or_else(|| publish(document, cx))
+                                });
+                                let _ = done.send(result);
+                            }
+                        });
                     }
                 }))
             }
@@ -125,7 +192,7 @@ impl Writer {
 type Done = oneshot::Sender<Result<u64, String>>;
 
 /// Applies the oldest queued change to the current settings.
-fn next_job(writer: &WeakEntity<Writer>, cx: &mut AsyncApp) -> Option<(Done, Job)> {
+fn next_job(writer: &WeakEntity<Writer>, cx: &mut AsyncApp) -> Option<Job> {
     writer
         .update(cx, |writer, cx| {
             let Some(pending) = writer.queue.take() else {
@@ -140,39 +207,53 @@ fn next_job(writer: &WeakEntity<Writer>, cx: &mut AsyncApp) -> Option<(Done, Job
                 document,
                 file: store.file.clone(),
                 writing: writer.queue.begin_write(),
+                gate: writer.gate.clone(),
                 #[cfg(test)]
                 test_writer: writer.test_writer.clone(),
             };
-            Some((pending.done, job))
+            writer.candidate = Some((job.document.clone(), pending.done));
+            Some(job)
         })
         .ok()
         .flatten()
 }
 
 /// Saves `document` off the main thread, then publishes it.
-async fn write(job: Job, cx: &mut AsyncApp) -> Result<u64, String> {
+async fn write(job: Job, cx: &mut AsyncApp) -> Result<Option<u64>, String> {
     if let Some(revision) = job.unchanged {
-        return Ok(revision);
+        return Ok(Some(revision));
     }
-    let value = job.document.clone();
+    let (send, receive) = oneshot::channel();
+    cx.background_executor()
+        .spawn(async move {
+            let gate = job.gate.clone();
+            let Some(_guard) = gate.normal().await else {
+                return;
+            };
+            let _ = send.send(save(job).await);
+        })
+        .detach();
+    receive
+        .await
+        .map_err(|_| "Settings writer closed before saving completed.".to_owned())??;
+    Ok(None)
+}
+
+async fn save(job: Job) -> Result<(), String> {
+    let value = job.document;
     let file = job.file;
     let writing = job.writing;
     #[cfg(test)]
     let test_writer = job.test_writer;
-    cx.background_executor()
-        .spawn(async move {
-            let _writing = writing;
-            #[cfg(test)]
-            if let Some(test_writer) = test_writer {
-                return test_writer(value).await;
-            }
-            if let Some(file) = file {
-                file.save(&value).map_err(|error| error.to_string())?;
-            }
-            Ok::<(), String>(())
-        })
-        .await?;
-    Ok(cx.update(|cx| publish(job.document, cx)))
+    let _writing = writing;
+    #[cfg(test)]
+    if let Some(test_writer) = test_writer {
+        return test_writer(value).await;
+    }
+    if let Some(file) = file {
+        file.save(&value).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn rejection(rejected: Rejected) -> String {
@@ -184,3 +265,6 @@ fn rejection(rejected: Rejected) -> String {
     }
     .into()
 }
+
+#[cfg(test)]
+mod shutdown_tests;

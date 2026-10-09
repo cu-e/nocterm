@@ -5,9 +5,18 @@
 //! changes it. The values live in a small JSON file in the state directory;
 //! without a file (tests, a read-only home) they last for the session.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
-use gpui_kit::{App, AppContext as _, Global, Pixels, px};
+use gpui_kit::{App, Global, Pixels, Task, px};
+use nocterm_core::persist::{self, ShutdownDeadline, WriteGate};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -21,6 +30,11 @@ struct Saved {
 pub struct LayoutMemory {
     saved: Saved,
     file: Option<PathBuf>,
+    gate: WriteGate,
+    revision: Arc<AtomicU64>,
+    writer: Option<Task<()>>,
+    #[cfg(test)]
+    captures: Arc<AtomicU64>,
 }
 
 impl Global for LayoutMemory {}
@@ -33,7 +47,37 @@ impl LayoutMemory {
             .and_then(|file| std::fs::read_to_string(file).ok())
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        cx.set_global(Self { saved, file });
+        cx.set_global(Self {
+            saved,
+            file,
+            ..Self::default()
+        });
+        cx.on_app_quit(|cx| {
+            let memory = cx.global::<Self>();
+            memory.gate.freeze();
+            let saved = memory.saved.clone();
+            let file = memory
+                .file
+                .clone()
+                .filter(|_| memory.revision.load(Ordering::Acquire) > 0);
+            let gate = memory.gate.clone();
+            let executor = cx.background_executor().clone();
+            let deadline = ShutdownDeadline::new(Duration::from_millis(180));
+            async move {
+                let Some(file) = file else { return };
+                let work = executor.spawn(async move {
+                    let _guard = gate.final_write().await;
+                    write(file, saved);
+                });
+                if matches!(
+                    futures::future::select(work, executor.timer(deadline.remaining())).await,
+                    futures::future::Either::Right(_)
+                ) {
+                    tracing::warn!("timed out saving final layout during shutdown");
+                }
+            }
+        })
+        .detach();
     }
 
     /// The remembered size for `key`, if the user ever set one.
@@ -79,24 +123,77 @@ impl LayoutMemory {
 
     /// Writes the file in the background.
     fn save(cx: &mut App) {
-        let memory = cx.global::<Self>();
-        let Some(file) = memory.file.clone() else {
+        let memory = cx.global_mut::<Self>();
+        if memory.file.is_none() {
             return;
-        };
-        let Ok(text) = serde_json::to_string_pretty(&memory.saved) else {
+        }
+        if memory.gate.is_frozen() {
             return;
-        };
-        cx.background_spawn(async move {
-            if let Some(parent) = file.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        }
+        memory.revision.fetch_add(1, Ordering::AcqRel);
+        if memory.writer.is_some() {
+            return;
+        }
+        let gate = memory.gate.clone();
+        let latest = memory.revision.clone();
+        let task = cx.spawn(async move |cx| {
+            loop {
+                if gate.is_frozen() {
+                    return;
+                }
+                let (file, saved, revision) = cx.update(|cx| {
+                    let memory = cx.global::<Self>();
+                    #[cfg(test)]
+                    memory.captures.fetch_add(1, Ordering::Relaxed);
+                    (
+                        memory.file.clone(),
+                        memory.saved.clone(),
+                        latest.load(Ordering::Acquire),
+                    )
+                });
+                let disk_gate = gate.clone();
+                let disk_latest = latest.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let Some(_guard) = disk_gate.normal().await else {
+                            return;
+                        };
+                        if disk_latest.load(Ordering::Acquire) == revision
+                            && let Some(file) = file
+                        {
+                            write(file, saved);
+                        }
+                    })
+                    .await;
+                if gate.is_frozen() {
+                    return;
+                }
+                let again = cx.update(|cx| {
+                    let memory = cx.global_mut::<Self>();
+                    if latest.load(Ordering::Acquire) == revision {
+                        memory.writer = None;
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !again {
+                    return;
+                }
             }
-            let temporary = file.with_extension("json.tmp");
-            if let Err(error) =
-                std::fs::write(&temporary, text).and_then(|()| std::fs::rename(&temporary, &file))
-            {
-                tracing::warn!(%error, file = %file.display(), "layout was not saved");
-            }
-        })
-        .detach();
+        });
+        cx.global_mut::<Self>().writer = Some(task);
     }
 }
+
+fn write(file: PathBuf, saved: Saved) {
+    let result = serde_json::to_string_pretty(&saved)
+        .map_err(|error| error.to_string())
+        .and_then(|text| persist::save_text(&file, &text).map_err(|error| error.to_string()));
+    if let Err(error) = result {
+        tracing::warn!(%error, file = %file.display(), "layout was not saved");
+    }
+}
+
+#[cfg(test)]
+mod tests;

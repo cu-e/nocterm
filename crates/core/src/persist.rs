@@ -14,6 +14,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use toml_edit::{DocumentMut, Item, Table};
 
 pub mod queue;
+mod shutdown;
+
+pub use shutdown::{ShutdownDeadline, WriteGate};
 
 pub use queue::{InFlight, Rejected, WriteQueue, Writing};
 

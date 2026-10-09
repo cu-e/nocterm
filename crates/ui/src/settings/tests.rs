@@ -281,7 +281,14 @@ async fn observers_of_a_section_ignore_changes_to_others(cx: &mut TestAppContext
 async fn quitting_with_queued_writes_does_not_panic(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let file = SettingsFile::new(directory.path().join("settings.toml"));
-    install(SettingsStore::new(SettingsDocument::default(), file), cx);
+    install(
+        SettingsStore::new(SettingsDocument::default(), file.clone()),
+        cx,
+    );
     let _save = copy_on_select(cx);
     cx.quit();
+    assert!(
+        on_disk(&file).copy_on_select,
+        "accepted edits must reach disk during actual GPUI shutdown"
+    );
 }
