@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_terminal::open_session;
-use nocterm_ui::ActiveSettings as _;
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::Workspace;
 
 use super::{FixtureDirectory, FixtureVault, MockTransport, fixture_with_vault};
@@ -72,8 +72,9 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
         let directory = tempfile::tempdir().unwrap();
-        let mut settings = nocterm_settings::Settings::default();
-        settings.vault.prompt_on_startup = true;
+        let mut settings = nocterm_settings::SettingsDocument::default();
+        settings
+            .update::<nocterm_settings::VaultSettings>(|section| section.prompt_on_startup = true);
         let vault_path = directory.path().join("vault.bin");
         let paths = nocterm_core::Paths::rooted_at(directory.path());
         cx.set_global(FixtureDirectory {
@@ -113,7 +114,10 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
                     nocterm_files::register(&mut workspace, window, cx);
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::super::app_menus::build, window, cx);
-                    if cx.settings().vault.prompt_on_startup {
+                    if cx
+                        .setting::<nocterm_settings::VaultSettings>()
+                        .prompt_on_startup
+                    {
                         let pages = vec![nocterm_vault_ui::settings_page()];
                         nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
                     }

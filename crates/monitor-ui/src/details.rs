@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 use nocterm_monitor::{History, MonitorMetric, Snapshot, format};
 use nocterm_settings::MonitorSettings;
-use nocterm_ui::{ActiveSettings as _, IconName};
+use nocterm_ui::{IconName, SettingsExt as _};
 
 use crate::{
     OpenMonitorSettings,
@@ -35,7 +35,7 @@ impl DetailsView {
 impl Render for DetailsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let monitor = self.monitor.read(cx);
-        let settings = &cx.settings().monitor;
+        let settings = cx.setting::<nocterm_settings::MonitorSettings>();
         let shows = |metric| settings.details.contains(&metric);
         let mut body = v_flex().gap_3();
         let title = monitor

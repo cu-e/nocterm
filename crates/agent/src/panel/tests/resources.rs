@@ -48,9 +48,11 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
 #[gpui_kit::test]
 async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     let first = draft(&f, cx);
     first.update(cx, |thread, cx| thread.send("first".into(), cx));
     cx.run_until_parked();
@@ -81,7 +83,9 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.idle_timeout_secs = 2)
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+            settings.sessions.idle_timeout_secs = 2
+        })
     })
     .await
     .unwrap();
@@ -139,9 +143,11 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
 #[gpui_kit::test]
 async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     first.update(cx, |thread, _| thread.name = Some("keep".into()));
@@ -250,9 +256,11 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.max_live = 1))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.sessions.max_live = 1)
+    })
+    .await
+    .unwrap();
     let first = draft(&f, cx);
     first.update(cx, |thread, cx| thread.send("window one".into(), cx));
     cx.run_until_parked();
@@ -331,9 +339,9 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings.ai.sessions.max_live = 1;
-            settings.ai.sessions.idle_timeout_secs = 1;
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+            settings.sessions.max_live = 1;
+            settings.sessions.idle_timeout_secs = 1;
         })
     })
     .await
@@ -724,7 +732,9 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
 async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| settings.ai.sessions.idle_timeout_secs = 2)
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+            settings.sessions.idle_timeout_secs = 2
+        })
     })
     .await
     .unwrap();

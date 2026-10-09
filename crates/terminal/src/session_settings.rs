@@ -226,8 +226,12 @@ mod tests {
         })
         .unwrap();
         cx.read(|cx| {
-            use nocterm_ui::ActiveSettings as _;
-            assert_eq!(cx.settings(), &nocterm_settings::Settings::default());
+            let store = cx.global::<nocterm_ui::SettingsStore>();
+            assert_eq!(
+                store.revision(),
+                0,
+                "applying a session setting saved nothing"
+            );
         });
     }
 

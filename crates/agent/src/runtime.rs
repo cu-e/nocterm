@@ -8,7 +8,7 @@ use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
     ConnectRequest, ToolBridge, acp,
 };
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _, SettingsStore};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _, SettingsStore};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -111,7 +111,9 @@ impl Runtime {
     }
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(services: AgentServices, cx: &mut Context<Self>) -> Self {
-        for warning in nocterm_ai::AgentRegistry::new(&cx.settings().ai).warnings {
+        for warning in
+            nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>()).warnings
+        {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
         let settings = cx.observe_global::<SettingsStore>(|this, cx| {
@@ -119,7 +121,7 @@ impl Runtime {
                 let ids = this.documents.keys().copied().collect::<Vec<_>>();
                 for id in ids { this.capture_and_detach_document(id, cx); }
             }
-            let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
+            let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>());
             for warning in &registry.warnings{tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");}
             let keys: Vec<_> = this
                 .connections
@@ -132,7 +134,7 @@ impl Runtime {
             }
             // Isolation is a security boundary: it applies to running agents
             // at once rather than to the next chat.
-            let isolated = cx.settings().ai.sandbox == nocterm_settings::SandboxMode::Workspace;
+            let isolated = cx.setting::<nocterm_settings::AiSettings>().sandbox == nocterm_settings::SandboxMode::Workspace;
             let keys: Vec<_> = this
                 .connections
                 .iter()
@@ -288,7 +290,7 @@ impl Runtime {
     /// Reads `agent`'s plan limits again, from agents that keep them in their
     /// own files. Others report them along with usage.
     pub(crate) fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        let codex = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
+        let codex = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
             .get(agent)
             .is_some_and(nocterm_ai::usage::is_codex);
         let Some(home) = self.services.codex_home.clone().filter(|_| codex) else {
@@ -393,13 +395,13 @@ impl Runtime {
             return;
         }
         let workdir = cx
-            .settings()
-            .ai
+            .setting::<nocterm_settings::AiSettings>()
             .working_directory
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(|| self.services.workdir.clone());
-        let isolated = cx.settings().ai.sandbox == nocterm_settings::SandboxMode::Workspace;
+        let isolated = cx.setting::<nocterm_settings::AiSettings>().sandbox
+            == nocterm_settings::SandboxMode::Workspace;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         launch.hash(&mut hasher);
         workdir.hash(&mut hasher);
@@ -453,7 +455,10 @@ impl Runtime {
                 &self.services.shared_dirs,
             )
         });
-        let resources = cx.settings().ai.resources.clone();
+        let resources = cx
+            .setting::<nocterm_settings::AiSettings>()
+            .resources
+            .clone();
         let future = cx.background_executor().spawn(async move {
             if private_workdir {
                 nocterm_core::paths::ensure_private_dir(&workdir)

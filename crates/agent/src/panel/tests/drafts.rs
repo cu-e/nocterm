@@ -317,9 +317,11 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
         });
     })
     .unwrap();
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     let value = saved_value(&f, &id);
     assert_eq!(value["draft"], "last pending edit");
@@ -362,9 +364,11 @@ async fn disabling_ai_with_an_untouched_chat_does_not_create_a_history_file(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     assert_eq!(history_file_count(&f), 0);
 }

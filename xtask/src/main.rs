@@ -287,11 +287,49 @@ fn schema_rows(
 }
 
 fn reference<T: JsonSchema>(title: &str, defaults: Value) -> anyhow::Result<String> {
+    let mut text = reference_header(title);
     let schema = serde_json::to_value(schema_for!(T))?;
-    let mut text = format!(
-        "{GENERATED}# {title}\n\n`null` means the value is inherited or unset. Dictionaries are shown as objects.\n\n| Key | Type / choices | Default | Description |\n| --- | --- | --- | --- |\n"
-    );
     schema_rows(&schema, &schema, &defaults, "", &mut text)?;
+    Ok(text)
+}
+
+fn reference_header(title: &str) -> String {
+    format!(
+        "{GENERATED}# {title}\n\n`null` means the value is inherited or unset. Dictionaries are shown as objects.\n\n| Key | Type / choices | Default | Description |\n| --- | --- | --- | --- |\n"
+    )
+}
+
+/// One table of `settings.toml`: its schema and its defaults, under its key.
+fn section<S: nocterm_settings::SettingsSection>() -> anyhow::Result<(&'static str, String)> {
+    let schema = serde_json::to_value(schema_for!(S))?;
+    let defaults = serde_json::to_value(S::default())?;
+    let mut rows = String::new();
+    schema_rows(&schema, &schema, &defaults, S::KEY, &mut rows)?;
+    Ok((S::KEY, rows))
+}
+
+/// Every section the application registers, in key order.
+fn settings_reference() -> anyhow::Result<String> {
+    use nocterm_settings::{
+        AiSettings, Appearance, ExplorerSettings, LocalShellSettings, LoggingOptions,
+        MonitorSettings, SshSettings, TerminalSettings, VaultSettings,
+    };
+    let mut sections = vec![
+        section::<AiSettings>()?,
+        section::<Appearance>()?,
+        section::<ExplorerSettings>()?,
+        section::<LocalShellSettings>()?,
+        section::<LoggingOptions>()?,
+        section::<MonitorSettings>()?,
+        section::<SshSettings>()?,
+        section::<TerminalSettings>()?,
+        section::<VaultSettings>()?,
+    ];
+    sections.sort_by_key(|(key, _)| *key);
+    let mut text = reference_header("Settings");
+    for (_, rows) in sections {
+        text.push_str(&rows);
+    }
     Ok(text)
 }
 
@@ -403,13 +441,7 @@ fn actions(root: &Path) -> anyhow::Result<String> {
 
 fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
     let documents = [
-        (
-            "docs/reference/settings.md",
-            reference::<nocterm_settings::Settings>(
-                "Settings",
-                serde_json::to_value(nocterm_settings::Settings::default())?,
-            )?,
-        ),
+        ("docs/reference/settings.md", settings_reference()?),
         (
             "docs/reference/design-tokens.md",
             reference::<nocterm_design::DesignTokens>(
@@ -488,11 +520,7 @@ mod tests {
     }
     #[test]
     fn settings_reference_resolves_definitions_and_uses_actual_defaults() {
-        let text = reference::<nocterm_settings::Settings>(
-            "Settings",
-            serde_json::to_value(nocterm_settings::Settings::default()).unwrap(),
-        )
-        .unwrap();
+        let text = settings_reference().unwrap();
         assert!(text.contains("`terminal.scrollback_lines`"));
         assert!(text.contains("`10000`"));
         assert!(text.contains("Lines of history kept above the visible screen."));

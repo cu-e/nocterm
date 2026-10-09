@@ -41,8 +41,8 @@ fn submit(
 
 fn set_policy(cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, move |settings| {
-            settings.ai.approval.agent_permissions = policy;
+        cx.update_setting::<nocterm_settings::AiSettings>(move |settings| {
+            settings.approval.agent_permissions = policy;
         })
         .detach()
     });
@@ -314,9 +314,9 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     });
     let mut queued = submit(&f, cx, session, options());
     cx.update(|cx| {
-        nocterm_ui::update_settings(cx, |settings| {
-            settings.ai.enabled = false;
-            settings.ai.approval.agent_permissions = ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+            settings.enabled = false;
+            settings.approval.agent_permissions = ApprovalPolicy::Allow;
         })
     })
     .await

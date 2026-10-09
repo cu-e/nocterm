@@ -15,7 +15,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _, IconName, SettingsStore};
+use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
@@ -272,7 +272,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry = nocterm_ai::AgentRegistry::new(&cx.settings().ai);
+        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>());
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
@@ -280,7 +280,11 @@ impl AgentPanel {
             .last_agent
             .as_ref()
             .filter(known)
-            .or(cx.settings().ai.default_agent.as_ref().filter(known))
+            .or(cx
+                .setting::<nocterm_settings::AiSettings>()
+                .default_agent
+                .as_ref()
+                .filter(known))
             .cloned()
             .or_else(|| registry.iter().next().map(|launch| launch.id.clone()))
     }

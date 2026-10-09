@@ -9,6 +9,8 @@ use std::{collections::BTreeMap, ops::RangeInclusive};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::{SettingsSection, clamp_f32, trim_unset};
+
 /// Terminal font sizes a user may pick, in pixels.
 pub const FONT_SIZE_RANGE: RangeInclusive<f32> = 6.0..=72.0;
 /// Terminal line heights a user may pick, as multiples of the font size.
@@ -23,30 +25,6 @@ pub const KEEPALIVE_RANGE: RangeInclusive<u32> = 0..=3600;
 pub const CARD_GAP_RANGE: RangeInclusive<f32> = 0.0..=24.0;
 /// Corner radii of floating cards a user may pick, in pixels.
 pub const CARD_RADIUS_RANGE: RangeInclusive<f32> = 0.0..=24.0;
-
-/// Everything a user can configure.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct Settings {
-    /// Defaults for optional output-only session recording.
-    pub logging: crate::LoggingOptions,
-    /// How the interface looks.
-    pub appearance: Appearance,
-    /// How terminals look and behave.
-    pub terminal: TerminalSettings,
-    /// How SSH connections are made.
-    pub ssh: SshSettings,
-    /// Local shell launch options; applied when opening the bottom terminal.
-    pub local: ShellSettings,
-    /// Portable credential vault behavior.
-    pub vault: VaultSettings,
-    /// AI agents and what they may do.
-    pub ai: crate::AiSettings,
-    /// The active host's resources in the status bar.
-    pub monitor: crate::MonitorSettings,
-    /// The Explorer: folder statistics and the programs that open files.
-    pub explorer: crate::ExplorerSettings,
-}
 
 /// How the interface looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -270,138 +248,180 @@ impl Default for VaultSettings {
     }
 }
 
-impl Settings {
-    /// Pulls every out-of-range value back into range.
-    ///
-    /// A hand-edited file may hold anything; the rest of the application only
-    /// ever sees settings it can act on.
-    pub fn sanitized(mut self) -> Self {
-        for name in [
-            &mut self.appearance.light_theme,
-            &mut self.appearance.dark_theme,
-        ] {
-            *name = name
-                .take()
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty());
-        }
-        let appearance = &mut self.appearance;
-        appearance.card_gap =
-            clamp(appearance.card_gap, CARD_GAP_RANGE).unwrap_or(Appearance::DEFAULT_CARD_GAP);
-        appearance.card_radius = clamp(appearance.card_radius, CARD_RADIUS_RANGE)
-            .unwrap_or(Appearance::DEFAULT_CARD_RADIUS);
-        let terminal = &mut self.terminal;
-        terminal.font_family = terminal
-            .font_family
-            .take()
-            .map(|family| family.trim().to_owned())
-            .filter(|family| !family.is_empty());
-        terminal.font_size = terminal
-            .font_size
-            .and_then(|size| clamp(size, FONT_SIZE_RANGE));
-        terminal.line_height = terminal
-            .line_height
-            .and_then(|height| clamp(height, LINE_HEIGHT_RANGE));
-        terminal.scrollback_lines = terminal
-            .scrollback_lines
-            .clamp(*SCROLLBACK_RANGE.start(), *SCROLLBACK_RANGE.end());
-        terminal.term = terminal.term.trim().to_owned();
-        if terminal.term.is_empty() {
-            terminal.term = TerminalSettings::default().term;
-        }
+impl SettingsSection for Appearance {
+    const KEY: &'static str = "appearance";
 
-        let ssh = &mut self.ssh;
-        ssh.connect_timeout_secs = ssh
-            .connect_timeout_secs
-            .clamp(*CONNECT_TIMEOUT_RANGE.start(), *CONNECT_TIMEOUT_RANGE.end());
-        ssh.keepalive_interval_secs = ssh
-            .keepalive_interval_secs
-            .clamp(*KEEPALIVE_RANGE.start(), *KEEPALIVE_RANGE.end());
-
-        self.logging.max_file_mib = self.logging.max_file_mib.clamp(1, 1024);
-        if crate::validate_term(&terminal.term).is_err() {
-            terminal.term = TerminalSettings::default().term;
-        }
-        self.vault.auto_lock_minutes = self.vault.auto_lock_minutes.clamp(1, 1440);
-        self.ai.sanitize();
-        self.monitor.sanitize();
-        self.explorer.sanitize();
-        self
+    fn sanitize(&mut self) {
+        trim_unset(&mut self.light_theme);
+        trim_unset(&mut self.dark_theme);
+        self.card_gap = clamp_f32(self.card_gap, CARD_GAP_RANGE).unwrap_or(Self::DEFAULT_CARD_GAP);
+        self.card_radius =
+            clamp_f32(self.card_radius, CARD_RADIUS_RANGE).unwrap_or(Self::DEFAULT_CARD_RADIUS);
     }
 }
 
-/// Clamps a float into `range`; a NaN is dropped rather than propagated.
-fn clamp(value: f32, range: RangeInclusive<f32>) -> Option<f32> {
-    (!value.is_nan()).then(|| value.clamp(*range.start(), *range.end()))
+impl SettingsSection for TerminalSettings {
+    const KEY: &'static str = "terminal";
+
+    fn sanitize(&mut self) {
+        trim_unset(&mut self.font_family);
+        self.font_size = self
+            .font_size
+            .and_then(|size| clamp_f32(size, FONT_SIZE_RANGE));
+        self.line_height = self
+            .line_height
+            .and_then(|height| clamp_f32(height, LINE_HEIGHT_RANGE));
+        self.scrollback_lines = self
+            .scrollback_lines
+            .clamp(*SCROLLBACK_RANGE.start(), *SCROLLBACK_RANGE.end());
+        self.term = self.term.trim().to_owned();
+        if crate::validate_term(&self.term).is_err() {
+            self.term = Self::default().term;
+        }
+    }
+}
+
+impl SettingsSection for SshSettings {
+    const KEY: &'static str = "ssh";
+
+    fn sanitize(&mut self) {
+        self.connect_timeout_secs = self
+            .connect_timeout_secs
+            .clamp(*CONNECT_TIMEOUT_RANGE.start(), *CONNECT_TIMEOUT_RANGE.end());
+        self.keepalive_interval_secs = self
+            .keepalive_interval_secs
+            .clamp(*KEEPALIVE_RANGE.start(), *KEEPALIVE_RANGE.end());
+    }
+}
+
+/// Local shell launch options; applied when opening the bottom terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct LocalShellSettings(pub ShellSettings);
+
+impl std::ops::Deref for LocalShellSettings {
+    type Target = ShellSettings;
+
+    fn deref(&self) -> &ShellSettings {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for LocalShellSettings {
+    fn deref_mut(&mut self) -> &mut ShellSettings {
+        &mut self.0
+    }
+}
+
+impl SettingsSection for LocalShellSettings {
+    const KEY: &'static str = "local";
+}
+
+impl SettingsSection for VaultSettings {
+    const KEY: &'static str = "vault";
+
+    fn sanitize(&mut self) {
+        self.auto_lock_minutes = self.auto_lock_minutes.clamp(1, 1440);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn empty_file_is_the_defaults() {
-        let settings: Settings = toml::from_str("").unwrap();
-        assert_eq!(settings, Settings::default());
+    fn read<S: SettingsSection>(text: &str) -> S {
+        let mut document = crate::SettingsDocument::from_table(toml::from_str(text).unwrap());
+        document.register::<S>();
+        assert!(document.errors().is_empty(), "{:?}", document.errors());
+        document.get::<S>().clone()
     }
 
     #[test]
-    fn partial_file_keeps_the_other_defaults() {
-        let settings: Settings = toml::from_str("[terminal]\ncursor_shape = \"bar\"\n").unwrap();
-
-        assert_eq!(settings.terminal.cursor_shape, CursorShape::Bar);
-        assert_eq!(settings.terminal.scrollback_lines, 10_000);
-        assert_eq!(settings.ssh, SshSettings::default());
+    fn partial_table_keeps_the_other_defaults() {
+        let terminal: TerminalSettings = read("[terminal]\ncursor_shape = \"bar\"\n");
+        assert_eq!(terminal.cursor_shape, CursorShape::Bar);
+        assert_eq!(terminal.scrollback_lines, 10_000);
     }
 
     #[test]
     fn terminal_highlighting_defaults_on_and_explicit_disable_round_trips() {
-        let settings: Settings =
-            toml::from_str("[terminal]\nsemantic_highlighting = false\n").unwrap();
-        assert!(!settings.terminal.semantic_highlighting);
-        assert!(Settings::default().terminal.semantic_highlighting);
-        let saved = toml::to_string(&settings).unwrap();
-        assert_eq!(toml::from_str::<Settings>(&saved).unwrap(), settings);
+        let terminal: TerminalSettings = read("[terminal]\nsemantic_highlighting = false\n");
+        assert!(!terminal.semantic_highlighting);
+        assert!(TerminalSettings::default().semantic_highlighting);
+        let saved = toml::to_string(&terminal).unwrap();
+        assert_eq!(
+            toml::from_str::<TerminalSettings>(&saved).unwrap(),
+            terminal
+        );
     }
 
     #[test]
     fn unknown_keys_are_rejected_by_name() {
-        let error = toml::from_str::<Settings>("[terminal]\nfont_szie = 14\n").unwrap_err();
+        let error = toml::from_str::<TerminalSettings>("font_szie = 14\n").unwrap_err();
         assert!(error.to_string().contains("font_szie"), "{error}");
     }
 
     #[test]
     fn sanitizing_clamps_and_cleans() {
-        let mut settings = Settings::default();
-        settings.terminal.font_size = Some(500.0);
-        settings.terminal.line_height = Some(f32::NAN);
-        settings.terminal.font_family = Some("   ".to_owned());
-        settings.terminal.term = " ".to_owned();
-        settings.ssh.connect_timeout_secs = 0;
-        settings.appearance.card_gap = 100.0;
-        settings.appearance.card_radius = f32::NAN;
+        let mut terminal = TerminalSettings {
+            font_size: Some(500.0),
+            line_height: Some(f32::NAN),
+            font_family: Some("   ".to_owned()),
+            term: " ".to_owned(),
+            ..TerminalSettings::default()
+        };
+        terminal.sanitize();
+        assert_eq!(terminal.font_size, Some(72.0));
+        assert_eq!(terminal.line_height, None);
+        assert_eq!(terminal.font_family, None);
+        assert_eq!(terminal.term, "xterm-256color");
 
-        let settings = settings.sanitized();
+        let mut ssh = SshSettings {
+            connect_timeout_secs: 0,
+            ..SshSettings::default()
+        };
+        ssh.sanitize();
+        assert_eq!(ssh.connect_timeout_secs, 1);
 
-        assert_eq!(settings.appearance.card_gap, 24.0);
-        assert_eq!(settings.appearance.card_radius, 10.0);
-
-        assert_eq!(settings.terminal.font_size, Some(72.0));
-        assert_eq!(settings.terminal.line_height, None);
-        assert_eq!(settings.terminal.font_family, None);
-        assert_eq!(settings.terminal.term, "xterm-256color");
-        assert_eq!(settings.ssh.connect_timeout_secs, 1);
+        let mut appearance = Appearance {
+            card_gap: 100.0,
+            card_radius: f32::NAN,
+            light_theme: Some("  ".into()),
+            dark_theme: Some(" My Dark ".into()),
+            ..Appearance::default()
+        };
+        appearance.sanitize();
+        assert_eq!(appearance.card_gap, 24.0);
+        assert_eq!(appearance.card_radius, 10.0);
+        assert_eq!(appearance.light_theme, None);
+        assert_eq!(appearance.dark_theme.as_deref(), Some("My Dark"));
     }
 
     #[test]
     fn layout_is_floating_unless_classic_is_chosen() {
-        assert_eq!(Settings::default().appearance.layout, UiLayout::Floating);
-        let settings: Settings = toml::from_str("[appearance]\nlayout = \"classic\"\n").unwrap();
-        assert_eq!(settings.appearance.layout, UiLayout::Classic);
+        assert_eq!(Appearance::default().layout, UiLayout::Floating);
+        let appearance: Appearance = read("[appearance]\nlayout = \"classic\"\n");
+        assert_eq!(appearance.layout, UiLayout::Classic);
     }
 
     #[test]
-    fn sanitizing_leaves_valid_settings_alone() {
-        assert_eq!(Settings::default().sanitized(), Settings::default());
+    fn the_local_shell_is_a_plain_table() {
+        let local: LocalShellSettings = read("[local]\nargs = [\"-l\"]\n");
+        assert_eq!(local.args, ["-l"]);
+        assert!(local.integration);
+    }
+
+    #[test]
+    fn sanitizing_leaves_the_defaults_alone() {
+        fn check<S: SettingsSection>() {
+            let mut section = S::default();
+            section.sanitize();
+            assert_eq!(section, S::default(), "{}", S::KEY);
+        }
+        check::<Appearance>();
+        check::<TerminalSettings>();
+        check::<SshSettings>();
+        check::<LocalShellSettings>();
+        check::<VaultSettings>();
     }
 }

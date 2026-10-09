@@ -50,8 +50,10 @@ impl Default for MonitorSettings {
     }
 }
 
-impl MonitorSettings {
-    pub(crate) fn sanitize(&mut self) {
+impl crate::SettingsSection for MonitorSettings {
+    const KEY: &'static str = "monitor";
+
+    fn sanitize(&mut self) {
         let clamp =
             |value: u32, range: RangeInclusive<u32>| value.clamp(*range.start(), *range.end());
         self.interval_secs = clamp(self.interval_secs, MONITOR_INTERVAL_RANGE);
@@ -132,12 +134,11 @@ impl MonitorMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Settings;
+    use crate::SettingsSection as _;
 
     #[test]
     fn defaults_show_cpu_and_memory_and_every_detail() {
-        let settings: Settings = toml::from_str("").unwrap();
-        let monitor = settings.monitor;
+        let monitor: MonitorSettings = toml::from_str("").unwrap();
         assert_eq!(
             monitor.status_bar,
             [MonitorMetric::Cpu, MonitorMetric::Memory]
@@ -151,11 +152,10 @@ mod tests {
 
     #[test]
     fn metrics_are_read_by_name_in_order() {
-        let settings: Settings =
-            toml::from_str("[monitor]\nstatus_bar = [\"network\", \"disk_io\", \"cpu\"]\n")
-                .unwrap();
+        let monitor: MonitorSettings =
+            toml::from_str("status_bar = [\"network\", \"disk_io\", \"cpu\"]\n").unwrap();
         assert_eq!(
-            settings.monitor.status_bar,
+            monitor.status_bar,
             [
                 MonitorMetric::Network,
                 MonitorMetric::DiskIo,
@@ -166,14 +166,15 @@ mod tests {
 
     #[test]
     fn sanitizing_clamps_intervals_and_drops_repeats() {
-        let mut settings = Settings::default();
-        settings.monitor.interval_secs = 0;
-        settings.monitor.detail_interval_secs = 1000;
-        settings.monitor.history_points = 1;
-        settings.monitor.status_bar =
-            vec![MonitorMetric::Cpu, MonitorMetric::Swap, MonitorMetric::Cpu];
+        let mut monitor = MonitorSettings {
+            interval_secs: 0,
+            detail_interval_secs: 1000,
+            history_points: 1,
+            status_bar: vec![MonitorMetric::Cpu, MonitorMetric::Swap, MonitorMetric::Cpu],
+            ..MonitorSettings::default()
+        };
 
-        let monitor = settings.sanitized().monitor;
+        monitor.sanitize();
 
         assert_eq!(monitor.interval_secs, 1);
         assert_eq!(monitor.detail_interval_secs, 60);

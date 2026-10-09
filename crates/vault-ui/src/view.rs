@@ -5,7 +5,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_session::Secret;
-use nocterm_ui::{ActiveSettings as _, SettingsStore, edit_settings};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vault::{CredentialInfo, DeviceCapability, VaultFuture, VaultService};
 use nocterm_workspace::SettingsPage;
 use std::sync::Arc;
@@ -64,8 +64,11 @@ impl VaultView {
                 .placeholder("Repeat master password")
         });
         let auto_lock = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(cx.settings().vault.auto_lock_minutes.to_string())
+            InputState::new(window, cx).default_value(
+                cx.setting::<nocterm_settings::VaultSettings>()
+                    .auto_lock_minutes
+                    .to_string(),
+            )
         });
         let subscriptions = vec![
             cx.subscribe_in(&password, window, |this, _, event, window, cx| {
@@ -82,7 +85,10 @@ impl VaultView {
                 this.status_changed(window, cx);
             }),
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-                let minutes = cx.settings().vault.auto_lock_minutes.to_string();
+                let minutes = cx
+                    .setting::<nocterm_settings::VaultSettings>()
+                    .auto_lock_minutes
+                    .to_string();
                 let focused = this.auto_lock.read(cx).focus_handle(cx).is_focused(window);
                 if !focused && this.auto_lock.read(cx).value() != minutes.as_str() {
                     this.auto_lock
@@ -253,9 +259,13 @@ impl VaultView {
         match text.parse::<u32>() {
             Ok(minutes) if (1..=1440).contains(&minutes) => {
                 self.auto_lock_error = None;
-                if minutes != cx.settings().vault.auto_lock_minutes {
-                    edit_settings(cx, move |settings| {
-                        settings.vault.auto_lock_minutes = minutes
+                if minutes
+                    != cx
+                        .setting::<nocterm_settings::VaultSettings>()
+                        .auto_lock_minutes
+                {
+                    cx.update_setting::<nocterm_settings::VaultSettings>(move |settings| {
+                        settings.auto_lock_minutes = minutes
                     })
                     .detach();
                 }

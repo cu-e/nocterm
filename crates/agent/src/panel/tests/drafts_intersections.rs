@@ -55,9 +55,11 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     type_draft(&f, "draft before disabling AI", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(f.panel.read(cx).threads.is_empty());

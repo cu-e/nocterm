@@ -26,9 +26,9 @@ use gpui_kit::{
 };
 use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
-use nocterm_settings::{Settings, SettingsFile};
+use nocterm_settings::{SettingsDocument, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
-use nocterm_ui::{ActiveSettings as _, SettingsStore};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_workspace::{
     DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
 };
@@ -148,6 +148,7 @@ fn main() -> anyhow::Result<()> {
                 tracing::error!(%error, "could not open the window");
                 cx.quit();
             }
+            report_settings_errors(cx);
             cx.activate(true);
         });
     Ok(())
@@ -187,7 +188,11 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
             nocterm_monitor_ui::register(&mut workspace, window, cx);
             nocterm_agent::register(&mut workspace, window, cx);
             workspace.set_menu_builder(app_menus::build, window, cx);
-            if vault_ready && cx.settings().vault.prompt_on_startup {
+            if vault_ready
+                && cx
+                    .setting::<nocterm_settings::VaultSettings>()
+                    .prompt_on_startup
+            {
                 let pages = vec![nocterm_vault_ui::settings_page()];
                 nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
             }
@@ -255,6 +260,14 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
     })
 }
 
+/// Logs the sections of the settings file that could not be read. Every
+/// section is registered once the window's features are.
+fn report_settings_errors(cx: &App) {
+    for error in cx.global::<SettingsStore>().section_errors() {
+        tracing::error!(%error, "a settings section is invalid; using its defaults");
+    }
+}
+
 /// The user's settings. A broken section runs on its defaults and is shown on
 /// the settings page; saving leaves it in the file. A file that is not TOML
 /// at all is replaced by the defaults for this run only, so nothing in it is
@@ -262,15 +275,10 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
 fn load_settings(paths: &Paths) -> SettingsStore {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(loaded) => {
-            for error in &loaded.errors {
-                tracing::error!(%error, "a settings section is invalid; using its defaults");
-            }
-            SettingsStore::new(loaded.settings, file).with_errors(loaded.errors)
-        }
+        Ok(document) => SettingsStore::new(document, file),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
-            SettingsStore::in_memory(Settings::default())
+            SettingsStore::in_memory(SettingsDocument::default())
         }
     }
 }

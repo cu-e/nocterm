@@ -20,8 +20,8 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_settings::{ExplorerSettings, INDEXING_ENTRIES_RANGE, OpenRule, Opener, Settings};
-use nocterm_ui::{ActiveSettings as _, IconName, SettingsStore, edit_settings, form};
+use nocterm_settings::{ExplorerSettings, INDEXING_ENTRIES_RANGE, OpenRule, Opener};
+use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, form};
 use nocterm_workspace::SettingsPage;
 
 /// How long typing must pause before a field saves.
@@ -185,7 +185,7 @@ pub struct ExplorerPage {
 }
 
 fn explorer(cx: &App) -> ExplorerSettings {
-    cx.settings().explorer.clone()
+    cx.setting::<ExplorerSettings>().clone()
 }
 
 impl ExplorerPage {
@@ -299,8 +299,8 @@ impl ExplorerPage {
             Ok(()) => {
                 field.error = None;
                 if candidate != explorer(cx) {
-                    edit_settings(cx, move |settings| {
-                        let _ = key.write(&mut settings.explorer, &value);
+                    cx.update_setting::<ExplorerSettings>(move |settings| {
+                        let _ = key.write(settings, &value);
                     })
                     .detach();
                 }
@@ -367,9 +367,9 @@ impl ExplorerPage {
                             .icon(IconName::Trash)
                             .tooltip("Remove this file type")
                             .on_click(cx.listener(move |_, _, _, cx| {
-                                edit_settings(cx, move |settings| {
-                                    if ix < settings.explorer.open.rules.len() {
-                                        settings.explorer.open.rules.remove(ix);
+                                cx.update_setting::<ExplorerSettings>(move |settings| {
+                                    if ix < settings.open.rules.len() {
+                                        settings.open.rules.remove(ix);
                                     }
                                 })
                                 .detach();
@@ -388,14 +388,15 @@ impl ExplorerPage {
 fn switch(
     id: &'static str,
     checked: bool,
-    edit: fn(&mut Settings, bool),
+    edit: fn(&mut ExplorerSettings, bool),
     cx: &mut Context<ExplorerPage>,
 ) -> Switch {
     Switch::new(id)
         .checked(checked)
         .on_click(cx.listener(move |_, checked: &bool, _, cx| {
             let checked = *checked;
-            edit_settings(cx, move |settings| edit(settings, checked)).detach();
+            cx.update_setting::<ExplorerSettings>(move |explorer| edit(explorer, checked))
+                .detach();
             cx.notify();
         }))
 }
@@ -418,8 +419,8 @@ fn presets(
                 .label(label)
                 .selected(current == program)
                 .on_click(cx.listener(move |_, _, _, cx| {
-                    edit_settings(cx, move |settings| {
-                        let open = &mut settings.explorer.open;
+                    cx.update_setting::<ExplorerSettings>(move |settings| {
+                        let open = &mut settings.open;
                         let opener = match side {
                             Side::Local => &mut open.local,
                             Side::Remote => &mut open.remote,
@@ -446,7 +447,7 @@ impl Render for ExplorerPage {
                 switch(
                     "explorer-index-local",
                     indexing.local,
-                    |s, on| s.explorer.indexing.local = on,
+                    |s, on| s.indexing.local = on,
                     cx,
                 ),
                 cx,
@@ -457,7 +458,7 @@ impl Render for ExplorerPage {
                 switch(
                     "explorer-index-remote",
                     indexing.remote,
-                    |s, on| s.explorer.indexing.remote = on,
+                    |s, on| s.indexing.remote = on,
                     cx,
                 ),
                 cx,
@@ -468,7 +469,7 @@ impl Render for ExplorerPage {
                 switch(
                     "explorer-skip-home",
                     indexing.skip_home,
-                    |s, on| s.explorer.indexing.skip_home = on,
+                    |s, on| s.indexing.skip_home = on,
                     cx,
                 ),
                 cx,
@@ -479,7 +480,7 @@ impl Render for ExplorerPage {
                 switch(
                     "explorer-skip-root",
                     indexing.skip_root,
-                    |s, on| s.explorer.indexing.skip_root = on,
+                    |s, on| s.indexing.skip_root = on,
                     cx,
                 ),
                 cx,
@@ -560,8 +561,8 @@ impl Render for ExplorerPage {
                         .icon(IconName::Plus)
                         .label("Add file type")
                         .on_click(cx.listener(|_, _, _, cx| {
-                            edit_settings(cx, |settings| {
-                                settings.explorer.open.rules.push(OpenRule::default());
+                            cx.update_setting::<ExplorerSettings>(|settings| {
+                                settings.open.rules.push(OpenRule::default());
                             })
                             .detach();
                         })),

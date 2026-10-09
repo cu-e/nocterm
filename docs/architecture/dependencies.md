@@ -10,7 +10,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-ai`, `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | ACP agent runtime, chat panel and terminal context. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
-| `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
+| `nocterm-connections` | feature | `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-containers` | domain | `nocterm-session` | Containers on a host: listing, actions, logs and shells through the docker or podman CLI. |
 | `nocterm-containers-ui` | feature | `nocterm-containers`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's containers in the sidebar, with their logs and shells in tabs. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
@@ -77,6 +77,7 @@ graph TD
     nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_core
     nocterm_connections --> nocterm_session
+    nocterm_connections --> nocterm_settings
     nocterm_connections --> nocterm_ui
     nocterm_connections --> nocterm_workspace
     nocterm_containers --> nocterm_session

@@ -100,6 +100,14 @@ impl Default for LoggingOptions {
         }
     }
 }
+impl crate::SettingsSection for LoggingOptions {
+    const KEY: &'static str = "logging";
+
+    fn sanitize(&mut self) {
+        self.max_file_mib = self.max_file_mib.clamp(1, 1024);
+    }
+}
+
 impl LoggingOptions {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=1024).contains(&self.max_file_mib) {

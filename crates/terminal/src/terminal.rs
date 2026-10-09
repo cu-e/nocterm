@@ -15,8 +15,10 @@ use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
     SessionError, Transport,
 };
-use nocterm_settings::{CursorShape, TerminalSettings};
-use nocterm_ui::{ActiveSettings as _, SettingsStore};
+use nocterm_settings::{
+    CursorShape, LocalShellSettings, LoggingOptions, SshSettings, TerminalSettings,
+};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
@@ -144,9 +146,11 @@ impl Terminal {
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let options = emulator_options(&cx.settings().terminal);
+        let options = emulator_options(cx.setting::<nocterm_settings::TerminalSettings>());
         let mut this = Self {
-            codec: crate::codec::TextCodec::new(cx.settings().terminal.charset),
+            codec: crate::codec::TextCodec::new(
+                cx.setting::<nocterm_settings::TerminalSettings>().charset,
+            ),
             input_error: RefCell::default(),
             text_error: None,
             recording: None,
@@ -175,7 +179,7 @@ impl Terminal {
             _pump: None,
             sync_timer: None,
             _settings: cx.observe_global::<SettingsStore>(|this, cx| {
-                let options = emulator_options(&cx.settings().terminal);
+                let options = emulator_options(cx.setting::<nocterm_settings::TerminalSettings>());
                 this.emulator.set_options(options);
                 this.refresh_find(cx);
                 this.emit_output(cx);
@@ -243,19 +247,18 @@ impl Terminal {
             );
             return;
         }
-        let settings = cx.settings();
         self.codec = crate::codec::TextCodec::new(
             self.spec
                 .options
                 .charset
-                .unwrap_or(settings.terminal.charset),
+                .unwrap_or(cx.setting::<TerminalSettings>().charset),
         );
         self.recording_options = self
             .spec
             .options
             .logging
             .clone()
-            .unwrap_or_else(|| settings.logging.clone());
+            .unwrap_or_else(|| cx.setting::<LoggingOptions>().clone());
         if self.local_transport.is_some() {
             self.recording_options.auto_start = false;
         }
@@ -265,12 +268,12 @@ impl Terminal {
             self.spec
                 .launch
                 .clone()
-                .unwrap_or_else(|| shell_launch(&settings.local))
+                .unwrap_or_else(|| shell_launch(cx.setting::<LocalShellSettings>()))
         } else {
             self.spec
                 .launch
                 .clone()
-                .unwrap_or_else(|| shell_launch(&settings.ssh.launch))
+                .unwrap_or_else(|| shell_launch(&cx.setting::<SshSettings>().launch))
         };
         self.shell_program = launch.program.clone().unwrap_or_else(|| {
             if self.local {
@@ -298,14 +301,14 @@ impl Terminal {
             );
             return;
         };
-        let settings = cx.settings();
+        let ssh = cx.setting::<SshSettings>().clone();
         let request = ConnectRequest {
             proxy: self
                 .spec
                 .options
                 .proxy
                 .clone()
-                .unwrap_or_else(|| settings.ssh.proxy.clone()),
+                .unwrap_or_else(|| ssh.proxy.clone()),
             launch,
             target: self.spec.target.clone(),
             auth: self.spec.auth.clone(),
@@ -314,10 +317,10 @@ impl Terminal {
                 .options
                 .term
                 .clone()
-                .unwrap_or_else(|| settings.terminal.term.clone()),
+                .unwrap_or_else(|| cx.setting::<TerminalSettings>().term.clone()),
             size: pty_size(self.emulator.size()),
-            connect_timeout: Duration::from_secs(settings.ssh.connect_timeout_secs.into()),
-            keepalive_interval: Some(settings.ssh.keepalive_interval_secs)
+            connect_timeout: Duration::from_secs(ssh.connect_timeout_secs.into()),
+            keepalive_interval: Some(ssh.keepalive_interval_secs)
                 .filter(|secs| *secs > 0)
                 .map(|secs| Duration::from_secs(secs.into())),
         };
@@ -432,7 +435,9 @@ impl Terminal {
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
                     if text.len() <= 1024 * 1024
-                        && cx.settings().terminal.clipboard_write
+                        && cx
+                            .setting::<nocterm_settings::TerminalSettings>()
+                            .clipboard_write
                             == nocterm_settings::ClipboardWritePolicy::FocusedTerminal
                     {
                         cx.emit(TerminalEvent::ClipboardWrite(text));

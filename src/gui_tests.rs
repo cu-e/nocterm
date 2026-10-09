@@ -12,7 +12,7 @@ use nocterm_session::{
     SessionDriver, Transport,
 };
 use nocterm_terminal::{TerminalView, open_session};
-use nocterm_ui::ActiveSettings as _;
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{SessionSpec, Workspace};
 
 mod menu_tabs;
@@ -81,8 +81,10 @@ fn fixture_with_vault(
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
         let directory = tempfile::tempdir().unwrap();
-        let mut settings = nocterm_settings::Settings::default();
-        settings.local.cwd = Some(directory.path().to_string_lossy().into_owned());
+        let mut settings = nocterm_settings::SettingsDocument::default();
+        settings.update::<nocterm_settings::LocalShellSettings>(|section| {
+            section.cwd = Some(directory.path().to_string_lossy().into_owned())
+        });
         let vault_path = directory.path().join("vault.bin");
         let paths = nocterm_core::Paths::rooted_at(directory.path());
         cx.set_global(FixtureDirectory {
@@ -135,7 +137,11 @@ fn fixture_with_vault(
                     nocterm_monitor_ui::register(&mut workspace, window, cx);
                     nocterm_agent::register(&mut workspace, window, cx);
                     workspace.set_menu_builder(super::app_menus::build, window, cx);
-                    if vault_ready && cx.settings().vault.prompt_on_startup {
+                    if vault_ready
+                        && cx
+                            .setting::<nocterm_settings::VaultSettings>()
+                            .prompt_on_startup
+                    {
                         let pages = vec![nocterm_vault_ui::settings_page()];
                         nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
                     }
@@ -410,7 +416,7 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
 fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_ui::update_settings;
+    use nocterm_ui::SettingsExt as _;
     let (window, workspace, _, _) = fixture(cx);
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
@@ -432,7 +438,8 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
             .find_item::<nocterm_settings_ui::SettingsView>()
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
-        update_settings(cx, |settings| settings.ai.enabled = false).detach();
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+            .detach();
         window.render_frame(cx);
     })
     .unwrap();

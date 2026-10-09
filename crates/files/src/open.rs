@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 use nocterm_session::fs::path;
 use nocterm_settings::{OpenSettings, Opener};
-use nocterm_ui::ActiveSettings as _;
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::Workspace;
 use std::{
     path::Path,
@@ -20,7 +20,9 @@ use crate::operations::FileTarget;
 /// The user's opener settings; the defaults where none are installed.
 fn settings(cx: &App) -> OpenSettings {
     if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.settings().explorer.open.clone()
+        cx.setting::<nocterm_settings::ExplorerSettings>()
+            .open
+            .clone()
     } else {
         OpenSettings::default()
     }

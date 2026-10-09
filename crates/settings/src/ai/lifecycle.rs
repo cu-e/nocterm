@@ -79,38 +79,42 @@ impl AgentResourceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Settings, SettingsFile};
+    use crate::{AiSettings, SettingsFile};
     #[test]
     fn global_admission_and_memory_limits_are_bounded_and_round_trip() {
-        let mut settings = Settings::default();
-        settings.ai.sessions = AgentSessionSettings {
-            max_live: 0,
-            max_idle: usize::MAX,
-            idle_timeout_secs: 0,
-        };
-        settings.ai.resources = AgentResourceSettings {
-            memory_high_mb: u64::MAX,
-            memory_max_mb: 0,
-            memory_swap_max_mb: u64::MAX,
-            tasks_max: 0,
-        };
-        let settings = settings.sanitized();
+        let dir = tempfile::tempdir().unwrap();
+        let file = SettingsFile::new(dir.path().join("settings.toml"));
+        let mut document = file.load().unwrap();
+        document.update::<AiSettings>(|ai| {
+            ai.sessions = AgentSessionSettings {
+                max_live: 0,
+                max_idle: usize::MAX,
+                idle_timeout_secs: 0,
+            };
+            ai.resources = AgentResourceSettings {
+                memory_high_mb: u64::MAX,
+                memory_max_mb: 0,
+                memory_swap_max_mb: u64::MAX,
+                tasks_max: 0,
+            };
+        });
+        let ai = document.get::<AiSettings>();
         assert_eq!(
-            settings.ai.sessions,
+            ai.sessions,
             AgentSessionSettings {
                 max_live: 1,
                 max_idle: 1,
                 idle_timeout_secs: 1
             }
         );
-        assert_eq!(settings.ai.resources.memory_high_mb, 64);
-        assert_eq!(settings.ai.resources.memory_max_mb, 64);
-        assert_eq!(settings.ai.resources.tasks_max, 16);
-        assert!(settings.ai.resources.validate().is_ok());
-        let dir = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(dir.path().join("settings.toml"));
-        file.save(&settings).unwrap();
-        assert_eq!(file.load().unwrap().settings, settings);
+        assert_eq!(ai.resources.memory_high_mb, 64);
+        assert_eq!(ai.resources.memory_max_mb, 64);
+        assert_eq!(ai.resources.tasks_max, 16);
+        assert!(ai.resources.validate().is_ok());
+        file.save(&document).unwrap();
+        let mut loaded = file.load().unwrap();
+        loaded.register::<AiSettings>();
+        assert_eq!(loaded, document);
     }
     #[test]
     fn unsanitized_process_limits_fail_validation() {

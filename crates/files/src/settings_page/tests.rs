@@ -30,7 +30,7 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Settings::default()),
+            SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
             cx,
         );
         ExplorerPage::new(window, cx)
@@ -42,7 +42,7 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
     });
     window.run_until_parked();
     window.update(|window, cx| {
-        let explorer = &cx.settings().explorer;
+        let explorer = cx.setting::<nocterm_settings::ExplorerSettings>();
         assert_eq!(explorer.open.remote.program, "nvim");
         assert_eq!(explorer.open.rules.len(), 1);
         assert!(page.read(cx).fields.contains_key(&Key::Extensions(0)));
@@ -51,7 +51,12 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
     });
     window.run_until_parked();
     window.update(|_, cx| {
-        assert!(cx.settings().explorer.open.rules.is_empty());
+        assert!(
+            cx.setting::<nocterm_settings::ExplorerSettings>()
+                .open
+                .rules
+                .is_empty()
+        );
         assert!(!page.read(cx).fields.contains_key(&Key::Extensions(0)));
         assert_eq!(page.read(cx).rules, 0);
     });

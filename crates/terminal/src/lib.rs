@@ -164,6 +164,9 @@ pub fn open_program(
 
 /// Installs the transport terminals open their sessions with.
 pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
+    nocterm_ui::register_setting::<nocterm_settings::LoggingOptions>(cx);
+    nocterm_ui::register_setting::<nocterm_settings::SshSettings>(cx);
+    nocterm_ui::register_setting::<nocterm_settings::LocalShellSettings>(cx);
     // Keep inherited focus traversal and native Copy shortcuts off the screen.
     // Target only native Copy so explicit terminal actions retain precedence.
     cx.bind_keys([

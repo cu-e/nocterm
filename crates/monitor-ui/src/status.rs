@@ -13,7 +13,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_monitor::{MonitorMetric, Snapshot, format};
-use nocterm_ui::{ActiveSettings as _, IconName};
+use nocterm_ui::{IconName, SettingsExt as _};
 
 use crate::{
     details::DetailsView,
@@ -94,8 +94,7 @@ fn summary(snapshot: Option<&Snapshot>, stale: bool, cx: &App) -> AnyElement {
         .text_xs()
         .when(stale, |row| row.opacity(0.6))
         .children(
-            cx.settings()
-                .monitor
+            cx.setting::<nocterm_settings::MonitorSettings>()
                 .status_bar
                 .iter()
                 .map(|metric| item(*metric, snapshot, muted, cx)),

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, WeakEntity};
 use nocterm_ai::{BridgeCall, TerminalCall};
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::{TerminalStatus, TextRequest};
 
 use super::{AgentThread, SignInWait};
@@ -33,10 +33,10 @@ impl AgentThread {
             let _ = call.respond.send(Err(error));
             return;
         }
-        if self
-            .grants
-            .requires_approval(&call.call, &cx.settings().ai.approval)
-            || self.unsafe_live_input(&call.call, cx)
+        if self.grants.requires_approval(
+            &call.call,
+            &cx.setting::<nocterm_settings::AiSettings>().approval,
+        ) || self.unsafe_live_input(&call.call, cx)
         {
             self.approval_generation = self.approval_generation.wrapping_add(1);
             self.tools.push(call);
@@ -270,7 +270,11 @@ impl AgentThread {
         tail: nocterm_workspace::TerminalText,
         cx: &App,
     ) -> serde_json::Value {
-        let text = if cx.settings().ai.approval.redact_secrets {
+        let text = if cx
+            .setting::<nocterm_settings::AiSettings>()
+            .approval
+            .redact_secrets
+        {
             nocterm_ai::redact::redact(&tail.text)
         } else {
             tail.text

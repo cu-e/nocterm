@@ -239,8 +239,8 @@ fn xterm_negotiation_disambiguates_modified_keys_and_restores_legacy(cx: &mut Te
 fn a_rejected_text_commit_does_not_send_a_release(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.terminal.charset = nocterm_settings::Charset::Windows1251
+        cx.update_setting::<nocterm_settings::TerminalSettings>(|settings| {
+            settings.charset = nocterm_settings::Charset::Windows1251
         })
         .detach()
     });

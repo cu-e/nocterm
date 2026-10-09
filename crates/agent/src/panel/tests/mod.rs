@@ -10,6 +10,7 @@ use nocterm_ai::{
     BridgeRegistration, ConnectRequest, ToolBridge, acp,
 };
 
+use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{
     Item, ItemEvent, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
     Workspace,

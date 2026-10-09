@@ -5,7 +5,7 @@ use crate::{
     thread::{AgentThread, Attachment},
 };
 use gpui_kit::{AppContext as _, Context, Entity, Focusable as _, Window};
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::time::Duration;
 impl AgentPanel {
     pub(super) fn reset_chat_view(&mut self, cx: &mut Context<Self>) {
@@ -63,9 +63,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(_launch) = nocterm_ai::AgentRegistry::new(&cx.settings().ai)
-            .get(&id)
-            .cloned()
+        let Some(_launch) =
+            nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
+                .get(&id)
+                .cloned()
         else {
             return;
         };

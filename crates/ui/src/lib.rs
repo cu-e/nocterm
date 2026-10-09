@@ -2,7 +2,7 @@
 //!
 //! Design tokens (`nocterm-design`) and user settings (`nocterm-settings`)
 //! know nothing about GPUI. This crate makes them application globals that
-//! every view reads ([`ActiveDesign`], [`ActiveSettings`]), and projects them
+//! every view reads ([`ActiveDesign`], [`SettingsExt`]), and projects them
 //! onto the component library's theme, so standard components follow the
 //! tokens without any view repeating a colour or a size.
 
@@ -26,7 +26,7 @@ pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
 pub use layout::LayoutMemory;
-pub use settings::{ActiveSettings, SettingsStore, edit_settings, save_settings, update_settings};
+pub use settings::{SettingsExt, SettingsStore, edit_settings, register_setting};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
 pub use themes::{ActiveThemes, Themes, init_themes, reload_themes};
@@ -47,6 +47,9 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) {
     cx.set_global(Design::new(tokens));
     cx.set_global(settings);
     settings::init(cx);
+    register_setting::<nocterm_settings::Appearance>(cx);
+    register_setting::<nocterm_settings::TerminalSettings>(cx);
+    register_setting::<nocterm_settings::AiSettings>(cx);
     apply_theme(cx);
 
     cx.observe_global::<Design>(apply_theme).detach();

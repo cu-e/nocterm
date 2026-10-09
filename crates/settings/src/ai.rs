@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::trim_unset;
 pub(crate) mod lifecycle;
 use lifecycle::{AgentResourceSettings, AgentSessionSettings};
 
@@ -141,11 +143,13 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
-impl AiSettings {
+impl crate::SettingsSection for AiSettings {
+    const KEY: &'static str = "ai";
+
     /// Trims text values; an empty one counts as unset. Agent entries are kept
     /// as written: the registry skips the ones it cannot start, and the
     /// settings page explains why.
-    pub(crate) fn sanitize(&mut self) {
+    fn sanitize(&mut self) {
         self.sessions.sanitize();
         self.resources.sanitize();
         trim_unset(&mut self.default_agent);
@@ -157,18 +161,15 @@ impl AiSettings {
     }
 }
 
-fn trim_unset(value: &mut Option<String>) {
-    *value = value
-        .take()
-        .map(|text| text.trim().to_owned())
-        .filter(|text| !text.is_empty());
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::Settings;
-
     use super::*;
+    use crate::SettingsSection as _;
+
+    fn read(text: &str) -> AiSettings {
+        let table: toml::Table = toml::from_str(text).unwrap();
+        table["ai"].clone().try_into().unwrap()
+    }
 
     #[test]
     fn defaults_enable_ai_and_ask_before_writing() {
@@ -181,20 +182,17 @@ mod tests {
         assert_eq!(ai.approval.terminal_write, ApprovalPolicy::Ask);
         assert!(ai.approval.redact_secrets);
         assert!(ai.agents.is_empty());
-        assert_eq!(Settings::default().ai, ai);
     }
 
     #[test]
     fn a_partial_table_keeps_the_other_defaults() {
-        let settings: Settings =
-            toml::from_str("[ai]\nenabled = false\n[ai.approval]\nterminal_write = \"allow\"\n")
-                .unwrap();
+        let ai = read("[ai]\nenabled = false\n[ai.approval]\nterminal_write = \"allow\"\n");
 
-        assert!(!settings.ai.enabled);
-        assert_eq!(settings.ai.approval.terminal_write, ApprovalPolicy::Allow);
-        assert_eq!(settings.ai.approval.terminal_read, ApprovalPolicy::Allow);
-        assert_eq!(settings.ai.approval.agent_permissions, ApprovalPolicy::Ask);
-        assert!(settings.ai.approval.redact_secrets);
+        assert!(!ai.enabled);
+        assert_eq!(ai.approval.terminal_write, ApprovalPolicy::Allow);
+        assert_eq!(ai.approval.terminal_read, ApprovalPolicy::Allow);
+        assert_eq!(ai.approval.agent_permissions, ApprovalPolicy::Ask);
+        assert!(ai.approval.redact_secrets);
     }
 
     #[test]
@@ -202,14 +200,14 @@ mod tests {
         for agent_permissions in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
             for terminal_read in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
                 for terminal_write in [ApprovalPolicy::Ask, ApprovalPolicy::Allow] {
-                    let mut settings = Settings::default();
-                    settings.ai.approval.agent_permissions = agent_permissions;
-                    settings.ai.approval.terminal_read = terminal_read;
-                    settings.ai.approval.terminal_write = terminal_write;
-                    let encoded = toml::to_string(&settings).unwrap();
+                    let mut ai = AiSettings::default();
+                    ai.approval.agent_permissions = agent_permissions;
+                    ai.approval.terminal_read = terminal_read;
+                    ai.approval.terminal_write = terminal_write;
+                    let encoded = toml::to_string(&ai).unwrap();
                     assert_eq!(
-                        toml::from_str::<Settings>(&encoded).unwrap().ai.approval,
-                        settings.ai.approval
+                        toml::from_str::<AiSettings>(&encoded).unwrap().approval,
+                        ai.approval
                     );
                 }
             }
@@ -218,35 +216,35 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_rejected_by_name() {
-        let error = toml::from_str::<Settings>("[ai]\nenabeld = true\n").unwrap_err();
+        let error = toml::from_str::<AiSettings>("enabeld = true\n").unwrap_err();
         assert!(error.to_string().contains("enabeld"), "{error}");
-        let error =
-            toml::from_str::<Settings>("[ai.agents.mine]\ncomand = \"mine\"\n").unwrap_err();
+        let error = toml::from_str::<AiSettings>("[agents.mine]\ncomand = \"mine\"\n").unwrap_err();
         assert!(error.to_string().contains("comand"), "{error}");
     }
 
     #[test]
     fn agents_are_read_by_id() {
-        let settings: Settings = toml::from_str(
+        let ai = read(
             "[ai.agents.mine]\ncommand = \"/opt/mine\"\nargs = [\"acp\"]\ninherit_env = [\"MINE_KEY\"]\n[ai.agents.mine.env]\nMODE = \"fast\"\n[ai.agents.hermes]\nenabled = false\n",
-        )
-        .unwrap();
+        );
 
-        let mine = &settings.ai.agents["mine"];
+        let mine = &ai.agents["mine"];
         assert!(mine.enabled);
         assert_eq!(mine.command.as_deref(), Some("/opt/mine"));
         assert_eq!(mine.args.as_deref(), Some(&["acp".to_owned()][..]));
         assert_eq!(mine.inherit_env, ["MINE_KEY"]);
         assert_eq!(mine.env["MODE"], "fast");
-        assert!(!settings.ai.agents["hermes"].enabled);
+        assert!(!ai.agents["hermes"].enabled);
     }
 
     #[test]
     fn sanitizing_treats_blank_text_as_unset() {
-        let mut settings = Settings::default();
-        settings.ai.default_agent = Some("  ".to_owned());
-        settings.ai.working_directory = Some(" /work ".to_owned());
-        settings.ai.agents.insert(
+        let mut ai = AiSettings {
+            default_agent: Some("  ".to_owned()),
+            working_directory: Some(" /work ".to_owned()),
+            ..AiSettings::default()
+        };
+        ai.agents.insert(
             "mine".to_owned(),
             AgentServerSettings {
                 name: Some(" ".to_owned()),
@@ -255,11 +253,11 @@ mod tests {
             },
         );
 
-        let settings = settings.sanitized();
+        ai.sanitize();
 
-        assert_eq!(settings.ai.default_agent, None);
-        assert_eq!(settings.ai.working_directory.as_deref(), Some("/work"));
-        assert_eq!(settings.ai.agents["mine"].name, None);
-        assert_eq!(settings.ai.agents["mine"].command.as_deref(), Some("mine"));
+        assert_eq!(ai.default_agent, None);
+        assert_eq!(ai.working_directory.as_deref(), Some("/work"));
+        assert_eq!(ai.agents["mine"].name, None);
+        assert_eq!(ai.agents["mine"].command.as_deref(), Some("mine"));
     }
 }

@@ -5014,6 +5014,7 @@ dependencies = [
  "gpui-pre-reqwest",
  "nocterm-core",
  "nocterm-session",
+ "nocterm-settings",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",

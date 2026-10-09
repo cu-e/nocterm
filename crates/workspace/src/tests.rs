@@ -86,7 +86,7 @@ pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Works
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(nocterm_settings::Settings::default()),
+            nocterm_ui::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
             cx,
         );
         let (window, workspace) =

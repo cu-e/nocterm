@@ -334,8 +334,8 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         "cancelled"
     );
     cx.update(|cx| {
-        nocterm_ui::edit_settings(cx, |settings| {
-            settings.ai.approval.agent_permissions = nocterm_settings::ApprovalPolicy::Allow;
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| {
+            settings.approval.agent_permissions = nocterm_settings::ApprovalPolicy::Allow;
         })
         .detach();
     });
@@ -421,8 +421,10 @@ fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mu
 fn disabling_ai_cancels_execution_and_revokes_chat_access(cx: &mut TestAppContext) {
     let (f, thread, programs, terminal) = setup(cx);
     start(&f, &thread, &terminal, cx);
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .detach();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+    })
+    .detach();
     cx.run_until_parked();
     assert!(programs.closed(0));
     cx.update(|cx| assert!(thread.read(cx).registration().is_none()));

@@ -1,551 +1,123 @@
-//! Revision-checked settings publication with a bounded, ordered disk writer.
-use futures::channel::oneshot;
-use gpui_kit::{App, AppContext as _, BorrowAppContext as _, Context, Entity, Global, Task};
-use nocterm_settings::{SectionError, Settings, SettingsFile};
-use std::{
-    collections::VecDeque,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+//! The published settings, typed access to their sections and a bounded,
+//! ordered disk writer.
+use gpui_kit::{App, Global, Subscription, Task};
+use nocterm_settings::{SectionError, SettingsDocument, SettingsFile, SettingsSection};
 
-const MAX_PENDING: usize = 16;
-const CONFLICT: &str =
-    "Settings changed in another view. Reload saved settings before applying this draft.";
+mod writer;
+pub use writer::edit_settings;
+pub(crate) use writer::init;
 
-/// Published settings only. Queue changes do not notify theme/settings observers.
+/// Published settings only. Queued changes do not notify observers.
 pub struct SettingsStore {
-    settings: Settings,
+    document: SettingsDocument,
     file: Option<SettingsFile>,
     revision: u64,
-    errors: Vec<SectionError>,
 }
 impl SettingsStore {
-    pub fn new(settings: Settings, file: SettingsFile) -> Self {
+    pub fn new(document: SettingsDocument, file: SettingsFile) -> Self {
         Self {
-            settings: settings.sanitized(),
+            document,
             file: Some(file),
             revision: 0,
-            errors: Vec::new(),
         }
     }
-    pub fn in_memory(settings: Settings) -> Self {
+    pub fn in_memory(document: SettingsDocument) -> Self {
         Self {
-            settings: settings.sanitized(),
+            document,
             file: None,
             revision: 0,
-            errors: Vec::new(),
         }
     }
-    /// Records the sections of the file that could not be read and run on
-    /// their defaults.
-    pub fn with_errors(mut self, errors: Vec<SectionError>) -> Self {
-        self.errors = errors;
+    /// A store holding `section`, for tests and previews.
+    pub fn with<S: SettingsSection>(mut self, section: S) -> Self {
+        self.document.set(section);
         self
     }
     pub fn is_persistent(&self) -> bool {
         self.file.is_some()
     }
-    /// Sections of the file that could not be read and have not been
-    /// rewritten since.
-    pub fn section_errors(&self) -> &[SectionError] {
-        &self.errors
+    pub fn document(&self) -> &SettingsDocument {
+        &self.document
     }
-    /// Optimistic revision for drafts. Advances only after successful publication.
+    /// Sections of the file that could not be read and have not been
+    /// rewritten since, and tables no section claims.
+    pub fn section_errors(&self) -> Vec<SectionError> {
+        self.document.errors()
+    }
+    /// Advances every time a change is published.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 }
 impl Global for SettingsStore {}
 
-pub trait ActiveSettings {
-    fn settings(&self) -> &Settings;
-}
-impl ActiveSettings for App {
-    fn settings(&self) -> &Settings {
-        &self.global::<SettingsStore>().settings
+/// Reads section `S` from the file, once. The crate that owns a section
+/// registers it when it is initialised; without a settings store this does
+/// nothing.
+pub fn register_setting<S: SettingsSection>(cx: &mut App) {
+    if cx.has_global::<SettingsStore>()
+        && !cx.global::<SettingsStore>().document.is_registered::<S>()
+    {
+        cx.global_mut::<SettingsStore>().document.register::<S>();
     }
 }
-type Patch = Box<dyn FnOnce(&mut Settings)>;
 
-/// What a queued job writes: a complete draft checked against the revision it
-/// was based on, or an edit applied to whatever is current when it runs.
-enum Change {
-    Draft {
-        expected: u64,
-        settings: Box<Settings>,
-    },
-    Edit(Patch),
-}
-struct Pending {
-    change: Change,
-    done: oneshot::Sender<Result<u64, String>>,
-}
-struct Writer {
-    pending: VecDeque<Pending>,
-    task: Option<Task<()>>,
-    /// Cloned into every disk write; a count above one means a write is in
-    /// flight. Shutdown polls it because the app cannot be read while quitting.
-    saving: Arc<()>,
-    closing: bool,
-    #[cfg(test)]
-    test_writer: Option<
-        std::sync::Arc<
-            dyn Fn(Settings) -> futures::future::BoxFuture<'static, Result<(), String>>
-                + Send
-                + Sync,
-        >,
-    >,
-}
-struct SettingsWriter(Entity<Writer>);
-impl Global for SettingsWriter {}
+/// Typed access to the published settings.
+pub trait SettingsExt {
+    /// Section `S` as last published.
+    fn setting<S: SettingsSection>(&self) -> &S;
 
-pub(crate) fn init(cx: &mut App) {
-    let writer = cx.new(|_| Writer {
-        pending: VecDeque::new(),
-        task: None,
-        saving: Arc::new(()),
-        closing: false,
-        #[cfg(test)]
-        test_writer: None,
-    });
-    cx.set_global(SettingsWriter(writer.clone()));
-    // The app stays borrowed while quit futures run, so only the disk write
-    // already in flight can finish; queued changes are reported as lost.
-    cx.on_app_quit(move |cx| {
-        let (saving, queued) = writer.update(cx, |writer, _| {
-            writer.closing = true;
-            (writer.saving.clone(), writer.pending.len())
-        });
-        let executor = cx.background_executor().clone();
-        async move {
-            if queued > 0 {
-                tracing::warn!(queued, "settings changes queued at shutdown were not saved");
+    /// Changes section `S` and saves it. Changes are applied in order to the
+    /// settings current when each runs, so they never conflict.
+    fn update_setting<S: SettingsSection>(
+        &mut self,
+        edit: impl FnOnce(&mut S) + 'static,
+    ) -> Task<Result<u64, String>>;
+
+    /// Calls `on_change` whenever a published change alters section `S`.
+    /// Changes to other sections, and subscribing, do not call it.
+    fn observe_setting<S: SettingsSection>(
+        &mut self,
+        on_change: impl FnMut(&S, &mut App) + 'static,
+    ) -> Subscription;
+}
+
+impl SettingsExt for App {
+    fn setting<S: SettingsSection>(&self) -> &S {
+        self.global::<SettingsStore>().document.get::<S>()
+    }
+
+    fn update_setting<S: SettingsSection>(
+        &mut self,
+        edit: impl FnOnce(&mut S) + 'static,
+    ) -> Task<Result<u64, String>> {
+        edit_settings(self, move |document| {
+            document.update::<S>(edit);
+        })
+    }
+
+    fn observe_setting<S: SettingsSection>(
+        &mut self,
+        mut on_change: impl FnMut(&S, &mut App) + 'static,
+    ) -> Subscription {
+        let mut seen = self.setting::<S>().clone();
+        self.observe_global::<SettingsStore>(move |cx| {
+            let now = cx.setting::<S>();
+            if *now != seen {
+                seen = now.clone();
+                on_change(&seen, cx);
             }
-            let deadline = Instant::now() + Duration::from_millis(180);
-            // One reference is the writer's, one is ours; the rest are writes.
-            while Arc::strong_count(&saving) > 2 {
-                if Instant::now() >= deadline {
-                    tracing::warn!("timed out saving settings during shutdown; pending changes may not be saved");
-                    break;
-                }
-                executor.timer(Duration::from_millis(10)).await;
-            }
-        }
-    }).detach();
-}
-
-/// Persists a draft before publishing it. Stale drafts never reach disk.
-/// The application owns accepted jobs even when their caller closes a view.
-pub fn save_settings(cx: &mut App, expected: u64, settings: Settings) -> Task<Result<u64, String>> {
-    let settings = settings.sanitized();
-    let writer = cx.global::<SettingsWriter>().0.clone();
-    writer.update(cx, |writer, cx| {
-        writer.push(
-            Change::Draft {
-                expected,
-                settings: Box::new(settings),
-            },
-            cx,
-        )
-    })
-}
-
-/// Applies `edit` to the settings current when the write runs, so edits made
-/// in quick succession (autosave) never conflict with one another.
-pub fn edit_settings(
-    cx: &mut App,
-    edit: impl FnOnce(&mut Settings) + 'static,
-) -> Task<Result<u64, String>> {
-    let writer = cx.global::<SettingsWriter>().0.clone();
-    writer.update(cx, |writer, cx| {
-        writer.push(Change::Edit(Box::new(edit)), cx)
-    })
-}
-
-/// Edits the latest published settings using its current revision.
-pub fn update_settings(
-    cx: &mut App,
-    edit: impl FnOnce(&mut Settings),
-) -> Task<Result<u64, String>> {
-    let expected = cx.global::<SettingsStore>().revision();
-    let mut settings = cx.settings().clone();
-    edit(&mut settings);
-    save_settings(cx, expected, settings)
-}
-fn publish(settings: Settings, cx: &mut App) -> u64 {
-    cx.update_global::<SettingsStore, _>(|store, _| {
-        let before = &store.settings;
-        store
-            .errors
-            .retain(|error| error.outlives(before, &settings));
-        store.settings = settings;
-        store.revision += 1;
-        store.revision
-    })
-}
-impl Writer {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn push(&mut self, change: Change, cx: &mut Context<Self>) -> Task<Result<u64, String>> {
-        if self.closing {
-            return Task::ready(Err(
-                "Settings are closing. New changes cannot be saved.".into()
-            ));
-        }
-        let store = cx.global::<SettingsStore>();
-        if let Change::Draft { expected, .. } = &change
-            && *expected != store.revision
-        {
-            return Task::ready(Err(CONFLICT.into()));
-        }
-        if store.file.is_none() {
-            let settings = match change {
-                Change::Draft { settings, .. } => *settings,
-                Change::Edit(edit) => {
-                    let mut settings = store.settings.clone();
-                    edit(&mut settings);
-                    settings.sanitized()
-                }
-            };
-            let store = cx.global::<SettingsStore>();
-            return Task::ready(Ok(if settings == store.settings {
-                store.revision
-            } else {
-                publish(settings, cx)
-            }));
-        }
-        if self.pending.len() >= MAX_PENDING {
-            return Task::ready(Err(
-                "Settings save queue is full. Wait for pending saves to finish and retry.".into(),
-            ));
-        }
-        let (done, receive) = oneshot::channel();
-        self.pending.push_back(Pending { change, done });
-        if self.task.is_none() {
-            self.task = Some(cx.spawn(async move |writer, cx| {
-                loop {
-                    let next = writer.update(cx, |writer, cx| {
-                        let Some(pending) = writer.pending.pop_front() else {
-                            writer.task = None;
-                            return None;
-                        };
-                        let store = cx.global::<SettingsStore>();
-                        let (settings, candidate) = match pending.change {
-                            Change::Draft { expected, settings } if expected != store.revision => {
-                                (*settings, Err(CONFLICT.to_owned()))
-                            }
-                            Change::Draft { settings, .. } => (*settings, Ok(())),
-                            Change::Edit(edit) => {
-                                let mut settings = store.settings.clone();
-                                edit(&mut settings);
-                                (settings.sanitized(), Ok(()))
-                            }
-                        };
-                        let candidate = candidate.map(|()| {
-                            (
-                                store.file.clone(),
-                                settings == store.settings,
-                                store.revision,
-                            )
-                        });
-                        #[cfg(test)]
-                        let test_writer = writer.test_writer.clone();
-                        #[cfg(not(test))]
-                        let test_writer = ();
-                        let saving = writer.saving.clone();
-                        Some((pending.done, settings, candidate, test_writer, saving))
-                    });
-                    let Ok(Some((done, settings, candidate, _test_writer, saving))) = next else {
-                        break;
-                    };
-                    let result = match candidate {
-                        Err(error) => Err(error),
-                        Ok((_, true, revision)) => Ok(revision),
-                        Ok((file, false, _)) => {
-                            let value = settings.clone();
-                            let result = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    let _saving = saving;
-                                    #[cfg(test)]
-                                    if let Some(test_writer) = _test_writer {
-                                        return test_writer(value).await;
-                                    }
-                                    if let Some(file) = file {
-                                        file.save(&value).map_err(|error| error.to_string())?;
-                                    }
-                                    Ok(())
-                                })
-                                .await;
-                            match result {
-                                Ok(()) => Ok(cx.update(|cx| publish(settings, cx))),
-                                Err(error) => Err(error),
-                            }
-                        }
-                    };
-                    let _ = done.send(result);
-                }
-            }));
-        }
-        cx.spawn(async move |_, _| {
-            receive
-                .await
-                .unwrap_or_else(|_| Err("Settings service closed before saving completed.".into()))
         })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui_kit::TestAppContext;
-    fn install(store: SettingsStore, cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            cx.set_global(store);
-            init(cx);
-        });
-    }
-    #[gpui_kit::test]
-    async fn failed_save_leaves_active_settings_and_revision_intact(cx: &mut TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        install(
-            SettingsStore::new(Settings::default(), SettingsFile::new(directory.path())),
-            cx,
-        );
-        let task =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        assert!(task.await.is_err());
-        cx.update(|cx| {
-            assert_eq!(cx.settings(), &Settings::default());
-            assert_eq!(cx.global::<SettingsStore>().revision(), 0);
-        });
-    }
-    #[gpui_kit::test]
-    async fn saved_settings_survive_reload_and_stale_draft_cannot_overwrite(
-        cx: &mut TestAppContext,
-    ) {
-        let directory = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(directory.path().join("settings.toml"));
-        install(SettingsStore::new(Settings::default(), file.clone()), cx);
-        let task =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.font_size = Some(18.)));
-        assert_eq!(task.await.unwrap(), 1);
-        let mut stale = Settings::default();
-        stale.terminal.copy_on_select = true;
-        assert!(
-            cx.update(|cx| save_settings(cx, 0, stale))
-                .await
-                .unwrap_err()
-                .contains("Reload saved settings")
-        );
-        assert_eq!(file.load().unwrap().settings.terminal.font_size, Some(18.));
-        assert!(!file.load().unwrap().settings.terminal.copy_on_select);
-    }
-    #[gpui_kit::test]
-    async fn ordered_background_writes_reject_queued_stale_drafts_and_do_not_notify_before_commit(
-        cx: &mut TestAppContext,
-    ) {
-        use futures::FutureExt as _;
-        use std::sync::{Arc, Mutex};
-        install(
-            SettingsStore::new(
-                Settings::default(),
-                SettingsFile::new("/unused-test-writer"),
-            ),
-            cx,
-        );
-        let writer = cx.update(|cx| cx.global::<SettingsWriter>().0.clone());
-        let (release, receive) = oneshot::channel::<Result<(), String>>();
-        let gate = Arc::new(Mutex::new(Some(receive)));
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let observed = writes.clone();
-        writer.update(cx, |writer, _| {
-            writer.test_writer = Some(Arc::new(move |value| {
-                observed.lock().unwrap().push(value);
-                let gate = gate
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .expect("only the current draft is persisted");
-                async { gate.await.unwrap() }.boxed()
-            }))
-        });
-        let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
-        cx.update(|cx| {
-            let count = notifications.clone();
-            cx.observe_global::<SettingsStore>(move |_| count.set(count.get() + 1))
-                .detach();
-        });
-        let first =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.font_size = Some(18.)));
-        let stale =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        cx.run_until_parked();
-        assert_eq!(writes.lock().unwrap().len(), 1);
-        assert_eq!(notifications.get(), 0);
-        cx.update(|cx| assert_eq!(cx.settings(), &Settings::default()));
-        release.send(Ok(())).unwrap();
-        assert_eq!(first.await.unwrap(), 1);
-        assert!(stale.await.unwrap_err().contains("Reload saved settings"));
-        cx.run_until_parked();
-        assert_eq!(notifications.get(), 1);
-        assert_eq!(writes.lock().unwrap().len(), 1);
-    }
-    #[gpui_kit::test]
-    async fn failed_write_does_not_invalidate_following_draft_or_wedge_writer(
-        cx: &mut TestAppContext,
-    ) {
-        use futures::FutureExt as _;
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-        install(
-            SettingsStore::new(
-                Settings::default(),
-                SettingsFile::new("/unused-test-writer"),
-            ),
-            cx,
-        );
-        let writer = cx.update(|cx| cx.global::<SettingsWriter>().0.clone());
-        let calls = Arc::new(AtomicUsize::new(0));
-        let observed = calls.clone();
-        writer.update(cx, |writer, _| {
-            writer.test_writer = Some(Arc::new(move |_| {
-                let first = observed.fetch_add(1, Ordering::SeqCst) == 0;
-                async move {
-                    if first {
-                        Err("disk full".into())
-                    } else {
-                        Ok(())
-                    }
-                }
-                .boxed()
-            }))
-        });
-        let failed =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.font_size = Some(18.)));
-        let next =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        assert_eq!(failed.await.unwrap_err(), "disk full");
-        assert_eq!(next.await.unwrap(), 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        cx.update(|cx| {
-            assert_eq!(cx.settings().terminal.font_size, None);
-            assert!(cx.settings().terminal.copy_on_select);
-        });
-    }
-    #[gpui_kit::test]
-    async fn queued_edits_apply_to_the_latest_settings_without_conflicts(cx: &mut TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(directory.path().join("settings.toml"));
-        install(SettingsStore::new(Settings::default(), file.clone()), cx);
-        let first =
-            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.font_size = Some(18.)));
-        let second =
-            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        assert_eq!(first.await.unwrap(), 1);
-        assert_eq!(second.await.unwrap(), 2);
-        let saved = file.load().unwrap().settings;
-        assert_eq!(saved.terminal.font_size, Some(18.));
-        assert!(saved.terminal.copy_on_select);
-    }
-    #[gpui_kit::test]
-    fn accepted_save_survives_dropped_caller_and_reaches_disk(cx: &mut TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(directory.path().join("settings.toml"));
-        install(SettingsStore::new(Settings::default(), file.clone()), cx);
-        let task =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        drop(task);
-        cx.run_until_parked();
-        assert!(file.load().unwrap().settings.terminal.copy_on_select);
-        cx.update(|cx| assert_eq!(cx.global::<SettingsStore>().revision(), 1));
-    }
-
-    #[gpui_kit::test]
-    async fn bounded_queue_rejects_overflow_and_shutdown_without_blocking(cx: &mut TestAppContext) {
-        use futures::FutureExt as _;
-        use std::sync::{Arc, Mutex};
-        install(
-            SettingsStore::new(
-                Settings::default(),
-                SettingsFile::new("/unused-test-writer"),
-            ),
-            cx,
-        );
-        let writer = cx.update(|cx| cx.global::<SettingsWriter>().0.clone());
-        let (release, receive) = oneshot::channel::<Result<(), String>>();
-        let gate = Arc::new(Mutex::new(Some(receive)));
-        writer.update(cx, |writer, _| {
-            writer.test_writer = Some(Arc::new(move |_| {
-                let gate = gate.lock().unwrap().take().unwrap();
-                async { gate.await.unwrap() }.boxed()
-            }))
-        });
-        let mut tasks = Vec::new();
-        for _ in 0..MAX_PENDING {
-            tasks.push(cx.update(|cx| {
-                update_settings(cx, |settings| settings.terminal.copy_on_select = true)
-            }));
-        }
-        assert!(
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true))
-                .await
-                .unwrap_err()
-                .contains("queue is full")
-        );
-        cx.run_until_parked();
-        writer.update(cx, |writer, _| writer.closing = true);
-        assert!(
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true))
-                .await
-                .unwrap_err()
-                .contains("closing")
-        );
-        release.send(Ok(())).unwrap();
-        assert_eq!(tasks.remove(0).await.unwrap(), 1);
-        for task in tasks {
-            assert!(task.await.is_err());
-        }
-    }
-
-    #[gpui_kit::test]
-    async fn changing_a_broken_section_clears_its_error(cx: &mut TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(directory.path().join("settings.toml"));
-        std::fs::write(
-            file.path(),
-            "[terminal]\nfont_szie = 1\n[monitor]\nbogus = 1\n",
-        )
-        .unwrap();
-        let loaded = file.load().unwrap();
-        install(
-            SettingsStore::new(loaded.settings, file.clone()).with_errors(loaded.errors),
-            cx,
-        );
-        cx.update(|cx| assert_eq!(cx.global::<SettingsStore>().section_errors().len(), 2));
-        let task =
-            cx.update(|cx| edit_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        assert_eq!(task.await.unwrap(), 1);
-        cx.update(|cx| {
-            let errors = cx.global::<SettingsStore>().section_errors();
-            assert_eq!(errors.len(), 1);
-            assert_eq!(errors[0].key, "monitor");
-        });
-        assert!(
-            std::fs::read_to_string(file.path())
-                .unwrap()
-                .contains("bogus = 1")
-        );
-    }
-
-    #[gpui_kit::test]
-    async fn quitting_with_queued_writes_does_not_panic(cx: &mut TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let file = SettingsFile::new(directory.path().join("settings.toml"));
-        install(SettingsStore::new(Settings::default(), file), cx);
-        let _save =
-            cx.update(|cx| update_settings(cx, |settings| settings.terminal.copy_on_select = true));
-        cx.quit();
-    }
+fn publish(document: SettingsDocument, cx: &mut App) -> u64 {
+    let store = cx.global_mut::<SettingsStore>();
+    store.document = document;
+    store.revision += 1;
+    store.revision
 }
+
+#[cfg(test)]
+#[path = "settings/tests.rs"]
+mod tests;

@@ -8,7 +8,7 @@ mod unlock;
 mod view;
 
 use gpui_kit::{App, AppContext as _, Global};
-use nocterm_ui::{ActiveSettings as _, SettingsStore};
+use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vault::{DeviceUnlockProvider, VaultService, VaultStatus};
 use nocterm_workspace::SettingsPageSpec;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -53,9 +53,15 @@ pub fn init_with_device_unlock(
     device: Option<Arc<dyn DeviceUnlockProvider>>,
     cx: &mut App,
 ) -> Result<Arc<VaultService>, nocterm_vault::VaultError> {
+    nocterm_ui::register_setting::<nocterm_settings::VaultSettings>(cx);
     let service = Arc::new(VaultService::new_with_device_unlock(
         path,
-        Duration::from_secs(u64::from(cx.settings().vault.auto_lock_minutes) * 60),
+        Duration::from_secs(
+            u64::from(
+                cx.setting::<nocterm_settings::VaultSettings>()
+                    .auto_lock_minutes,
+            ) * 60,
+        ),
         device,
     )?);
     cx.set_global(Service(service.clone()));
@@ -63,7 +69,10 @@ pub fn init_with_device_unlock(
     unlock::init(cx);
     cx.observe_global::<SettingsStore>(|cx| {
         cx.global::<Service>().0.set_auto_lock(Duration::from_secs(
-            u64::from(cx.settings().vault.auto_lock_minutes) * 60,
+            u64::from(
+                cx.setting::<nocterm_settings::VaultSettings>()
+                    .auto_lock_minutes,
+            ) * 60,
         ));
     })
     .detach();

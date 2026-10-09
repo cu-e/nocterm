@@ -19,8 +19,8 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
     let captured = result.clone();
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        let mut settings = nocterm_settings::Settings::default();
-        settings.logging.auto_start = true;
+        let mut settings = nocterm_settings::SettingsDocument::default();
+        settings.update::<nocterm_settings::LoggingOptions>(|section| section.auto_start = true);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
@@ -102,8 +102,10 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
     let captured = driver.clone();
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        let mut settings = nocterm_settings::Settings::default();
-        settings.local.program = Some("/bin/bash".into());
+        let mut settings = nocterm_settings::SettingsDocument::default();
+        settings.update::<nocterm_settings::LocalShellSettings>(|section| {
+            section.program = Some("/bin/bash".into())
+        });
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
@@ -129,10 +131,12 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
                 cx,
             );
             assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/egor")));
-            nocterm_ui::update_settings(cx, |s| s.local.program = Some("pwsh".into()))
-                .now_or_never()
-                .unwrap()
-                .unwrap();
+            cx.update_setting::<nocterm_settings::LocalShellSettings>(|s| {
+                s.program = Some("pwsh".into())
+            })
+            .now_or_never()
+            .unwrap()
+            .unwrap();
             terminal
                 .change_directory(Path::new("/tmp/a' $(id)"), cx)
                 .unwrap();

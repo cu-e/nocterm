@@ -35,7 +35,7 @@ use gpui_kit::{
 use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
-use nocterm_ui::{ActiveDesign as _, ActiveSettings as _, IconName};
+use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _};
 use nocterm_workspace::{
     FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
 };
@@ -399,7 +399,9 @@ impl FilesPanel {
 /// The user's indexing settings; the defaults where none are installed.
 fn indexing(cx: &App) -> nocterm_settings::IndexingSettings {
     if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.settings().explorer.indexing.clone()
+        cx.setting::<nocterm_settings::ExplorerSettings>()
+            .indexing
+            .clone()
     } else {
         Default::default()
     }
@@ -422,7 +424,11 @@ impl Render for FilesPanel {
         if self.local.requested.is_none() {
             let initial = cx
                 .has_global::<nocterm_ui::SettingsStore>()
-                .then(|| cx.settings().local.cwd.clone())
+                .then(|| {
+                    cx.setting::<nocterm_settings::LocalShellSettings>()
+                        .cwd
+                        .clone()
+                })
                 .flatten()
                 .map(PathBuf::from)
                 .or_else(local::home);

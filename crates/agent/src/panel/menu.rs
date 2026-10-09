@@ -14,7 +14,7 @@ use gpui_kit::{
     rems,
 };
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveSettings as _, IconName};
+use nocterm_ui::{IconName, SettingsExt as _};
 
 use super::{
     AgentPanel, MenuKind,
@@ -102,7 +102,10 @@ impl AgentPanel {
         match self.menu.clone() {
             Some(MenuKind::Agents) => {
                 let last = self.last_agent(cx);
-                for launch in nocterm_ai::AgentRegistry::new(&cx.settings().ai).iter() {
+                for launch in
+                    nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_settings::AiSettings>())
+                        .iter()
+                {
                     let id = launch.id.clone();
                     let shortcut = (last.as_deref() == Some(id.as_str()))
                         .then(|| {

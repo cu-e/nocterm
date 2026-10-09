@@ -228,7 +228,10 @@ fn double_click_words_triple_click_lines_and_copy_on_release(cx: &mut TestAppCon
         0,
         Event::Output(b"alpha beta\r\nsecond line".to_vec()),
     );
-    cx.update(|cx| nocterm_ui::edit_settings(cx, |s| s.terminal.copy_on_select = true).detach());
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::TerminalSettings>(|s| s.copy_on_select = true)
+            .detach()
+    });
     cx.run_until_parked();
     let g = geometry(handle, &view, cx);
     down(handle, at(g, 2.2, 0.5), MouseButton::Left, false, 2, cx);

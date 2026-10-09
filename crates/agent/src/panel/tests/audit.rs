@@ -594,9 +594,11 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
         });
     })
     .unwrap();
-    cx.update(|cx| nocterm_ui::update_settings(cx, |settings| settings.ai.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        cx.update_setting::<nocterm_settings::AiSettings>(|settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);

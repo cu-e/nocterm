@@ -2,7 +2,7 @@
 use gpui_kit::Context;
 use nocterm_ai::acp;
 use nocterm_settings::ApprovalPolicy;
-use nocterm_ui::{ActiveAi as _, ActiveSettings as _};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 
 use super::{AgentThread, PendingPermission};
 
@@ -55,7 +55,11 @@ impl AgentThread {
             respond.respond(acp::RequestPermissionOutcome::Cancelled);
             return;
         }
-        let automatic = cx.settings().ai.approval.agent_permissions == ApprovalPolicy::Allow;
+        let automatic = cx
+            .setting::<nocterm_settings::AiSettings>()
+            .approval
+            .agent_permissions
+            == ApprovalPolicy::Allow;
         if automatic && let Some(id) = allow_once(&request) {
             respond.respond(selected(id));
             return;
@@ -72,7 +76,11 @@ impl AgentThread {
 
     /// Applies changes to queued requests without granting persistent provider permissions.
     pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
-        let automatic = cx.settings().ai.approval.agent_permissions == ApprovalPolicy::Allow;
+        let automatic = cx
+            .setting::<nocterm_settings::AiSettings>()
+            .approval
+            .agent_permissions
+            == ApprovalPolicy::Allow;
         let mut changed = false;
         for mut permission in std::mem::take(&mut self.permissions) {
             if !self.accepts_permission(&permission.request, cx) {

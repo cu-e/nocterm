@@ -26,6 +26,7 @@ gpui_kit::actions!(
 
 /// Adds the monitor to the footer of `workspace`.
 pub fn register(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
+    nocterm_ui::register_setting::<nocterm_settings::MonitorSettings>(cx);
     let handle = cx.entity();
     let session = workspace.active_session(cx);
     let local = nocterm_workspace::host::local_exec(cx);

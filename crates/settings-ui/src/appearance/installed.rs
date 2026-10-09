@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_themes::{Appearance, ThemeCatalog, ThemeSource, uninstall};
-use nocterm_ui::{ActiveThemes as _, Themes, form, reload_themes};
+use nocterm_ui::{ActiveThemes as _, SettingsExt as _, Themes, form, reload_themes};
 use std::{collections::BTreeSet, fs};
 
 pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<SettingsView>) {
@@ -51,20 +51,18 @@ pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<Setti
                     .map(|e| e.name.clone())
                     .collect();
                 let save = cx.update(|cx| {
-                    nocterm_ui::edit_settings(cx, move |s| {
-                        if s.appearance
-                            .light_theme
+                    cx.update_setting::<nocterm_settings::Appearance>(move |s| {
+                        if s.light_theme
                             .as_ref()
                             .is_some_and(|n| names.contains(n) && !light.contains(n))
                         {
-                            s.appearance.light_theme = None;
+                            s.light_theme = None;
                         }
-                        if s.appearance
-                            .dark_theme
+                        if s.dark_theme
                             .as_ref()
                             .is_some_and(|n| names.contains(n) && !dark.contains(n))
                         {
-                            s.appearance.dark_theme = None;
+                            s.dark_theme = None;
                         }
                     })
                 });

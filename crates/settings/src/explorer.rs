@@ -195,8 +195,10 @@ impl OpenSettings {
     }
 }
 
-impl ExplorerSettings {
-    pub(crate) fn sanitize(&mut self) {
+impl crate::SettingsSection for ExplorerSettings {
+    const KEY: &'static str = "explorer";
+
+    fn sanitize(&mut self) {
         let indexing = &mut self.indexing;
         let clamp = |value: u32| {
             value.clamp(
@@ -239,6 +241,7 @@ fn clean_names(names: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SettingsSection as _;
 
     #[test]
     fn rules_match_extensions_and_names_case_insensitively() {
