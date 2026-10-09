@@ -6,12 +6,14 @@ use nocterm_session::{ExecError, ExecOutput, HostExec};
 
 use crate::{MetricSet, Platform, Reading, frame::FrameReader};
 
+const MAX_PENDING: usize = 32;
+
 /// A collection script running on a host. Dropping it stops the script.
 pub struct Watch {
     platform: Platform,
     output: ExecOutput,
     frames: FrameReader,
-    pending: VecDeque<Vec<String>>,
+    pending: VecDeque<Reading>,
 }
 
 impl Watch {
@@ -38,10 +40,19 @@ impl Watch {
     pub async fn next(&mut self) -> Option<Reading> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
-                return Some(self.platform.parse(&frame));
+                return Some(frame);
             }
             let chunk = self.output.next().await?;
-            self.pending.extend(self.frames.push(&chunk));
+            let platform = &self.platform;
+            let pending = &mut self.pending;
+            self.frames.push(&chunk, |frame| {
+                // Keep the most recent readings after a burst. Frames are
+                // parsed and released individually, rather than accumulated.
+                if pending.len() == MAX_PENDING {
+                    pending.pop_front();
+                }
+                pending.push_back(platform.parse(&frame));
+            });
         }
     }
 }
@@ -54,6 +65,36 @@ mod tests {
 
     use super::*;
     use crate::platform::tests::Scripted;
+
+    #[test]
+    fn a_large_chunk_keeps_only_recent_readings() {
+        let text = (0..10_000)
+            .map(|uptime| format!("@@uptime\n{uptime}\n@@end\n"))
+            .collect::<String>();
+        let exec = Scripted {
+            answers: vec![("sh", Ok(Box::leak(text.into_boxed_str())))],
+            asked: Arc::new(Mutex::default()),
+        };
+        futures::executor::block_on(async {
+            let mut watch = Watch::start(
+                &exec,
+                Platform::Linux,
+                MetricSet::all(),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+            assert_eq!(watch.next().await.unwrap().uptime, Some(9968.0));
+            assert_eq!(watch.pending.len(), MAX_PENDING - 1);
+            for expected in 9969..10_000 {
+                assert_eq!(
+                    watch.next().await.unwrap().uptime,
+                    Some(f64::from(expected))
+                );
+            }
+            assert!(watch.next().await.is_none());
+        });
+    }
 
     #[test]
     fn readings_follow_the_frames() {
