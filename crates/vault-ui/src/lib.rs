@@ -10,11 +10,12 @@ mod view;
 
 use gpui_kit::{App, AppContext as _, Global};
 use nocterm_ui::{SettingsExt as _, SettingsStore};
-use nocterm_vault::{DeviceUnlockProvider, VaultService, VaultStatus};
+use nocterm_vault::{DeviceUnlockProvider, VaultStatus};
 use nocterm_workspace::SettingsPageSpec;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 pub use credentials::VaultCredentials;
+pub use nocterm_vault::VaultService;
 pub use settings::VaultSettings;
 pub use view::VaultView;
 

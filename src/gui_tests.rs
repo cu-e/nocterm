@@ -11,8 +11,7 @@ use nocterm_session::{
     CloseReason, ConnectRequest, Event, Prompt, Reply, Secret, SecretRequest, Session,
     SessionDriver, Transport,
 };
-use nocterm_terminal::{TerminalView, open_session};
-use nocterm_ui::SettingsExt as _;
+use nocterm_terminal::TerminalView;
 use nocterm_workspace::{SessionSpec, Workspace};
 
 mod menu_tabs;
@@ -62,7 +61,6 @@ fn fixture(
     fixture_with_vault(cx, false)
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_vault(
     cx: &mut TestAppContext,
     vault_ready: bool,
@@ -78,25 +76,13 @@ fn fixture_with_vault(
     }
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal) = cx.update(|cx| {
-        gpui_kit::init(cx);
-        cx.set_reduce_motion(true);
-        let directory = tempfile::tempdir().unwrap();
         let mut settings = nocterm_settings::SettingsDocument::default();
+        let directory = tempfile::tempdir().unwrap();
         settings.update::<nocterm_session::LocalShellSettings>(|section| {
             section.cwd = Some(directory.path().to_string_lossy().into_owned())
         });
-        let vault_path = directory.path().join("vault.bin");
-        let paths = nocterm_core::Paths::rooted_at(directory.path());
-        cx.set_global(FixtureDirectory {
-            _directory: directory,
-        });
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(settings),
-            cx,
-        );
-        if vault_ready {
-            let service = nocterm_vault_ui::init(vault_path, cx).unwrap();
+        let booted = boot(directory, settings, transport.clone(), vault_ready, cx);
+        if let Some(service) = booted.vault {
             // Creates the vault with a master password and leaves it locked.
             cx.set_global(FixtureVault(Box::new(move || {
                 futures::executor::block_on(
@@ -106,49 +92,7 @@ fn fixture_with_vault(
                 service.lock();
             })));
         }
-        nocterm_terminal::init(transport.clone(), cx);
-        nocterm_connections::init(None, cx);
-        nocterm_snippets_ui::init(None, cx);
-        nocterm_agent::init(
-            nocterm_agent::AgentServices {
-                terminal_auth: None,
-                private_dirs: Vec::new(),
-                shared_dirs: Vec::new(),
-                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
-                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
-                state_file: paths.state_dir().join("agents.toml"),
-                chats_dir: paths.state_dir().join("agent-chats"),
-                codex_home: None,
-                workdir: paths.state_dir().join("agent-workspace"),
-            },
-            cx,
-        );
-        crate::keymap::load(None, cx);
-        super::application::register(paths, vault_ready, cx);
-        let (window, workspace) =
-            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| {
-                    let mut workspace = Workspace::new(window, cx);
-                    workspace.set_session_opener(open_session);
-                    nocterm_connections::register(&mut workspace, window, cx);
-                    super::register_settings(&mut workspace, vault_ready);
-                    nocterm_files::register(&mut workspace, window, cx);
-                    nocterm_snippets_ui::register(&mut workspace, window, cx);
-                    nocterm_monitor_ui::register(&mut workspace, window, cx);
-                    nocterm_agent::register(&mut workspace, window, cx);
-                    workspace.set_menu_builder(super::app_menus::build, window, cx);
-                    if vault_ready
-                        && cx
-                            .setting::<nocterm_vault_ui::VaultSettings>()
-                            .prompt_on_startup
-                    {
-                        let pages = vec![nocterm_vault_ui::settings_page()];
-                        nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
-                    }
-                    workspace
-                })
-            })
-            .unwrap();
+        let (window, workspace) = open_workspace(vault_ready, cx);
         let terminal = window
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -175,6 +119,66 @@ fn fixture_with_vault(
     })
     .unwrap();
     (window, workspace, terminal, transport)
+}
+
+/// Installs the application's globals as the application does, with the
+/// state in `directory` and nothing persisted.
+fn boot(
+    directory: tempfile::TempDir,
+    settings: nocterm_settings::SettingsDocument,
+    transport: Arc<MockTransport>,
+    vault: bool,
+    cx: &mut gpui_kit::App,
+) -> crate::bootstrap::Booted {
+    let paths = nocterm_core::Paths::rooted_at(directory.path());
+    let vault = vault.then(|| crate::bootstrap::VaultSetup {
+        file: directory.path().join("vault.bin"),
+        device_unlock: false,
+    });
+    cx.set_global(FixtureDirectory {
+        _directory: directory,
+    });
+    let booted = crate::bootstrap::bootstrap(
+        crate::bootstrap::Services {
+            tokens: nocterm_ui::DesignTokens::builtin(),
+            settings: nocterm_ui::SettingsStore::in_memory(settings),
+            persist: false,
+            transport,
+            local: false,
+            themes: None,
+            agent: nocterm_agent::AgentServices {
+                terminal_auth: None,
+                private_dirs: Vec::new(),
+                shared_dirs: Vec::new(),
+                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
+                bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+                state_file: paths.state_dir().join("agents.toml"),
+                chats_dir: paths.state_dir().join("agent-chats"),
+                codex_home: None,
+                workdir: paths.state_dir().join("agent-workspace"),
+            },
+            paths,
+            vault,
+        },
+        cx,
+    );
+    cx.set_reduce_motion(true);
+    booted
+}
+
+/// Opens a window with the application's workspace.
+fn open_workspace(
+    vault_ready: bool,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| {
+            let mut workspace = Workspace::new(window, cx);
+            crate::bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
+            workspace
+        })
+    })
+    .unwrap()
 }
 
 fn emit(cx: &mut TestAppContext, transport: &MockTransport, index: usize, event: Event) {

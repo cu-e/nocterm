@@ -12,6 +12,7 @@ mod agent_auth;
 mod agent_bridge;
 mod app_menus;
 mod application;
+mod bootstrap;
 mod keymap;
 
 #[cfg(test)]
@@ -28,7 +29,7 @@ use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_settings::{SettingsDocument, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
-use nocterm_ui::{SettingsExt as _, SettingsStore};
+use nocterm_ui::SettingsStore;
 use nocterm_workspace::{
     DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
 };
@@ -37,7 +38,6 @@ use tracing_subscriber::EnvFilter;
 /// Used by Linux desktops to match the window to its `.desktop` entry.
 const APP_ID: &str = "dev.nocterm.Nocterm";
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     if std::env::args_os()
@@ -76,67 +76,28 @@ fn main() -> anyhow::Result<()> {
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets)
         .run(move |cx| {
-            gpui_kit::init(cx);
-            nocterm_ui::init(tokens, settings, cx);
-            nocterm_ui::init_themes(theme_dirs, catalog, cx);
-            nocterm_settings_ui::init_theme_registry(registry, cx);
-            nocterm_ui::LayoutMemory::init(Some(paths.state_dir().join("layout.json")), cx);
-            nocterm_terminal::init(Arc::new(transport), cx);
-            nocterm_terminal::init_recording(paths.state_dir().join("logs"), cx);
-            nocterm_terminal::init_local(
-                Arc::new(|launch| Arc::new(nocterm_local::LocalTransport(launch))),
-                cx,
-            );
-            nocterm_connections::init(Some(&paths), cx);
-            nocterm_snippets_ui::init(Some(&paths), cx);
-            nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
-            nocterm_agent::init(
-                nocterm_agent::AgentServices {
-                    connector: Arc::new(nocterm_acp::AcpConnector::managed(agent_helper)),
-                    terminal_auth: Some(Arc::new(agent_auth::open)),
-                    bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
-                    state_file: paths.state_dir().join("agents.toml"),
-                    chats_dir: paths.state_dir().join("agent-chats"),
-                    codex_home: nocterm_ai::usage::codex_home(),
-                    workdir: paths.state_dir().join("agent-workspace"),
-                    private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
-                    shared_dirs: vec![paths.effective_runtime_dir()],
+            let booted = bootstrap::bootstrap(
+                bootstrap::Services {
+                    tokens,
+                    settings,
+                    paths: paths.clone(),
+                    persist: true,
+                    transport: Arc::new(transport),
+                    local: true,
+                    themes: Some(bootstrap::Themes {
+                        dirs: theme_dirs,
+                        catalog,
+                        registry,
+                    }),
+                    agent: agent_services(&paths, agent_helper),
+                    vault: Some(bootstrap::VaultSetup {
+                        file: paths.config_dir().join("vault.bin"),
+                        device_unlock: true,
+                    }),
                 },
                 cx,
             );
-            let vault_ready = match nocterm_vault_ui::init_with_device_unlock(
-                paths.config_dir().join("vault.bin"),
-                Some(nocterm_device_unlock::provider()),
-                cx,
-            ) {
-                Ok(vault) => {
-                    nocterm_terminal::init_credentials(
-                        Arc::new(nocterm_vault_ui::VaultCredentials::new(vault)),
-                        |spec, id, cx| {
-                            nocterm_connections::Connections::global(cx).update(
-                                cx,
-                                |connections, cx| {
-                                    connections.associate_credential(
-                                        &spec.target,
-                                        &spec.auth,
-                                        id,
-                                        cx,
-                                    )
-                                },
-                            )
-                        },
-                        cx,
-                    );
-                    true
-                }
-                Err(error) => {
-                    tracing::error!(%error, "could not initialize the credential vault");
-                    false
-                }
-            };
-            keymap::load(Some(paths.config_dir().join("keymap.toml")), cx);
-
-            application::register(paths.clone(), vault_ready, cx);
+            let vault_ready = booted.vault_ready();
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -175,30 +136,27 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
 
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            workspace.set_session_factory(nocterm_terminal::Factory);
-            nocterm_connections::register(&mut workspace, window, cx);
-            register_settings(&mut workspace, vault_ready);
-            nocterm_files::register(&mut workspace, window, cx);
-            // The last panel's switcher sits just before the monitor.
-            nocterm_snippets_ui::register(&mut workspace, window, cx);
-            nocterm_containers_ui::register(&mut workspace, window, cx);
-            nocterm_monitor_ui::register(&mut workspace, window, cx);
-            nocterm_agent::register(&mut workspace, window, cx);
-            workspace.set_menu_builder(app_menus::build, window, cx);
-            if vault_ready
-                && cx
-                    .setting::<nocterm_vault_ui::VaultSettings>()
-                    .prompt_on_startup
-            {
-                let pages = vec![nocterm_vault_ui::settings_page()];
-                nocterm_settings_ui::open_page(&mut workspace, "vault", &pages, window, cx);
-            }
+            bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
         workspace
     })?;
     Ok(())
+}
+
+fn agent_services(paths: &Paths, helper: std::path::PathBuf) -> nocterm_agent::AgentServices {
+    nocterm_agent::AgentServices {
+        connector: Arc::new(nocterm_acp::AcpConnector::managed(helper)),
+        terminal_auth: Some(Arc::new(agent_auth::open)),
+        bridge: Arc::new(nocterm_acp::BridgeServer::new(paths.clone())),
+        state_file: paths.state_dir().join("agents.toml"),
+        chats_dir: paths.state_dir().join("agent-chats"),
+        codex_home: nocterm_ai::usage::codex_home(),
+        workdir: paths.state_dir().join("agent-workspace"),
+        private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
+        shared_dirs: vec![paths.effective_runtime_dir()],
+    }
 }
 
 fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
