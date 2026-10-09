@@ -548,6 +548,7 @@ mod servers;
 mod tool_input;
 mod tool_output;
 mod tool_presentation;
+mod tool_wrappers;
 mod usage_dismissal;
 
 mod flow;

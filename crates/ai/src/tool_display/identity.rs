@@ -134,7 +134,10 @@ fn envelope_of(
 }
 
 pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
-    let named = explicit_identity(call)??;
+    let Some(Some(named)) = explicit_identity(call) else {
+        let tool = legacy_tool(call)?;
+        return requested_call(call).is_some().then_some(tool);
+    };
     if operation(named.tool) == "Tool" {
         return None;
     }
@@ -153,6 +156,51 @@ pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
 /// What a Nocterm tool row asked for, for display. Requests the bridge
 /// rejected, such as a timeout beyond its limit, are shown all the same.
 pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
-    let named = explicit_identity(call)??;
-    envelope_of(call, named.registration, deserialize)
+    if let Some(Some(named)) = explicit_identity(call) {
+        return envelope_of(call, named.registration, deserialize);
+    }
+    let (tool, arguments) = legacy_arguments(call)?;
+    deserialize(tool, arguments)
+}
+
+/// Older Hermes builds used one bridge server named simply `nocterm`.
+/// This spelling is display-only: it never establishes a registered server.
+fn legacy_tool(call: &acp::ToolCall) -> Option<&str> {
+    fn tool(name: &str) -> Option<&str> {
+        let tool = name.strip_prefix("mcp_nocterm_")?;
+        (operation(tool) != "Tool").then_some(tool)
+    }
+    let title = if call.title.starts_with("mcp.") || call.title.starts_with("mcp_") {
+        Some(tool(&call.title)?)
+    } else {
+        None
+    };
+    let name = match call.name.as_deref() {
+        Some(name) => Some(tool(name)?),
+        None => None,
+    };
+    match (name, title) {
+        (Some(name), Some(title)) if name != title => None,
+        (Some(name), _) => Some(name),
+        (_, title) => title,
+    }
+}
+
+fn legacy_arguments(call: &acp::ToolCall) -> Option<(&str, serde_json::Value)> {
+    let tool = legacy_tool(call)?;
+    let input = call
+        .raw_input
+        .clone()
+        .filter(|input| !input.is_null())
+        .unwrap_or(json!({}));
+    if ["server", "tool", "arguments"]
+        .iter()
+        .any(|key| input.get(key).is_some())
+    {
+        if input.get("server")?.as_str()? != "nocterm" || input.get("tool")?.as_str()? != tool {
+            return None;
+        }
+        return Some((tool, input.get("arguments")?.clone()));
+    }
+    Some((tool, input))
 }

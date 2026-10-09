@@ -178,7 +178,6 @@ fn hermes_omits_the_input_of_calls_without_arguments() {
 #[test]
 fn malformed_and_foreign_hermes_names_keep_the_provider_label() {
     for title in [
-        "mcp_nocterm_run_command",
         "mcp_nocterm_x_run_command",
         "mcp_nocterm_3run_command",
         "mcp_nocterm_3_unknown",
@@ -270,4 +269,25 @@ fn raw_matching_preserves_rejected_unknown_tools_and_original_arguments() {
         assert!(raw_envelope(&call, "nocterm-4").is_none());
         assert!(envelope(&call, "nocterm-3").is_none());
     }
+}
+
+#[test]
+fn old_hermes_server_names_are_display_only() {
+    for tool in ["exec_command", "list_terminals"] {
+        let input = if tool == "exec_command" {
+            json!({"terminal_id":"t1","program":"sh"})
+        } else {
+            json!({})
+        };
+        let call = acp::ToolCall::new("old", format!("mcp_nocterm_{tool}")).raw_input(input);
+        assert!(requested_call(&call).is_some());
+        assert!(header(&call).starts_with("Nocterm"));
+        assert!(envelope(&call, "nocterm-3").is_none());
+        assert!(raw_envelope(&call, "nocterm-3").is_none());
+    }
+    let mut call = acp::ToolCall::new("old", "mcp_nocterm_exec_command")
+        .raw_input(json!({"terminal_id":"t1","program":"sh"}));
+    call.name = Some("mcp.nocterm-3.exec_command".into());
+    assert!(requested_call(&call).is_none());
+    assert!(envelope(&call, "nocterm-3").is_none());
 }

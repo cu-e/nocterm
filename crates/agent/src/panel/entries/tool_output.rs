@@ -67,8 +67,7 @@ pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Out
     {
         let mut output = match outcome {
             ToolOutcome::Pending => return None,
-            ToolOutcome::Ok(value) => decode::known(&display.tool, &value, 0)
-                .unwrap_or_else(|| Output::plain("Tool output", text(&value))),
+            ToolOutcome::Ok(value) => decode::bridge(&display.tool, &value),
             ToolOutcome::Err(error) => Output::plain("Error", error),
         };
         if redact {
@@ -101,20 +100,32 @@ pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Out
         let decoded = tool.and_then(|tool| decode::known(tool, value, 0));
         output.append(decoded.unwrap_or_else(|| Output::plain("Tool output", text(value))));
     } else if !content_values.is_empty() {
-        output.append(Output::plain(
-            "Tool output",
-            content_values
-                .iter()
-                .map(text)
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        ));
+        if let Some(tool) = tool {
+            for value in &content_values {
+                output.append(
+                    decode::known(tool, value, 0)
+                        .unwrap_or_else(|| Output::plain("Tool output", text(value))),
+                );
+            }
+        } else {
+            output.append(Output::plain(
+                "Tool output",
+                content_values
+                    .iter()
+                    .map(text)
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ));
+        }
     }
     if let Some(raw) = call.raw_output.as_ref().filter(|raw| !raw.is_null()) {
         // Providers often repeat the same result as both content and rawOutput.
         // Suppress only exact text/JSON equivalence, never an unknown extra block.
-        let duplicate =
-            content_values.len() == 1 && decode::equivalent(tool, &content_values[0], raw);
+        let duplicate = match content_values.as_slice() {
+            [] => false,
+            [value] => decode::equivalent(tool, value, raw),
+            values => decode::equivalent(tool, &Value::Array(values.to_vec()), raw),
+        };
         if !duplicate {
             let decoded = tool.and_then(|tool| decode::known(tool, raw, 0));
             output.append(decoded.unwrap_or_else(|| Output::plain("Tool output", text(raw))));

@@ -1,267 +1,65 @@
-//! Decode only the bridge's known result shapes. Unknown fields stay visible.
-use super::{Output, text};
-use crate::panel::entries::tool_input::Section;
-use serde::Deserialize;
+//! Historical provider wrappers are presentation hints, independent of execution validation.
+use super::Output;
 use serde_json::Value;
-
-const MAX_DECODE_BYTES: usize = 512 * 1024;
-const MAX_WRAPPER_DEPTH: usize = 8;
-
-fn payload(value: &Value) -> Option<Value> {
-    match value {
-        Value::String(text) if text.len() <= MAX_DECODE_BYTES => serde_json::from_str(text).ok(),
-        _ => None,
-    }
-}
-
-fn mcp_text(value: &Value) -> Option<(&str, bool)> {
-    let object = value.as_object()?;
-    if !object
-        .keys()
-        .all(|key| matches!(key.as_str(), "content" | "isError"))
-    {
-        return None;
-    }
-    let [item] = object.get("content")?.as_array()?.as_slice() else {
-        return None;
-    };
-    let item = item.as_object()?;
-    if item.len() != 2 || item.get("type")?.as_str()? != "text" {
-        return None;
-    }
-    let error = match object.get("isError") {
-        Some(Value::Bool(error)) => *error,
-        None => false,
-        _ => return None,
-    };
-    Some((item.get("text")?.as_str()?, error))
-}
-
-/// Hermes fences results from MCP tools: the opening tag, one line of
-/// guidance, a blank line, the result and the closing tag.
-fn fenced(value: &Value) -> Option<Value> {
-    let text = value.as_str()?;
-    let (source, rest) = text
-        .strip_prefix("<untrusted_tool_result source=\"")?
-        .split_once("\">\n")?;
-    let (guidance, result) = rest.split_once("\n\n")?;
-    if source.contains(['"', '\n']) || guidance.contains('\n') {
-        return None;
-    }
-    let result = result.strip_suffix("\n</untrusted_tool_result>")?;
-    Some(Value::String(result.into()))
-}
-
-/// Hermes reports a failed MCP call as `{"error": message}`.
-/// Hermes `{"error": text}` and Codex `{"result": null, "error": {"message": text}}`.
-fn provider_error(value: &Value) -> Option<&str> {
-    let object = value.as_object()?;
-    match object.len() {
-        1 => object.get("error")?.as_str(),
-        2 if object.get("result")?.is_null() => {
-            let error = object.get("error")?.as_object()?;
-            (error.len() == 1).then_some(())?;
-            error.get("message")?.as_str()
-        }
-        _ => None,
-    }
-}
-
-fn nested(value: &Value) -> Option<Value> {
-    if let Some(result) = fenced(value) {
-        return Some(result);
-    }
-    if let Some(payload) = payload(value) {
-        return Some(payload);
-    }
-    let object = value.as_object()?;
-    if object
-        .keys()
-        .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "result"))
-        && object.get("jsonrpc").is_none_or(|version| version == "2.0")
-        && let Some(result) = object.get("result")
-    {
-        return Some(result.clone());
-    }
-    let (message, error) = mcp_text(value)?;
-    (!error).then(|| Value::String(message.into()))
-}
-
-fn normalized(value: &Value) -> Option<Value> {
-    let mut value = value.clone();
-    for _ in 0..MAX_WRAPPER_DEPTH {
-        match nested(&value) {
-            Some(next) => value = next,
-            None => return Some(value),
-        }
-    }
-    None
-}
+mod payload;
+mod unwrap;
 
 pub(super) fn equivalent(tool: Option<&str>, content: &Value, raw: &Value) -> bool {
-    if content == raw {
-        return true;
-    }
-    let Some(tool) = tool else {
-        return false;
-    };
-    known(tool, content, 0).is_some()
-        && known(tool, raw, 0).is_some()
-        && normalized(content).is_some_and(|content| Some(content) == normalized(raw))
+    content == raw
+        || (tool.is_some()
+            && unwrap::normalized(tool, content, 0)
+                .is_some_and(|content| Some(content) == unwrap::normalized(tool, raw, 0)))
 }
 
 pub(super) fn known(tool: &str, value: &Value, depth: usize) -> Option<Output> {
-    if depth >= MAX_WRAPPER_DEPTH {
-        return None;
+    if let Some(output) = payload::known(tool, value) {
+        return Some(output);
     }
-    if let Some(nested) = nested(value) {
-        return known(tool, &nested, depth + 1);
-    }
-    if let Some((message, true)) = mcp_text(value) {
-        return Some(Output::plain("Error", message.into()));
-    }
-    if let Some(message) = provider_error(value) {
-        return Some(Output::plain("Error", message.into()));
-    }
-    let object = value.as_object()?;
-    match tool {
-        "exec_command" | "read_command" | "cancel_command" => command(value),
-        "run_command" => observation(value),
-        "read_terminal" => terminal(value),
-        "send_input" if value == &serde_json::json!({"accepted":true}) => {
-            Some(Output::plain("Tool output", "Input accepted".into()))
-        }
-        "list_terminals" if object.len() == 1 => Some(Output::plain(
-            "Context",
-            object.get("context")?.as_str()?.into(),
-        )),
-        "open_terminal" if object.len() == 1 && object.contains_key("terminal") => {
-            Some(Output::plain("Terminal", text(object.get("terminal")?)))
-        }
-        _ => None,
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Command {
-    command_id: String,
-    state: String,
-    stdout: String,
-    stderr: String,
-    exit_status: Option<u32>,
-    total_bytes: u64,
-    truncated: bool,
-    error: Option<String>,
-}
-
-fn command(value: &Value) -> Option<Output> {
-    let value: Command = serde_json::from_value(value.clone()).ok()?;
-    let state = match value.state.as_str() {
-        "starting" => "Starting",
-        "running" => "Running",
-        "exited" => "Exited",
-        "timed_out" => "Timed out",
-        "cancelled" => "Cancelled",
-        "failed" => "Failed",
-        _ => return None,
+    let Some(parts) = unwrap::normalized(Some(tool), value, depth) else {
+        return Some(Output::plain(
+            "Tool output",
+            "Tool result exceeds display limits".into(),
+        ));
     };
-    if value.command_id.is_empty() || value.command_id.len() > 128 {
-        return None;
-    }
-    let mut output = Output::plain("Standard output", value.stdout);
-    output.sections.push(Section {
-        label: "Standard error",
-        text: value.stderr,
-        language: None,
-    });
-    output.parameters = vec![
-        format!("Process: {state}"),
-        format!("Command handle: {}", value.command_id),
-        value
-            .exit_status
-            .map(|status| format!("Exit status: {status}"))
-            .unwrap_or_else(|| "Exit status: unknown".into()),
-        format!("{} bytes received", value.total_bytes),
-    ];
-    if value.truncated {
-        output.parameters.push("Output truncated".into());
-    }
-    if let Some(error) = value.error {
-        output.sections.push(Section {
-            label: "Error",
-            text: error,
-            language: None,
+    let mut output = Output {
+        sections: Vec::new(),
+        parameters: Vec::new(),
+    };
+    for part in parts {
+        output.append(match part {
+            unwrap::Part::Payload(value) => bridge(tool, &value),
+            unwrap::Part::Error(error) => Output::plain("Error", error),
         });
     }
-    Some(output)
+    (!output.sections.is_empty()).then_some(output)
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Terminal {
-    text: String,
-    first_line: u64,
-    next_line: u64,
-    cursor_semantics: String,
-    truncated: bool,
-    alt_screen: bool,
+pub(super) fn bridge(tool: &str, value: &Value) -> Output {
+    payload::known(tool, value).unwrap_or_else(|| Output::plain("Tool output", readable(value)))
 }
 
-fn terminal_output(value: Terminal) -> Option<Output> {
-    if value.cursor_semantics != "inclusive snapshot; replace overlapping lines" {
-        return None;
-    }
-    let mut output = Output::plain("Terminal output", value.text);
-    output.parameters = vec![
-        format!("Lines {}–{}", value.first_line, value.next_line),
-        value.cursor_semantics,
-    ];
-    if value.truncated {
-        output.parameters.push("Output truncated".into());
-    }
-    if value.alt_screen {
-        output.parameters.push("Alternate screen".into());
-    }
-    Some(output)
-}
-fn terminal(value: &Value) -> Option<Output> {
-    terminal_output(serde_json::from_value(value.clone()).ok()?)
+/// Key/value text also handles future payloads without exposing provider JSON.
+pub(super) fn readable(value: &Value) -> String {
+    readable_at(value, 0)
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Observation {
-    text: String,
-    first_line: u64,
-    next_line: u64,
-    cursor_semantics: String,
-    truncated: bool,
-    alt_screen: bool,
-    completion: String,
-    completed: bool,
-    exit_status: Option<u32>,
-}
-fn observation(value: &Value) -> Option<Output> {
-    let value: Observation = serde_json::from_value(value.clone()).ok()?;
-    let status = match (value.completion.as_str(), value.completed) {
-        ("prompt_returned", true) => "Prompt returned",
-        ("output_idle", false) => "Observation ended: output idle; process completion unknown",
-        ("timeout", false) => "Observation ended: timeout; process completion unknown",
-        _ => return None,
-    };
-    if value.exit_status.is_some() {
-        return None;
+fn readable_at(value: &Value, depth: usize) -> String {
+    if depth >= 16 {
+        return "…".into();
     }
-    let mut output = terminal_output(Terminal {
-        text: value.text,
-        first_line: value.first_line,
-        next_line: value.next_line,
-        cursor_semantics: value.cursor_semantics,
-        truncated: value.truncated,
-        alt_screen: value.alt_screen,
-    })?;
-    output.parameters.push(status.into());
-    output.parameters.push("Exit status: unknown".into());
-    Some(output)
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Object(values) => values
+            .iter()
+            .map(|(key, value)| format!("{key}: {}", readable_at(value, depth + 1)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| readable_at(value, depth + 1))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        Value::Null => "None".into(),
+        value => value.to_string(),
+    }
 }
