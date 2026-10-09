@@ -66,7 +66,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     } = services;
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
-    nocterm_ui::init(tokens, settings, cx);
+    let ui = nocterm_ui::init(tokens, settings, cx);
     if let Some(themes) = themes {
         nocterm_ui::init_themes(themes.dirs, themes.catalog, cx);
         nocterm_settings_ui::init_theme_registry(themes.registry, cx);
@@ -75,7 +75,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         stored.map(|paths| paths.state_dir().join("layout.json")),
         cx,
     );
-    nocterm_terminal::init(transport, cx);
+    nocterm_terminal::init(transport, &ui, cx);
     if persist {
         nocterm_terminal::init_recording(paths.state_dir().join("logs"), cx);
     }
@@ -88,7 +88,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     }
     nocterm_connections::init(stored, cx);
     nocterm_snippets_ui::init(stored, cx);
-    nocterm_agent::init(agent, cx);
+    nocterm_agent::init(agent, &ui, cx);
     let vault = vault.and_then(|setup| open_vault(setup, cx));
     crate::keymap::load(
         stored.map(|paths| paths.config_dir().join("keymap.toml")),

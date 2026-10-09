@@ -101,6 +101,7 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
                 codex_home: None,
                 workdir: f._directory.path().join("pending"),
             },
+            &nocterm_ui::UiReady::installed(cx).unwrap(),
             cx,
         )
     });

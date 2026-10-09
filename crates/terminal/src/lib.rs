@@ -161,7 +161,7 @@ pub fn open_program(
 }
 
 /// Installs the transport terminals open their sessions with.
-pub fn init(transport: Arc<dyn Transport>, cx: &mut App) {
+pub fn init(transport: Arc<dyn Transport>, _: &nocterm_ui::UiReady, cx: &mut App) {
     nocterm_ui::register_setting::<nocterm_session::LoggingOptions>(cx);
     nocterm_ui::register_setting::<nocterm_session::SshSettings>(cx);
     nocterm_ui::register_setting::<nocterm_session::LocalShellSettings>(cx);

@@ -54,7 +54,7 @@ impl TerminalAuth {
 }
 
 /// Installs services without starting an agent or opening a listener.
-pub fn init(services: AgentServices, cx: &mut App) {
+pub fn init(services: AgentServices, _: &nocterm_ui::UiReady, cx: &mut App) {
     panel::commands::init(cx);
     cx.set_global(TerminalAuth(services.terminal_auth.clone()));
     cx.set_global(runtime::AiSettingsSource(|cx| {

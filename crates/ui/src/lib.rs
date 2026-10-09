@@ -43,8 +43,9 @@ use gpui_kit::App;
 /// Installs the design tokens and settings, themes the components after
 /// them, and keeps the theme in step when either changes.
 ///
-/// Call it after `gpui_kit::init`.
-pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) {
+/// Call it after `gpui_kit::init`. The returned witness is what the features
+/// that read settings take, so calling them first does not compile.
+pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiReady {
     for name in unknown_color_names(&tokens) {
         tracing::warn!(%name, "design tokens name a colour the component theme does not have");
     }
@@ -59,4 +60,18 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) {
 
     cx.observe_global::<Design>(apply_theme).detach();
     cx.observe_global::<SettingsStore>(apply_theme).detach();
+    UiReady(())
+}
+
+/// Proof that [`init`] has run: the design and the settings store are
+/// installed. It costs nothing at run time.
+#[derive(Clone, Copy, Debug)]
+pub struct UiReady(());
+
+impl UiReady {
+    /// The witness for an app [`init`] already ran in, for code handed the
+    /// app rather than the witness, such as a test re-initializing a feature.
+    pub fn installed(cx: &App) -> Option<Self> {
+        cx.has_global::<SettingsStore>().then_some(Self(()))
+    }
 }

@@ -33,12 +33,12 @@ pub(super) fn fixture(
     let transport = Arc::new(Scripted::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init(transport.clone(), cx);
+        crate::init(transport.clone(), &ui, cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 TerminalView::new(
