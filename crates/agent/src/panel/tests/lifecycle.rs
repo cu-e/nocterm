@@ -442,7 +442,10 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
     let commands = f.commands.clone();
     cx.update(|cx| {
         crate::runtime::Runtime::global(cx).update(cx, |runtime, _| {
-            runtime.services.terminal_auth = Some(Arc::new(move |_, request, _, _| {
+            runtime.services.terminal_auth = true;
+        });
+        cx.set_global(crate::TerminalAuth(Some(Arc::new(
+            move |_, request, _, _| {
                 let mut requests = captured.lock().unwrap();
                 requests.push(request);
                 let (send, receive) = oneshot::channel();
@@ -451,8 +454,8 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
                     send.send(Ok(())).unwrap();
                 }
                 receive
-            }));
-        });
+            },
+        ))));
     });
     new_chat(&f, cx);
     cx.update(|cx| {

@@ -351,7 +351,7 @@ impl AgentThread {
             acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
             acp::AuthMethod::Terminal(method) => {
                 let runtime = Runtime::global(cx);
-                let Some(opener) = runtime.read(cx).services.terminal_auth.clone() else {
+                let Some(opener) = crate::TerminalAuth::opener(cx) else {
                     return;
                 };
                 let Some(request) = self

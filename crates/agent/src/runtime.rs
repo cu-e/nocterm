@@ -2,14 +2,16 @@ mod client;
 mod documents;
 mod lease;
 mod lifecycle;
+mod settings;
 pub(crate) use client::{Client, ClientState, SessionClient, SessionEvent};
-use gpui_kit::{App, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity, Window};
+use gpui_kit::{App, Context, Entity, EntityId, Global, Task};
 pub(crate) use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
     ConnectRequest, ToolBridge, acp,
 };
-use nocterm_ui::{ActiveAi as _, SettingsExt as _, SettingsStore};
+use settings::AiSettingsExt as _;
+pub(crate) use settings::AiSettingsSource;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -24,18 +26,8 @@ pub struct TerminalAuthRequest {
     pub cwd: PathBuf,
     pub title: String,
 }
-pub type TerminalAuthOpener = Arc<
-    dyn Fn(
-            WeakEntity<nocterm_workspace::Workspace>,
-            TerminalAuthRequest,
-            &mut Window,
-            &mut App,
-        ) -> futures::channel::oneshot::Receiver<Result<(), String>>
-        + Send
-        + Sync,
->;
-
-pub struct AgentServices {
+/// What the runtime connects agents with, and where it keeps their state.
+pub(crate) struct RuntimeServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub state_file: PathBuf,
@@ -44,7 +36,8 @@ pub struct AgentServices {
     /// Where Codex keeps its session logs, read for its plan limits.
     pub codex_home: Option<PathBuf>,
     pub workdir: PathBuf,
-    pub terminal_auth: Option<TerminalAuthOpener>,
+    /// Whether the host can run an agent's sign-in command in a terminal.
+    pub terminal_auth: bool,
     /// nocterm's own directories (settings, vault, chats), hidden from
     /// isolated agents.
     pub private_dirs: Vec<PathBuf>,
@@ -70,7 +63,7 @@ struct Connection {
     startup_completion: Option<futures::channel::oneshot::Receiver<Result<(), String>>>,
 }
 pub(crate) struct Runtime {
-    pub services: AgentServices,
+    pub services: RuntimeServices,
     pub favorites: nocterm_ai::favorites::AgentStateFile,
     pub favorites_error: Option<String>,
     favorites_revision: u64,
@@ -103,67 +96,16 @@ pub(crate) struct Runtime {
     /// Leases dropped by their threads, waiting to be released.
     lease_releases: async_channel::Sender<lease::ReleasedLease>,
     _releasing: Task<()>,
-    _settings: Subscription,
     _bridge: Option<Task<()>>,
 }
 impl Runtime {
     pub(crate) fn global(cx: &App) -> Entity<Self> {
         cx.global::<RuntimeGlobal>().0.clone()
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(crate) fn new(services: AgentServices, cx: &mut Context<Self>) -> Self {
-        for warning in
-            nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>()).warnings
-        {
+    pub(crate) fn new(services: RuntimeServices, cx: &mut Context<Self>) -> Self {
+        for warning in nocterm_ai::AgentRegistry::new(cx.ai()).warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
-        let settings = cx.observe_global::<SettingsStore>(|this, cx| {
-            if !cx.ai_enabled() {
-                let ids = this.documents.keys().copied().collect::<Vec<_>>();
-                for id in ids { this.capture_and_detach_document(id, cx); }
-            }
-            let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>());
-            for warning in &registry.warnings{tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");}
-            let keys: Vec<_> = this
-                .connections
-                .iter()
-                .filter(|(_, connection)| registry.get(&connection.launch.id).is_none())
-                .map(|(key, _)| *key)
-                .collect();
-            for key in keys {
-                this.stop_connection(key, "Agent configuration changed. Start a new chat.", cx);
-            }
-            // Isolation is a security boundary: it applies to running agents
-            // at once rather than to the next chat.
-            let isolated = cx.setting::<nocterm_ai::AiSettings>().sandbox == nocterm_ai::SandboxMode::Workspace;
-            let keys: Vec<_> = this
-                .connections
-                .iter()
-                .filter(|(_, connection)| connection.isolated != isolated)
-                .map(|(key, _)| *key)
-                .collect();
-            for key in keys {
-                this.stop_connection(
-                    key,
-                    if isolated {
-                        "Agent isolation was turned on. Restart the chat to continue isolated."
-                    } else {
-                        "Agent isolation was turned off. Restart the chat to continue."
-                    },
-                    cx,
-                );
-            }
-            if !cx.ai_enabled() {
-                this.registrations.clear();
-                this.services.bridge.stop();
-            }
-            let clients: Vec<_> = this.connections.values()
-                .flat_map(|connection| connection.users.values().cloned())
-                .collect();
-            for client in clients {
-                client.emit(SessionEvent::PolicyChanged, cx);
-            }
-        });
         let favorites =
             nocterm_ai::favorites::AgentStateFile::load(&services.state_file).unwrap_or_default();
         let chats_dir = services.chats_dir.clone();
@@ -216,8 +158,64 @@ impl Runtime {
             serial: 0,
             lease_releases,
             _releasing: releasing,
-            _settings: settings,
             _bridge: None,
+        }
+    }
+    /// Applies changed AI settings to the running agents.
+    pub(crate) fn settings_changed(&mut self, cx: &mut Context<Self>) {
+        if !cx.ai_enabled() {
+            let ids = self.documents.keys().copied().collect::<Vec<_>>();
+            for id in ids {
+                self.capture_and_detach_document(id, cx);
+            }
+        }
+        let registry = nocterm_ai::AgentRegistry::new(cx.ai());
+        for warning in &registry.warnings {
+            tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");
+        }
+        let keys: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(_, connection)| registry.get(&connection.launch.id).is_none())
+            .map(|(key, _)| *key)
+            .collect();
+        for key in keys {
+            self.stop_connection(key, "Agent configuration changed. Start a new chat.", cx);
+        }
+        self.apply_isolation(cx);
+        if !cx.ai_enabled() {
+            self.registrations.clear();
+            self.services.bridge.stop();
+        }
+        let clients: Vec<_> = self
+            .connections
+            .values()
+            .flat_map(|connection| connection.users.values().cloned())
+            .collect();
+        for client in clients {
+            client.emit(SessionEvent::PolicyChanged, cx);
+        }
+    }
+    /// Isolation is a security boundary: it applies to running agents at once
+    /// rather than to the next chat.
+    fn apply_isolation(&mut self, cx: &mut Context<Self>) {
+        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
+        let keys: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(_, connection)| connection.isolated != isolated)
+            .map(|(key, _)| *key)
+            .collect();
+        for key in keys {
+            self.stop_connection(
+                key,
+                if isolated {
+                    "Agent isolation was turned on. Restart the chat to continue isolated."
+                } else {
+                    "Agent isolation was turned off. Restart the chat to continue."
+                },
+                cx,
+            );
         }
     }
     pub(crate) fn toggle_favorite(
@@ -290,7 +288,7 @@ impl Runtime {
     /// Reads `agent`'s plan limits again, from agents that keep them in their
     /// own files. Others report them along with usage.
     pub(crate) fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        let codex = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
+        let codex = nocterm_ai::AgentRegistry::new(cx.ai())
             .get(agent)
             .is_some_and(nocterm_ai::usage::is_codex);
         let Some(home) = self.services.codex_home.clone().filter(|_| codex) else {
@@ -395,13 +393,12 @@ impl Runtime {
             return;
         }
         let workdir = cx
-            .setting::<nocterm_ai::AiSettings>()
+            .ai()
             .working_directory
             .as_ref()
             .map(PathBuf::from)
             .unwrap_or_else(|| self.services.workdir.clone());
-        let isolated =
-            cx.setting::<nocterm_ai::AiSettings>().sandbox == nocterm_ai::SandboxMode::Workspace;
+        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         launch.hash(&mut hasher);
         workdir.hash(&mut hasher);
@@ -441,7 +438,7 @@ impl Runtime {
         );
         let connector = self.services.connector.clone();
         let private_workdir = workdir == self.services.workdir;
-        let terminal_auth = self.services.terminal_auth.is_some();
+        let terminal_auth = self.services.terminal_auth;
         let sandbox = isolated.then(|| {
             nocterm_ai::sandbox::SandboxPolicy::new(
                 &workdir,
@@ -450,7 +447,7 @@ impl Runtime {
                 &self.services.shared_dirs,
             )
         });
-        let resources = cx.setting::<nocterm_ai::AiSettings>().resources.clone();
+        let resources = cx.ai().resources.clone();
         let future = cx.background_executor().spawn(async move {
             if private_workdir {
                 nocterm_core::paths::ensure_private_dir(&workdir)

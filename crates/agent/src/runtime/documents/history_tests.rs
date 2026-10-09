@@ -30,22 +30,21 @@ impl nocterm_ai::ToolBridge for UnusedBridge {
 fn fixture(cx: &mut TestAppContext) -> (Entity<Runtime>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let runtime = cx.update(|cx| {
-        gpui_kit::init(cx);
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
-            cx,
-        );
+        cx.set_global(AiSettingsSource(|_| {
+            static AI: std::sync::LazyLock<nocterm_ai::AiSettings> =
+                std::sync::LazyLock::new(Default::default);
+            &AI
+        }));
         cx.new(|cx| {
             Runtime::new(
-                crate::AgentServices {
+                RuntimeServices {
                     connector: Arc::new(UnusedConnector),
                     bridge: Arc::new(UnusedBridge),
                     state_file: directory.path().join("agents.toml"),
                     chats_dir: directory.path().join("chats"),
                     codex_home: None,
                     workdir: directory.path().join("work"),
-                    terminal_auth: None,
+                    terminal_auth: false,
                     private_dirs: Vec::new(),
                     shared_dirs: Vec::new(),
                 },

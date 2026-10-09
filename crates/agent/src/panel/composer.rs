@@ -20,10 +20,7 @@ use super::{
     AgentPanel, MenuKind,
     widgets::{attachment_icon, menu_variant, mode_label, running_dot},
 };
-use crate::{
-    runtime::Runtime,
-    thread::{AgentThread, config_label},
-};
+use crate::thread::{AgentThread, config_label};
 
 impl AgentPanel {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -324,11 +321,7 @@ impl AgentPanel {
         {
             for method in &info.auth_methods {
                 if matches!(method, acp::AuthMethod::Terminal(_))
-                    && Runtime::global(cx)
-                        .read(cx)
-                        .services
-                        .terminal_auth
-                        .is_none()
+                    && crate::TerminalAuth::opener(cx).is_none()
                 {
                     continue;
                 }
