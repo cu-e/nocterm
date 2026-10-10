@@ -1,7 +1,7 @@
 //! Reading and writing the connection files.
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,18 +9,14 @@ use nocterm_core::persist;
 
 use crate::store::{Profiles, Recents};
 
-pub(super) fn write_profiles(path: Option<PathBuf>, profiles: &Profiles) -> Result<(), String> {
-    path.map_or(Ok(()), |path| {
-        persist::save_preserving(&path, profiles).map_err(|error| error.to_string())
-    })
-}
-
-pub(super) fn load_profiles(path: &Path) -> (Profiles, Option<String>) {
+pub(super) fn load_profiles(
+    path: &Path,
+) -> (Profiles, Option<std::sync::Arc<persist::PersistError>>) {
     match persist::load::<Profiles>(path) {
         Ok(profiles) => (profiles.unwrap_or_default(), None),
         Err(error) => {
             tracing::error!(%error, "could not read saved connections");
-            (Profiles::default(), Some(error.to_string()))
+            (Profiles::default(), Some(std::sync::Arc::new(error)))
         }
     }
 }

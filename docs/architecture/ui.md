@@ -3,7 +3,7 @@
 Part of the [architecture overview](../ARCHITECTURE.md).
 
 UI crates are shared by every feature and depend only on each other, the
-domain and the foundation: `nocterm-ui`, `nocterm-workspace` and
+domain, service and the foundation: `nocterm-ui`, `nocterm-workspace` and
 `nocterm-keymap`. The workspace's seams are how features meet without depending
 on each other ([ADR 0006](../adr/0006-workspace-ports.md)).
 
@@ -137,11 +137,15 @@ in the palette by declaring and handling an action, nothing more.
 
 Widths the user drags resizable columns to, and layout choices, are kept by
 `nocterm_ui::LayoutMemory`, a global keyed by name and saved to `layout.json` in
-the state directory. One background writer coalesces pending changes into the
-latest arrangement and publishes through atomic persistence. Layout and settings
-writers freeze admission on quit and capture final snapshots before waiting for
-ordered background writes; accepted settings edits are included even when an
-earlier write is still in progress. The workspace body lays out only its visible columns —
+the state directory. Its private `nocterm_store::Persisted` entity keeps changes
+immediately visible and coalesces pending snapshots into the latest arrangement.
+The explicitly injected `ShutdownCoordinator` captures layout before background
+drain and shares one deadline across its registered participants (ADR 0013).
+Settings also uses `nocterm-store`, with durable publication rather than optimistic
+layout projection. Bootstrap registers both settings and layout with the same
+coordinator alongside snippets and connection state; agent and recording writers
+still retain their own quit handlers.
+The workspace body lays out only its visible columns —
 sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
 the left — with one resize state per arrangement, and remembers widths per
 column rather than per position: a hidden column kept in the resizable group

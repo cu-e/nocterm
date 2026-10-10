@@ -4,7 +4,9 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Service crates own GPUI entities and background work but no views: they
 depend on GPUI alone, never on the component library, the UI layer or features,
-and features depend on them. `nocterm-agent-runtime` is the one service crate
+and UI/feature crates depend on them. `nocterm-store` owns ordered persistence
+and synchronous quit capture for layout, settings, snippets and connection state ([ADR 0013](../adr/0013-persistence-shutdown-service.md)).
+`nocterm-agent-runtime` owns agent lifecycle
 ([ADR 0005](../adr/0005-agent-runtime-service.md)).
 
 ## Agents
@@ -16,7 +18,7 @@ connections, closes idle ones and writes chats; `nocterm-agent` supplies threads
 and chat UI. App injects the adapter. The runtime knows no thread type: a thread
 registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
-host installs the `AiSettingsSource` the runtime reads settings through. Workspace exposes allowlisted `TerminalAccess`
+host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace exposes allowlisted `TerminalAccess`
 and `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.

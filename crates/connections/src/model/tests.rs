@@ -1,70 +1,14 @@
-use std::{collections::VecDeque, fs};
-
 use super::*;
+use futures::channel::oneshot;
+use nocterm_core::persist;
+use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+};
 
-#[gpui_kit::test]
-async fn moves_preserve_latest_attributes_and_roll_back_failed_storage(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = Profile {
-        id: ProfileId::generate(),
-        name: "Build".into(),
-        description: "Retained".into(),
-        options: Default::default(),
-        target: Target::new("ci", "build", 2222),
-        auth: Auth::Password,
-        credential: Some(CredentialId::from_bytes([42; 16])),
-        launch: Some(Default::default()),
-        icon: None,
-        icon_color: None,
-        country: None,
-        group: Some("Work".into()),
-    };
-    let entity = cx.new(|_| Connections::in_memory());
-    entity
-        .update(cx, |c, cx| c.save_profile(profile.clone(), cx))
-        .await
-        .unwrap();
-    entity
-        .update(cx, |c, cx| {
-            c.move_profile(profile.id, Some("Personal".into()), cx)
-        })
-        .await
-        .unwrap();
-    let mut expected = profile.clone();
-    expected.group = Some("Personal".into());
-    assert_eq!(
-        entity.read_with(cx, |c, _| c.profiles.get(profile.id).cloned()),
-        Some(expected)
-    );
-    let before = entity.read_with(cx, |c, _| c.profiles.clone());
-    entity.update(cx, |c, _| c.profiles_file = Some(dir.path().into()));
-    assert!(
-        entity
-            .update(cx, |c, cx| c.move_profile(profile.id, None, cx))
-            .await
-            .is_err()
-    );
-    assert_eq!(entity.read_with(cx, |c, _| c.profiles.clone()), before);
-    entity.update(cx, |c, _| {
-        c.profiles_file = None;
-        c.load_error = Some("Invalid TOML".into());
-    });
-    assert!(
-        entity
-            .update(cx, |c, cx| c.move_profile(profile.id, None, cx))
-            .await
-            .is_err()
-    );
-    assert_eq!(entity.read_with(cx, |c, _| c.profiles.clone()), before);
-    entity
-        .update(cx, |c, cx| {
-            c.move_profile(profile.id, Some("Personal".into()), cx)
-        })
-        .await
-        .unwrap();
-}
+mod credentials;
+mod shutdown;
 
 fn profile(name: &str) -> Profile {
     Profile {
@@ -84,84 +28,6 @@ fn profile(name: &str) -> Profile {
 }
 
 #[gpui_kit::test]
-async fn ordered_writes_publish_after_success_and_reject_queued_stale_editor(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    use futures::FutureExt as _;
-    use std::sync::{Arc, Mutex};
-    let original = profile("Build");
-    let entity = cx.new(|_| Connections::in_memory());
-    entity
-        .update(cx, |c, cx| c.save_profile(original.clone(), cx))
-        .await
-        .unwrap();
-    let (first_send, first_receive) = oneshot::channel::<Result<(), String>>();
-    let (second_send, second_receive) = oneshot::channel::<Result<(), String>>();
-    let gates = Arc::new(Mutex::new(VecDeque::from([first_receive, second_receive])));
-    let writes = Arc::new(Mutex::new(Vec::<Profiles>::new()));
-    let observed = writes.clone();
-    entity.update(cx, |c, _| {
-        c.profiles_file = Some("/not-used-by-injected-writer".into());
-        c.test_writer = Some(Arc::new(move |profiles| {
-            observed.lock().unwrap().push(profiles);
-            let gate = gates.lock().unwrap().pop_front().unwrap();
-            async { gate.await.unwrap() }.boxed()
-        }));
-    });
-    let first = entity.update(cx, |c, cx| {
-        c.move_profile(original.id, Some("A".into()), cx)
-    });
-    let second = entity.update(cx, |c, cx| {
-        c.move_profile(original.id, Some("B".into()), cx)
-    });
-    let mut edited = original.clone();
-    edited.description = "Old draft".into();
-    let stale = entity.update(cx, |c, cx| {
-        c.save_profile_checked(edited, Some(original.clone()), cx)
-    });
-    cx.run_until_parked();
-    assert_eq!(writes.lock().unwrap().len(), 1);
-    assert_eq!(
-        entity.read_with(cx, |c, _| c.profiles.get(original.id).cloned()),
-        Some(original.clone())
-    );
-    // A normal UI mutation remains runnable while disk completion is held.
-    entity.update(cx, |c, _| {
-        c.profile_persistence_error = Some("UI remains responsive".into())
-    });
-    first_send.send(Ok(())).unwrap();
-    cx.run_until_parked();
-    assert_eq!(writes.lock().unwrap().len(), 2);
-    assert_eq!(
-        entity.read_with(cx, |c, _| c
-            .profiles
-            .get(original.id)
-            .unwrap()
-            .group
-            .clone()),
-        Some("A".into())
-    );
-    second_send.send(Ok(())).unwrap();
-    first.await.unwrap();
-    second.await.unwrap();
-    assert!(stale.await.unwrap_err().contains("changed or was deleted"));
-    assert_eq!(
-        writes.lock().unwrap().len(),
-        2,
-        "stale draft never reaches persistence"
-    );
-    assert_eq!(
-        entity.read_with(cx, |c, _| c
-            .profiles
-            .get(original.id)
-            .unwrap()
-            .group
-            .clone()),
-        Some("B".into())
-    );
-}
-
-#[gpui_kit::test]
 async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
     cx: &mut gpui_kit::TestAppContext,
 ) {
@@ -171,7 +37,7 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
         .update(cx, |c, cx| c.save_profile(original.clone(), cx))
         .await
         .unwrap();
-    let credential = CredentialId::from_bytes([42; 16]);
+    let credential = CredentialId::from_bytes([1; 16]);
     entity
         .update(cx, |c, cx| {
             c.associate_credential(&original.target, &original.auth, credential, cx)
@@ -189,7 +55,11 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
             .is_err()
     );
     assert_eq!(
-        entity.read_with(cx, |c, _| c.profiles.get(original.id).unwrap().credential),
+        entity.read_with(cx, |c, cx| c
+            .profiles(cx)
+            .get(original.id)
+            .unwrap()
+            .credential),
         Some(credential)
     );
     entity
@@ -206,9 +76,9 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
             .await
             .is_err()
     );
-    assert!(entity.read_with(cx, |c, _| c.profiles.is_empty()));
+    assert!(entity.read_with(cx, |c, cx| c.profiles(cx).is_empty()));
     let mut oversized = original.clone();
-    oversized.description = "x".repeat(MAX_PROFILE_BYTES + 1);
+    oversized.description = "x".repeat((64 * 1024) + 1);
     assert!(
         entity
             .update(cx, |c, cx| c.save_profile(oversized, cx))
@@ -246,57 +116,38 @@ async fn group_mutations_apply_atomically_and_unlink_recents(cx: &mut gpui_kit::
         .await
         .unwrap();
     assert_eq!(
-        entity.read_with(cx, |e, _| e.profiles.get(a.id).unwrap().group.clone()),
+        entity.read_with(cx, |e, cx| e.profiles(cx).get(a.id).unwrap().group.clone()),
         Some("Team".into())
     );
     entity
         .update(cx, |e, cx| e.ungroup("Team".into(), cx))
         .await
         .unwrap();
-    entity.read_with(cx, |e, _| {
-        assert_eq!(e.profiles.get(b.id).unwrap().group, None);
-        assert_eq!(e.profiles.groups(), ["Other"]);
+    entity.read_with(cx, |e, cx| {
+        assert_eq!(e.profiles(cx).get(b.id).unwrap().group, None);
+        assert_eq!(e.profiles(cx).groups(), ["Other"]);
     });
-    entity
-        .update(cx, |e, cx| e.rename_group("Work".into(), "X".into(), cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| e.ungroup("Work".into(), cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| e.delete_group("Work".into(), vec![], cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| {
-            e.rename_group("Other".into(), String::new(), cx)
-        })
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| e.rename_group("Other".into(), " \t".into(), cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| {
-            e.rename_group("Other".into(), "x".repeat(MAX_PROFILE_BYTES + 1), cx)
-        })
-        .await
-        .unwrap_err();
+    reject_invalid_group_actions(&entity, cx).await;
 
     entity
         .update(cx, |e, cx| e.delete_group("Other".into(), vec![c.id], cx))
         .await
         .unwrap();
-    entity.read_with(cx, |e, _| {
-        assert!(e.profiles.get(c.id).is_none());
-        assert!(e.profiles.get(a.id).is_some() && e.profiles.get(b.id).is_some());
-        assert!(e.profiles.groups().is_empty());
-        assert!(e.recents.iter().all(|recent| recent.profile != Some(c.id)));
-        assert!(e.recents.iter().any(|recent| recent.profile == Some(a.id)));
-        assert_eq!(e.recents.iter().count(), 2);
+    entity.read_with(cx, |e, cx| {
+        assert!(e.profiles(cx).get(c.id).is_none());
+        assert!(e.profiles(cx).get(a.id).is_some() && e.profiles(cx).get(b.id).is_some());
+        assert!(e.profiles(cx).groups().is_empty());
+        assert!(
+            e.recents(cx)
+                .iter()
+                .all(|recent| recent.profile != Some(c.id))
+        );
+        assert!(
+            e.recents(cx)
+                .iter()
+                .any(|recent| recent.profile == Some(a.id))
+        );
+        assert_eq!(e.recents(cx).iter().count(), 2);
     });
 }
 
@@ -319,20 +170,20 @@ async fn delete_group_rejects_members_that_changed_since_they_were_shown(
         .update(cx, |e, cx| e.move_profile(b.id, Some("Work".into()), cx))
         .await
         .unwrap();
-    let before = entity.read_with(cx, |e, _| e.profiles.clone());
+    let before = entity.read_with(cx, |e, cx| e.profiles(cx).clone());
     let error = entity
         .update(cx, |e, cx| e.delete_group("Work".into(), vec![a.id], cx))
         .await
         .unwrap_err();
-    assert!(error.contains("changed"), "{error}");
-    assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
+    assert!(error.to_string().contains("changed"), "{error}");
+    assert_eq!(entity.read_with(cx, |e, cx| e.profiles(cx).clone()), before);
     entity
         .update(cx, |e, cx| {
             e.delete_group("Work".into(), vec![b.id, a.id], cx)
         })
         .await
         .unwrap();
-    assert!(entity.read_with(cx, |e, _| e.profiles.is_empty()));
+    assert!(entity.read_with(cx, |e, cx| e.profiles(cx).is_empty()));
 }
 
 #[gpui_kit::test]
@@ -354,192 +205,13 @@ async fn rename_group_trims_the_new_name(cx: &mut gpui_kit::TestAppContext) {
         })
         .await
         .unwrap();
-    entity.read_with(cx, |e, _| {
-        assert_eq!(e.profiles.groups(), ["Team"]);
-        assert_eq!(e.profiles.get(a.id).unwrap().group.as_deref(), Some("Team"));
+    entity.read_with(cx, |e, cx| {
+        assert_eq!(e.profiles(cx).groups(), ["Team"]);
+        assert_eq!(
+            e.profiles(cx).get(a.id).unwrap().group.as_deref(),
+            Some("Team")
+        );
     });
-}
-
-#[gpui_kit::test]
-async fn group_mutations_fail_after_load_error_or_write_failure(cx: &mut gpui_kit::TestAppContext) {
-    let mut item = profile("a");
-    item.group = Some("Work".into());
-    let entity = cx.new(|_| Connections::in_memory());
-    entity
-        .update(cx, |e, cx| e.save_profile(item.clone(), cx))
-        .await
-        .unwrap();
-    let before = entity.read_with(cx, |e, _| e.profiles.clone());
-    let dir = tempfile::tempdir().unwrap();
-    entity.update(cx, |e, _| e.profiles_file = Some(dir.path().into()));
-    entity
-        .update(cx, |e, cx| e.delete_group("Work".into(), vec![item.id], cx))
-        .await
-        .unwrap_err();
-    assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
-    entity.update(cx, |e, _| {
-        e.profiles_file = None;
-        e.load_error = Some("Invalid TOML".into());
-    });
-    entity
-        .update(cx, |e, cx| e.rename_group("Work".into(), "T".into(), cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| e.ungroup("Work".into(), cx))
-        .await
-        .unwrap_err();
-    entity
-        .update(cx, |e, cx| e.delete_group("Work".into(), vec![item.id], cx))
-        .await
-        .unwrap_err();
-    assert_eq!(entity.read_with(cx, |e, _| e.profiles.clone()), before);
-}
-
-#[gpui_kit::test]
-async fn recents_are_scheduled_only_when_a_group_mutation_removes_profiles(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    let mut a = profile("a");
-    a.target = Target::new("ci", "a", 22);
-    a.group = Some("Work".into());
-    let entity = cx.new(|_| Connections::in_memory());
-    entity
-        .update(cx, |e, cx| e.save_profile(a.clone(), cx))
-        .await
-        .unwrap();
-    for (name, folder) in [("e1", "Empty1"), ("e2", "Empty2")] {
-        let mut empty = profile(name);
-        empty.target = Target::new("ci", name, 22);
-        empty.group = Some(folder.into());
-        entity
-            .update(cx, |e, cx| e.save_profile(empty.clone(), cx))
-            .await
-            .unwrap();
-        entity
-            .update(cx, |e, cx| e.move_profile(empty.id, None, cx))
-            .await
-            .unwrap();
-    }
-    let revision =
-        |cx: &mut gpui_kit::TestAppContext| entity.read_with(cx, |e, _| e.recents_revision);
-    let base = revision(cx);
-    entity
-        .update(cx, |e, cx| e.move_profile(a.id, Some("Other".into()), cx))
-        .await
-        .unwrap();
-    entity
-        .update(cx, |e, cx| {
-            e.rename_group("Other".into(), "Work".into(), cx)
-        })
-        .await
-        .unwrap();
-    entity
-        .update(cx, |e, cx| e.ungroup("Empty1".into(), cx))
-        .await
-        .unwrap();
-    entity
-        .update(cx, |e, cx| e.delete_group("Empty2".into(), vec![], cx))
-        .await
-        .unwrap();
-    assert_eq!(revision(cx), base, "nothing was removed");
-    entity
-        .update(cx, |e, cx| e.delete_group("Work".into(), vec![a.id], cx))
-        .await
-        .unwrap();
-    assert_eq!(revision(cx), base.wrapping_add(1));
-}
-
-#[gpui_kit::test]
-async fn queue_admission_and_shutdown_refusal_are_explicit(cx: &mut gpui_kit::TestAppContext) {
-    let entity = cx.new(|_| Connections::in_memory());
-    let directory = tempfile::tempdir().unwrap();
-    let (_pending, rejected) = entity.update(cx, |c, cx| {
-        c.profiles_file = Some(directory.path().into());
-        let pending = (0..MAX_PENDING_WRITES)
-            .map(|_| c.save_profile(profile("Queued"), cx))
-            .collect::<Vec<_>>();
-        let rejected = c.save_profile(profile("Overflow"), cx);
-        (pending, rejected)
-    });
-    assert!(rejected.await.unwrap_err().contains("queue is full"));
-    entity.update(cx, |c, _| c.queue.close());
-    assert!(
-        entity
-            .update(cx, |c, cx| c.save_profile(profile("Shutdown"), cx))
-            .await
-            .unwrap_err()
-            .contains("shutting down")
-    );
-}
-
-#[gpui_kit::test]
-async fn successful_profile_save_preserves_recents_failure_until_recents_retry_succeeds(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    let directory = tempfile::tempdir().unwrap();
-    let blocked_recents = directory.path().join("recents.toml");
-    fs::create_dir(&blocked_recents).unwrap();
-    let original = profile("Build");
-    let entity = cx.new(|_| Connections::in_memory());
-    entity
-        .update(cx, |c, cx| c.save_profile(original.clone(), cx))
-        .await
-        .unwrap();
-    entity.update(cx, |c, cx| {
-        c.profiles_file = Some(directory.path().join("connections.toml"));
-        c.recents_file = Some(blocked_recents.clone());
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx);
-    });
-    cx.run_until_parked();
-    let failure = entity.read_with(cx, |c, _| {
-        assert!(c.recents_written_revision < c.recents_revision);
-        c.persistence_error().unwrap().to_owned()
-    });
-    assert!(failure.contains("Could not save recent connections"));
-    entity
-        .update(cx, |c, cx| {
-            c.move_profile(original.id, Some("Work".into()), cx)
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        entity.read_with(cx, |c, _| c.persistence_error().map(str::to_owned)),
-        Some(failure)
-    );
-    entity.read_with(cx, |c, _| {
-        assert!(c.recents_written_revision < c.recents_revision)
-    });
-    fs::remove_dir(&blocked_recents).unwrap();
-    entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
-    });
-    cx.run_until_parked();
-    entity.read_with(cx, |c, _| {
-        assert!(c.persistence_error().is_none());
-        assert_eq!(c.recents_written_revision, c.recents_revision);
-    });
-    assert_eq!(
-        persist::load::<Recents>(&blocked_recents).unwrap().unwrap(),
-        entity.read_with(cx, |c, _| c.recents.clone())
-    );
-    // The opposite writer must preserve ownership of a profile failure too.
-    entity.update(cx, |c, _| c.profiles_file = Some(directory.path().into()));
-    assert!(
-        entity
-            .update(cx, |c, cx| c.move_profile(original.id, None, cx))
-            .await
-            .is_err()
-    );
-    let profile_failure = entity.read_with(cx, |c, _| c.persistence_error().unwrap().to_owned());
-    entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        entity.read_with(cx, |c, _| c.persistence_error().map(str::to_owned)),
-        Some(profile_failure)
-    );
 }
 
 #[test]
@@ -571,6 +243,7 @@ fn saved_profile_keeps_description_and_session_overrides_when_opened() {
     assert_eq!(restored.description, profile.description);
     assert_eq!(spec_for_profile(&restored).options, profile.options);
 }
+
 #[test]
 fn a_missing_file_is_an_empty_list() {
     let dir = tempfile::tempdir().unwrap();
@@ -578,7 +251,7 @@ fn a_missing_file_is_an_empty_list() {
     let (profiles, error) = load_profiles(&dir.path().join("connections.toml"));
 
     assert!(profiles.is_empty());
-    assert_eq!(error, None);
+    assert!(error.is_none());
     assert_eq!(
         load_recents(&dir.path().join("recents.toml")),
         Recents::default()
@@ -594,7 +267,7 @@ fn a_broken_file_is_reported_not_discarded() {
     let (profiles, error) = load_profiles(&path);
 
     assert!(profiles.is_empty());
-    assert!(error.unwrap().contains("connections.toml"));
+    assert!(error.unwrap().to_string().contains("connections.toml"));
 }
 
 #[test]
@@ -606,15 +279,413 @@ fn broken_recents_start_afresh() {
     assert_eq!(load_recents(&path), Recents::default());
 }
 
+fn documents(items: &[Profile]) -> Profiles {
+    let mut profiles = Profiles::default();
+    for item in items {
+        profiles.upsert(item.clone());
+    }
+    profiles
+}
+fn ready_writer<T: Send + 'static>() -> SnapshotWriter<T> {
+    Arc::new(|_| Box::pin(async { Ok(()) }))
+}
+
 #[gpui_kit::test]
-async fn quitting_with_queued_writes_does_not_panic(cx: &mut gpui_kit::TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
+async fn ordered_writes_rebase_failed_predecessors_and_reject_stale_editors(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let original = profile("Build");
+    let (release, blocked) = oneshot::channel();
+    let blocked = Arc::new(Mutex::new(Some(blocked)));
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let saved = writes.clone();
+    let writer = Arc::new(move |profiles: Profiles| {
+        saved.lock().unwrap().push(profiles);
+        let blocked = blocked.lock().unwrap().take();
+        Box::pin(async move {
+            if let Some(blocked) = blocked {
+                blocked.await.unwrap();
+                return Err(StoreError::PendingWrites);
+            }
+            Ok(())
+        }) as futures::future::BoxFuture<'static, Result<(), StoreError>>
+    });
+    let entity = cx.new(|_| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+            writer,
+            ready_writer(),
+        )
+    });
+    let first = entity.update(cx, |c, cx| {
+        c.move_profile(original.id, Some("A".into()), cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c
+            .profiles(cx)
+            .get(original.id)
+            .unwrap()
+            .group
+            .clone()),
+        None
+    );
+    let second = entity.update(cx, |c, cx| {
+        c.move_profile(original.id, Some("B".into()), cx)
+    });
+    let stale = entity.update(cx, |c, cx| {
+        c.save_profile_checked(original.clone(), Some(original.clone()), cx)
+    });
+    release.send(()).unwrap();
+    assert!(first.await.is_err());
+    second.await.unwrap();
+    assert!(matches!(
+        stale.await,
+        Err(ConnectionsError::Profile(
+            crate::store::ProfileError::Conflict(_)
+        ))
+    ));
+    assert_eq!(writes.lock().unwrap().len(), 2);
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c
+            .profiles(cx)
+            .get(original.id)
+            .unwrap()
+            .group
+            .clone()),
+        Some("B".into())
+    );
+}
+
+#[gpui_kit::test]
+async fn save_success_applies_recent_effects_before_receipt_without_a_waiting_caller(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let original = profile("Build");
+    let entity = cx.new(|_| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+            ready_writer(),
+            ready_writer(),
+        )
+    });
+    entity.update(cx, |c, cx| {
+        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+    });
+    let save = entity.update(cx, |c, cx| c.delete_profile(original.id, cx));
+    drop(save);
+    cx.run_until_parked();
+    assert!(entity.read_with(cx, |c, cx| c.profiles(cx).is_empty()));
+    assert!(entity.read_with(cx, |c, cx| {
+        c.recents(cx).iter().all(|recent| recent.profile.is_none())
+    }));
+}
+
+#[gpui_kit::test]
+async fn consumed_credential_does_not_overwrite_later_independent_use(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let original = profile("Build");
+    let entity = cx.new(|_| {
+        Connections::with_documents(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+        )
+    });
+    let assigned = CredentialId::from_bytes([2; 16]);
+    entity
+        .update(cx, |c, cx| {
+            c.associate_credential(&original.target, &original.auth, assigned, cx)
+        })
+        .await
+        .unwrap();
+    let newer = CredentialId::from_bytes([3; 16]);
+    let mut spec = spec_for_profile(&original);
+    spec.credential = Some(newer);
+    entity.update(cx, |c, cx| c.record_use(&spec, Some(original.id), cx));
+    entity
+        .update(cx, |c, cx| {
+            c.move_profile(original.id, Some("Work".into()), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c.recents(cx).iter().next().unwrap().credential),
+        Some(newer)
+    );
+}
+
+#[gpui_kit::test]
+async fn readonly_broken_profiles_and_unknown_toml_are_preserved(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::rooted_at(dir.path());
+    fs::create_dir_all(paths.config_dir()).unwrap();
+    fs::write(paths.connections_file(), "invalid [[").unwrap();
+    let entity = cx.new(|_| Connections::load(&paths));
+    assert!(matches!(
+        entity
+            .update(cx, |c, cx| c.save_profile(profile("New"), cx))
+            .await,
+        Err(ConnectionsError::ReadOnly(_))
+    ));
+    assert_eq!(
+        fs::read_to_string(paths.connections_file()).unwrap(),
+        "invalid [["
+    );
+    fs::write(
+        paths.connections_file(),
+        "# user comment\nfolders = [\"Work\"] # folder comment\n[plugin]\nunknown = 7\n",
+    )
+    .unwrap();
+    let entity = cx.new(|_| Connections::load(&paths));
+    entity
+        .update(cx, |c, cx| c.save_profile(profile("New"), cx))
+        .await
+        .unwrap();
+    let text = fs::read_to_string(paths.connections_file()).unwrap();
+    assert!(
+        text.contains("# user comment")
+            && text.contains("unknown = 7")
+            && text.contains("# folder comment")
+    );
+}
+
+#[gpui_kit::test]
+async fn queue_full_and_captured_closing_are_semantic_errors(cx: &mut gpui_kit::TestAppContext) {
+    let shutdown = ShutdownCoordinator::default();
     let entity = cx.update(|cx| {
-        let mut connections = Connections::in_memory();
-        connections.profiles_file = Some(directory.path().join("connections.toml"));
-        connections.install(cx);
+        Connections::with_backends(
+            Profiles::default(),
+            Recents::default(),
+            ready_writer(),
+            ready_writer(),
+        )
+        .install(&shutdown, cx)
+        .unwrap();
         Connections::global(cx)
     });
-    let _save = entity.update(cx, |c, cx| c.save_profile(profile("Queued"), cx));
-    cx.quit();
+    let (_, overflow) = entity.update(cx, |c, cx| {
+        let accepted = (0..MAX_PENDING_WRITES)
+            .map(|_| c.save_profile(profile("Queued"), cx))
+            .collect::<Vec<_>>();
+        (accepted, c.save_profile(profile("Overflow"), cx))
+    });
+    assert!(matches!(overflow.await, Err(ConnectionsError::Full)));
+    let work = cx.update(|cx| shutdown.capture_all(cx));
+    assert!(matches!(
+        entity
+            .update(cx, |c, cx| c.save_profile(profile("After capture"), cx))
+            .await,
+        Err(ConnectionsError::Closing)
+    ));
+    assert!(
+        cx.background_executor
+            .spawn(work)
+            .await
+            .failures()
+            .is_empty()
+    );
+}
+
+#[gpui_kit::test]
+async fn successful_profile_save_preserves_recents_failure_until_explicit_retry(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let original = profile("Build");
+    let fail = Arc::new(AtomicBool::new(true));
+    let failed = fail.clone();
+    let recents_writer: SnapshotWriter<Recents> = Arc::new(move |_| {
+        let fail = failed.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if fail {
+                Err(StoreError::PendingWrites)
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let entity = cx.new(|_| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+            ready_writer(),
+            recents_writer,
+        )
+    });
+    entity.update(cx, |c, cx| {
+        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+    });
+    cx.run_until_parked();
+    assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_some()));
+    entity
+        .update(cx, |c, cx| {
+            c.move_profile(original.id, Some("Work".into()), cx)
+        })
+        .await
+        .unwrap();
+    assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_some()));
+    fail.store(false, Ordering::SeqCst);
+    entity.update(cx, |c, cx| {
+        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+    });
+    cx.run_until_parked();
+    assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_none()));
+}
+
+async fn reject_invalid_group_actions(
+    entity: &Entity<Connections>,
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    entity
+        .update(cx, |e, cx| e.rename_group("Work".into(), "X".into(), cx))
+        .await
+        .unwrap_err();
+    entity
+        .update(cx, |e, cx| e.ungroup("Work".into(), cx))
+        .await
+        .unwrap_err();
+    entity
+        .update(cx, |e, cx| e.delete_group("Work".into(), vec![], cx))
+        .await
+        .unwrap_err();
+    entity
+        .update(cx, |e, cx| {
+            e.rename_group("Other".into(), String::new(), cx)
+        })
+        .await
+        .unwrap_err();
+    entity
+        .update(cx, |e, cx| e.rename_group("Other".into(), " \t".into(), cx))
+        .await
+        .unwrap_err();
+    entity
+        .update(cx, |e, cx| {
+            e.rename_group("Other".into(), "x".repeat((64 * 1024) + 1), cx)
+        })
+        .await
+        .unwrap_err();
+}
+
+#[gpui_kit::test]
+async fn noop_profiles_do_not_write_and_backend_sources_remain_typed(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let original = profile("Original");
+    let writes = Arc::new(Mutex::new(0));
+    let observed = writes.clone();
+    let writer: SnapshotWriter<Profiles> = Arc::new(move |_| {
+        *observed.lock().unwrap() += 1;
+        Box::pin(async {
+            Err(StoreError::backend(persist::PersistError::Io {
+                path: "/profiles.toml".into(),
+                source: std::io::Error::from(std::io::ErrorKind::StorageFull),
+            }))
+        })
+    });
+    let entity = cx.new(|_| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            shutdown::recent_profiles(std::slice::from_ref(&original)),
+            writer,
+            ready_writer(),
+        )
+    });
+    entity
+        .update(cx, |c, cx| c.save_profile(original.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(*writes.lock().unwrap(), 0);
+    let result = entity
+        .update(cx, |c, cx| c.delete_profile(original.id, cx))
+        .await;
+    let Err(ConnectionsError::Persistence(StoreError::Backend(source))) = result else {
+        panic!("expected typed backend failure");
+    };
+    assert!(
+        matches!(source.downcast_ref::<persist::PersistError>(), Some(persist::PersistError::Io { source, .. }) if source.kind() == std::io::ErrorKind::StorageFull)
+    );
+    assert_eq!(*writes.lock().unwrap(), 1);
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c.recents(cx).iter().next().unwrap().profile),
+        Some(original.id)
+    );
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c.profiles(cx).get(original.id).cloned()),
+        Some(original)
+    );
+}
+
+#[gpui_kit::test]
+async fn deleting_and_readding_the_same_profile_keeps_the_old_recent_unlinked(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let original = profile("Original");
+    let entity = cx.new(|_| {
+        Connections::with_documents(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+        )
+    });
+    entity.update(cx, |c, cx| {
+        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+    });
+    entity
+        .update(cx, |c, cx| c.delete_profile(original.id, cx))
+        .await
+        .unwrap();
+    entity
+        .update(cx, |c, cx| c.save_profile(original.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c.profiles(cx).get(original.id).cloned()),
+        Some(original)
+    );
+    assert_eq!(
+        entity.read_with(cx, |c, cx| c.recents(cx).iter().next().unwrap().profile),
+        None
+    );
+}
+
+#[gpui_kit::test]
+fn normal_publication_survives_dropping_model_and_receipt_tasks(cx: &mut gpui_kit::TestAppContext) {
+    let original = profile("Original");
+    let directory = tempfile::tempdir().unwrap();
+    let recents_path = directory.path().join("recents.toml");
+    let saved_path = recents_path.clone();
+    let writer: SnapshotWriter<Recents> = Arc::new(move |recents| {
+        let path = saved_path.clone();
+        Box::pin(async move { persist::save(&path, &recents).map_err(StoreError::backend) })
+    });
+    let recents = shutdown::recent_profiles(std::slice::from_ref(&original));
+    let coordinator = ShutdownCoordinator::default();
+    let entity = cx.update(|cx| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            recents,
+            ready_writer(),
+            writer,
+        )
+        .into_entity(&coordinator, cx)
+        .unwrap()
+    });
+    let deleted = entity.update(cx, |c, cx| c.delete_profile(original.id, cx));
+    drop(deleted);
+    drop(entity);
+    cx.run_until_parked();
+    assert_eq!(
+        persist::load::<Recents>(&recents_path)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap()
+            .profile,
+        None
+    );
 }

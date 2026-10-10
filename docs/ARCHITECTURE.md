@@ -23,7 +23,7 @@ debt inside crates and prohibit its growth through an exact source inventory.
 | domain | domain, foundation | none | [Domain](architecture/domain.md) |
 | adapter | domain, foundation | none | [Adapters](architecture/adapter.md) |
 | service | service, domain, foundation | GPUI only | [Services](architecture/service.md) |
-| ui | ui, domain, foundation | yes | [UI](architecture/ui.md) |
+| ui | service, ui, domain, foundation | yes | [UI](architecture/ui.md) |
 | feature | service, ui, domain, foundation | yes | [Features](architecture/feature.md) |
 | app | everything but tooling | yes | [App and tooling](architecture/app.md) |
 | tooling | everything but app and tooling | — | [App and tooling](architecture/app.md) |

@@ -101,7 +101,7 @@ impl Field {
 }
 
 fn document(cx: &App) -> &SettingsDocument {
-    cx.global::<SettingsStore>().document()
+    cx.global::<SettingsStore>().document(cx)
 }
 
 /// An optional value: empty text means unset.

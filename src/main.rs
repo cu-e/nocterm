@@ -230,7 +230,7 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
 /// Logs the sections of the settings file that could not be read. Every
 /// section is registered once the window's features are.
 fn report_settings_errors(cx: &App) {
-    for error in cx.global::<SettingsStore>().section_errors() {
+    for error in cx.global::<SettingsStore>().section_errors(cx) {
         tracing::error!(%error, "a settings section is invalid; using its defaults");
     }
 }

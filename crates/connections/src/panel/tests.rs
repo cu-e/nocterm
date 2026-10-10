@@ -129,7 +129,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         assert_eq!(
             Connections::global(cx)
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .get(a.id)
                 .unwrap()
                 .group
@@ -155,7 +155,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         assert!(
             Connections::global(cx)
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .get(a.id)
                 .unwrap()
                 .group
@@ -174,7 +174,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         assert_eq!(
             Connections::global(cx)
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .get(a.id)
                 .unwrap()
                 .group
@@ -213,19 +213,50 @@ fn setup(
     Entity<ConnectionsPanel>,
     crate::test_support::Opened,
 ) {
+    setup_with_writer(cx, profiles, None)
+}
+
+fn setup_with_writer(
+    cx: &mut TestAppContext,
+    profiles: &[Profile],
+    writer: Option<nocterm_store::SnapshotWriter<crate::store::Profiles>>,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<ConnectionsPanel>,
+    crate::test_support::Opened,
+) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    if let Some(writer) = writer {
+        let mut initial = crate::store::Profiles::default();
+        for profile in profiles {
+            initial.upsert(profile.clone());
+        }
+        cx.update(|cx| {
+            Connections::with_backends(
+                initial,
+                Default::default(),
+                writer,
+                std::sync::Arc::new(|_| Box::pin(async { Ok(()) })),
+            )
+            .install(&nocterm_store::ShutdownCoordinator::default(), cx)
+            .unwrap()
+        });
+    } else {
+        cx.update(|cx| {
+            let connections = Connections::global(cx);
+            for profile in profiles {
+                connections.update(cx, |c, cx| {
+                    c.save_profile(profile.clone(), cx)
+                        .now_or_never()
+                        .unwrap()
+                        .unwrap()
+                });
+            }
+        });
+    }
     let panel = cx
         .update_window(handle, |_, window, cx| {
             let connections = Connections::global(cx);
-            for profile in profiles {
-                connections.update(cx, |connections, cx| {
-                    connections
-                        .save_profile(profile.clone(), cx)
-                        .now_or_never()
-                        .unwrap()
-                        .unwrap();
-                });
-            }
             let panel = cx.new(|cx| {
                 ConnectionsPanel::new(connections.clone(), workspace.downgrade(), window, cx)
             });
@@ -238,7 +269,7 @@ fn setup(
 }
 
 fn profiles_of(cx: &mut TestAppContext) -> crate::store::Profiles {
-    cx.read(|cx| Connections::global(cx).read(cx).profiles().clone())
+    cx.read(|cx| Connections::global(cx).read(cx).profiles(cx).clone())
 }
 
 fn start_rename_via_double_click(
@@ -484,7 +515,7 @@ fn delete_dialog_ungroups_or_deletes_members(cx: &mut TestAppContext) {
         assert!(
             connections
                 .read(cx)
-                .recents()
+                .recents(cx)
                 .iter()
                 .all(|recent| recent.profile != Some(a.id))
         );
@@ -695,16 +726,9 @@ fn rename_input_is_dropped_when_its_group_disappears(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn failed_merge_rename_restores_the_target_collapsed_state(cx: &mut TestAppContext) {
     let (a, b) = (gp("a", Some("Work")), gp("b", Some("Personal")));
-    let (handle, panel, _) = setup(cx, &[a, b]);
+    let (handle, panel, _) = setup_with_writer(cx, &[a, b], Some(failing_profile_writer()));
     let before = profiles_of(cx);
     collapse(cx, handle, "Personal");
-    let directory = tempfile::tempdir().unwrap();
-    cx.update(|cx| {
-        Connections::global(cx).update(cx, |connections, _| {
-            connections.set_profiles_file_for_test(Some(directory.path().into()))
-        })
-    });
-    // Work is open, so the optimistic merge unfolds Personal until it fails.
     start_rename_via_double_click(cx, handle, "Work");
     commit_rename(cx, handle, &panel, "Personal");
     cx.run_until_parked();
@@ -714,16 +738,11 @@ fn failed_merge_rename_restores_the_target_collapsed_state(cx: &mut TestAppConte
 
 #[gpui_kit::test]
 fn failed_rename_rolls_back_collapsed_state_and_profiles(cx: &mut TestAppContext) {
-    let (handle, panel, _) = setup(cx, &[gp("a", Some("Work"))]);
+    let (handle, panel, _) =
+        setup_with_writer(cx, &[gp("a", Some("Work"))], Some(failing_profile_writer()));
     let before = profiles_of(cx);
     collapse(cx, handle, "Work");
     // Saving fails: the profiles path is a directory.
-    let directory = tempfile::tempdir().unwrap();
-    cx.update(|cx| {
-        Connections::global(cx).update(cx, |connections, _| {
-            connections.set_profiles_file_for_test(Some(directory.path().into()))
-        })
-    });
     start_rename_via_double_click(cx, handle, "Work");
     commit_rename(cx, handle, &panel, "Team");
     cx.run_until_parked();
@@ -735,4 +754,14 @@ fn failed_rename_rolls_back_collapsed_state_and_profiles(cx: &mut TestAppContext
         assert!(window.try_find("group-Team").is_none());
     })
     .unwrap();
+}
+
+fn failing_profile_writer() -> nocterm_store::SnapshotWriter<crate::store::Profiles> {
+    std::sync::Arc::new(|_| {
+        Box::pin(async {
+            Err(nocterm_store::StoreError::backend(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )))
+        })
+    })
 }

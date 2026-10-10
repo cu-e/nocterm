@@ -16,10 +16,14 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Image, ImageFormat, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global, Image, ImageFormat};
 use nocterm_core::{Paths, persist};
 use nocterm_session::RemoteFs;
+use nocterm_store::{ShutdownCoordinator, StoreError};
 use nocterm_workspace::Workspace;
+
+mod persistence;
+use persistence::FactsStore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -77,20 +81,16 @@ struct Known {
 
 /// Detected systems and countries of saved connections, and flag images.
 pub struct ServerFacts {
-    file: Option<PathBuf>,
     flags_dir: Option<PathBuf>,
     /// Whether GeoIP and flag requests may go over the network. Without a
     /// state directory (tests, `--no-config`) nothing is fetched.
     online: bool,
-    known: Known,
+    known: FactsStore,
     /// Absent: never asked for; `None`: loading, or no image exists.
     flags: HashMap<String, Option<Arc<Image>>>,
     /// Sessions already probed; each is probed once.
     probed: Vec<Weak<dyn RemoteFs>>,
     locating: HashSet<ProfileId>,
-    saver: Option<Task<()>>,
-    revision: u64,
-    saved_revision: u64,
 }
 
 struct GlobalServerFacts(Entity<ServerFacts>);
@@ -107,36 +107,38 @@ impl ServerFacts {
             })
             .unwrap_or_default();
         Self {
-            file: Some(file),
             flags_dir: Some(paths.state_dir().join("flags")),
             online: true,
-            known,
+            known: FactsStore::new(known, Some(file)),
             ..Self::in_memory()
         }
     }
 
     pub fn in_memory() -> Self {
         Self {
-            file: None,
             flags_dir: None,
             online: false,
-            known: Known::default(),
+            known: FactsStore::new(Known::default(), None),
             flags: HashMap::new(),
             probed: Vec::new(),
             locating: HashSet::new(),
-            saver: None,
-            revision: 0,
-            saved_revision: 0,
         }
     }
 
-    pub(crate) fn install(self, cx: &mut App) {
+    pub(crate) fn install(
+        mut self,
+        shutdown: &ShutdownCoordinator,
+        cx: &mut App,
+    ) -> Result<(), StoreError> {
+        self.known.register(shutdown, cx)?;
         let countries: HashSet<String> = self
             .known
+            .read(cx)
             .servers
             .values()
             .filter_map(|detected| detected.country.clone())
             .collect();
+        let storage = self.known.install(cx);
         let entity = cx.new(|cx| {
             let mut this = self;
             for code in countries {
@@ -144,12 +146,22 @@ impl ServerFacts {
             }
             this
         });
+        cx.observe(&storage, {
+            let entity = entity.downgrade();
+            move |storage, cx| {
+                if let Some(error) = storage.read(cx).error() {
+                    tracing::warn!(%error, "could not save detected server details");
+                }
+                let _ = entity.update(cx, |_, cx| cx.notify());
+            }
+        })
+        .detach();
         // Forget servers whose connection was deleted, and load the flags of
         // countries chosen by hand.
         cx.observe(&Connections::global(cx), {
             let entity = entity.downgrade();
             move |connections, cx| {
-                let profiles = connections.read(cx).profiles();
+                let profiles = connections.read(cx).profiles(cx);
                 let ids: HashSet<ProfileId> = profiles.iter().map(|profile| profile.id).collect();
                 let chosen: HashSet<String> = profiles
                     .iter()
@@ -159,16 +171,14 @@ impl ServerFacts {
                     for code in &chosen {
                         this.ensure_flag(code, cx);
                     }
-                    let before = this.known.servers.len();
-                    this.known.servers.retain(|id, _| ids.contains(id));
-                    if this.known.servers.len() != before {
-                        this.schedule_save(cx);
-                    }
+                    this.known
+                        .update(|known| known.servers.retain(|id, _| ids.contains(id)), cx);
                 });
             }
         })
         .detach();
         cx.set_global(GlobalServerFacts(entity));
+        Ok(())
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
@@ -176,8 +186,9 @@ impl ServerFacts {
     }
 
     /// The system detected on `id`'s server.
-    pub fn os(&self, id: ProfileId) -> Option<&'static Os> {
+    pub fn os(&self, id: ProfileId, cx: &App) -> Option<&'static Os> {
         self.known
+            .read(cx)
             .servers
             .get(&id)?
             .os
@@ -186,8 +197,8 @@ impl ServerFacts {
     }
 
     /// The country `id`'s server is in.
-    pub fn country(&self, id: ProfileId) -> Option<&str> {
-        self.known.servers.get(&id)?.country.as_deref()
+    pub fn country<'a>(&'a self, id: ProfileId, cx: &'a App) -> Option<&'a str> {
+        self.known.read(cx).servers.get(&id)?.country.as_deref()
     }
 
     /// The flag of `code`, once it has loaded.
@@ -225,12 +236,14 @@ impl ServerFacts {
                     return;
                 };
                 let _ = this.update(cx, |this, cx| {
-                    let detected = this.known.servers.entry(id).or_default();
-                    if detected.os.as_deref() != Some(os.id) {
-                        detected.os = Some(os.id.to_owned());
-                        this.schedule_save(cx);
-                        cx.notify();
-                    }
+                    this.known.update(
+                        |known| {
+                            let detected = known.servers.entry(id).or_default();
+                            detected.os = Some(os.id.to_owned());
+                        },
+                        cx,
+                    );
+                    cx.notify();
                 });
             })
             .detach();
@@ -238,6 +251,7 @@ impl ServerFacts {
 
         let located = self
             .known
+            .read(cx)
             .servers
             .get(&id)
             .is_some_and(|detected| detected.located.as_deref() == Some(host));
@@ -248,7 +262,7 @@ impl ServerFacts {
             && self.locating.insert(id)
         {
             let host = host.to_owned();
-            let cached = self.known.geoip.clone();
+            let cached = self.known.read(cx).geoip.clone();
             let lookup = cx
                 .background_spawn(async move { locate(&host, &cached).map(|found| (host, found)) });
             cx.spawn(async move |this, cx| {
@@ -263,17 +277,21 @@ impl ServerFacts {
                             return;
                         }
                     };
-                    if let Some((ip, code)) = &found {
-                        this.known.geoip.insert(ip.clone(), code.clone());
-                    }
-                    let country = found.map(|(_, code)| code);
+                    let country = found.as_ref().map(|(_, code)| code.clone());
                     if let Some(code) = &country {
                         this.ensure_flag(code, cx);
                     }
-                    let detected = this.known.servers.entry(id).or_default();
-                    detected.country = country;
-                    detected.located = Some(host);
-                    this.schedule_save(cx);
+                    this.known.update(
+                        |known| {
+                            if let Some((ip, code)) = found {
+                                known.geoip.insert(ip, code);
+                            }
+                            let detected = known.servers.entry(id).or_default();
+                            detected.country = country;
+                            detected.located = Some(host);
+                        },
+                        cx,
+                    );
                     cx.notify();
                 });
             })
@@ -283,12 +301,12 @@ impl ServerFacts {
 
     /// The icon shown for `profile`: the system chosen by hand, else the
     /// detected one, in the chosen or brand colour. `None`: a generic server.
-    pub fn icon(&self, profile: &Profile) -> Option<Arc<Image>> {
+    pub fn icon(&self, profile: &Profile, cx: &App) -> Option<Arc<Image>> {
         let os = profile
             .icon
             .as_deref()
             .and_then(os::find)
-            .or_else(|| self.os(profile.id))?;
+            .or_else(|| self.os(profile.id, cx))?;
         let color = profile
             .icon_color
             .as_deref()
@@ -302,10 +320,10 @@ impl ServerFacts {
 
     /// The country shown for `profile`: the one chosen by hand, else the
     /// detected one while detection is on.
-    pub fn shown_country<'a>(&'a self, profile: &'a Profile, cx: &App) -> Option<&'a str> {
+    pub fn shown_country<'a>(&'a self, profile: &'a Profile, cx: &'a App) -> Option<&'a str> {
         profile.country.as_deref().or_else(|| {
             country_detection_enabled(cx)
-                .then(|| self.country(profile.id))
+                .then(|| self.country(profile.id, cx))
                 .flatten()
         })
     }
@@ -339,41 +357,6 @@ impl ServerFacts {
         })
         .detach();
     }
-
-    fn schedule_save(&mut self, cx: &mut Context<Self>) {
-        self.revision = self.revision.wrapping_add(1);
-        if self.file.is_none() || self.saver.is_some() {
-            return;
-        }
-        self.saver = Some(cx.spawn(async move |this, cx| {
-            loop {
-                let Ok((path, known, revision)) = this.update(cx, |this, _| {
-                    (this.file.clone(), this.known.clone(), this.revision)
-                }) else {
-                    return;
-                };
-                let result = cx
-                    .background_spawn(async move {
-                        path.map_or(Ok(()), |path| persist::save(&path, &known))
-                    })
-                    .await;
-                if let Err(error) = result {
-                    tracing::warn!(%error, "could not save detected server details");
-                }
-                let again = this.update(cx, |this, _| {
-                    this.saved_revision = revision;
-                    let again = this.revision != revision;
-                    if !again {
-                        this.saver = None;
-                    }
-                    again
-                });
-                if !matches!(again, Ok(true)) {
-                    return;
-                }
-            }
-        }));
-    }
 }
 
 /// Whether the user lets nocterm look up server countries. Without settings
@@ -399,7 +382,7 @@ pub(crate) fn probe_sessions(workspace: &Workspace, cx: &mut App) {
             let id = item.terminal_access(cx)?.info(cx)?.profile?;
             let profile = connections
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .iter()
                 .find(|profile| profile.id.to_string() == *id)?
                 .clone();
@@ -615,7 +598,7 @@ mod tests {
         let downloads = Arc::new(AtomicUsize::new(0));
         let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=debian\n", downloads.clone(), &[]));
         let detected = |facts: &Entity<ServerFacts>, cx: &mut gpui_kit::TestAppContext| {
-            facts.read_with(cx, |facts, _| facts.os(profile.id).map(|os| os.id))
+            facts.read_with(cx, |facts, cx| facts.os(profile.id, cx).map(|os| os.id))
         };
         facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs.clone(), cx));
         cx.run_until_parked();
@@ -633,6 +616,54 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(downloads.load(Ordering::SeqCst), 1);
         assert_eq!(detected(&facts, cx), Some("debian"));
+    }
+
+    #[gpui_kit::test]
+    async fn visible_observations_retry_at_quit_after_a_normal_write_failure(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted_at(directory.path());
+        let profile = Profile {
+            description: String::new(),
+            options: Default::default(),
+            id: ProfileId::generate(),
+            name: "web".into(),
+            target: nocterm_session::Target::new("root", "web", 22),
+            auth: Default::default(),
+            group: None,
+            credential: None,
+            launch: None,
+            icon: None,
+            icon_color: None,
+            country: Some("de".into()),
+        };
+        let mut profiles = crate::store::Profiles::default();
+        profiles.upsert(profile.clone());
+        persist::save(&paths.connections_file(), &profiles).unwrap();
+        std::fs::write(paths.state_dir(), "blocks informational writes").unwrap();
+        let shutdown = ShutdownCoordinator::default();
+        cx.update(|cx| crate::init(Some(&paths), &shutdown, cx).unwrap());
+        let facts = cx.read(ServerFacts::global);
+        let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=debian\n", Default::default(), &[]));
+        facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            facts.read_with(cx, |facts, cx| facts.os(profile.id, cx).map(|os| os.id)),
+            Some("debian")
+        );
+        std::fs::remove_file(paths.state_dir()).unwrap();
+        std::fs::create_dir(paths.state_dir()).unwrap();
+        let work = cx.update(|cx| shutdown.capture_all(cx));
+        let report = cx.background_executor.spawn(work).await;
+        assert!(report.failures().is_empty());
+        let saved: Known = persist::load(&paths.state_dir().join("servers.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.servers.get(&profile.id).unwrap().os.as_deref(),
+            Some("debian")
+        );
     }
 
     #[test]

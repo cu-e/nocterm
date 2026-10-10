@@ -7,7 +7,7 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<SnippetsPanel>) 
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(None, cx);
+        crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| Workspace::new(window, cx))
         })
@@ -36,15 +36,14 @@ fn snippet() -> Snippet {
         content: "#!/bin/bash\necho 'привет'\n\n".into(),
         groups: vec!["Missing group".into()],
         profiles: vec!["missing-server".into()],
-        ..Default::default()
+        ..Snippet::new(uuid::Uuid::from_u128(1))
     }
 }
 
 fn seed(snippet: &Snippet, cx: &mut TestAppContext) {
     cx.update(|cx| {
         Snippets::global(cx).update(cx, |model, cx| {
-            model.library.save(snippet.clone(), None).unwrap();
-            cx.notify();
+            model.save(snippet.clone(), None, cx).detach();
         });
     });
     cx.run_until_parked();
@@ -65,7 +64,13 @@ fn plus_opens_editor_and_cancel_preserves_library(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
+        assert!(
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .is_empty()
+        );
     })
     .unwrap();
 }
@@ -120,7 +125,11 @@ fn fold_search_copy_and_edit_preserve_exact_saved_snippet(cx: &mut TestAppContex
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets.as_slice(),
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .as_slice(),
             std::slice::from_ref(&original)
         );
         window.click("edit", cx);
@@ -139,7 +148,10 @@ fn fold_search_copy_and_edit_preserve_exact_saved_snippet(cx: &mut TestAppContex
         let mut unassigned = original;
         unassigned.profiles.clear();
         unassigned.groups.clear();
-        assert_eq!(Snippets::global(cx).read(cx).library.snippets, [unassigned]);
+        assert_eq!(
+            Snippets::global(cx).read(cx).library(cx).snippets,
+            [unassigned]
+        );
     })
     .unwrap();
 }
@@ -156,7 +168,11 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
         assert!(window.try_find("snippet-save").is_none());
         assert!(window.try_find("ok").is_some());
         assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets.as_slice(),
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .as_slice(),
             std::slice::from_ref(&original)
         );
         window.click("cancel", cx);
@@ -165,7 +181,10 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(Snippets::global(cx).read(cx).library.snippets, [original]);
+        assert_eq!(
+            Snippets::global(cx).read(cx).library(cx).snippets,
+            [original]
+        );
         window.click("delete", cx);
         window.render_frame(cx);
         window.click("ok", cx);
@@ -175,7 +194,13 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("ok").is_none());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
+        assert!(
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .is_empty()
+        );
     })
     .unwrap();
 }

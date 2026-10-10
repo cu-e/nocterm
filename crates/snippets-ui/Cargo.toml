@@ -12,11 +12,12 @@ layer = "feature"
 [dependencies]
 nocterm-snippets.workspace = true
 nocterm-core.workspace = true
+nocterm-store.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
-futures.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-bash", "tree-sitter-python", "tree-sitter-yaml", "tree-sitter-toml"] }
-tracing.workspace = true
 
 [lints]
 workspace = true

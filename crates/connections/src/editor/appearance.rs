@@ -38,7 +38,7 @@ impl ConnectionEditor {
         let color = Some(typed).filter(|color| crate::os::is_valid_color(color));
         let detected = self
             .editing
-            .then(|| crate::ServerFacts::global(cx).read(cx).os(self.id))
+            .then(|| crate::ServerFacts::global(cx).read(cx).os(self.id, cx))
             .flatten();
         let tile = |id: SharedString,
                     choice: Option<&'static str>,
@@ -189,7 +189,7 @@ impl ConnectionEditor {
         let typed = self.country.read(cx).value().trim().to_ascii_lowercase();
         let detected = self
             .editing
-            .then(|| facts.country(self.id))
+            .then(|| facts.country(self.id, cx))
             .flatten()
             .filter(|_| detecting);
         let shown = if typed.is_empty() {

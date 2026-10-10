@@ -22,6 +22,7 @@ nocterm-workspace.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

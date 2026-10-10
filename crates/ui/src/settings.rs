@@ -1,101 +1,139 @@
-//! The published settings, typed access to their sections and a bounded,
-//! ordered disk writer.
+//! Compatibility access to explicitly installed service-layer settings.
 use gpui_kit::{App, Global, Subscription, Task};
 use nocterm_settings::{SectionError, SettingsDocument, SettingsFile, SettingsSection};
+use nocterm_store::{SettingsConfig, SettingsHandle, StoreError};
 
-mod writer;
-pub use writer::edit_settings;
-pub(crate) use writer::init;
-
-/// Published settings only. Queued changes do not notify observers.
+/// Existing UI global identity; documents, revisions and workers live in store.
 pub struct SettingsStore {
-    document: SettingsDocument,
-    file: Option<SettingsFile>,
-    revision: u64,
+    initial: Option<SettingsConfig>,
+    installed: Option<SettingsHandle>,
 }
 impl SettingsStore {
     pub fn new(document: SettingsDocument, file: SettingsFile) -> Self {
-        Self {
-            document,
-            file: Some(file),
-            revision: 0,
-        }
+        Self::from_config(SettingsConfig::new(document, file))
     }
     pub fn in_memory(document: SettingsDocument) -> Self {
+        Self::from_config(SettingsConfig::in_memory(document))
+    }
+    pub fn from_config(initial: SettingsConfig) -> Self {
         Self {
-            document,
-            file: None,
-            revision: 0,
+            initial: Some(initial),
+            installed: None,
         }
     }
-    /// A store holding `section`, for tests and previews.
+    /// Wrap an explicitly installed service during the UI-global migration.
+    pub fn from_handle(installed: SettingsHandle) -> Self {
+        Self {
+            initial: None,
+            installed: Some(installed),
+        }
+    }
     pub fn with<S: SettingsSection>(mut self, section: S) -> Self {
-        self.document.set(section);
+        self.initial = self.initial.take().map(|config| config.with(section));
         self
     }
     pub fn is_persistent(&self) -> bool {
-        self.file.is_some()
+        self.installed.as_ref().map_or_else(
+            || {
+                self.initial
+                    .as_ref()
+                    .is_some_and(SettingsConfig::is_persistent)
+            },
+            SettingsHandle::is_persistent,
+        )
     }
-    pub fn document(&self) -> &SettingsDocument {
-        &self.document
+    pub fn document<'a>(&'a self, cx: &'a App) -> &'a SettingsDocument {
+        match &self.installed {
+            Some(handle) => handle.document(cx),
+            None => self
+                .initial
+                .as_ref()
+                .expect("settings are configured")
+                .document(),
+        }
     }
-    /// Sections of the file that could not be read and have not been
-    /// rewritten since, and tables no section claims.
-    pub fn section_errors(&self) -> Vec<SectionError> {
-        self.document.errors()
+    pub fn section_errors(&self, cx: &App) -> Vec<SectionError> {
+        self.document(cx).errors()
     }
-    /// Advances every time a change is published.
-    pub fn revision(&self) -> u64 {
-        self.revision
+    pub fn revision(&self, cx: &App) -> u64 {
+        self.installed
+            .as_ref()
+            .map_or(0, |handle| handle.revision(cx))
+    }
+    pub fn handle(&self) -> Option<&SettingsHandle> {
+        self.installed.as_ref()
     }
 }
 impl Global for SettingsStore {}
 
-/// Reads section `S` from the file, once. The crate that owns a section
-/// registers it when it is initialised; without a settings store this does
-/// nothing.
+pub(crate) fn init(cx: &mut App) -> SettingsHandle {
+    let (initial, installed) = {
+        let store = cx.global_mut::<SettingsStore>();
+        (store.initial.take(), store.installed.clone())
+    };
+    let handle = installed.unwrap_or_else(|| {
+        initial
+            .expect("settings are configured before UI install")
+            .install(cx)
+    });
+    cx.global_mut::<SettingsStore>().installed = Some(handle.clone());
+    handle
+        .observe(cx, |cx| {
+            let _ = cx.global_mut::<SettingsStore>();
+        })
+        .detach();
+    handle
+}
+
 pub fn register_setting<S: SettingsSection>(cx: &mut App) {
-    if cx.has_global::<SettingsStore>()
-        && !cx.global::<SettingsStore>().document.is_registered::<S>()
+    let handle = cx
+        .try_global::<SettingsStore>()
+        .and_then(|store| store.handle().cloned());
+    if let Some(handle) = handle {
+        handle.register::<S>(cx);
+    } else if cx.has_global::<SettingsStore>()
+        && let Some(initial) = &mut cx.global_mut::<SettingsStore>().initial
     {
-        cx.global_mut::<SettingsStore>().document.register::<S>();
+        initial.register::<S>();
     }
 }
 
-/// Typed access to the published settings.
-pub trait SettingsExt {
-    /// Section `S` as last published.
-    fn setting<S: SettingsSection>(&self) -> &S;
+pub fn edit_settings(
+    cx: &mut App,
+    edit: impl FnOnce(&mut SettingsDocument) + 'static,
+) -> Task<Result<u64, StoreError>> {
+    let handle = cx
+        .try_global::<SettingsStore>()
+        .and_then(|store| store.handle().cloned());
+    match handle {
+        Some(handle) => handle.edit(cx, edit),
+        None => Task::ready(Err(StoreError::CompletionDropped)),
+    }
+}
 
-    /// Changes section `S` and saves it. Changes are applied in order to the
-    /// settings current when each runs, so they never conflict.
+pub trait SettingsExt {
+    fn setting<S: SettingsSection>(&self) -> &S;
     fn update_setting<S: SettingsSection>(
         &mut self,
         edit: impl FnOnce(&mut S) + 'static,
-    ) -> Task<Result<u64, String>>;
-
-    /// Calls `on_change` whenever a published change alters section `S`.
-    /// Changes to other sections, and subscribing, do not call it.
+    ) -> Task<Result<u64, StoreError>>;
     fn observe_setting<S: SettingsSection>(
         &mut self,
         on_change: impl FnMut(&S, &mut App) + 'static,
     ) -> Subscription;
 }
-
 impl SettingsExt for App {
     fn setting<S: SettingsSection>(&self) -> &S {
-        self.global::<SettingsStore>().document.get::<S>()
+        self.global::<SettingsStore>().document(self).get::<S>()
     }
-
     fn update_setting<S: SettingsSection>(
         &mut self,
         edit: impl FnOnce(&mut S) + 'static,
-    ) -> Task<Result<u64, String>> {
+    ) -> Task<Result<u64, StoreError>> {
         edit_settings(self, move |document| {
             document.update::<S>(edit);
         })
     }
-
     fn observe_setting<S: SettingsSection>(
         &mut self,
         mut on_change: impl FnMut(&S, &mut App) + 'static,
@@ -109,13 +147,6 @@ impl SettingsExt for App {
             }
         })
     }
-}
-
-fn publish(document: SettingsDocument, cx: &mut App) -> u64 {
-    let store = cx.global_mut::<SettingsStore>();
-    store.document = document;
-    store.revision += 1;
-    store.revision
 }
 
 #[cfg(test)]

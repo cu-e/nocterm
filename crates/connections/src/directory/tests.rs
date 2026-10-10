@@ -162,7 +162,11 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
     )
     .unwrap();
-    cx.update(|cx| ServerFacts::load(&paths).install(cx));
+    cx.update(|cx| {
+        ServerFacts::load(&paths)
+            .install(&nocterm_store::ShutdownCoordinator::default(), cx)
+            .unwrap()
+    });
     cx.run_until_parked();
     for enabled in [true, false, true] {
         cx.update(|cx| {

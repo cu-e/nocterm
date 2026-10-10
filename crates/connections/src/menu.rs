@@ -100,7 +100,7 @@ impl NewTabMenu {
     }
 
     fn open_recent(&mut self, recent: &Recent, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = self.connections.read(cx).spec_for_recent(recent);
+        let spec = self.connections.read(cx).spec_for_recent(recent, cx);
         connect(&self.workspace, spec, recent.profile, window, cx);
     }
 
@@ -114,9 +114,9 @@ impl NewTabMenu {
     fn render_recents(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let connections = self.connections.read(cx);
         let recents: Vec<(Recent, SessionSpec)> = connections
-            .recents()
+            .recents(cx)
             .iter()
-            .map(|recent| (recent.clone(), connections.spec_for_recent(recent)))
+            .map(|recent| (recent.clone(), connections.spec_for_recent(recent, cx)))
             .collect();
         let theme = cx.theme();
         let muted = theme.muted_foreground;
@@ -303,10 +303,13 @@ mod tests {
             assert_eq!(opened.borrow()[0].target.port, 2222);
             assert_eq!(opened.borrow()[0].target.user, "alice");
             assert_eq!(
-                Connections::global(cx).read(cx).profiles().iter().count(),
+                Connections::global(cx).read(cx).profiles(cx).iter().count(),
                 0
             );
-            assert_eq!(Connections::global(cx).read(cx).recents().iter().count(), 1);
+            assert_eq!(
+                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                1
+            );
             assert_eq!(menu.read(cx).quick_connect.read(cx).value(), "");
         })
         .unwrap();
@@ -352,7 +355,10 @@ mod tests {
             window.input("b", cx);
             assert_eq!(menu.read(cx).quick_connect.read(cx).value(), "a b");
             assert!(opened.borrow().is_empty());
-            assert_eq!(Connections::global(cx).read(cx).recents().iter().count(), 0);
+            assert_eq!(
+                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -387,10 +393,13 @@ mod tests {
             window.render_frame(cx);
             assert!(opened.borrow().is_empty());
             assert_eq!(
-                Connections::global(cx).read(cx).profiles().iter().count(),
+                Connections::global(cx).read(cx).profiles(cx).iter().count(),
                 0
             );
-            assert_eq!(Connections::global(cx).read(cx).recents().iter().count(), 0);
+            assert_eq!(
+                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                0
+            );
             assert!(menu.read(cx).error.is_some());
             assert!(
                 window.find("menu-new-connection").visible(),

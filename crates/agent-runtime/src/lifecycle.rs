@@ -45,7 +45,7 @@ impl Runtime {
         self.pending_activation.retain(|client| client.id() != id);
     }
     pub fn request_activation(&mut self, client: Client, cx: &mut Context<Self>) {
-        if self.shutting_down || !cx.ai_enabled() {
+        if self.shutting_down || !self.ai_enabled(cx) {
             return;
         }
         if !self
@@ -59,11 +59,11 @@ impl Runtime {
         self.maintain_sessions(cx);
     }
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
-        if self.shutting_down || !cx.ai_enabled() {
+        if self.shutting_down || !self.ai_enabled(cx) {
             self.pending_activation.clear();
             return;
         }
-        let policy = cx.ai().sessions.clone();
+        let policy = self.ai(cx).sessions.clone();
         self.release_idle(&policy, cx);
         self.admit_pending(&policy, cx);
     }
@@ -153,7 +153,7 @@ impl Runtime {
                 self.pending_activation.push_back(client);
                 continue;
             }
-            if let Some(launch) = nocterm_ai::AgentRegistry::new(cx.ai())
+            if let Some(launch) = nocterm_ai::AgentRegistry::new(self.ai(cx))
                 .get(&state.agent_id)
                 .cloned()
             {

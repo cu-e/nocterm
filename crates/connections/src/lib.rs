@@ -9,6 +9,14 @@
 //!
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
+//!
+//! Owns: connection formats, views, backend codecs and detected-server cache.
+//! Does not own: session transport, credentials or persistence worker lifecycle.
+//! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator.
+//! Ports provided: ConnectionDirectory. Settings section: none.
+//! Globals: existing connection, facts and menu compatibility handles.
+//! Invariants: profiles publish after physical success; independent recents survive
+//! profile failure; derived recent effects require a successful profile projection.
 
 mod directory;
 mod editor;
@@ -30,7 +38,7 @@ use nocterm_workspace::Workspace;
 pub use editor::{ConnectionEditor, open_editor};
 pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
-pub use model::{Connections, connect, spec_for_profile};
+pub use model::{Connections, ConnectionsError, connect, spec_for_profile};
 pub use panel::ConnectionsPanel;
 
 gpui_kit::actions!(
@@ -45,18 +53,22 @@ gpui_kit::actions!(
 
 /// Loads the saved connections and what is known about their servers. With
 /// no `paths`, nothing is read, written or fetched.
-pub fn init(paths: Option<&Paths>, cx: &mut App) {
+pub fn init(
+    paths: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Result<(), nocterm_store::StoreError> {
     menu::init(cx);
     match paths {
         Some(paths) => Connections::load(paths),
         None => Connections::in_memory(),
     }
-    .install(cx);
+    .install(shutdown, cx)?;
     match paths {
         Some(paths) => ServerFacts::load(paths),
         None => ServerFacts::in_memory(),
     }
-    .install(cx);
+    .install(shutdown, cx)
 }
 
 /// Adds the connections panel, the new-tab menu and the commands to a

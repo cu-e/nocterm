@@ -63,12 +63,15 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
     let ui = nocterm_ui::init(tokens, settings, cx);
+    let shutdown = nocterm_store::ShutdownCoordinator::default();
+    report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
     if let Some(themes) = themes {
         nocterm_ui::init_themes(themes.dirs, themes.catalog, cx);
         nocterm_settings_ui::init_theme_registry(themes.registry, cx);
     }
     nocterm_ui::LayoutMemory::init(
         stored.map(|paths| paths.state_dir().join("layout.json")),
+        &shutdown,
         cx,
     );
     nocterm_terminal::init(transport, &ui, cx);
@@ -82,8 +85,11 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         );
         nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
     }
-    nocterm_connections::init(stored, cx);
-    nocterm_snippets_ui::init(stored, cx);
+    report_store_registration(
+        "connections",
+        nocterm_connections::init(stored, &shutdown, cx),
+    );
+    report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
     nocterm_agent::init(agent, &ui, cx);
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     crate::keymap::load(
@@ -92,6 +98,13 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     );
     crate::application::register(paths, vault.clone(), cx);
     Booted { vault }
+}
+
+/// Reports registration failures consistently while retaining installation order.
+fn report_store_registration(owner: &str, result: Result<(), nocterm_store::StoreError>) {
+    if let Err(error) = result {
+        tracing::error!(owner, %error, "shutdown registration failed");
+    }
 }
 
 /// Opens the vault and lets terminals keep credentials in it.
@@ -119,8 +132,14 @@ fn open_vault(
     nocterm_terminal::init_credentials(
         Arc::new(nocterm_vault_ui::VaultCredentials::new(vault.clone())),
         |spec, id, cx| {
-            nocterm_connections::Connections::global(cx).update(cx, |connections, cx| {
-                connections.associate_credential(&spec.target, &spec.auth, id, cx)
+            let association =
+                nocterm_connections::Connections::global(cx).update(cx, |connections, cx| {
+                    connections.associate_credential(&spec.target, &spec.auth, id, cx)
+                });
+            cx.spawn(async move |_| {
+                association
+                    .await
+                    .map_err(nocterm_terminal::CredentialAssociationError::binding)
             })
         },
         cx,

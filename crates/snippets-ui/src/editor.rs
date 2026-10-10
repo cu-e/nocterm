@@ -88,7 +88,9 @@ impl SnippetEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let draft = original.clone().unwrap_or_default();
+        let draft = original
+            .clone()
+            .unwrap_or_else(|| Snippet::new(uuid::Uuid::new_v4()));
         let name = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("e.g. Inspect disk usage")
@@ -191,7 +193,7 @@ impl SnippetEditor {
                 }
                 match result {
                     Err(error) => {
-                        this.error = Some(error.into());
+                        this.error = Some(error.to_string().into());
                         cx.notify();
                     }
                     Ok(()) => {

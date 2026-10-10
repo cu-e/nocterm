@@ -51,7 +51,7 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
         cx.read(|cx| {
             Connections::global(cx)
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .in_group(group, "")
                 .iter()
                 .map(|p| p.name.clone())

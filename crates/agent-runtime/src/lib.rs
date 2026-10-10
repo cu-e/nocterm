@@ -1,9 +1,15 @@
+//! Agent lifecycle and durable chat orchestration.
+//! Owns: agent admission, leases, chat persistence and usage limits.
+//! Does not own: settings storage, ACP subprocess adapters or views.
+//! Ports used: AgentConnector, ToolBridge, explicit SettingsHandle.
+//! Ports provided: SessionClient/SessionEvent. Settings section: ai consumer.
+//! Globals: existing RuntimeGlobal. Invariants: settings read from injected service.
+
 mod admission;
 mod client;
 mod documents;
 mod lease;
 mod lifecycle;
-mod settings;
 mod shutdown;
 mod startup;
 pub use client::{Client, ClientState, SessionClient, SessionEvent};
@@ -13,8 +19,6 @@ use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
     ConnectRequest, ToolBridge, acp,
 };
-use settings::AiSettingsExt as _;
-pub use settings::AiSettingsSource;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -31,6 +35,7 @@ pub struct TerminalAuthRequest {
 }
 /// What the runtime connects agents with, and where it keeps their state.
 pub struct RuntimeServices {
+    pub settings: nocterm_store::SettingsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub state_file: PathBuf,
@@ -112,11 +117,21 @@ pub struct Runtime {
     _bridge: Option<Task<()>>,
 }
 impl Runtime {
+    fn ai<'a>(&self, cx: &'a App) -> &'a nocterm_ai::AiSettings {
+        self.services.settings.setting::<nocterm_ai::AiSettings>(cx)
+    }
+    fn ai_enabled(&self, cx: &App) -> bool {
+        self.ai(cx).enabled
+    }
+
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<RuntimeGlobal>().0.clone()
     }
     pub fn new(services: RuntimeServices, cx: &mut Context<Self>) -> Self {
-        for warning in nocterm_ai::AgentRegistry::new(cx.ai()).warnings {
+        for warning in
+            nocterm_ai::AgentRegistry::new(services.settings.setting::<nocterm_ai::AiSettings>(cx))
+                .warnings
+        {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
         let favorites =
@@ -185,13 +200,13 @@ impl Runtime {
     }
     /// Applies changed AI settings to the running agents.
     pub fn settings_changed(&mut self, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() {
+        if !self.ai_enabled(cx) {
             let ids = self.documents.keys().copied().collect::<Vec<_>>();
             for id in ids {
                 self.capture_and_detach_document(id, cx);
             }
         }
-        let registry = nocterm_ai::AgentRegistry::new(cx.ai());
+        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
         for warning in &registry.warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");
         }
@@ -205,7 +220,7 @@ impl Runtime {
             self.stop_connection(key, "Agent configuration changed. Start a new chat.", cx);
         }
         self.apply_isolation(cx);
-        if !cx.ai_enabled() {
+        if !self.ai_enabled(cx) {
             self.registrations.clear();
             self.services.bridge.stop();
         }
@@ -221,7 +236,7 @@ impl Runtime {
     /// Isolation is a security boundary: it applies to running agents at once
     /// rather than to the next chat.
     fn apply_isolation(&mut self, cx: &mut Context<Self>) {
-        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
+        let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
         let keys: Vec<_> = self
             .connections
             .iter()
@@ -348,7 +363,7 @@ impl Runtime {
     /// Reads `agent`'s plan limits again, from agents that keep them in their
     /// own files. Others report them along with usage.
     pub fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        let codex = nocterm_ai::AgentRegistry::new(cx.ai())
+        let codex = nocterm_ai::AgentRegistry::new(self.ai(cx))
             .get(agent)
             .is_some_and(nocterm_ai::usage::is_codex);
         let Some(home) = self.services.codex_home.clone().filter(|_| codex) else {
@@ -425,7 +440,7 @@ impl Runtime {
         client: &Client,
         cx: &mut Context<Self>,
     ) -> Result<BridgeRegistration, String> {
-        if !cx.ai_enabled() {
+        if !self.ai_enabled(cx) {
             return Err("AI is disabled.".into());
         }
         let registration = self.services.bridge.register()?;
@@ -470,14 +485,14 @@ impl Runtime {
         launch: AgentLaunch,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() {
+        if !self.ai_enabled(cx) {
             return;
         }
         let workdir = client
             .state(cx)
             .and_then(|state| state.workdir)
             .unwrap_or_else(|| {
-                cx.ai()
+                self.ai(cx)
                     .working_directory
                     .as_ref()
                     .map(PathBuf::from)
@@ -492,7 +507,7 @@ impl Runtime {
             );
             return;
         }
-        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
+        let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         launch.hash(&mut hasher);
         workdir.hash(&mut hasher);
@@ -535,7 +550,7 @@ impl Runtime {
         let terminal_auth = self.services.terminal_auth;
         let private_dirs = self.services.private_dirs.clone();
         let shared_dirs = self.services.shared_dirs.clone();
-        let resources = cx.ai().resources.clone();
+        let resources = self.ai(cx).resources.clone();
         let future = cx.background_executor().spawn(async move {
             if cancellation.is_cancelled() {
                 return (
@@ -591,7 +606,7 @@ impl Runtime {
                         .connections
                         .get(&key)
                         .is_some_and(|connection| connection.serial == serial)
-                        || !cx.ai_enabled()
+                        || !this.ai_enabled(cx)
                     {
                         return false;
                     }

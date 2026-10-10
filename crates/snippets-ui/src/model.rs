@@ -1,224 +1,194 @@
-//! Serialize mutations and publish only after atomic persistence succeeds.
-use futures::channel::oneshot;
-use gpui_kit::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task, WeakEntity};
-use nocterm_core::{
-    Paths,
-    persist::{self, Rejected, WriteQueue},
-};
-use nocterm_snippets::{Library, Snippet};
-use std::path::PathBuf;
+//! Checked snippet mutations delegate ordered durable publication to the store service.
+use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
+use nocterm_core::{Paths, persist};
+use nocterm_snippets::{Library, LibraryError, Snippet};
+use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
+use std::{path::PathBuf, sync::Arc};
 
 const MAX_PENDING: usize = 32;
 
-enum Mutation {
-    Save(Snippet, Option<Snippet>),
-    Delete(Snippet),
+#[derive(Debug, thiserror::Error)]
+pub enum SnippetsLoadError {
+    #[error(transparent)]
+    File(#[from] persist::PersistError),
+    #[error(transparent)]
+    Library(#[from] LibraryError),
 }
-struct Pending {
-    mutation: Mutation,
-    done: oneshot::Sender<Result<(), String>>,
+
+#[derive(Debug, thiserror::Error)]
+pub enum SnippetsError {
+    #[error(transparent)]
+    Library(#[from] LibraryError),
+    #[error("Snippet library is read-only until its file is fixed: {0}")]
+    ReadOnly(#[source] Arc<SnippetsLoadError>),
+    #[error("Snippet service is shutting down.")]
+    Closing,
+    #[error("Snippet save queue is full. Wait for pending saves and retry.")]
+    Full,
+    #[error("Snippet save was interrupted.")]
+    Cancelled,
+    #[error("Could not persist the snippet library: {0}")]
+    Persistence(#[source] StoreError),
 }
+
+impl From<StoreError> for SnippetsError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Closing => Self::Closing,
+            StoreError::Full => Self::Full,
+            StoreError::CompletionDropped => Self::Cancelled,
+            StoreError::Edit(ref source) => source
+                .downcast_ref::<LibraryError>()
+                .cloned()
+                .map_or(Self::Persistence(error), Self::Library),
+            error => Self::Persistence(error),
+        }
+    }
+}
+
 struct GlobalLibrary(Entity<Snippets>);
 impl Global for GlobalLibrary {}
 
 pub(crate) struct Snippets {
-    pub(crate) library: Library,
-    path: Option<PathBuf>,
-    load_error: Option<String>,
-    error: Option<String>,
-    queue: WriteQueue<Pending>,
-    writer: Option<Task<()>>,
+    state: Entity<Persisted<Library>>,
+    load_error: Option<Arc<SnippetsLoadError>>,
+    persistent: bool,
+    _subscription: Subscription,
 }
+
 impl Snippets {
-    fn new(path: Option<PathBuf>) -> Self {
+    fn new(path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let loaded = path.as_ref().map_or(Ok(Library::default()), |path| {
-            let library: Library = persist::load(path)
-                .map_err(|error| error.to_string())?
-                .unwrap_or_default();
+            let library: Library = persist::load(path)?.unwrap_or_default();
             library.validate()?;
-            Ok(library)
+            Ok::<_, SnippetsLoadError>(library)
         });
         let (library, load_error) = match loaded {
             Ok(library) => (library, None),
-            Err(error) => (Library::default(), Some(error)),
+            Err(error) => (Library::default(), Some(Arc::new(error))),
         };
+        let persistent = path.is_some();
+        let writer: SnapshotWriter<Library> = Arc::new(move |library| {
+            let path = path.clone();
+            Box::pin(async move {
+                if let Some(path) = path {
+                    persist::save(&path, &library).map_err(StoreError::backend)?;
+                }
+                Ok(())
+            })
+        });
+        Self::with_writer(library, load_error, persistent, writer, cx)
+    }
+
+    fn with_writer(
+        library: Library,
+        load_error: Option<Arc<SnippetsLoadError>>,
+        persistent: bool,
+        writer: SnapshotWriter<Library>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let state = cx.new(|_| Persisted::new(library, writer, Publication::Durable, MAX_PENDING));
+        let subscription = cx.observe(&state, |_, _, cx| cx.notify());
         Self {
-            library,
-            path,
+            state,
             load_error,
-            error: None,
-            queue: WriteQueue::new(MAX_PENDING),
-            writer: None,
+            persistent,
+            _subscription: subscription,
         }
     }
+
     pub(crate) fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalLibrary>().0.clone()
     }
-    pub(crate) fn error(&self) -> Option<&str> {
-        self.load_error.as_deref().or(self.error.as_deref())
+    pub(crate) fn library<'a>(&self, cx: &'a App) -> &'a Library {
+        self.state.read(cx).visible()
     }
-    pub(crate) fn writable(&self) -> bool {
-        self.load_error.is_none() && !self.queue.is_closing()
+    pub(crate) fn error(&self, cx: &App) -> Option<SnippetsError> {
+        self.load_error
+            .as_ref()
+            .map(|error| SnippetsError::ReadOnly(error.clone()))
+            .or_else(|| {
+                self.state
+                    .read(cx)
+                    .error()
+                    .cloned()
+                    .map(SnippetsError::from)
+            })
+    }
+    pub(crate) fn writable(&self, cx: &App) -> bool {
+        self.load_error.is_none() && !self.state.read(cx).is_closing()
+    }
+    pub(crate) fn register_shutdown(
+        &self,
+        shutdown: &ShutdownCoordinator,
+    ) -> Result<(), StoreError> {
+        shutdown.register(&self.state)
     }
     pub(crate) fn save(
         &mut self,
         snippet: Snippet,
         expected: Option<Snippet>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        self.enqueue(Mutation::Save(snippet, expected), cx)
+    ) -> Task<Result<(), SnippetsError>> {
+        if self.state.read(cx).is_closing() {
+            return Task::ready(Err(SnippetsError::Closing));
+        }
+        if let Err(error) = snippet.validate() {
+            return Task::ready(Err(LibraryError::from(error).into()));
+        }
+        self.edit(move |library| library.save(snippet, expected.as_ref()), cx)
     }
     pub(crate) fn delete(
         &mut self,
         expected: Snippet,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        self.enqueue(Mutation::Delete(expected), cx)
+    ) -> Task<Result<(), SnippetsError>> {
+        self.edit(move |library| library.delete(&expected), cx)
     }
-    fn candidate(&self, mutation: &Mutation) -> Result<Library, String> {
+    fn edit(
+        &mut self,
+        edit: impl FnOnce(&mut Library) -> Result<(), LibraryError> + 'static,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), SnippetsError>> {
+        if self.state.read(cx).is_closing() {
+            return Task::ready(Err(SnippetsError::Closing));
+        }
         if let Some(error) = &self.load_error {
-            return Err(format!(
-                "Snippet library is read-only until its file is fixed: {error}"
-            ));
+            return Task::ready(Err(SnippetsError::ReadOnly(error.clone())));
         }
-        let mut candidate = self.library.clone();
-        match mutation {
-            Mutation::Save(snippet, expected) => {
-                candidate.save(snippet.clone(), expected.as_ref())?
-            }
-            Mutation::Delete(expected) => candidate.delete(expected)?,
+        let edit = move |library: &mut Library| edit(library).map_err(StoreError::edit);
+        if !self.persistent {
+            let result = self
+                .state
+                .update(cx, |state, cx| state.update_immediate_checked(edit, cx));
+            cx.notify();
+            return Task::ready(result.map_err(SnippetsError::from));
         }
-        Ok(candidate)
-    }
-    fn enqueue(&mut self, mutation: Mutation, cx: &mut Context<Self>) -> Task<Result<(), String>> {
-        if self.queue.is_closing() {
-            return Task::ready(Err(rejection(Rejected::Closing)));
+        let receipt = self
+            .state
+            .update(cx, |state, cx| state.update_checked(edit, cx));
+        match receipt {
+            Err(error) => Task::ready(Err(error.into())),
+            Ok(receipt) => cx.spawn(async move |_, _| {
+                receipt
+                    .wait()
+                    .await
+                    .map(|_| ())
+                    .map_err(SnippetsError::from)
+            }),
         }
-        if let Mutation::Save(snippet, _) = &mutation
-            && let Err(error) = snippet.validate()
-        {
-            return Task::ready(Err(error.to_string()));
-        }
-        if self.path.is_none() {
-            let result = self.candidate(&mutation).map(|library| {
-                self.library = library;
-                self.error = None;
-                cx.notify();
-            });
-            return Task::ready(result);
-        }
-        let (done, result) = oneshot::channel();
-        match self.queue.push(Pending { mutation, done }) {
-            Err(rejected) => return Task::ready(Err(rejection(rejected))),
-            Ok(false) => {}
-            Ok(true) => {
-                self.writer = Some(cx.spawn(async move |this, cx| {
-                    while let Some(pending) = next(&this, cx) {
-                        let result = write(&pending.mutation, &this, cx).await;
-                        let _ = pending.done.send(result);
-                    }
-                }))
-            }
-        }
-        cx.spawn(async move |_, _| {
-            result
-                .await
-                .unwrap_or_else(|_| Err("Snippet save was interrupted.".into()))
-        })
     }
 }
 
-fn rejection(rejected: Rejected) -> String {
-    match rejected {
-        Rejected::Closing => "Snippet service is shutting down.",
-        Rejected::Full => "Snippet save queue is full. Wait for pending saves and retry.",
-    }
-    .into()
-}
-
-fn next(this: &WeakEntity<Snippets>, cx: &mut AsyncApp) -> Option<Pending> {
-    this.update(cx, |this, _| {
-        let pending = this.queue.take();
-        if pending.is_none() {
-            this.writer = None;
-        }
-        pending
-    })
-    .ok()
-    .flatten()
-}
-
-/// Applies `mutation` to the saved library, writes it off the main thread
-/// and publishes it once saved.
-async fn write(
-    mutation: &Mutation,
-    this: &WeakEntity<Snippets>,
-    cx: &mut AsyncApp,
-) -> Result<(), String> {
-    let closed = || "Snippet service closed before saving completed.".to_string();
-    let (candidate, path, writing) = this
-        .update(cx, |this, _| {
-            (
-                this.candidate(mutation),
-                this.path.clone(),
-                this.queue.begin_write(),
-            )
-        })
-        .map_err(|_| closed())?;
-    let persisted = match candidate {
-        Err(error) => Err(error),
-        Ok(library) => {
-            cx.background_executor()
-                .spawn(async move {
-                    let _writing = writing;
-                    if let Some(path) = path {
-                        persist::save(&path, &library).map_err(|error| error.to_string())?;
-                    }
-                    Ok(library)
-                })
-                .await
-        }
-    };
-    this.update(cx, |this, cx| {
-        cx.notify();
-        match persisted {
-            Ok(library) => {
-                this.library = library;
-                this.error = None;
-                Ok(())
-            }
-            Err(error) => {
-                this.error = Some(error.clone());
-                Err(error)
-            }
-        }
-    })
-    .unwrap_or_else(|_| Err(closed()))
-}
-
-pub(crate) fn init(paths: Option<&Paths>, cx: &mut App) {
-    let model = cx.new(|_| Snippets::new(paths.map(Paths::snippets_file)));
-    let shutdown = model.clone();
-    cx.on_app_quit(move |cx| {
-        let (in_flight, queued) =
-            shutdown.update(cx, |this, _| (this.queue.in_flight(), this.queue.close()));
-        let executor = cx.background_executor().clone();
-        async move {
-            if queued > 0 {
-                tracing::warn!(queued, "snippet changes queued at shutdown were not saved");
-            }
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(180);
-            while in_flight.count() > 0 {
-                if std::time::Instant::now() >= deadline {
-                    tracing::warn!("timed out saving snippets at shutdown");
-                    break;
-                }
-                executor.timer(std::time::Duration::from_millis(10)).await;
-            }
-        }
-    })
-    .detach();
+pub(crate) fn init(
+    paths: Option<&Paths>,
+    shutdown: &ShutdownCoordinator,
+    cx: &mut App,
+) -> Result<(), StoreError> {
+    let model = cx.new(|cx| Snippets::new(paths.map(Paths::snippets_file), cx));
+    model.read(cx).register_shutdown(shutdown)?;
     cx.set_global(GlobalLibrary(model));
+    Ok(())
 }
 #[cfg(test)]
 mod tests;

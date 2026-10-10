@@ -26,6 +26,7 @@ nocterm-local.workspace = true
 nocterm-monitor-ui.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
+nocterm-store.workspace = true
 nocterm-settings-ui.workspace = true
 nocterm-ssh.workspace = true
 nocterm-terminal.workspace = true
@@ -153,6 +154,7 @@ nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
+nocterm-store = { path = "crates/store" }
 nocterm-settings-ui = { path = "crates/settings-ui" }
 nocterm-ssh = { path = "crates/ssh" }
 nocterm-terminal = { path = "crates/terminal" }

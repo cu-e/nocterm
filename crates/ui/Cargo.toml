@@ -11,6 +11,7 @@ layer = "ui"
 
 [dependencies]
 nocterm-core.workspace = true
+nocterm-store.workspace = true
 nocterm-session.workspace = true
 nocterm-ai.workspace = true
 nocterm-themes.workspace = true
@@ -22,9 +23,9 @@ schemars.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true
-futures.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 toml.workspace = true
 gpui-kit = {workspace = true,features = ["test-support"]}
 tempfile.workspace = true

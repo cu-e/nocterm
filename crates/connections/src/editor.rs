@@ -464,7 +464,7 @@ impl ConnectionEditor {
                 }
                 match result {
                     Err(error) => {
-                        this.error = Some(error.into());
+                        this.error = Some(error.to_string().into());
                         cx.notify();
                     }
                     Ok(()) => {
@@ -562,7 +562,7 @@ impl ConnectionEditor {
                             .tooltip("Discard this draft and load the current saved connection")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if this.pending || this.dismissed.load(std::sync::atomic::Ordering::Acquire) { return; }
-                                let latest = Connections::global(cx).read(cx).profiles().get(this.id).cloned();
+                                let latest = Connections::global(cx).read(cx).profiles(cx).get(this.id).cloned();
                                 if let Some(profile) = latest {
                                     this.dismissed.store(true, std::sync::atomic::Ordering::Release);
                                     let workspace = this.workspace.clone();

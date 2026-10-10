@@ -1,152 +1,145 @@
-use std::path::PathBuf;
-
-use futures::channel::oneshot;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task, WeakEntity, Window};
-use nocterm_core::{
-    Paths,
-    persist::{self, WriteQueue, Writing},
-};
+use nocterm_core::Paths;
 use nocterm_session::{Auth, CredentialId, Target};
 use nocterm_workspace::{SessionSpec, Workspace};
 
 use crate::store::{Profile, ProfileId, Profiles, Recent, Recents};
 
+mod error;
 mod files;
-mod recents;
-mod shutdown;
-mod writes;
+mod persistence;
+pub use error::ConnectionsError;
 
-use files::{load_profiles, load_recents, now, write_profiles};
+use crate::store::{ProfileExpectation, ProfileMutation as Mutation};
+use files::{load_profiles, load_recents, now};
 
 const MAX_PENDING_WRITES: usize = 32;
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
-
-enum ProfileExpectation {
-    Any,
-    Absent,
-    Snapshot(Box<Profile>),
-}
-#[cfg(test)]
-type ProfileWriter = std::sync::Arc<
-    dyn Fn(Profiles) -> futures::future::BoxFuture<'static, Result<(), String>> + Send + Sync,
->;
-
-/// A queued intent is rebased on the last successfully persisted state.
-enum Mutation {
-    Save {
-        profile: Box<Profile>,
-        expected: ProfileExpectation,
-    },
-    Move {
-        id: ProfileId,
-        group: Option<String>,
-        before: Option<ProfileId>,
-    },
-    Delete(ProfileId),
-    RenameGroup {
-        from: String,
-        to: String,
-    },
-    Ungroup(String),
-    /// Deletes a group only while it still holds exactly the `expected` members.
-    DeleteGroup {
-        group: String,
-        expected: Vec<ProfileId>,
-    },
-    Credential {
-        target: Target,
-        auth: Auth,
-        id: CredentialId,
-    },
-}
-struct PendingWrite {
-    mutation: Mutation,
-    done: oneshot::Sender<Result<(), String>>,
-}
-struct Write {
-    pending: PendingWrite,
-    candidate: Result<Profiles, String>,
-    path: Option<PathBuf>,
-    writing: Writing,
-    #[cfg(test)]
-    writer: Option<ProfileWriter>,
-}
 
 /// Saved connections and recent ones, shared by every view that lists them.
 pub struct Connections {
-    profiles: Profiles,
-    recents: Recents,
-    profiles_file: Option<PathBuf>,
-    recents_file: Option<PathBuf>,
-    /// Invalid user configuration remains read-only until fixed externally.
-    load_error: Option<String>,
-    profile_persistence_error: Option<String>,
-    recents_persistence_error: Option<String>,
-    queue: WriteQueue<PendingWrite>,
-    writer: Option<Task<()>>,
-    recents_writer: Option<Task<()>>,
-    recents_revision: u64,
-    recents_written_revision: u64,
-    #[cfg(test)]
-    test_writer: Option<ProfileWriter>,
+    state: persistence::ConnectionStore,
+    load_error: Option<std::sync::Arc<nocterm_core::persist::PersistError>>,
 }
 struct GlobalConnections(Entity<Connections>);
 impl Global for GlobalConnections {}
 
 impl Connections {
     pub fn load(paths: &Paths) -> Self {
-        let profiles_file = paths.connections_file();
-        let recents_file = paths.recents_file();
-        let (profiles, load_error) = load_profiles(&profiles_file);
+        let (profiles, load_error) = load_profiles(&paths.connections_file());
         Self {
-            profiles,
-            recents: load_recents(&recents_file),
-            profiles_file: Some(profiles_file),
-            recents_file: Some(recents_file),
+            state: persistence::ConnectionStore::files(
+                profiles,
+                load_recents(&paths.recents_file()),
+                paths,
+            ),
             load_error,
-            ..Self::in_memory()
         }
     }
     pub fn in_memory() -> Self {
+        Self::with_documents(Profiles::default(), Recents::default())
+    }
+    /// A synchronous, explicitly memory-only owner, with no filesystem writes.
+    pub fn with_documents(profiles: Profiles, recents: Recents) -> Self {
         Self {
-            profiles: Profiles::default(),
-            recents: Recents::default(),
-            profiles_file: None,
-            recents_file: None,
+            state: persistence::ConnectionStore::memory(profiles, recents),
             load_error: None,
-            profile_persistence_error: None,
-            recents_persistence_error: None,
-            queue: WriteQueue::new(MAX_PENDING_WRITES),
-            writer: None,
-            recents_writer: None,
-            recents_revision: 0,
-            recents_written_revision: 0,
-            #[cfg(test)]
-            test_writer: None,
         }
     }
-    pub(crate) fn install(self, cx: &mut App) {
-        let entity = cx.new(|_| self);
-        shutdown::save_on_quit(entity.clone(), cx);
+    /// Explicit persistence ports; useful for alternate backends and behavior tests.
+    pub fn with_backends(
+        profiles: Profiles,
+        recents: Recents,
+        profiles_writer: nocterm_store::SnapshotWriter<Profiles>,
+        recents_writer: nocterm_store::SnapshotWriter<Recents>,
+    ) -> Self {
+        Self {
+            state: persistence::ConnectionStore::backends(
+                profiles,
+                recents,
+                profiles_writer,
+                recents_writer,
+            ),
+            load_error: None,
+        }
+    }
+    /// Construct an owner with explicit shutdown lifetime, without global lookup.
+    pub fn into_entity(
+        mut self,
+        shutdown: &nocterm_store::ShutdownCoordinator,
+        cx: &mut App,
+    ) -> Result<Entity<Self>, nocterm_store::StoreError> {
+        self.state.install(cx).register(shutdown)?;
+        Ok(cx.new(|cx| {
+            self.observe(cx);
+            self
+        }))
+    }
+    pub(crate) fn install(
+        self,
+        shutdown: &nocterm_store::ShutdownCoordinator,
+        cx: &mut App,
+    ) -> Result<(), nocterm_store::StoreError> {
+        let entity = self.into_entity(shutdown, cx)?;
         cx.set_global(GlobalConnections(entity));
+        Ok(())
+    }
+    fn observe(&self, cx: &mut Context<Self>) {
+        if let Some(installed) = self.state.installed() {
+            installed.observe(cx);
+        }
     }
     pub fn global(cx: &App) -> Entity<Connections> {
         cx.global::<GlobalConnections>().0.clone()
     }
-    pub fn profiles(&self) -> &Profiles {
-        &self.profiles
+    pub fn profiles<'a>(&'a self, cx: &'a App) -> &'a Profiles {
+        self.state.profiles(cx)
     }
-    pub fn recents(&self) -> &Recents {
-        &self.recents
+    pub fn recents<'a>(&'a self, cx: &'a App) -> &'a Recents {
+        self.state.recents(cx)
     }
-    pub fn load_error(&self) -> Option<&str> {
+    pub fn load_error(&self) -> Option<&nocterm_core::persist::PersistError> {
         self.load_error.as_deref()
     }
-    /// Failures remain visible in every Connections panel, including recent bookkeeping.
-    pub fn persistence_error(&self) -> Option<&str> {
-        self.profile_persistence_error
-            .as_deref()
-            .or(self.recents_persistence_error.as_deref())
+    /// Failures remain visible without rolling back a successfully written profile.
+    pub fn persistence_error(&self, cx: &App) -> Option<nocterm_store::StoreError> {
+        self.state.error(cx)
+    }
+    fn enqueue(
+        &mut self,
+        mutation: Mutation,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConnectionsError>> {
+        if let Err(error) = mutation.validate() {
+            return Task::ready(Err(error.into()));
+        }
+        let newly_installed = self.state.installed().is_none();
+        self.state.install(cx);
+        if newly_installed {
+            self.observe(cx);
+        }
+        let installed = self.state.installed().unwrap();
+        let consumed = installed.consumed();
+        let load_error = self.load_error.clone();
+        let edit = move |snapshot: &mut persistence::ProfileSnapshot| {
+            snapshot
+                .apply(&mutation, consumed.get(), load_error.as_ref())
+                .map_err(nocterm_store::StoreError::edit)
+        };
+        if installed.memory_only() {
+            let result = installed
+                .profiles()
+                .update(cx, |state, cx| state.update_immediate_checked(edit, cx));
+            return Task::ready(result.map_err(Into::into));
+        }
+        match installed
+            .profiles()
+            .update(cx, |state, cx| state.update_checked(edit, cx))
+        {
+            Ok(receipt) => {
+                cx.spawn(async move |_, _| receipt.wait().await.map(|_| ()).map_err(Into::into))
+            }
+            Err(error) => Task::ready(Err(error.into())),
+        }
     }
 
     /// Adds or updates a profile; completion means the write succeeded.
@@ -154,7 +147,7 @@ impl Connections {
         &mut self,
         profile: Profile,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(
             Mutation::Save {
                 profile: Box::new(profile),
@@ -169,7 +162,7 @@ impl Connections {
         profile: Profile,
         expected: Option<Profile>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(
             Mutation::Save {
                 profile: Box::new(profile),
@@ -185,7 +178,7 @@ impl Connections {
         id: ProfileId,
         group: Option<String>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.place_profile(id, group, None, cx)
     }
     /// Files a connection under `group`, just before `before` (else last).
@@ -195,14 +188,14 @@ impl Connections {
         group: Option<String>,
         before: Option<ProfileId>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::Move { id, group, before }, cx)
     }
     pub fn delete_profile(
         &mut self,
         id: ProfileId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::Delete(id), cx)
     }
     /// Renames a group; an existing group with the new name absorbs it.
@@ -211,11 +204,15 @@ impl Connections {
         from: String,
         to: String,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::RenameGroup { from, to }, cx)
     }
     /// Moves a group's connections to the top level and removes the group.
-    pub fn ungroup(&mut self, group: String, cx: &mut Context<Self>) -> Task<Result<(), String>> {
+    pub fn ungroup(
+        &mut self,
+        group: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::Ungroup(group), cx)
     }
     /// Deletes a group and its connections, provided its members are still
@@ -225,12 +222,8 @@ impl Connections {
         group: String,
         expected: Vec<ProfileId>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::DeleteGroup { group, expected }, cx)
-    }
-    #[cfg(test)]
-    pub(crate) fn set_profiles_file_for_test(&mut self, path: Option<PathBuf>) {
-        self.profiles_file = path;
     }
     pub fn associate_credential(
         &mut self,
@@ -238,7 +231,7 @@ impl Connections {
         auth: &Auth,
         id: CredentialId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(
             Mutation::Credential {
                 target: target.clone(),
@@ -254,7 +247,7 @@ impl Connections {
         profile: Option<ProfileId>,
         cx: &mut Context<Self>,
     ) {
-        self.recents.record(Recent {
+        let recent = Recent {
             options: spec.options.clone(),
             target: spec.target.clone(),
             auth: spec.auth.clone(),
@@ -262,12 +255,16 @@ impl Connections {
             last_used: now(),
             credential: spec.credential,
             launch: spec.launch.clone(),
-        });
-        self.schedule_recents(cx);
-        cx.notify();
+        };
+        let newly_installed = self.state.installed().is_none();
+        self.state.install(cx);
+        if newly_installed {
+            self.observe(cx);
+        }
+        self.state.installed().unwrap().record(recent, cx);
     }
-    pub fn spec_for_recent(&self, recent: &Recent) -> SessionSpec {
-        match recent.profile.and_then(|id| self.profiles.get(id)) {
+    pub fn spec_for_recent(&self, recent: &Recent, cx: &App) -> SessionSpec {
+        match recent.profile.and_then(|id| self.profiles(cx).get(id)) {
             Some(profile) => spec_for_profile(profile),
             None => SessionSpec {
                 profile: None,

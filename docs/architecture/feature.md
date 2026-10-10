@@ -81,7 +81,14 @@ typed validation selects the section containing the invalid field. Folder member
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. Group rename, ungroup and
 delete are single queued mutations; removed profiles unlink their recents and
-vault credentials are left untouched. `nocterm-settings-ui`
+vault credentials are left untouched. Profiles use durable checked edits through
+`nocterm-store`; recents and detected facts remain optimistic and coalesce. The
+injected shutdown coordinator captures profiles/recents together, saves independent
+uses before waiting for profile outcomes, and applies only physically successful
+prefix/final effects. The feature supplies typed backend errors and codecs;
+no separate writer loop or quit handler remains. Unknown top-level profile tables
+and comments on retained keys round-trip through the existing atomic writer.
+`nocterm-settings-ui`
 contributes a single settings Item with a page list. Every control saves itself:
 switches and choices at once, text when typing pauses, on Enter and on blur.
 Invalid text stays in its field with the error and is never written. Each save is

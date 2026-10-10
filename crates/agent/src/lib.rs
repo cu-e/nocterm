@@ -16,7 +16,6 @@ pub use runtime::TerminalAuthRequest;
 
 use gpui_kit::{App, Global, WeakEntity, Window, prelude::*};
 use nocterm_ai::{AgentConnector, ToolBridge};
-use nocterm_ui::SettingsExt as _;
 use std::{path::PathBuf, sync::Arc};
 
 /// Runs an agent's sign-in command in a terminal of `workspace`, and reports
@@ -64,13 +63,11 @@ impl TerminalAuth {
 }
 
 /// Installs services without starting an agent or opening a listener.
-pub fn init(services: AgentServices, _: &nocterm_ui::UiReady, cx: &mut App) {
+pub fn init(services: AgentServices, ready: &nocterm_ui::UiReady, cx: &mut App) {
     panel::commands::init(cx);
     cx.set_global(TerminalAuth(services.terminal_auth.clone()));
-    cx.set_global(runtime::AiSettingsSource(|cx| {
-        cx.setting::<nocterm_ai::AiSettings>()
-    }));
     let services = runtime::RuntimeServices {
+        settings: ready.settings().clone(),
         connector: services.connector,
         bridge: services.bridge,
         state_file: services.state_file,
@@ -84,10 +81,12 @@ pub fn init(services: AgentServices, _: &nocterm_ui::UiReady, cx: &mut App) {
     let runtime = cx.new(|cx| runtime::Runtime::new(services, cx));
     cx.set_global(runtime::RuntimeGlobal(runtime.clone()));
     let observed = runtime.downgrade();
-    cx.observe_global::<nocterm_ui::SettingsStore>(move |cx| {
-        let _ = observed.update(cx, |runtime, cx| runtime.settings_changed(cx));
-    })
-    .detach();
+    ready
+        .settings()
+        .observe(cx, move |cx| {
+            let _ = observed.update(cx, |runtime, cx| runtime.settings_changed(cx));
+        })
+        .detach();
     cx.on_app_quit(move |cx| runtime.update(cx, |runtime, cx| runtime.shutdown(cx)))
         .detach();
 }

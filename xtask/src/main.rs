@@ -109,7 +109,7 @@ fn allowed(source: &str, destination: &str) -> bool {
         "adapter" => matches!(destination, "domain" | "foundation"),
         // Services own GPUI entities but no views: they never reach the UI.
         "service" => matches!(destination, "service" | "domain" | "foundation"),
-        "ui" => matches!(destination, "ui" | "domain" | "foundation"),
+        "ui" => matches!(destination, "service" | "ui" | "domain" | "foundation"),
         "feature" => matches!(destination, "service" | "ui" | "domain" | "foundation"),
         "app" => destination != "tooling",
         // Generated references read every crate's settings sections.
@@ -532,6 +532,7 @@ mod tests {
     fn feature_and_transport_boundaries_are_enforced() {
         assert!(!allowed("feature", "feature"));
         assert!(allowed("feature", "service"));
+        assert!(allowed("ui", "service"));
         assert!(!allowed("service", "ui"));
         assert!(!allowed("service", "feature"));
         assert!(!allowed("feature", "adapter"));

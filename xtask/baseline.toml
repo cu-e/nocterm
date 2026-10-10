@@ -122,18 +122,17 @@ nocterm-workspace = 8
 
 [global_reads]
 nocterm = 4
-nocterm-agent-runtime = 2
+nocterm-agent-runtime = 1
 nocterm-connections = 2
 nocterm-keymap = 2
 nocterm-settings-ui = 2
 nocterm-snippets-ui = 1
-nocterm-ui = 14
+nocterm-ui = 6
 
 [globals]
 "nocterm::application::ApplicationState" = 1
 "nocterm_agent::TerminalAuth" = 1
 "nocterm_agent_runtime::RuntimeGlobal" = 1
-"nocterm_agent_runtime::settings::AiSettingsSource" = 1
 "nocterm_connections::facts::GlobalServerFacts" = 1
 "nocterm_connections::model::GlobalConnections" = 1
 "nocterm_files::path_input::Bindings" = 1
@@ -150,7 +149,6 @@ nocterm-ui = 14
 "nocterm_ui::layout::LayoutMemory" = 1
 "nocterm_ui::notice::Notices" = 1
 "nocterm_ui::settings::SettingsStore" = 1
-"nocterm_ui::settings::writer::SettingsWriter" = 1
 "nocterm_ui::themes::Themes" = 1
 "nocterm_workspace::host::LocalExec" = 1
 
@@ -188,7 +186,6 @@ nocterm-ui = 14
 "nocterm_agent_runtime::client::ClientState" = 9
 "nocterm_agent_runtime::lease::ReleasedLease" = 5
 "nocterm_agent_runtime::lease::SessionLease" = 5
-"nocterm_agent_runtime::settings::AiSettingsSource" = 1
 "nocterm_containers_ui::model::ActionIntent" = 1
 "nocterm_files::path_input::Navigate" = 2
 "nocterm_files::path_input::completion::Candidate" = 2
@@ -204,7 +201,6 @@ nocterm-ui = 14
 "nocterm_monitor_ui::model::Plan" = 2
 "nocterm_settings_ui::appearance::browser::ThemeBrowser" = 1
 "nocterm_settings_ui::field::Field" = 3
-"nocterm_snippets_ui::model::Snippets" = 1
 "nocterm_snippets_ui::panel::run::RunTarget" = 1
 "nocterm_terminal::access::Access" = 1
 "nocterm_terminal::credentials::CredentialState" = 2
@@ -222,11 +218,8 @@ nocterm-ui = 14
 
 [quit_handlers]
 "nocterm_agent::init" = 1
-"nocterm_connections::model::shutdown::save_on_quit" = 1
-"nocterm_snippets_ui::model::init" = 1
 "nocterm_terminal::init_recording" = 1
 "nocterm_ui::layout::LayoutMemory::init" = 1
-"nocterm_ui::settings::writer::init" = 1
 
 [string_errors]
 nocterm = 1
@@ -234,19 +227,18 @@ nocterm-acp = 10
 nocterm-agent = 10
 nocterm-agent-runtime = 2
 nocterm-ai = 29
-nocterm-connections = 22
+nocterm-connections = 5
 nocterm-containers = 3
 nocterm-files = 9
 nocterm-keymap = 5
 nocterm-keymap-ui = 1
 nocterm-local = 3
 nocterm-session = 6
-nocterm-settings-ui = 13
-nocterm-snippets = 3
-nocterm-snippets-ui = 7
+nocterm-settings-ui = 12
+nocterm-snippets-ui = 1
 nocterm-ssh = 3
-nocterm-terminal = 23
-nocterm-ui = 9
+nocterm-terminal = 21
+nocterm-ui = 1
 nocterm-vault-broker = 3
 nocterm-vt = 6
 nocterm-workspace = 13

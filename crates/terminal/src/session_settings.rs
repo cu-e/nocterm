@@ -228,7 +228,7 @@ mod tests {
         cx.read(|cx| {
             let store = cx.global::<nocterm_ui::SettingsStore>();
             assert_eq!(
-                store.revision(),
+                store.revision(cx),
                 0,
                 "applying a session setting saved nothing"
             );

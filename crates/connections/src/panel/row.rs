@@ -19,7 +19,7 @@ impl RowVisual {
                 .icon
                 .as_deref()
                 .and_then(os::find)
-                .or_else(|| facts.os(profile.id)),
+                .or_else(|| facts.os(profile.id, cx)),
             flag: facts
                 .shown_country(profile, cx)
                 .and_then(|code| Some((code.to_uppercase(), facts.flag(code)?))),

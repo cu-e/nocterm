@@ -24,7 +24,7 @@ fn dialog_focus_accepts_typing_and_enter_opens_exactly_once(cx: &mut TestAppCont
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles().iter().count(),
+            Connections::global(cx).read(cx).profiles(cx).iter().count(),
             1
         );
         assert_eq!(
@@ -52,7 +52,7 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
         assert!(window.try_find("dialog").is_some());
         assert!(opened.borrow().is_empty());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles().iter().count(),
+            Connections::global(cx).read(cx).profiles(cx).iter().count(),
             0
         );
         window.input("valid.test", cx);
@@ -64,7 +64,7 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles().iter().count(),
+            Connections::global(cx).read(cx).profiles(cx).iter().count(),
             1
         );
         assert_eq!(opened.borrow().len(), 1);
@@ -149,7 +149,7 @@ fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut
         assert!(window.try_find("dialog").is_none());
         let profile = Connections::global(cx)
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .iter()
             .next()
             .unwrap();
@@ -220,7 +220,7 @@ fn hidden_invalid_fields_open_their_section_and_footer_stays_visible(cx: &mut Te
         );
         assert!(editor.read(cx).error.is_some());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles().iter().count(),
+            Connections::global(cx).read(cx).profiles(cx).iter().count(),
             0
         );
         editor.update(cx, |editor, cx| {
@@ -401,7 +401,7 @@ fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
                 .load(std::sync::atomic::Ordering::Acquire)
         );
         let connections = Connections::global(cx);
-        let stored = connections.read(cx).profiles().get(original.id).unwrap();
+        let stored = connections.read(cx).profiles(cx).get(original.id).unwrap();
         if save {
             latest.name = "Saved after reload".into();
         }

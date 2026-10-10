@@ -233,13 +233,22 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
         });
     }
     for query in ["color scheme", "change theme"] {
-        let before = cx.update(|cx| cx.global::<nocterm_ui::SettingsStore>().document().clone());
+        let before = cx.update(|cx| {
+            cx.global::<nocterm_ui::SettingsStore>()
+                .document(cx)
+                .clone()
+        });
         palette(handle, query, cx);
         enter(handle, cx);
         cx.update_window(handle, |_, window, cx| window.press("escape", cx))
             .unwrap();
         frames(handle, cx);
-        cx.update(|cx| assert_eq!(cx.global::<nocterm_ui::SettingsStore>().document(), &before));
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<nocterm_ui::SettingsStore>().document(cx),
+                &before
+            )
+        });
         cx.update_window(handle, |_, window, _| {
             assert!(window.try_find("dialog").is_none())
         })
@@ -271,11 +280,16 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     let (handle, _, _, _) = fixture(cx);
     let directory = tempfile::tempdir().unwrap();
     let before = cx.update(|cx| {
-        let settings = cx.global::<nocterm_ui::SettingsStore>().document().clone();
-        cx.set_global(nocterm_ui::SettingsStore::new(
+        let settings = cx
+            .global::<nocterm_ui::SettingsStore>()
+            .document(cx)
+            .clone();
+        let service = nocterm_store::SettingsConfig::new(
             settings.clone(),
             nocterm_settings::SettingsFile::new(directory.path()),
-        ));
+        )
+        .install(cx);
+        cx.set_global(nocterm_ui::SettingsStore::from_handle(service));
         settings
     });
     let notices = cx
@@ -286,7 +300,12 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     palette(handle, "color scheme", cx);
     enter(handle, cx);
     choose(handle, "Dark", cx);
-    cx.update(|cx| assert_eq!(cx.global::<nocterm_ui::SettingsStore>().document(), &before));
+    cx.update(|cx| {
+        assert_eq!(
+            cx.global::<nocterm_ui::SettingsStore>().document(cx),
+            &before
+        )
+    });
     cx.update_window(handle, |_, window, cx| {
         assert!(nocterm_ui::notice::count(window, cx) > notices)
     })

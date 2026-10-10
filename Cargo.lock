@@ -4929,6 +4929,7 @@ dependencies = [
  "nocterm-settings-ui",
  "nocterm-snippets-ui",
  "nocterm-ssh",
+ "nocterm-store",
  "nocterm-terminal",
  "nocterm-themes",
  "nocterm-ui",
@@ -4994,6 +4995,7 @@ dependencies = [
  "gpui-pre",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-store",
  "tempfile",
  "tracing",
 ]
@@ -5028,11 +5030,13 @@ dependencies = [
  "gpui-pre-reqwest",
  "nocterm-core",
  "nocterm-session",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "uuid",
@@ -5247,15 +5251,16 @@ dependencies = [
 name = "nocterm-snippets-ui"
 version = "0.0.0"
 dependencies = [
- "futures",
  "gpui-kit",
  "nocterm-core",
  "nocterm-session",
  "nocterm-snippets",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
  "tempfile",
- "tracing",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -5278,6 +5283,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-store"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-settings",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nocterm-terminal"
 version = "0.0.0"
 dependencies = [
@@ -5292,6 +5308,7 @@ dependencies = [
  "nocterm-workspace",
  "regex",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
  "uuid",
 ]
@@ -5338,6 +5355,7 @@ dependencies = [
  "nocterm-design",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-themes",
  "schemars 1.2.2",
  "serde",

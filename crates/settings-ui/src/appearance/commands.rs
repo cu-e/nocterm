@@ -141,7 +141,7 @@ fn save(choice: Choice, window: &mut Window, cx: &mut App) {
                     cx,
                     "theme-command-save",
                     "Could not save appearance",
-                    error,
+                    error.to_string(),
                 ),
             });
         })

@@ -15,7 +15,7 @@ impl ConnectionDirectory for Directory {
         let facts = ServerFacts::global(cx).read(cx);
         Connections::global(cx)
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .iter()
             .map(|profile| summary(profile, facts, cx))
             .collect()
@@ -24,7 +24,7 @@ impl ConnectionDirectory for Directory {
     fn recent_connections(&self, cx: &App) -> Vec<ConnectionSummary> {
         let connections = Connections::global(cx).read(cx);
         let facts = ServerFacts::global(cx).read(cx);
-        recent_profiles(connections.profiles(), connections.recents())
+        recent_profiles(connections.profiles(cx), connections.recents(cx))
             .map(|profile| summary(profile, facts, cx))
             .collect()
     }
@@ -32,7 +32,7 @@ impl ConnectionDirectory for Directory {
     fn groups(&self, cx: &App) -> Vec<gpui_kit::SharedString> {
         Connections::global(cx)
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .groups()
             .into_iter()
             .map(|group| group.to_owned().into())
@@ -83,7 +83,7 @@ fn summary(profile: &Profile, facts: &ServerFacts, cx: &App) -> ConnectionSummar
         group: profile.group.clone().map(Into::into),
         description: profile.description.clone().into(),
         target: profile.target.clone(),
-        icon: facts.icon(profile),
+        icon: facts.icon(profile, cx),
         flag: facts
             .shown_country(profile, cx)
             .and_then(|code| facts.flag(code)),
@@ -107,7 +107,7 @@ mod tests;
 fn profile(id: &str, cx: &App) -> Option<Profile> {
     Connections::global(cx)
         .read(cx)
-        .profiles()
+        .profiles(cx)
         .iter()
         .find(|profile| profile.id.to_string() == id)
         .cloned()

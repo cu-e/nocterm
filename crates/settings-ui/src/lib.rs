@@ -308,7 +308,11 @@ impl SettingsView {
     }
 
     /// Shows the outcome of `task` until the next save.
-    fn report(&mut self, task: gpui_kit::Task<Result<u64, String>>, cx: &mut Context<Self>) {
+    fn report(
+        &mut self,
+        task: gpui_kit::Task<Result<u64, nocterm_ui::SettingsError>>,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -437,7 +441,7 @@ impl Render for SettingsView {
         };
         let section_errors: Vec<_> = cx
             .global::<SettingsStore>()
-            .section_errors()
+            .section_errors(cx)
             .iter()
             .map(|error| {
                 format!(

@@ -102,8 +102,9 @@ fn run_group_action(
                 });
             }
             Err(error) => {
-                let _ = cx
-                    .update(|window, cx| nocterm_ui::notice::error(window, cx, key, title, error));
+                let _ = cx.update(|window, cx| {
+                    nocterm_ui::notice::error(window, cx, key, title, error.to_string())
+                });
             }
         })
         .detach();
@@ -152,7 +153,7 @@ impl ConnectionsPanel {
             cx.observe_in(&connections, window, |this, connections, window, cx| {
                 // The group may have been deleted or ungrouped while being renamed.
                 if let Some(rename) = &this.renaming
-                    && !connections.read(cx).profiles().has_group(&rename.group)
+                    && !connections.read(cx).profiles(cx).has_group(&rename.group)
                 {
                     let focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
                     this.renaming = None;
@@ -189,7 +190,7 @@ impl ConnectionsPanel {
     }
 
     fn open(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(profile) = self.connections.read(cx).profiles().get(id).cloned() else {
+        let Some(profile) = self.connections.read(cx).profiles(cx).get(id).cloned() else {
             return;
         };
         connect(
@@ -206,7 +207,7 @@ impl ConnectionsPanel {
         let matches: Vec<ProfileId> = self
             .connections
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .iter()
             .filter(|profile| profile.matches(&filter))
             .map(|profile| profile.id)
@@ -217,7 +218,7 @@ impl ConnectionsPanel {
     }
 
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        let profile = self.connections.read(cx).profiles().get(id).cloned();
+        let profile = self.connections.read(cx).profiles(cx).get(id).cloned();
         if profile.is_some() {
             open_editor(profile, self.workspace.clone(), window, cx);
         }
@@ -227,7 +228,7 @@ impl ConnectionsPanel {
         let Some(name) = self
             .connections
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .get(id)
             .map(|profile| profile.name.clone())
         else {
@@ -251,7 +252,7 @@ impl ConnectionsPanel {
                                         cx,
                                         "connections-delete",
                                         "Could not delete connection",
-                                        error,
+                                        error.to_string(),
                                     )
                                 });
                             }
@@ -267,7 +268,7 @@ impl ConnectionsPanel {
         let members: Vec<ProfileId> = self
             .connections
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .in_group(Some(&group), "")
             .iter()
             .map(|profile| profile.id)
@@ -408,7 +409,7 @@ impl ConnectionsPanel {
                         cx,
                         "connections-rename-group",
                         "Could not rename group",
-                        error,
+                        error.to_string(),
                     )
                 });
             }
@@ -446,7 +447,7 @@ impl ConnectionsPanel {
                         cx,
                         "connections-move",
                         "Could not move connection",
-                        error,
+                        error.to_string(),
                     )
                 });
             }
@@ -590,7 +591,7 @@ impl ConnectionsPanel {
         let filter = self.filter_text(cx);
         let filtering = !filter.trim().is_empty();
         let connections = self.connections.read(cx);
-        let profiles = connections.profiles();
+        let profiles = connections.profiles(cx);
 
         let (top, groups) = profiles.grouped(&filter);
         let top: Vec<_> = top.into_iter().cloned().collect();
@@ -708,8 +709,13 @@ impl Render for ConnectionsPanel {
             .connections
             .read(cx)
             .load_error()
-            .or_else(|| self.connections.read(cx).persistence_error())
-            .map(str::to_owned);
+            .map(ToString::to_string)
+            .or_else(|| {
+                self.connections
+                    .read(cx)
+                    .persistence_error(cx)
+                    .map(|error| error.to_string())
+            });
         let theme = cx.theme();
         let danger = theme.danger;
 

@@ -5,6 +5,14 @@
 //! every view reads ([`ActiveDesign`], [`SettingsExt`]), and projects them
 //! onto the component library's theme, so standard components follow the
 //! tokens without any view repeating a colour or a size.
+//!
+//! Owns: theme projections, shared assets/forms, settings compatibility access and layout values.
+//! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
+//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers.
+//! Settings sections: appearance, terminal; init also registers ai.
+//! Globals: Design, Themes, SettingsStore, LayoutMemory, Notices.
+//! Compatibility settings access: `ActiveAi`.
+//! Invariants: layout edits remain visible on persistence failure; theme uses typed settings.
 
 mod ai;
 mod design;
@@ -27,6 +35,7 @@ pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
 pub use layout::LayoutMemory;
+pub use nocterm_store::StoreError as SettingsError;
 pub use sections::{
     AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy,
     CursorShape, FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings, UiLayout,
@@ -52,7 +61,7 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiRe
 
     cx.set_global(Design::new(tokens));
     cx.set_global(settings);
-    settings::init(cx);
+    let settings = settings::init(cx);
     register_setting::<crate::AppearanceSettings>(cx);
     register_setting::<crate::TerminalSettings>(cx);
     register_setting::<nocterm_ai::AiSettings>(cx);
@@ -60,18 +69,26 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiRe
 
     cx.observe_global::<Design>(apply_theme).detach();
     cx.observe_global::<SettingsStore>(apply_theme).detach();
-    UiReady(())
+    UiReady { settings }
 }
 
 /// Proof that [`init`] has run: the design and the settings store are
-/// installed. It costs nothing at run time.
-#[derive(Clone, Copy, Debug)]
-pub struct UiReady(());
+/// installed. It retains the explicit settings dependency for composition.
+#[derive(Clone)]
+pub struct UiReady {
+    settings: nocterm_store::SettingsHandle,
+}
 
 impl UiReady {
+    pub fn settings(&self) -> &nocterm_store::SettingsHandle {
+        &self.settings
+    }
     /// The witness for an app [`init`] already ran in, for code handed the
     /// app rather than the witness, such as a test re-initializing a feature.
     pub fn installed(cx: &App) -> Option<Self> {
-        cx.has_global::<SettingsStore>().then_some(Self(()))
+        cx.try_global::<SettingsStore>()?
+            .handle()
+            .cloned()
+            .map(|settings| Self { settings })
     }
 }

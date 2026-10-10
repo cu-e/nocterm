@@ -32,14 +32,12 @@ impl nocterm_ai::ToolBridge for UnusedBridge {
 fn fixture(cx: &mut TestAppContext) -> (Entity<Runtime>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let runtime = cx.update(|cx| {
-        cx.set_global(AiSettingsSource(|_| {
-            static AI: std::sync::LazyLock<nocterm_ai::AiSettings> =
-                std::sync::LazyLock::new(Default::default);
-            &AI
-        }));
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        settings.register::<nocterm_ai::AiSettings>(cx);
         cx.new(|cx| {
             Runtime::new(
                 RuntimeServices {
+                    settings,
                     connector: Arc::new(UnusedConnector),
                     bridge: Arc::new(UnusedBridge),
                     state_file: directory.path().join("agents.toml"),

@@ -39,8 +39,10 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
 
 ## Reuse before writing
 
-- Ordered persistence: `nocterm_core::persist::{WriteQueue, WriteGate,
-  ShutdownDeadline}` ([ADR 0004](docs/adr/0004-write-queue.md)).
+- Ordered persistence: `nocterm_store::{Persisted, ShutdownCoordinator}`
+  ([ADR 0013](docs/adr/0013-persistence-shutdown-service.md)); the common service
+  uses `nocterm_core::persist::{WriteQueue, WriteGate, ShutdownDeadline}`
+  ([ADR 0004](docs/adr/0004-write-queue.md)).
 - Atomic files: `nocterm_core::fs::{write_private_atomic, create_private,
   AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
   save_preserving}` for configuration. Check their symlink and format semantics
@@ -48,10 +50,10 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
 - Shutdown, link-safe filesystem traversal and test fakes: inspect existing
   implementations before adding one; propose shared extraction for missing reuse.
 
-`nocterm-store`, `Persisted<T>`, `ShutdownCoordinator`, `nocterm-local::fs` and
-session `test-support` are not implemented yet. Do not
-refer to them as available APIs. Until shared mechanisms exist, a plan must
-identify the existing owner and how its mechanism will be reused or extracted.
+Layout, settings, snippets and connection state use the shared persistence service.
+Runtime chat/favorites and recording remain migration owners. `nocterm-local::fs`
+and session `test-support` are not implemented yet; inspect their existing owners
+and propose shared extraction instead of describing unavailable APIs.
 
 ## Design rules
 
@@ -148,6 +150,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `design` | design tokens and themes |
 | `themes` | Zed theme import, catalogue and installation |
 | `settings` | settings schema and storage |
+| `store` | common persistence service and shutdown coordination |
 | `session` | transport and remote filesystem contracts |
 | `ssh` | SSH and SFTP adapter |
 | `vt` | terminal emulation and input encoding |

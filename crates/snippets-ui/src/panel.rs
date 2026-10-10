@@ -127,7 +127,7 @@ impl SnippetsPanel {
                                         cx,
                                         "snippet-delete",
                                         "Could not delete snippet",
-                                        error,
+                                        error.to_string(),
                                     )
                                 });
                             }
@@ -257,12 +257,12 @@ impl Focusable for SnippetsPanel {
 impl Render for SnippetsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
-        let error = model.error().map(ToOwned::to_owned);
-        let writable = model.writable();
+        let error = model.error(cx).map(|error| error.to_string());
+        let writable = model.writable(cx);
         let query = self.search.read(cx).value();
         let (current, other) =
             model
-                .library
+                .library(cx)
                 .partition(self.profile.as_deref(), self.group.as_deref(), &query);
         let current: Vec<_> = current.into_iter().cloned().collect();
         let other: Vec<_> = other.into_iter().cloned().collect();

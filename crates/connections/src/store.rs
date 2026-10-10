@@ -7,6 +7,10 @@
 //!   preserving comments.
 //! - `recents.toml` (state directory) is nocterm's own bookkeeping.
 
+mod mutation;
+pub use mutation::ProfileError;
+pub(crate) use mutation::{ProfileExpectation, ProfileMutation};
+
 use std::fmt;
 
 use nocterm_session::{Auth, CredentialId, ShellLaunch, Target};
@@ -76,8 +80,11 @@ fn is_auto(auth: &Auth) -> bool {
 }
 
 /// The contents of `connections.toml`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Profiles {
+    /// Forward-compatible tables belong to the document, even when not interpreted.
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, toml::Value>,
     /// Remember folders even after their last connection is moved or deleted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folders: Vec<String>,

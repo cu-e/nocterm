@@ -16,7 +16,7 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(None, cx);
+        crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(window, cx);
@@ -29,7 +29,7 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
     assert!(cx.read(|cx| {
         Connections::global(cx)
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .iter()
             .next()
             .is_none()

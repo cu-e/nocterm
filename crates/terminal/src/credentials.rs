@@ -5,7 +5,21 @@ use nocterm_session::{CredentialId, CredentialStore, Prompt, Secret, SecretReque
 use nocterm_workspace::SessionSpec;
 use std::{rc::Rc, sync::Arc};
 
-type Saved = Rc<dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>>>;
+/// The credential is saved, but attaching its ID to connection history failed.
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialAssociationError {
+    #[error("could not associate the saved credential: {0}")]
+    Binding(#[source] Arc<dyn std::error::Error + Send + Sync>),
+}
+impl CredentialAssociationError {
+    pub fn binding(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Binding(Arc::new(error))
+    }
+}
+
+type Saved = Rc<
+    dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), CredentialAssociationError>>,
+>;
 pub(crate) struct ActiveCredentials {
     store: Arc<dyn CredentialStore>,
     saved: Saved,
@@ -16,7 +30,12 @@ impl Global for ActiveCredentials {}
 /// connections/recent targets. It receives no plaintext secret.
 pub fn init_credentials(
     store: Arc<dyn CredentialStore>,
-    on_saved: impl Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), String>> + 'static,
+    on_saved: impl Fn(
+        &SessionSpec,
+        CredentialId,
+        &mut App,
+    ) -> Task<Result<(), CredentialAssociationError>>
+    + 'static,
     cx: &mut App,
 ) {
     cx.set_global(ActiveCredentials {

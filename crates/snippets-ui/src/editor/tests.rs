@@ -7,7 +7,7 @@ fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(None, cx);
+        crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| Workspace::new(window, cx))
         })
@@ -35,7 +35,13 @@ fn multiline_enter_does_not_save_then_explicit_save_preserves_code(cx: &mut Test
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_some());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
+        assert!(
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .is_empty()
+        );
         assert!(editor.read(cx).code.read(cx).value().contains('\n'));
         editor.update(cx, |editor, cx| {
             editor.select_language(Language::Python, cx);
@@ -50,7 +56,7 @@ fn multiline_enter_does_not_save_then_explicit_save_preserves_code(cx: &mut Test
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         let model = Snippets::global(cx);
-        let snippets = &model.read(cx).library.snippets;
+        let snippets = &model.read(cx).library(cx).snippets;
         assert_eq!(snippets.len(), 1);
         assert_eq!(snippets[0].name, "Disk usage");
         assert_eq!(snippets[0].content, "echo first\necho second");
@@ -81,7 +87,13 @@ fn validation_and_cancel_keep_library_unchanged(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
+        assert!(
+            Snippets::global(cx)
+                .read(cx)
+                .library(cx)
+                .snippets
+                .is_empty()
+        );
     })
     .unwrap();
 }
@@ -162,7 +174,7 @@ fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) 
         assert!(editor.read(cx).saved);
         assert!(!editor.read(cx).pending);
         assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets[0].content,
+            Snippets::global(cx).read(cx).library(cx).snippets[0].content,
             "echo first"
         );
         window.close_dialog(cx);
@@ -192,7 +204,7 @@ fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) 
             "The resurfaced editor can save and close normally."
         );
         assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets[0].content,
+            Snippets::global(cx).read(cx).library(cx).snippets[0].content,
             "echo second"
         );
     })
