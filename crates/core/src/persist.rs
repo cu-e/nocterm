@@ -5,8 +5,7 @@
 //! intact.
 
 use std::{
-    fs,
-    io::{self, Write as _},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -69,9 +68,11 @@ pub fn save<T: Serialize>(path: &Path, value: &T) -> Result<(), PersistError> {
 }
 
 /// Replaces the contents of `path` with `contents`, atomically and readable
-/// only by the user, for files nocterm owns that are not TOML.
+/// only by the user, for files nocterm owns that are not TOML. The final
+/// symlink is replaced instead of followed.
 pub fn save_text(path: &Path, contents: &str) -> Result<(), PersistError> {
-    publish_atomic(path, contents).map_err(|source| PersistError::io(path, source))
+    crate::fs::write_private_atomic(path, contents.as_bytes())
+        .map_err(|error| PersistError::io(path, error.into_io_error()))
 }
 
 /// Writes `value` to `path`, keeping the comments and key order already in
@@ -91,8 +92,8 @@ pub fn save_preserving<T: Serialize>(path: &Path, value: &T) -> Result<(), Persi
             Ok(document) => document,
             Err(_) => {
                 let backup = backup_path(path);
-                publish_atomic(&backup, &text)
-                    .map_err(|source| PersistError::io(&backup, source))?;
+                crate::fs::write_private_atomic(&backup, text.as_bytes())
+                    .map_err(|error| PersistError::io(&backup, error.into_io_error()))?;
                 DocumentMut::new()
             }
         },
@@ -166,31 +167,8 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
     // Write through a symlink rather than replacing it: configuration is
     // often linked in from a dotfiles repository.
     let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    publish_atomic(&path, contents)
-}
-
-// Backups publish at their exact path: an old .bak symlink must be replaced,
-// never followed into an unrelated file.
-fn publish_atomic(path: &Path, contents: &str) -> io::Result<()> {
-    let directory = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(directory)?;
-
-    // Unique, exclusively created temporary files cannot follow an attacker-
-    // supplied name or collide with another writer in the same process.
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    temporary.write_all(contents.as_bytes())?;
-    temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|error| error.error)?;
-    // Publication has committed. A directory-sync failure must not be reported
-    // as a precommit failure: callers would retain state different from disk.
-    #[cfg(unix)]
-    if let Ok(directory) = fs::File::open(directory) {
-        let _ = directory.sync_all();
-    }
-    Ok(())
+    crate::fs::write_private_atomic(&path, contents.as_bytes())
+        .map_err(crate::fs::FileError::into_io_error)
 }
 
 #[cfg(test)]
@@ -373,6 +351,20 @@ mod tests {
             }
         });
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_text_save_replaces_a_symlink_instead_of_writing_through_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let victim = directory.path().join("victim");
+        let path = directory.path().join("chat.json");
+        fs::write(&victim, b"preserve").unwrap();
+        std::os::unix::fs::symlink(&victim, &path).unwrap();
+        save_text(&path, "saved chat").unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"preserve");
+        assert_eq!(fs::read(&path).unwrap(), b"saved chat");
+        assert!(!fs::symlink_metadata(path).unwrap().file_type().is_symlink());
     }
 
     #[cfg(unix)]

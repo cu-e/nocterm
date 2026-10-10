@@ -1,6 +1,6 @@
 //! Bounded output-only capture. File I/O never runs on the UI executor.
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::Write as _,
     path::PathBuf,
     sync::{
@@ -78,14 +78,8 @@ impl Recorder {
             .spawn(move || {
                 let write = || -> Result<(), String> {
                     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-                    let mut options = OpenOptions::new();
-                    options.write(true).create_new(true);
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::OpenOptionsExt as _;
-                        options.mode(0o600);
-                    }
-                    let mut file = options.open(&path).map_err(|error| error.to_string())?;
+                    let mut file = nocterm_core::fs::create_private(&path)
+                        .map_err(|error| error.to_string())?;
                     let limit = u64::from(max_file_mib.clamp(1, 1024)) * 1024 * 1024;
                     let mut written = 0;
                     for bytes in receiver {

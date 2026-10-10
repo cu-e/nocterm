@@ -41,13 +41,15 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
 
 - Ordered persistence: `nocterm_core::persist::{WriteQueue, WriteGate,
   ShutdownDeadline}` ([ADR 0004](docs/adr/0004-write-queue.md)).
-- Atomic files: the public `nocterm_core::persist::{save, save_text,
-  save_preserving}` APIs; check their symlink and format semantics before reuse.
+- Atomic files: `nocterm_core::fs::{write_private_atomic, create_private,
+  AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
+  save_preserving}` for configuration. Check their symlink and format semantics
+  before reuse ([ADR 0015](docs/adr/0015-private-file-publication.md)).
 - Shutdown, link-safe filesystem traversal and test fakes: inspect existing
   implementations before adding one; propose shared extraction for missing reuse.
 
-`nocterm-store`, `Persisted<T>`, `ShutdownCoordinator`, `nocterm_core::fs`,
-`nocterm-local::fs` and session `test-support` are not implemented yet. Do not
+`nocterm-store`, `Persisted<T>`, `ShutdownCoordinator`, `nocterm-local::fs` and
+session `test-support` are not implemented yet. Do not
 refer to them as available APIs. Until shared mechanisms exist, a plan must
 identify the existing owner and how its mechanism will be reused or extracted.
 

@@ -5266,6 +5266,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "hmac 0.13.0",
+ "nocterm-core",
  "nocterm-session",
  "russh",
  "russh-sftp",
@@ -5285,6 +5286,7 @@ dependencies = [
  "encoding_rs",
  "futures",
  "gpui-kit",
+ "nocterm-core",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-ui",

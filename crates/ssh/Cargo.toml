@@ -10,6 +10,7 @@ publish = false
 layer = "adapter"
 
 [dependencies]
+nocterm-core.workspace = true
 nocterm-session.workspace = true
 
 futures.workspace = true

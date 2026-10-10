@@ -1,11 +1,7 @@
 //! Conservative replacement of conflicting records owned by the application.
 use super::*;
 use russh::keys::HashAlg;
-use std::{
-    fs,
-    io::{self, Write as _},
-    path::Path,
-};
+use std::{fs, io, path::Path};
 
 #[derive(Clone, Debug)]
 pub(super) struct Snapshot {
@@ -188,34 +184,18 @@ impl HostKeys {
             .map_err(|error| format!("Could not save the new host key: {error}"))
     }
     fn atomic_write(&self, bytes: &[u8]) -> io::Result<()> {
-        let parent = self
-            .writable
-            .parent()
-            .ok_or_else(|| io::Error::other("trust file has no parent"))?;
-        let temporary = parent.join(format!(".nocterm-host-key-{}", uuid::Uuid::new_v4()));
-        let result = (|| {
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            file.set_permissions(fs::metadata(&self.writable)?.permissions())?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            self.revalidate().map_err(io::Error::other)?;
-            fs::rename(&temporary, &self.writable)?;
-            // Publication committed; match core persistence's best-effort
-            // directory sync rather than reporting an already-saved key as failed.
-            if let Ok(directory) = fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
-            Ok(())
-        })();
-        let _ = fs::remove_file(&temporary);
-        result
+        // Trust records preserve their original mode; private snapshots elsewhere
+        // use 0600. The caller holds MUTATIONS through staging and publication.
+        let publication = nocterm_core::fs::AtomicPublication::stage_with_permissions(
+            &self.writable,
+            bytes,
+            fs::metadata(&self.writable)?.permissions(),
+        )
+        .map_err(nocterm_core::fs::FileError::into_io_error)?;
+        self.revalidate().map_err(io::Error::other)?;
+        publication
+            .publish()
+            .map_err(nocterm_core::fs::FileError::into_io_error)
     }
 }
 fn replace_fields(raw: &str, key: &str) -> Result<String, String> {
@@ -416,6 +396,23 @@ mod tests {
                 .is_some()
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_original_trust_file_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        fs::write(&path, format!("example.com {KEY_A}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        load(&path).replace("example.com", 22, &key(KEY_B)).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains(KEY_B));
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
     #[cfg(unix)]
     #[test]
     fn save_failure_is_reported_and_keeps_existing_bytes() {
