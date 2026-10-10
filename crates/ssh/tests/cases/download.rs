@@ -113,6 +113,13 @@ async fn pipelined_upload_preserves_offsets_and_waits_before_publish() {
             .await
             .is_err()
     );
+    assert!(writer.publish_as("batch.bin".into()).await.is_err());
+    writer.cancel().await.unwrap();
+    assert!(!target.exists());
+    let mut writer = remote
+        .upload(target.to_str().unwrap(), UploadMode::Create)
+        .await
+        .unwrap();
     let mut expected = Vec::new();
     for batch in 0..3 {
         let chunks: Vec<_> = (0..8)

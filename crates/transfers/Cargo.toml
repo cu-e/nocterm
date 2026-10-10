@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-transfers"
-description = "Bounded bidirectional streaming transfer queues independent of the explorer."
+description = "Bounded transfer requests, limits, progress transitions and service contracts."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -9,22 +9,17 @@ publish = false
 [package.metadata.nocterm]
 layer = "domain"
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 nocterm-session.workspace = true
-tokio.workspace = true
-parking_lot.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
-tempfile.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+futures.workspace = true
 
 [dev-dependencies]
-futures.workspace = true
+nocterm-session = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

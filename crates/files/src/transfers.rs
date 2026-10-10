@@ -1,8 +1,7 @@
 //! Presentation of the retained transfer service. Available outside Explorer.
 use crate::{ShowTransfers, local::bytes};
 use gpui_kit::{
-    App, Context, EventEmitter, FocusHandle, Focusable, Global, SharedString, Task, WeakEntity,
-    Window,
+    App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Task, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -11,36 +10,25 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_transfers::{Progress, TransferDirection, Transfers};
+use nocterm_transfers::{Progress, TransferDirection, TransferService};
 use nocterm_ui::IconName;
 use nocterm_workspace::{Item, ItemEvent, Workspace};
 use std::{sync::Arc, time::Duration};
 
-struct Service(Result<Arc<Transfers>, String>);
-impl Global for Service {}
-pub(super) fn init(cx: &mut App) {
-    if !cx.has_global::<Service>() {
-        cx.set_global(Service(
-            Transfers::new().map(Arc::new).map_err(|e| e.to_string()),
-        ));
-    }
-}
-pub(super) fn service(cx: &App) -> Result<Arc<Transfers>, String> {
-    cx.try_global::<Service>()
-        .ok_or("Upload service is unavailable")?
-        .0
-        .clone()
-}
 pub(super) struct TransferStatus {
+    service: Arc<dyn TransferService>,
     snapshot: Vec<Progress>,
     _poll: Task<()>,
 }
 impl TransferStatus {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        service: Arc<dyn TransferService>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
-            snapshot: service(cx)
-                .map(|service| service.snapshot())
-                .unwrap_or_default(),
+            snapshot: service.snapshot(),
+            service,
             _poll: cx.spawn_in(window, async move |this, cx| {
                 loop {
                     cx.background_executor()
@@ -48,7 +36,7 @@ impl TransferStatus {
                         .await;
                     if this
                         .update_in(cx, |this, window, cx| {
-                            let snapshot = service(cx).map(|s| s.snapshot()).unwrap_or_default();
+                            let snapshot = this.service.snapshot();
                             if snapshot != this.snapshot {
                                 for job in &snapshot {
                                     if job.state.finished()
@@ -58,8 +46,11 @@ impl TransferStatus {
                                             .iter()
                                             .any(|old| old.id == job.id && old.state.finished())
                                     {
-                                        let error =
-                                            job.errors.first().cloned().unwrap_or_else(|| {
+                                        let error = job
+                                            .errors
+                                            .first()
+                                            .map(ToString::to_string)
+                                            .unwrap_or_else(|| {
                                                 format!(
                                                     "{} files failed; review the transfer queue.",
                                                     job.failed_files
@@ -116,15 +107,21 @@ impl Render for TransferStatus {
     }
 }
 pub(super) struct TransfersView {
+    service: Arc<dyn TransferService>,
     focus: FocusHandle,
     workspace: WeakEntity<Workspace>,
     snapshot: Vec<Progress>,
     _poll: Task<()>,
 }
 impl TransfersView {
-    pub(super) fn new(workspace: WeakEntity<Workspace>, cx: &mut Context<Self>) -> Self {
-        let snapshot = service(cx).map(|s| s.snapshot()).unwrap_or_default();
+    pub(super) fn new(
+        service: Arc<dyn TransferService>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let snapshot = service.snapshot();
         Self {
+            service,
             focus: cx.focus_handle(),
             workspace,
             snapshot,
@@ -135,7 +132,7 @@ impl TransfersView {
                         .await;
                     if this
                         .update(cx, |this, cx| {
-                            let snapshot = service(cx).map(|s| s.snapshot()).unwrap_or_default();
+                            let snapshot = this.service.snapshot();
                             if this.snapshot != snapshot {
                                 this.snapshot = snapshot;
                                 cx.notify();
@@ -229,9 +226,15 @@ impl Render for TransfersView {
                                     .ghost()
                                     .label("Cancel")
                                     .disabled(job.state.finished())
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        if let Ok(service) = service(cx) {
-                                            service.cancel(id);
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Err(error) = this.service.cancel(id) {
+                                            nocterm_ui::notice::error(
+                                                window,
+                                                cx,
+                                                "files-transfer-cancel",
+                                                "Could not cancel transfer",
+                                                error.to_string(),
+                                            );
                                         }
                                     })),
                             )
@@ -242,22 +245,16 @@ impl Render for TransfersView {
                                     .label("Retry")
                                     .disabled(!job.state.finished() || retry_fs.is_none())
                                     .tooltip("Reconnect to this host, then retry explicitly")
-                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         if let Some(fs) = retry_fs.clone() {
-                                            let error = service(cx)
-                                                .and_then(|s| {
-                                                    s.retry(id, fs)
-                                                        .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                })
-                                                .err();
+                                            let error = this.service.retry(id, fs).err();
                                             if let Some(error) = error {
                                                 nocterm_ui::notice::error(
                                                     window,
                                                     cx,
                                                     "files-transfer-retry",
                                                     "Could not retry transfer",
-                                                    error,
+                                                    error.to_string(),
                                                 );
                                             }
                                         }
@@ -297,7 +294,7 @@ impl Render for TransfersView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().danger)
-                            .child(error.clone())
+                            .child(error.to_string())
                     }))
             }))
     }

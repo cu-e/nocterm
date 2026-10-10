@@ -9,6 +9,10 @@ publish = false
 [package.metadata.nocterm]
 layer = "domain"
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 nocterm-settings.workspace = true
 async-channel.workspace = true

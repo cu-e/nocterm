@@ -3,8 +3,9 @@
 Part of the [architecture overview](../ARCHITECTURE.md).
 
 Adapters implement domain contracts with real I/O and depend only on the
-domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-acp` and
-`nocterm-device-unlock` and `nocterm-vault-store`. The composition root chooses and injects them
+domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
+`nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock` and
+`nocterm-vault-store`. The composition root chooses and injects them
 ([app layer](app.md)).
 
 ## SSH and local sessions
@@ -36,6 +37,18 @@ detached process groups are outside that ownership. Windows commands start
 suspended and are attached to a Job Object before execution. Dropping the
 output or startup future cancels the owned command.
 
+## External local programs
+
+`nocterm-local` implements the separate `ProgramOpener` port for configured external
+editors. One opener is injected into Explorer and shared across application windows.
+Its 32 admitted workers start and then reap direct children independently of launch
+receipt or view lifetime. Literal arguments and native working directories reach
+`Command` without shell expansion; standard streams are null. Worker/spawn failure
+releases admission, natural reaping frees it, and uncertain wait failure retires a
+slot. Unlike PTY/exec cancellation, accepted external editors are neither killed on
+receipt cancellation nor included in application shutdown draining. See
+[ADR 0025](../adr/0025-native-program-opener.md).
+
 ## Device unlock
 
 `nocterm-vault` declares the device-unlock provider contract and owns envelope,
@@ -55,3 +68,43 @@ uses `nocterm_core::fs::AtomicPublication`; the lock remains held through rename
 and pure state is accepted only after success. Device registration is checked
 against the current envelope and cancellation epoch before publication or key
 installation. Only the app composes this adapter with native authentication.
+
+## Native filesystem capabilities
+
+`nocterm-localfs` implements session's synchronous `LocalFs` and `LocalMutations`
+ports. Application composition supplies them to Explorer; feature code dispatches
+blocking calls on the background executor. Native names remain `OsString`/`PathBuf`
+through operations; lossy strings are presentation only.
+
+Read-only browsing may follow directory links and accepts linked parent navigation.
+Strict traversal, source streams and mutations reject linked ancestors and pin each
+Unix directory. Walks and removals have entry/depth limits; cancellation can leave
+an explicitly reported partial removal. Portable targets check reparse/link state
+but do not claim Unix held-handle race guarantees. Staged publication distinguishes
+failure before commit from a durability warning after successful publication.
+Successful publication relinquishes its temporary name before returning; Drop
+cannot remove a later owner of that name. Explicit cancellation confirms removal
+through the held directory or an already absent candidate and returns typed cleanup
+failures; Drop remains best effort. A failed temporary-link cleanup is a
+committed warning, never permission to repeat the publication. See
+[ADR 0017](../adr/0017-local-filesystem-capabilities.md) for the capability boundary.
+
+## Transfer execution
+
+`nocterm-transfer-runtime` implements `TransferService` over injected `LocalFs` and
+`RemoteFs` ports. It schedules bounded discovery and four workers, uses 32-KiB
+chunks with at most eight acknowledged upload chunks per batch, and owns entropy,
+cancellable reservations and cleanup. Local operations run through bounded blocking
+slots; the adapter imports no concrete filesystem adapter or GPUI.
+
+Sources open relative to held directories. Local destination reservations combine
+directory identity and native name, and late Rename collisions reuse an already
+synced stage. SSH uploads seal their acknowledged stage and retry publication under
+one validated leaf in its original parent; failed/uncertain acknowledgements or
+close cannot authorize a partial publish. Committed durability warnings remain
+successful files. Native and SFTP limitations are described in
+[ADR 0018](../adr/0018-transfer-runtime-capabilities.md).
+
+Its drain port freezes admission synchronously and retains executor ownership
+through joined cleanup. Application composition bridges that future into the
+common shutdown coordinator; the adapter introduces no quit hook or separate budget.

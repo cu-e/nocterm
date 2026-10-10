@@ -2,14 +2,11 @@
 //! running count and the remote walk. The local walk is in `local.rs`.
 
 use crate::IndexingSettings;
-use nocterm_session::{EntryKind, RemoteFs, fs::path};
+use nocterm_session::{EntryKind, RemoteFs, fs::path, local_fs::CancelFlag};
 use parking_lot::Mutex;
 use std::{
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -32,24 +29,21 @@ pub(crate) struct Statistics {
     pub skipped: Option<Skip>,
 }
 
-/// Why a folder's size is not counted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Skip {
-    Disabled,
-    Home,
-    Root,
-}
-
-impl Skip {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Skip::Disabled => "size not counted",
-            Skip::Home => "home folder size not counted",
-            Skip::Root => "file system root size not counted",
+pub(crate) use nocterm_session::local_fs::ScanSkip as Skip;
+impl From<nocterm_session::local_fs::Statistics> for Statistics {
+    fn from(value: nocterm_session::local_fs::Statistics) -> Self {
+        Self {
+            files: value.files,
+            directories: value.directories,
+            bytes: value.bytes,
+            complete: value.complete,
+            inaccessible: value.inaccessible,
+            errors: value.errors.iter().map(ToString::to_string).collect(),
+            excluded: value.excluded,
+            skipped: value.skipped,
         }
     }
 }
-
 /// What a walk may enter, from the user's settings.
 #[derive(Clone, Debug)]
 pub(crate) struct Policy {
@@ -58,30 +52,11 @@ pub(crate) struct Policy {
 }
 
 impl Policy {
-    pub(crate) fn local(settings: &IndexingSettings) -> Self {
-        Self {
-            excluded: settings.excluded.clone(),
-            max_entries: settings.max_local_entries as usize,
-        }
-    }
-
     pub(crate) fn remote(settings: &IndexingSettings) -> Self {
         Self {
             excluded: settings.excluded.clone(),
             max_entries: settings.max_remote_entries as usize,
         }
-    }
-
-    /// Whether a walk may enter a folder called `name`.
-    pub(crate) fn enters(&self, name: &str) -> bool {
-        !self.excluded.iter().any(|excluded| excluded == name)
-    }
-
-    pub(crate) fn limit_message(&self) -> String {
-        format!(
-            "Folder statistics stopped at the {} entry limit; the size is partial.",
-            self.max_entries
-        )
     }
 }
 
@@ -91,15 +66,13 @@ pub(crate) fn local_skip(
     home: Option<&Path>,
     settings: &IndexingSettings,
 ) -> Option<Skip> {
-    if !settings.local {
-        Some(Skip::Disabled)
-    } else if settings.skip_home && home.is_some_and(|home| home == path) {
-        Some(Skip::Home)
-    } else if settings.skip_root && path.parent().is_none() {
-        Some(Skip::Root)
-    } else {
-        None
-    }
+    nocterm_session::local_fs::local_skip(
+        path,
+        home,
+        settings.local,
+        settings.skip_home,
+        settings.skip_root,
+    )
 }
 
 /// Why counting `directory` on a server is skipped, if it is.
@@ -108,58 +81,34 @@ pub(crate) fn remote_skip(
     home: Option<&str>,
     settings: &IndexingSettings,
 ) -> Option<Skip> {
-    let trimmed = |path: &str| path.trim_end_matches('/').to_owned();
-    if !settings.remote {
-        Some(Skip::Disabled)
-    } else if settings.skip_root && directory.trim_matches('/').is_empty() {
-        Some(Skip::Root)
-    } else if settings.skip_home && home.is_some_and(|home| trimmed(home) == trimmed(directory)) {
-        Some(Skip::Home)
-    } else {
-        None
-    }
+    nocterm_session::local_fs::remote_skip(
+        directory,
+        home,
+        settings.remote,
+        settings.skip_home,
+        settings.skip_root,
+    )
 }
 
 /// The statistics of a listing that is not walked: its own entries only.
 pub(crate) fn shallow(kinds: impl Iterator<Item = EntryKind>, skipped: Skip) -> Statistics {
-    let mut statistics = Statistics {
-        complete: true,
-        skipped: Some(skipped),
-        ..Statistics::default()
-    };
-    for kind in kinds {
-        match kind {
-            EntryKind::File => statistics.files += 1,
-            EntryKind::Directory => statistics.directories += 1,
-            EntryKind::Other => {}
-        }
-    }
-    statistics
+    nocterm_session::local_fs::Statistics::shallow(kinds, skipped).into()
 }
 
 /// A walk in progress: cancelled when replaced or dropped.
+#[derive(Default)]
 pub(crate) struct Counter {
     progress: Arc<Mutex<Statistics>>,
-    cancel: Arc<AtomicBool>,
+    cancel: CancelFlag,
     /// What the view shows; caught up with the walk by [`Counter::poll`].
     pub(crate) shown: Statistics,
 }
 
-impl Default for Counter {
-    fn default() -> Self {
-        Self {
-            progress: Arc::default(),
-            cancel: Arc::new(AtomicBool::new(false)),
-            shown: Statistics::default(),
-        }
-    }
-}
-
 impl Counter {
     /// Cancels the running walk and returns the handles of a new one.
-    pub(crate) fn restart(&mut self) -> (Arc<AtomicBool>, Arc<Mutex<Statistics>>) {
+    pub(crate) fn restart(&mut self) -> (CancelFlag, Arc<Mutex<Statistics>>) {
         self.stop();
-        self.cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = CancelFlag::default();
         self.progress = Arc::default();
         self.shown = Statistics::default();
         (self.cancel.clone(), self.progress.clone())
@@ -173,7 +122,7 @@ impl Counter {
     }
 
     pub(crate) fn stop(&self) {
-        self.cancel.store(true, Ordering::Release);
+        self.cancel.cancel();
     }
 
     /// Copies the walk's latest count; whether it changed.
@@ -182,11 +131,6 @@ impl Counter {
         let changed = latest != self.shown;
         self.shown = latest;
         changed
-    }
-
-    #[cfg(test)]
-    pub(crate) fn progress(&self) -> &Arc<Mutex<Statistics>> {
-        &self.progress
     }
 }
 
@@ -208,62 +152,84 @@ pub(crate) async fn scan_remote(
     fs: Arc<dyn RemoteFs>,
     root: String,
     policy: Policy,
-    cancel: Arc<AtomicBool>,
+    cancel: CancelFlag,
     progress: Arc<Mutex<Statistics>>,
 ) {
-    let mut result = Statistics::default();
+    use nocterm_session::{
+        FileMetadata,
+        local_fs::{ScanDecision, ScanIssue, ScanPolicy, StatisticsAccumulator},
+    };
+    let scan_policy = match ScanPolicy::new(
+        policy
+            .excluded
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect(),
+        policy.max_entries,
+        MAX_SCAN_DEPTH,
+    ) {
+        Ok(policy) => policy,
+        Err(error) => {
+            let mut result = Statistics {
+                complete: true,
+                ..Default::default()
+            };
+            record_error(&mut result, error.to_string());
+            *progress.lock() = result;
+            return;
+        }
+    };
+    let mut count = StatisticsAccumulator::new(scan_policy);
     let mut pending = vec![(root, 0usize)];
-    let mut visited = 0usize;
     let mut published = Instant::now();
     'walk: while let Some((directory, depth)) = pending.pop() {
-        if cancel.load(Ordering::Acquire) {
+        if cancel.is_cancelled() {
             return;
         }
         let entries = match fs.read_dir(&directory).await {
             Ok(entries) => entries,
-            Err(error) => {
-                record_error(&mut result, format!("{directory}: {error}"));
+            Err(source) => {
+                count.record_issue(ScanIssue::Remote {
+                    path: directory,
+                    source,
+                });
                 continue;
             }
         };
         for entry in entries {
-            if entry.name == "." || entry.name == ".." || entry.is_symlink {
+            if entry.name == "." || entry.name == ".." {
                 continue;
             }
-            visited += 1;
-            if visited > policy.max_entries {
-                record_error(&mut result, policy.limit_message());
-                break 'walk;
-            }
-            let immediate = depth == 0;
-            match entry.kind {
-                EntryKind::File => {
-                    result.bytes = result.bytes.saturating_add(entry.size.unwrap_or(0));
-                    result.files += u64::from(immediate);
+            let metadata = FileMetadata {
+                kind: entry.kind,
+                is_symlink: entry.is_symlink,
+                size: entry.size,
+                permissions: None,
+                uid: None,
+                gid: None,
+                modified: None,
+            };
+            match count.observe(
+                &metadata,
+                depth + 1,
+                depth == 0,
+                std::ffi::OsStr::new(&entry.name),
+            ) {
+                ScanDecision::Enter => {
+                    pending.push((path::join(&directory, &entry.name), depth + 1))
                 }
-                EntryKind::Directory => {
-                    result.directories += u64::from(immediate);
-                    if !policy.enters(&entry.name) {
-                        result.excluded += 1;
-                    } else if depth + 1 >= MAX_SCAN_DEPTH {
-                        record_error(&mut result, "Folder statistics skipped a subtree deeper than 256 levels; the size is partial.".into());
-                    } else {
-                        pending.push((path::join(&directory, &entry.name), depth + 1));
-                    }
-                }
-                EntryKind::Other => {}
+                ScanDecision::Skip => {}
+                ScanDecision::Stop => break 'walk,
             }
         }
         if published.elapsed() >= PUBLISH_EVERY {
-            *progress.lock() = result.clone();
+            *progress.lock() = count.snapshot().into();
             published = Instant::now();
         }
     }
-    if cancel.load(Ordering::Acquire) {
-        return;
+    if !cancel.is_cancelled() {
+        *progress.lock() = count.finish().into();
     }
-    result.complete = true;
-    *progress.lock() = result;
 }
 
 pub(crate) fn bytes(value: u64) -> String {
@@ -288,7 +254,11 @@ pub(crate) fn summary(statistics: &Statistics) -> String {
     match statistics.skipped {
         Some(skip) => {
             line.push_str(" · ");
-            line.push_str(skip.label());
+            line.push_str(match skip {
+                Skip::Disabled => "size not counted",
+                Skip::Home => "home folder size not counted",
+                Skip::Root => "file system root size not counted",
+            });
         }
         None => {
             line.push_str(" · ");

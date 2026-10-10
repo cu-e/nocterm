@@ -17,8 +17,9 @@ You verify a change in this repository. You may add or edit tests; you do not ch
   behavior; create one only when the behavior has no test file.
 - Drive actions, events, rendering and public methods. Do not inspect or mutate
   private view/model fields to prove the fix.
-- Reuse and extend existing port fakes. Session `test-support` is not available
-  yet; report a missing shared home rather than inventing a duplicate fake.
+- Reuse session `test-support` through dev-dependencies and extend its existing
+  port fakes. If a missing capability has no shared home, propose its extraction
+  rather than inventing a duplicate fake.
 - A regression test reproduces the observable failure, not the internal state
   that happened to cause it.
 

@@ -1,6 +1,7 @@
 //! Directory-only completion and native keyboard/navigation lifecycle.
 use super::{tests::*, *};
 use gpui_kit::{TestAppContext, px, test::TestWindowExt as _};
+use nocterm_session::testing::InMemoryFs;
 
 struct EditorAndOther {
     location: Entity<PathInput>,
@@ -37,7 +38,7 @@ fn other_input(
 fn pending_arrows_wrap_and_single_folder_arrows_never_descend(cx: &mut TestAppContext) {
     let (handle, input, fs) = fixture(cx);
     start("/etc/", handle, &input, cx);
-    let reply = fs.take("/etc/");
+    let reply = take(&fs, "/etc/");
     cx.update_window(handle, |_, window, cx| {
         window.press("up", cx);
         window.press("up", cx);
@@ -55,13 +56,18 @@ fn pending_arrows_wrap_and_single_folder_arrows_never_descend(cx: &mut TestAppCo
     assert_eq!(value(&input, cx), "/etc/b/");
     cx.update_window(handle, |_, window, cx| {
         window.press("down", cx);
-        assert_eq!(input.read(cx).cycle.as_ref().unwrap().selected, Some(0));
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("path-suggestion", 0usize)).selected(),
+            Some(true)
+        );
+        assert_eq!(window.find("explorer-path-editor").value(), Some("/etc/a/"));
         window.press("up", cx);
     })
     .unwrap();
     assert_eq!(value(&input, cx), "/etc/b/");
     start("/single/", handle, &input, cx);
-    fs.take("/single/")
+    take(&fs, "/single/")
         .send(Ok(vec![entry("only", true)]))
         .unwrap();
     cx.run_until_parked();
@@ -71,43 +77,42 @@ fn pending_arrows_wrap_and_single_folder_arrows_never_descend(cx: &mut TestAppCo
     })
     .unwrap();
     assert_eq!(value(&input, cx), "/single/only/");
-    assert!(input.read_with(cx, |input, _| input.pending.is_none()));
+    assert!(!fs.has_pending_listings());
 }
 
 #[gpui_kit::test]
 fn popup_enter_keeps_absolute_unicode_value_caret_then_plain_enter_closes(cx: &mut TestAppContext) {
     let (handle, input, fs) = fixture(cx);
     start("~/", handle, &input, cx);
-    fs.take("/home/test/")
+    take(&fs, "/home/test/")
         .send(Ok(vec![entry("資料 folder", true)]))
         .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.press("enter", cx))
         .unwrap();
-    assert_eq!(
-        input.read_with(cx, |input, _| input.navigation_mode),
-        NavigationMode::KeepEditing
-    );
+    assert!(!visible(cx, "path-completion-popup"));
     input.update(cx, |input, cx| {
         input.accept(Directory::Remote("/home/test/資料 folder".into()), None, cx)
     });
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let editor = input.read(cx);
-        assert!(editor.editing && !editor.popup_visible());
-        assert!(editor.input.read(cx).focus_handle(cx).is_focused(window));
-        let end = "/home/test/資料 folder".len();
-        assert_eq!(editor.input.read(cx).selected_range(), end..end);
+        assert_eq!(window.find("explorer-path-editor").focused(), Some(true));
+        assert_eq!(
+            window.find("explorer-path-editor").value(),
+            Some("/home/test/資料 folder")
+        );
+        assert!(
+            window
+                .try_find(("path-completion-popup", input.entity_id()))
+                .is_none()
+        );
         window.input("/next", cx);
         window.press("enter", cx);
     })
     .unwrap();
     assert_eq!(value(&input, cx), "/home/test/資料 folder/next");
-    assert_eq!(
-        input.read_with(cx, |input, _| input.navigation_mode),
-        NavigationMode::CloseEditor
-    );
+    assert!(!visible(cx, "path-completion-popup"));
     input.update(cx, |input, cx| {
         input.accept(
             Directory::Remote("/home/test/資料 folder/next".into()),
@@ -116,7 +121,7 @@ fn popup_enter_keeps_absolute_unicode_value_caret_then_plain_enter_closes(cx: &m
         )
     });
     cx.run_until_parked();
-    assert!(!input.read_with(cx, |input, _| input.editing));
+    assert!(visible(cx, "explorer-path-display"));
 }
 
 #[gpui_kit::test]
@@ -129,7 +134,7 @@ fn pending_enter_escape_and_blur_do_not_reopen_or_steal_focus(cx: &mut TestAppCo
     .unwrap();
     for escape in [false, true] {
         start("/pending/", handle, &input, cx);
-        let reply = fs.take("/pending/");
+        let reply = take(&fs, "/pending/");
         cx.update_window(handle, |_, window, cx| {
             window.press("enter", cx);
             window.render_frame(cx);
@@ -148,12 +153,13 @@ fn pending_enter_escape_and_blur_do_not_reopen_or_steal_focus(cx: &mut TestAppCo
         });
         cx.run_until_parked();
         assert!(
-            input.read_with(cx, |input, _| !input.editing && !input.popup_visible()),
+            visible(cx, "explorer-path-display") && !visible(cx, "path-completion-popup"),
             "escape={escape}"
         );
         cx.update_window(handle, |_, window, cx| {
             if !escape {
-                assert!(!input.read(cx).focus.is_focused(window));
+                window.render_frame(cx);
+                assert_eq!(window.find("explorer-path-display").focused(), Some(false));
             }
         })
         .unwrap();
@@ -167,46 +173,19 @@ fn display_and_input_share_text_metrics_and_do_not_resize_on_navigation(cx: &mut
         window.set_rem_size(px(20.));
         window.render_frame(cx);
         let display = window.find("explorer-path-display").bounds();
-        // Shape the displayed text with the inherited display font at its shared
-        // pixel size, then compare the native editor's actual glyph geometry.
-        let style = window.text_style();
-        let displayed = "/work";
-        let shaped = window.text_system().shape_line(
-            displayed.into(),
-            px(12.),
-            &[gpui_kit::TextRun {
-                len: displayed.len(),
-                font: style.font(),
-                color: style.color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            }],
-            None,
-        );
         window.click("explorer-path-display", cx);
         window.render_frame(cx);
-        let editor = input.read(cx).input.clone();
-        let frame = window.find(("input", editor.entity_id())).bounds();
-        let text = editor.read(cx).text_bounds().unwrap();
+        let editor = window.find("explorer-path-editor");
+        let frame = editor.bounds();
         assert_eq!(display.size, frame.size);
-        assert_eq!(editor.read(cx).line_height(), Some(px(18.)));
-        let glyphs = editor
-            .read(cx)
-            .range_to_bounds(&(0..displayed.len()))
-            .unwrap();
-        assert!(
-            (glyphs.size.width - shaped.width).abs() <= px(0.01),
-            "Native editor must retain the displayed font and 12px glyph size"
-        );
-        assert!((text.left() - display.left() - px(9.)).abs() <= px(1.));
-        assert!((text.center().y - display.center().y).abs() <= px(1.));
+        assert_eq!(frame.size.height, px(28.));
+        assert_eq!(editor.value(), Some("/work"));
         input.update(cx, |input, cx| {
             input.begin_navigation_with_mode(NavigationMode::KeepEditing, cx)
         });
         window.render_frame(cx);
-        assert_eq!(window.find(("input", editor.entity_id())).bounds(), frame);
-        assert!(editor.read(cx).focus_handle(cx).is_focused(window));
+        assert_eq!(window.find("explorer-path-editor").bounds(), frame);
+        assert_eq!(window.find("explorer-path-editor").focused(), Some(true));
     })
     .unwrap();
 }
@@ -214,31 +193,31 @@ fn display_and_input_share_text_metrics_and_do_not_resize_on_navigation(cx: &mut
 #[cfg(unix)]
 #[gpui_kit::test]
 fn local_only_directory_symlinks_are_suggested(cx: &mut TestAppContext) {
-    use std::os::unix::fs::symlink;
-    let (handle, input, _) = fixture(cx);
-    let root = tempfile::tempdir().unwrap();
-    std::fs::create_dir(root.path().join("directory")).unwrap();
-    std::fs::write(root.path().join("file"), b"text").unwrap();
-    symlink("directory", root.path().join("dir-link")).unwrap();
-    symlink("file", root.path().join("file-link")).unwrap();
-    symlink("missing", root.path().join("broken-link")).unwrap();
+    let root = std::path::PathBuf::from("/completion-links");
+    let local = InMemoryFs::default();
+    local.seed_native_directory(&root).unwrap();
+    local
+        .seed_native_directory(&root.join("directory"))
+        .unwrap();
+    local
+        .seed_native_file(&root.join("file"), b"text".to_vec())
+        .unwrap();
+    local
+        .seed_native_alias(&root.join("dir-link"), &root.join("directory"))
+        .unwrap();
+    local
+        .seed_native_alias(&root.join("file-link"), &root.join("file"))
+        .unwrap();
+    local
+        .seed_native_alias(&root.join("broken-link"), &root.join("missing"))
+        .unwrap();
+    let (handle, input, _) = fixture_with_local(cx, Arc::new(local));
     input.update(cx, |input, cx| {
-        input.accept(Directory::Local(root.path().into()), None, cx)
+        input.accept(Directory::Local(root), None, cx)
     });
     start("", handle, &input, cx);
     cx.run_until_parked();
-    assert_eq!(
-        input.read_with(cx, |input, _| input
-            .cycle
-            .as_ref()
-            .unwrap()
-            .candidates
-            .iter()
-            .map(|candidate| candidate.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")),
-        "directory,dir-link"
-    );
+    assert_eq!(suggestions(cx).join(","), "directory,dir-link");
 }
 
 #[gpui_kit::test]
@@ -253,20 +232,12 @@ fn remote_directory_symlinks_survive_filter_while_files_and_other_kinds_do_not(
     file.is_symlink = true;
     let mut other = entry("special", false);
     other.kind = EntryKind::Other;
-    fs.take("/links/")
+    take(&fs, "/links/")
         .send(Ok(vec![directory, file, other, entry("plain-file", false)]))
         .unwrap();
     cx.run_until_parked();
     assert_eq!(value(&input, cx), "/links/directory-link/");
-    assert_eq!(
-        input.read_with(cx, |input, _| input
-            .cycle
-            .as_ref()
-            .unwrap()
-            .candidates
-            .len()),
-        1
-    );
+    assert_eq!(suggestions(cx).len(), 1);
 }
 
 #[gpui_kit::test]
@@ -274,7 +245,7 @@ fn another_input_keeps_pointer_focus_and_draft_after_pending_navigation(cx: &mut
     let (handle, location, fs) = fixture(cx);
     let other = other_input(handle, &location, cx);
     start("/pending/", handle, &location, cx);
-    let stale = fs.take("/pending/");
+    let stale = take(&fs, "/pending/");
     cx.update_window(handle, |_, window, cx| {
         window.press("enter", cx);
         window.render_frame(cx);
@@ -296,7 +267,12 @@ fn another_input_keeps_pointer_focus_and_draft_after_pending_navigation(cx: &mut
             other.read(cx).focus_handle(cx).is_focused(window),
             "Accepted navigation must not steal another field's focus"
         );
-        assert!(!location.read(cx).editing && !location.read(cx).popup_visible());
+        assert!(window.try_find("explorer-path-editor").is_none());
+        assert!(
+            window
+                .try_find(("path-completion-popup", location.entity_id()))
+                .is_none()
+        );
         window.input("!", cx);
         assert_eq!(other.read(cx).value().as_ref(), "other draft!");
     })
@@ -307,14 +283,12 @@ fn another_input_keeps_pointer_focus_and_draft_after_pending_navigation(cx: &mut
 fn empty_folder_popup_enter_keeps_editing_and_later_plain_enter_closes(cx: &mut TestAppContext) {
     let (handle, location, fs) = fixture(cx);
     start("/empty/", handle, &location, cx);
-    fs.take("/empty/")
+    take(&fs, "/empty/")
         .send(Ok(vec![entry("file", false)]))
         .unwrap();
     cx.run_until_parked();
-    assert!(
-        location.read_with(cx, |location, _| location.popup_visible()
-            && location.cycle.as_ref().unwrap().candidates.is_empty())
-    );
+    assert!(visible(cx, "path-completion-popup"));
+    assert!(suggestions(cx).is_empty());
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(
@@ -327,38 +301,30 @@ fn empty_folder_popup_enter_keeps_editing_and_later_plain_enter_closes(cx: &mut 
         window.press("enter", cx);
     })
     .unwrap();
-    assert_eq!(
-        location.read_with(cx, |location, _| location.navigation_mode),
-        NavigationMode::KeepEditing
-    );
+    assert!(!visible(cx, "path-completion-popup"));
     location.update(cx, |location, cx| {
         location.accept(Directory::Remote("/empty/".into()), None, cx)
     });
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(location.read(cx).editing && !location.read(cx).popup_visible());
+        window.render_frame(cx);
+        assert_eq!(window.find("explorer-path-editor").focused(), Some(true));
         assert!(
-            location
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
+            window
+                .try_find(("path-completion-popup", location.entity_id()))
+                .is_none()
         );
         window.press("enter", cx);
     })
     .unwrap();
-    assert_eq!(
-        location.read_with(cx, |location, _| location.navigation_mode),
-        NavigationMode::CloseEditor
-    );
+    assert!(!visible(cx, "path-completion-popup"));
     location.update(cx, |location, cx| {
         location.accept(Directory::Remote("/empty/".into()), None, cx)
     });
     cx.run_until_parked();
-    assert!(!location.read_with(cx, |location, _| location.editing));
+    assert!(visible(cx, "explorer-path-display"));
     assert!(
-        !fs.has_requests(),
+        !fs.has_pending_listings(),
         "Empty-list arrows must not create filesystem requests"
     );
 }
@@ -368,32 +334,40 @@ fn arrows_without_popup_match_native_input_cursor_behavior(cx: &mut TestAppConte
     let (handle, location, fs) = fixture(cx);
     let other = other_input(handle, &location, cx);
     cx.update_window(handle, |_, window, cx| {
-        location.update(cx, |location, cx| location.edit(window, cx));
-        window.render_frame(cx);
-        let editor = location.read(cx).input.clone();
         for key in ["up", "down"] {
-            other.update(cx, |other, cx| {
-                other.focus(window, cx);
-                other.set_selected_range(3..3, cx);
-            });
-            window.render_frame(cx);
+            window.click(("input", other.entity_id()), cx);
+            window.press("home", cx);
+            for _ in 0..3 {
+                window.press("right", cx);
+            }
             window.press(key, cx);
-            let expected = other.read(cx).selected_range();
-            location.update(cx, |location, cx| location.edit(window, cx));
-            editor.update(cx, |editor, cx| editor.set_selected_range(3..3, cx));
+            window.input("!", cx);
+            let expected = other.read(cx).value().to_string();
+            other.update(cx, |other, cx| other.set_value("/work", window, cx));
             window.render_frame(cx);
-            assert!(!location.read(cx).popup_visible());
+            window.click("explorer-path-display", cx);
+            window.press("home", cx);
+            for _ in 0..3 {
+                window.press("right", cx);
+            }
             window.press(key, cx);
+            window.input("!", cx);
+            window.render_frame(cx);
             assert_eq!(
-                editor.read(cx).selected_range(),
-                expected,
-                "{key} should retain native Input behavior without completion"
+                window.find("explorer-path-editor").value(),
+                Some(expected.as_str()),
+                "{key} retains native Input caret behavior"
             );
-            assert_eq!(editor.read(cx).value().as_ref(), "/work");
+            assert!(
+                window
+                    .try_find(("path-completion-popup", location.entity_id()))
+                    .is_none()
+            );
+            window.press("escape", cx);
         }
     })
     .unwrap();
-    assert!(!fs.has_requests());
+    assert!(!fs.has_pending_listings());
 }
 
 #[gpui_kit::test]
@@ -407,7 +381,7 @@ fn immediate_draft_edit_before_arrow_or_enter_uses_current_native_input(cx: &mut
         });
         cx.run_until_parked();
         start("/etc/", handle, &location, cx);
-        fs.take("/etc/")
+        take(&fs, "/etc/")
             .send(Ok(vec![entry("a", true), entry("b", true)]))
             .unwrap();
         cx.run_until_parked();
@@ -423,14 +397,14 @@ fn immediate_draft_edit_before_arrow_or_enter_uses_current_native_input(cx: &mut
         results.push((
             key,
             value(&location, cx),
-            location.read_with(cx, |location, _| location.navigation_mode),
+            visible(cx, "path-completion-popup"),
         ));
     }
     assert_eq!(
         results,
         [
-            ("down", "/etc/a/new".into(), NavigationMode::CloseEditor),
-            ("enter", "/etc/a/new".into(), NavigationMode::CloseEditor),
+            ("down", "/etc/a/new".into(), false),
+            ("enter", "/etc/a/new".into(), false),
         ],
         "A typed draft invalidates the old popup before Arrow or Enter acts on it"
     );

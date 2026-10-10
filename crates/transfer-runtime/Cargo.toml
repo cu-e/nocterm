@@ -1,0 +1,25 @@
+[package]
+name = "nocterm-transfer-runtime"
+description = "Bounded streaming transfers over injected filesystem capabilities."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+nocterm-session.workspace = true
+nocterm-transfers.workspace = true
+tokio.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

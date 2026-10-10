@@ -4923,6 +4923,7 @@ dependencies = [
  "nocterm-keymap",
  "nocterm-keymap-ui",
  "nocterm-local",
+ "nocterm-localfs",
  "nocterm-monitor-ui",
  "nocterm-session",
  "nocterm-settings",
@@ -4932,6 +4933,8 @@ dependencies = [
  "nocterm-store",
  "nocterm-terminal",
  "nocterm-themes",
+ "nocterm-transfer-runtime",
+ "nocterm-transfers",
  "nocterm-ui",
  "nocterm-vault",
  "nocterm-vault-store",
@@ -5113,23 +5116,19 @@ dependencies = [
 name = "nocterm-files"
 version = "0.0.0"
 dependencies = [
- "atomicwrites",
  "chrono",
- "directories",
  "futures",
  "gpui-kit",
- "nix 0.28.0",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-transfers",
  "nocterm-ui",
  "nocterm-workspace",
  "parking_lot",
- "rustix 1.1.5",
  "schemars 1.2.2",
  "serde",
  "tempfile",
- "uuid",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5166,6 +5165,21 @@ dependencies = [
  "portable-pty",
  "process-wrap",
  "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-localfs"
+version = "0.0.0"
+dependencies = [
+ "atomicwrites",
+ "directories",
+ "getrandom 0.4.3",
+ "nix 0.28.0",
+ "nocterm-session",
+ "rustix 1.1.5",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5330,18 +5344,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-transfer-runtime"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-session",
+ "nocterm-transfers",
+ "parking_lot",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "nocterm-transfers"
 version = "0.0.0"
 dependencies = [
  "futures",
  "nocterm-session",
- "parking_lot",
- "rustix 1.1.5",
- "tempfile",
  "thiserror 2.0.21",
- "tokio",
- "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

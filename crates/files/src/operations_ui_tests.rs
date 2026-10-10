@@ -135,12 +135,25 @@ fn visible_panel(
     Entity<SessionItem>,
     Entity<FilesPanel>,
 ) {
-    let (handle, workspace, item, panel) = panel_fixture(cx, fs);
+    visible_panel_with(cx, fs, local, fixture_deps_at(local).0)
+}
+fn visible_panel_with(
+    cx: &mut TestAppContext,
+    fs: Arc<dyn RemoteFs>,
+    local: &Path,
+    deps: Deps,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<SessionItem>,
+    Entity<FilesPanel>,
+) {
+    let (handle, workspace, item, panel) = panel_fixture_with(cx, fs, deps);
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         cx.set_reduce_motion(true);
         workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
-        panel.update(cx, |panel, cx| panel.load_local(local.into(), cx));
+        panel.update(cx, |panel, cx| panel.navigate_local(local.into(), cx));
     })
     .unwrap();
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1100.)));
@@ -312,23 +325,12 @@ fn dismissed_pending_rename_cannot_close_a_new_dialog(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-#[gpui_kit::test]
-fn local_context_copy_and_collision_rename_preserve_existing_files(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    std::fs::write(directory.path().join("a.txt"), b"source").unwrap();
-    std::fs::write(directory.path().join("b.txt"), b"destination").unwrap();
-    let (handle, _, _, _) = visible_panel(cx, Arc::new(OperationsFs::writable()), directory.path());
-    context_menu(cx, handle, true, 0);
-    choose(cx, handle, COPY_NAME);
-    assert_eq!(clipboard(cx), "a.txt");
-    context_menu(cx, handle, true, 0);
-    choose(cx, handle, COPY_PATH);
-    assert_eq!(
-        clipboard(cx),
-        directory.path().join("a.txt").display().to_string()
-    );
-    context_menu(cx, handle, true, 0);
-    choose(cx, handle, RENAME);
+fn validate_rename_editor(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    local: &nocterm_session::testing::InMemoryFs,
+    directory: &std::path::Path,
+) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(
@@ -349,20 +351,49 @@ fn local_context_copy_and_collision_rename_preserve_existing_files(cx: &mut Test
         window.click("file-dialog-submit", cx);
         window.render_frame(cx);
         assert!(window.try_find("file-dialog-submit").is_some());
-        assert!(directory.path().join("a.txt").exists());
+        assert!(
+            nocterm_session::local_fs::LocalMutations::metadata(local, &directory.join("a.txt"))
+                .is_ok()
+        );
         window.press("ctrl-a", cx);
         window.input("b.txt", cx);
         window.render_frame(cx);
         assert!(window.find("file-dialog-submit").focused().is_some());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn local_context_copy_and_collision_rename_preserve_existing_files(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("a.txt"), b"source").unwrap();
+    std::fs::write(directory.path().join("b.txt"), b"destination").unwrap();
+    let (deps, local) = fixture_deps_at(directory.path());
+    let (handle, _, _, _) = visible_panel_with(
+        cx,
+        Arc::new(OperationsFs::writable()),
+        directory.path(),
+        deps,
+    );
+    context_menu(cx, handle, true, 0);
+    choose(cx, handle, COPY_NAME);
+    assert_eq!(clipboard(cx), "a.txt");
+    context_menu(cx, handle, true, 0);
+    choose(cx, handle, COPY_PATH);
+    assert_eq!(
+        clipboard(cx),
+        directory.path().join("a.txt").display().to_string()
+    );
+    context_menu(cx, handle, true, 0);
+    choose(cx, handle, RENAME);
+    validate_rename_editor(cx, handle, local.as_ref(), directory.path());
     button(cx, handle, "file-dialog-submit");
     assert_eq!(
-        std::fs::read(directory.path().join("a.txt")).unwrap(),
+        native_bytes(local.as_ref(), &directory.path().join("a.txt")),
         b"source"
     );
     assert_eq!(
-        std::fs::read(directory.path().join("b.txt")).unwrap(),
+        native_bytes(local.as_ref(), &directory.path().join("b.txt")),
         b"destination"
     );
     cx.update_window(handle, |_, window, cx| {
@@ -376,9 +407,15 @@ fn local_context_copy_and_collision_rename_preserve_existing_files(cx: &mut Test
     })
     .unwrap();
     button(cx, handle, "file-dialog-submit");
-    assert!(!directory.path().join("a.txt").exists());
+    assert!(
+        !nocterm_session::local_fs::LocalMutations::metadata(
+            local.as_ref(),
+            &directory.path().join("a.txt")
+        )
+        .is_ok()
+    );
     assert_eq!(
-        std::fs::read(directory.path().join("renamed.txt")).unwrap(),
+        native_bytes(local.as_ref(), &directory.path().join("renamed.txt")),
         b"source"
     );
 }
@@ -395,21 +432,32 @@ fn local_nonempty_delete_requires_confirmation_and_preserves_symlink_target(
     std::fs::write(outside.path().join("kept"), b"outside").unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), folder.join("link")).unwrap();
-    let (handle, _, _, _) = visible_panel(cx, Arc::new(OperationsFs::writable()), directory.path());
+    let (deps, local) = fixture_deps_at(directory.path());
+    seed_fixture_tree(&local, outside.path());
+    let (handle, _, _, _) = visible_panel_with(
+        cx,
+        Arc::new(OperationsFs::writable()),
+        directory.path(),
+        deps,
+    );
     context_menu(cx, handle, true, 0);
     choose(cx, handle, DELETE);
     assert!(
-        folder.join("inside").exists(),
+        nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &folder.join("inside"))
+            .is_ok(),
         "opening confirmation must not delete"
     );
     button(cx, handle, "file-dialog-close");
-    assert!(folder.join("inside").exists());
+    assert!(
+        nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &folder.join("inside"))
+            .is_ok()
+    );
     context_menu(cx, handle, true, 0);
     choose(cx, handle, DELETE);
     button(cx, handle, "file-dialog-submit");
-    assert!(!folder.exists());
+    assert!(nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &folder).is_err());
     assert_eq!(
-        std::fs::read(outside.path().join("kept")).unwrap(),
+        native_bytes(local.as_ref(), &outside.path().join("kept")),
         b"outside"
     );
 }
@@ -529,11 +577,8 @@ fn selected_remote_context_preserves_multi_selection_and_busy_stop_blocks_next_d
     })
     .unwrap();
     context_menu(cx, handle, false, 1);
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(
-            panel.remote_selected.iter().copied().collect::<Vec<_>>(),
-            [1, 2]
-        )
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.remote_listing(cx).selected(), [1, 2])
     });
     choose(cx, handle, DELETE);
     assert!(!fs.calls().iter().any(|call| call.starts_with("unlink:")));
@@ -680,14 +725,30 @@ fn local_properties_apply_and_right_click_keep_multi_selection(cx: &mut TestAppC
     std::fs::write(&a, b"a").unwrap();
     std::fs::write(&b, b"b").unwrap();
     std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o2640)).unwrap();
-    let (handle, _, _, panel) =
-        visible_panel(cx, Arc::new(OperationsFs::writable()), directory.path());
+    let (deps, local) = fixture_deps_at(directory.path());
+    let (handle, workspace, _, panel) =
+        panel_fixture_with(cx, Arc::new(OperationsFs::writable()), deps);
+    cx.update_window(handle, |_, window, cx| {
+        window.activate_window();
+        cx.set_reduce_motion(true);
+        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.navigate_local(directory.path().into(), cx)
+        });
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1100.)));
+    cx.run_until_parked();
     context_menu(cx, handle, true, 0);
     choose(cx, handle, PROPERTIES);
     button(cx, handle, "permission-Others-Execute");
     button(cx, handle, "file-dialog-submit");
     assert_eq!(
-        std::fs::metadata(&a).unwrap().permissions().mode() & 0o7777,
+        nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &a)
+            .unwrap()
+            .permissions
+            .unwrap()
+            & 0o7777,
         0o2641
     );
     button(cx, handle, "file-dialog-close");
@@ -706,16 +767,19 @@ fn local_properties_apply_and_right_click_keep_multi_selection(cx: &mut TestAppC
     })
     .unwrap();
     context_menu(cx, handle, true, 0);
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(
-            panel.local.selected.iter().copied().collect::<Vec<_>>(),
-            [0, 1]
-        )
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.local_listing(cx).selected(), [0, 1])
     });
     choose(cx, handle, DELETE);
-    assert!(a.exists() && b.exists());
+    assert!(
+        nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &a).is_ok()
+            && nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &b).is_ok()
+    );
     button(cx, handle, "file-dialog-submit");
-    assert!(!a.exists() && !b.exists());
+    assert!(
+        nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &a).is_err()
+            && nocterm_session::local_fs::LocalMutations::metadata(local.as_ref(), &b).is_err()
+    );
 }
 
 #[path = "rename_ui_tests.rs"]

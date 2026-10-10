@@ -6,6 +6,16 @@ use nocterm_session::FsFuture;
 use nocterm_workspace::{Item, ItemEvent};
 use std::sync::Mutex;
 
+fn click_rendered(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(SharedString::from(id.to_owned()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
 type ListingReply = oneshot::Sender<Result<Vec<DirEntry>, FsError>>;
 #[derive(Default)]
 struct PendingFs {
@@ -51,6 +61,133 @@ impl Item for SessionItem {
         Some(self.session.clone())
     }
 }
+fn fixture_deps() -> Deps {
+    let local = Arc::new(nocterm_session::testing::InMemoryFs::default());
+    Deps {
+        local: local.clone(),
+        mutations: local,
+        transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
+        opener: Arc::new(nocterm_session::testing::FakeExec::default()),
+    }
+}
+/// Materializes native test data into the shared port fake; it implements no I/O port.
+fn fixture_deps_at(root: &std::path::Path) -> (Deps, Arc<nocterm_session::testing::InMemoryFs>) {
+    let local = Arc::new(nocterm_session::testing::InMemoryFs::default());
+    seed_fixture_tree(&local, root);
+    let deps = Deps {
+        local: local.clone(),
+        mutations: local.clone(),
+        transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
+        opener: Arc::new(nocterm_session::testing::FakeExec::default()),
+    };
+    (deps, local)
+}
+fn transfer_fixture_deps_at(
+    root: &std::path::Path,
+) -> (
+    Deps,
+    Arc<nocterm_session::testing::InMemoryFs>,
+    Arc<nocterm_transfers::testing::FakeTransfers>,
+) {
+    let (mut deps, local) = fixture_deps_at(root);
+    let transfers = Arc::new(nocterm_transfers::testing::FakeTransfers::default());
+    deps.transfers = transfers.clone();
+    (deps, local, transfers)
+}
+fn transfer_remote(folder: bool) -> Arc<nocterm_session::testing::InMemoryFs> {
+    let fs = Arc::new(nocterm_session::testing::InMemoryFs::default());
+    block_on(fs.create_dir("/home")).unwrap();
+    block_on(fs.create_dir("/home/test")).unwrap();
+    fs.set_home("/home/test").unwrap();
+    if folder {
+        block_on(fs.create_dir("/home/test/incoming")).unwrap();
+    } else {
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            fs.seed_file(&format!("/home/test/{name}"), b"payload".to_vec())
+                .unwrap();
+        }
+    }
+    fs
+}
+fn recorded_download(
+    recording: &nocterm_transfers::testing::FakeTransfers,
+    id: nocterm_transfers::TransferId,
+) -> nocterm_transfers::DownloadRequest {
+    match recording.request(id).unwrap() {
+        nocterm_transfers::Request::Download(request) => request,
+        nocterm_transfers::Request::Upload(_) => panic!("expected a download request"),
+    }
+}
+fn recorded_upload(
+    recording: &nocterm_transfers::testing::FakeTransfers,
+    id: nocterm_transfers::TransferId,
+) -> nocterm_transfers::UploadRequest {
+    match recording.request(id).unwrap() {
+        nocterm_transfers::Request::Upload(request) => request,
+        nocterm_transfers::Request::Download(_) => panic!("expected an upload request"),
+    }
+}
+fn complete_recorded(
+    recording: &nocterm_transfers::testing::FakeTransfers,
+    id: nocterm_transfers::TransferId,
+) {
+    for event in [
+        nocterm_transfers::TransferEvent::DiscoveryComplete,
+        nocterm_transfers::TransferEvent::WorkersDrained,
+    ] {
+        recording.advance(id, event).unwrap();
+    }
+}
+fn seed_fixture_tree(local: &nocterm_session::testing::InMemoryFs, path: &std::path::Path) {
+    for ancestor in path
+        .ancestors()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .filter(|ancestor| ancestor.parent().is_some())
+    {
+        if ancestor != path {
+            local.seed_native_directory(ancestor).unwrap();
+        }
+    }
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    if metadata.is_symlink() {
+        let destination = std::fs::read_link(path).unwrap();
+        local.seed_native_alias(path, &destination).unwrap();
+    } else if metadata.is_dir() {
+        local.seed_native_directory(path).unwrap();
+        for entry in std::fs::read_dir(path).unwrap() {
+            seed_fixture_tree(local, &entry.unwrap().path());
+        }
+    } else {
+        local
+            .seed_native_file(path, std::fs::read(path).unwrap())
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            nocterm_session::local_fs::LocalMutations::set_permissions(
+                local,
+                path,
+                metadata.permissions().mode() & 0o7777,
+            )
+            .unwrap();
+        }
+    }
+}
+fn native_bytes(local: &dyn nocterm_session::local_fs::LocalFs, path: &std::path::Path) -> Vec<u8> {
+    let mut source = local.open_source(path).unwrap();
+    let mut result = Vec::new();
+    loop {
+        let bytes = source.read(32 * 1024).unwrap();
+        if bytes.is_empty() {
+            break;
+        }
+        result.extend(bytes);
+    }
+    source.close().unwrap();
+    result
+}
 fn panel_fixture(
     cx: &mut TestAppContext,
     fs: Arc<dyn RemoteFs>,
@@ -60,8 +197,33 @@ fn panel_fixture(
     Entity<SessionItem>,
     Entity<FilesPanel>,
 ) {
+    panel_fixture_with(cx, fs, fixture_deps())
+}
+fn panel_fixture_at(
+    cx: &mut TestAppContext,
+    fs: Arc<dyn RemoteFs>,
+    root: &std::path::Path,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<SessionItem>,
+    Entity<FilesPanel>,
+) {
+    panel_fixture_with(cx, fs, fixture_deps_at(root).0)
+}
+fn panel_fixture_with(
+    cx: &mut TestAppContext,
+    fs: Arc<dyn RemoteFs>,
+    deps: Deps,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<SessionItem>,
+    Entity<FilesPanel>,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        path_input::install_bindings(cx);
         cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -82,7 +244,8 @@ fn panel_fixture(
                     workspace.add_item(item.clone(), window, cx)
                 });
                 let session = workspace.read(cx).active_session(cx);
-                let panel = cx.new(|cx| FilesPanel::new(workspace.clone(), session, window, cx));
+                let panel =
+                    cx.new(|cx| FilesPanel::new(deps, workspace.clone(), session, window, cx));
                 (item, panel)
             })
             .unwrap();
@@ -114,13 +277,13 @@ fn session_events_ignore_late_requests_and_disable_access_after_disconnect(
         "superseded listing releases its receiver"
     );
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.browser.entries[0].name, "current");
-        assert!(panel.browser.error.is_none());
-        assert!(!panel.browser.loading);
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.remote_listing(cx).names()[0], "current");
+        assert!(panel.remote_listing(cx).error().is_none());
+        assert!(!panel.remote_listing(cx).loading());
     });
     panel.update(cx, |panel, cx| {
-        panel.load(Some("/home/test/current".into()), cx)
+        panel.navigate_remote(Some("/home/test/current".into()), cx)
     });
     cx.run_until_parked();
     let late = second.take_request("/home/test/current");
@@ -135,12 +298,12 @@ fn session_events_ignore_late_requests_and_disable_access_after_disconnect(
         "disconnect cancels the pending listing"
     );
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert!(panel.filesystem().is_none());
-        assert!(panel.browser.path.is_none());
-        assert!(panel.browser.entries.is_empty());
-        assert!(panel.browser.error.is_none());
-        assert!(!panel.browser.loading);
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.remote_access(cx) != RemoteAccess::Available);
+        assert!(panel.remote_listing(cx).path().is_none());
+        assert!(panel.remote_listing(cx).names().is_empty());
+        assert!(panel.remote_listing(cx).error().is_none());
+        assert!(!panel.remote_listing(cx).loading());
     });
     item.update(cx, |item, cx| {
         item.session.connected = true;
@@ -148,10 +311,10 @@ fn session_events_ignore_late_requests_and_disable_access_after_disconnect(
         cx.emit(ItemEvent::Changed);
     });
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert!(panel.session.as_ref().unwrap().connected);
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.remote_access(cx) == RemoteAccess::Unsupported);
         assert!(
-            panel.filesystem().is_none(),
+            panel.remote_access(cx) != RemoteAccess::Available,
             "a connected host may lack SFTP"
         );
     });
@@ -160,12 +323,12 @@ fn session_events_ignore_late_requests_and_disable_access_after_disconnect(
     })
     .unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
+    panel.read_with(cx, |panel, cx| {
         assert!(
-            panel.session.is_none(),
+            panel.remote_access(cx) == RemoteAccess::NoSession,
             "closing the final tab clears the active session"
         );
-        assert!(panel.browser.path.is_none());
+        assert!(panel.remote_listing(cx).path().is_none());
     });
 }
 
@@ -179,7 +342,7 @@ fn failed_navigation_can_retry_requested_path_and_success_clears_error(cx: &mut 
         .unwrap();
     cx.run_until_parked();
     panel.update(cx, |panel, cx| {
-        panel.load(Some("/home/test/docs".into()), cx)
+        panel.navigate_remote(Some("/home/test/docs".into()), cx)
     });
     cx.run_until_parked();
     fs.take_request("/home/test/docs")
@@ -189,17 +352,23 @@ fn failed_navigation_can_retry_requested_path_and_success_clears_error(cx: &mut 
         .unwrap();
     cx.run_until_parked();
     panel.update(cx, |panel, cx| {
-        assert_eq!(panel.browser.path.as_deref(), Some("/home/test"));
-        assert!(panel.browser.error.is_some());
-        panel.load(panel.requested_directory.clone(), cx);
+        assert_eq!(
+            panel.remote_listing(cx).path().as_deref(),
+            Some("/home/test")
+        );
+        assert!(panel.remote_listing(cx).error().is_some());
+        panel.navigate_remote(panel.remote_listing(cx).requested().clone(), cx);
     });
     cx.run_until_parked();
     fs.take_request("/home/test/docs").send(Ok(vec![])).unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.browser.path.as_deref(), Some("/home/test/docs"));
-        assert!(panel.browser.error.is_none());
-        assert!(panel.browser.entries.is_empty());
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.remote_listing(cx).path().as_deref(),
+            Some("/home/test/docs")
+        );
+        assert!(panel.remote_listing(cx).error().is_none());
+        assert!(panel.remote_listing(cx).names().is_empty());
     });
 }
 
@@ -326,7 +495,6 @@ impl nocterm_workspace::LocalTerminal for CwdShell {
 
 #[gpui_kit::test]
 fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mut TestAppContext) {
-    use gpui_kit::test::TestWindowExt as _;
     let directory = tempfile::tempdir().unwrap();
     let first = directory.path().join("first");
     let second = directory.path().join("second");
@@ -334,7 +502,7 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
     std::fs::create_dir(&second).unwrap();
     std::fs::write(first.join("one"), b"123").unwrap();
     std::fs::write(second.join("two"), b"4567").unwrap();
-    let (handle, workspace, _, panel) = panel_fixture(cx, Arc::new(FakeFs));
+    let (handle, workspace, _, panel) = panel_fixture_at(cx, Arc::new(FakeFs), directory.path());
     let shell = cx
         .update_window(handle, |_, window, cx| {
             let shell = cx.new(|cx| CwdShell {
@@ -347,34 +515,27 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
                 workspace.add_panel(panel.clone(), cx);
                 workspace.set_local_terminal(shell.clone(), window, cx);
             });
-            panel.update(cx, |panel, cx| panel.load_local(first.clone(), cx));
+            panel.update(cx, |panel, cx| panel.navigate_local(first.clone(), cx));
             shell
         })
         .unwrap();
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("explorer-to-terminal", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+    click_rendered(cx, handle, "explorer-to-terminal");
     shell.read_with(cx, |shell, _| {
         assert_eq!(shell.cwd, first);
         assert_eq!(shell.accepted, vec![first.clone()]);
     });
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.browser.path.as_deref(), Some("/home/test"));
-        assert!(panel.local.error.is_none());
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.remote_listing(cx).path().as_deref(),
+            Some("/home/test")
+        );
+        assert!(panel.local_listing(cx).error().is_none());
     });
     shell.update(cx, |shell, _| shell.busy = true);
-    panel.update(cx, |panel, cx| panel.load_local(second.clone(), cx));
+    panel.update(cx, |panel, cx| panel.navigate_local(second.clone(), cx));
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("explorer-to-terminal", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+    click_rendered(cx, handle, "explorer-to-terminal");
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
             nocterm_ui::notice::count(window, cx),
@@ -383,24 +544,24 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
         );
     })
     .unwrap();
-    panel.read_with(cx, |panel, _| assert!(panel.local.error.is_none()));
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.local_listing(cx).error().is_none())
+    });
     shell.read_with(cx, |shell, _| assert_eq!(shell.cwd, first));
     shell.update(cx, |shell, cx| {
         shell.cwd = first.clone();
         cx.emit(ItemEvent::Changed);
     });
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("terminal-to-explorer", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path, Some(first));
-        assert_eq!(panel.local.entries[0].name, "one");
-        assert!(panel.local.error.is_none());
-        assert_eq!(panel.browser.path.as_deref(), Some("/home/test"));
+    click_rendered(cx, handle, "terminal-to-explorer");
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.local_listing(cx).path(), Some(first));
+        assert_eq!(panel.local_listing(cx).names()[0], "one");
+        assert!(panel.local_listing(cx).error().is_none());
+        assert_eq!(
+            panel.remote_listing(cx).path().as_deref(),
+            Some("/home/test")
+        );
     });
     workspace.read_with(cx, |workspace, cx| {
         assert_eq!(workspace.active_session(cx).unwrap().target.host, "host")
@@ -418,147 +579,27 @@ fn newer_local_navigation_rejects_old_listings_and_keeps_directory_on_error(
     std::fs::create_dir(&second).unwrap();
     std::fs::write(first.join("old"), b"old").unwrap();
     std::fs::write(second.join("current"), b"current").unwrap();
-    let (_, _, _, panel) = panel_fixture(cx, Arc::new(FakeFs));
+    let (_, _, _, panel) = panel_fixture_at(cx, Arc::new(FakeFs), directory.path());
     panel.update(cx, |panel, cx| {
-        panel.load_local(first, cx);
-        panel.load_local(second.clone(), cx);
+        panel.navigate_local(first, cx);
+        panel.navigate_local(second.clone(), cx);
     });
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path, Some(second.clone()));
-        assert_eq!(panel.local.entries[0].name, "current");
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.local_listing(cx).path(), Some(second.clone()));
+        assert_eq!(panel.local_listing(cx).names()[0], "current");
     });
     let missing = directory.path().join("missing");
-    panel.update(cx, |panel, cx| panel.load_local(missing.clone(), cx));
+    panel.update(cx, |panel, cx| panel.navigate_local(missing.clone(), cx));
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert!(panel.local.error.is_some());
-        assert_eq!(panel.local.path, Some(second));
-        assert_eq!(panel.local.requested, Some(missing));
-        assert!(!panel.local.loading);
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.local_listing(cx).error().is_some());
+        assert_eq!(panel.local_listing(cx).path(), Some(second));
+        assert_eq!(panel.local_listing(cx).requested(), Some(missing));
+        assert!(!panel.local_listing(cx).loading());
     });
 }
 
-#[derive(Default)]
-struct StalledUploads {
-    paths: Mutex<Vec<String>>,
-}
-impl RemoteFs for StalledUploads {
-    fn home(&self) -> FsFuture<String> {
-        async { Ok("/home/test".into()) }.boxed()
-    }
-    fn read_dir(&self, _: &str) -> FsFuture<Vec<DirEntry>> {
-        async { Ok(vec![entry("incoming", EntryKind::Directory)]) }.boxed()
-    }
-    fn stat(&self, _: &str) -> FsFuture<Option<DirEntry>> {
-        async { Ok(None) }.boxed()
-    }
-    fn upload(
-        &self,
-        path: &str,
-        _: nocterm_session::fs::UploadMode,
-    ) -> FsFuture<Box<dyn nocterm_session::fs::RemoteUpload>> {
-        self.paths.lock().unwrap().push(path.into());
-        async { Ok(Box::new(StalledWriter) as Box<dyn nocterm_session::fs::RemoteUpload>) }.boxed()
-    }
-}
-struct StalledWriter;
-impl nocterm_session::fs::RemoteUpload for StalledWriter {
-    fn write(&mut self, _: Vec<u8>) -> FsFuture<()> {
-        async {
-            std::future::pending::<()>().await;
-            Ok(())
-        }
-        .boxed()
-    }
-    fn finish(self: Box<Self>) -> FsFuture<String> {
-        async { Err(FsError::Other("unexpected publication".into())) }.boxed()
-    }
-    fn cancel(self: Box<Self>) -> FsFuture<()> {
-        async { Ok(()) }.boxed()
-    }
-}
-fn wait_upload_started(service: &nocterm_transfers::Transfers, count: usize) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while service
-        .snapshot()
-        .iter()
-        .filter(|job| job.state == nocterm_transfers::TransferState::Running)
-        .count()
-        < count
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "uploads did not start: {:?}",
-            service.snapshot()
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-}
-
-struct RecordedDownloads {
-    paths: Mutex<Vec<String>>,
-    stalled: bool,
-}
-impl RecordedDownloads {
-    fn new(stalled: bool) -> Self {
-        Self {
-            paths: Mutex::new(Vec::new()),
-            stalled,
-        }
-    }
-}
-impl RemoteFs for RecordedDownloads {
-    fn home(&self) -> FsFuture<String> {
-        async { Ok("/home/test".into()) }.boxed()
-    }
-    fn read_dir(&self, _: &str) -> FsFuture<Vec<DirEntry>> {
-        async {
-            Ok(["a.txt", "b.txt", "c.txt"]
-                .into_iter()
-                .map(|name| {
-                    let mut file = entry(name, EntryKind::File);
-                    file.size = Some(7);
-                    file
-                })
-                .collect())
-        }
-        .boxed()
-    }
-    fn stat(&self, path: &str) -> FsFuture<Option<DirEntry>> {
-        let mut file = entry(nocterm_session::fs::path::file_name(path), EntryKind::File);
-        file.size = Some(7);
-        async { Ok(Some(file)) }.boxed()
-    }
-    fn download(&self, path: &str) -> FsFuture<Box<dyn nocterm_session::fs::RemoteDownload>> {
-        self.paths.lock().unwrap().push(path.into());
-        let reader = RecordedReader {
-            data: Some(b"payload".to_vec()),
-            stalled: self.stalled,
-        };
-        async { Ok(Box::new(reader) as Box<dyn nocterm_session::fs::RemoteDownload>) }.boxed()
-    }
-}
-struct RecordedReader {
-    data: Option<Vec<u8>>,
-    stalled: bool,
-}
-impl nocterm_session::fs::RemoteDownload for RecordedReader {
-    fn read(&mut self, _: usize) -> FsFuture<Vec<u8>> {
-        let stalled = self.stalled;
-        let data = self.data.take().unwrap_or_default();
-        async move {
-            if stalled {
-                std::future::pending::<()>().await;
-            }
-            Ok(data)
-        }
-        .boxed()
-    }
-    fn close(self: Box<Self>) -> FsFuture<()> {
-        async { Ok(()) }.boxed()
-    }
-}
 fn pointer_click(
     window: &mut Window,
     point: gpui_kit::Point<gpui_kit::Pixels>,
@@ -590,24 +631,6 @@ fn pointer_click(
     );
     window.render_frame(cx);
 }
-fn wait_transfer(
-    service: &nocterm_transfers::Transfers,
-    predicate: impl Fn(&[nocterm_transfers::Progress]) -> bool,
-) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let snapshot = service.snapshot();
-        if predicate(&snapshot) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "transfer did not reach expected state: {snapshot:?}"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 #[path = "listing_ui_tests.rs"]
 mod listing_ui;
 #[path = "operations_ui_tests.rs"]

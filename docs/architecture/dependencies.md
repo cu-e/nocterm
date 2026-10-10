@@ -6,7 +6,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-themes`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
 | `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-core`, `nocterm-store` | ACP agent connections, their admission and the chats' durable documents. |
@@ -21,6 +21,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Keymap settings page: search, rebind and reset key bindings. |
 | `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session and program adapter. |
+| `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session` | Host resource monitoring: collection scripts, parsers, rates and history. |
 | `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
 | `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
@@ -32,7 +33,8 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-store` | service | `nocterm-core`, `nocterm-settings` | Ordered snapshot persistence and bounded application shutdown. |
 | `nocterm-terminal` | feature | `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
-| `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
+| `nocterm-transfer-runtime` | adapter | `nocterm-session`, `nocterm-transfers` | Bounded streaming transfers over injected filesystem capabilities. |
+| `nocterm-transfers` | domain | `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
 | `nocterm-ui` | ui | `nocterm-ai`, `nocterm-core`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential rules and lifecycle contracts. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
@@ -56,6 +58,7 @@ graph TD
     nocterm --> nocterm_keymap
     nocterm --> nocterm_keymap_ui
     nocterm --> nocterm_local
+    nocterm --> nocterm_localfs
     nocterm --> nocterm_monitor_ui
     nocterm --> nocterm_session
     nocterm --> nocterm_settings
@@ -65,6 +68,8 @@ graph TD
     nocterm --> nocterm_store
     nocterm --> nocterm_terminal
     nocterm --> nocterm_themes
+    nocterm --> nocterm_transfer_runtime
+    nocterm --> nocterm_transfers
     nocterm --> nocterm_ui
     nocterm --> nocterm_vault
     nocterm --> nocterm_vault_store
@@ -106,6 +111,7 @@ graph TD
     nocterm_keymap_ui --> nocterm_ui
     nocterm_keymap_ui --> nocterm_workspace
     nocterm_local --> nocterm_session
+    nocterm_localfs --> nocterm_session
     nocterm_monitor --> nocterm_session
     nocterm_monitor_ui --> nocterm_monitor
     nocterm_monitor_ui --> nocterm_session
@@ -137,6 +143,8 @@ graph TD
     nocterm_terminal --> nocterm_vt
     nocterm_terminal --> nocterm_workspace
     nocterm_themes --> nocterm_design
+    nocterm_transfer_runtime --> nocterm_session
+    nocterm_transfer_runtime --> nocterm_transfers
     nocterm_transfers --> nocterm_session
     nocterm_ui --> nocterm_ai
     nocterm_ui --> nocterm_core

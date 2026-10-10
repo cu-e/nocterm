@@ -24,6 +24,7 @@ pub(crate) struct Services {
     pub(crate) transport: Arc<dyn Transport>,
     /// Whether local shells run on this machine.
     pub(crate) local: bool,
+    pub(crate) files: nocterm_files::Deps,
     pub(crate) themes: Option<Themes>,
     pub(crate) agent: nocterm_agent::AgentServices,
     pub(crate) vault: Option<VaultSetup>,
@@ -42,7 +43,9 @@ pub(crate) struct VaultSetup {
 }
 
 /// What the installed globals leave for the windows.
+#[derive(Clone)]
 pub(crate) struct Booted {
+    files: nocterm_files::Installed,
     /// The vault, when it opened; credentials and its settings depend on it.
     pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
@@ -56,6 +59,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         persist,
         transport,
         local,
+        files,
         themes,
         agent,
         vault,
@@ -91,13 +95,31 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     );
     report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
     nocterm_agent::init(agent, &ui, cx);
+    let files = nocterm_files::install(files, &ui, cx);
+    register_transfer_shutdown(&files, &shutdown);
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     crate::keymap::load(
         stored.map(|paths| paths.config_dir().join("keymap.toml")),
         cx,
     );
-    crate::application::register(paths, vault.clone(), cx);
-    Booted { vault }
+    let booted = Booted { vault, files };
+    crate::application::register(paths, booted.clone(), cx);
+    booted
+}
+
+/// Freeze transfer admission during synchronous capture, then drain without App.
+fn register_transfer_shutdown(
+    files: &nocterm_files::Installed,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+) {
+    let files = files.clone();
+    report_store_registration(
+        "transfers",
+        shutdown.register_capture(move |_| {
+            let drain = files.freeze_transfers();
+            Box::pin(async move { drain.await.map_err(nocterm_store::StoreError::backend) })
+        }),
+    );
 }
 
 /// Reports registration failures consistently while retaining installation order.
@@ -154,14 +176,15 @@ fn open_vault(
 /// Plugs every feature into a new window's workspace.
 pub(crate) fn build_workspace(
     workspace: &mut Workspace,
-    vault: Option<&nocterm_vault_ui::Installed>,
+    booted: &Booted,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let vault = booted.vault.as_deref();
     workspace.set_session_factory(nocterm_terminal::Factory);
     nocterm_connections::register(workspace, window, cx);
     crate::register_settings(workspace, vault);
-    nocterm_files::register(workspace, window, cx);
+    nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     nocterm_snippets_ui::register(workspace, window, cx);
     nocterm_containers_ui::register(workspace, window, cx);

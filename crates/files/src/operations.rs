@@ -1,29 +1,58 @@
 //! Pinned file targets and asynchronous operations shared by both Explorer halves.
-use super::local_operations;
 use nocterm_session::{
-    EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs, Target, fs::path,
+    EntryKind, FileMetadata, FsCapabilities, FsError, RemoteFs, Target, fs::path,
 };
-use std::{
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone)]
 pub(super) enum FileTarget {
-    Local(PathBuf),
+    Local {
+        path: PathBuf,
+        mutations: Arc<dyn LocalMutations>,
+    },
     Remote {
         path: String,
         host: Target,
         fs: Arc<dyn RemoteFs>,
     },
 }
+use nocterm_session::local_fs::{
+    CancelFlag, LocalFsError, LocalMutations, RemovalLimits, valid_native_name,
+};
+#[derive(Debug, thiserror::Error)]
+pub(super) enum FileOperationError {
+    #[error(transparent)]
+    Local(#[from] LocalFsError),
+    #[error(transparent)]
+    Remote(#[from] FsError),
+    #[error("Enter a single nonempty name without separators.")]
+    InvalidName,
+    #[error("Deletion cancelled; some entries may already have been deleted.")]
+    Cancelled,
+}
+type OperationFuture<T> = futures::future::BoxFuture<'static, Result<T, FileOperationError>>;
+fn valid_remote_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
+}
 impl FileTarget {
+    pub(super) fn local(path: PathBuf, mutations: Arc<dyn LocalMutations>) -> Self {
+        Self::Local { path, mutations }
+    }
+    pub(super) fn valid_name(&self, name: &str) -> bool {
+        match self {
+            Self::Local { .. } => valid_native_name(std::ffi::OsStr::new(name)),
+            Self::Remote { .. } => valid_remote_name(name),
+        }
+    }
+    fn same_name(&self, name: &str) -> bool {
+        match self {
+            Self::Local { path, .. } => path.file_name() == Some(std::ffi::OsStr::new(name)),
+            Self::Remote { path, .. } => path::file_name(path) == name,
+        }
+    }
     pub(super) fn name(&self) -> String {
         match self {
-            Self::Local(p) => p
+            Self::Local { path: p, .. } => p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
@@ -32,87 +61,81 @@ impl FileTarget {
     }
     pub(super) fn path(&self) -> String {
         match self {
-            Self::Local(p) => p.to_string_lossy().into_owned(),
+            Self::Local { path: p, .. } => p.to_string_lossy().into_owned(),
             Self::Remote { path, .. } => path.clone(),
         }
     }
     pub(super) fn location(&self) -> String {
         match self {
-            Self::Local(_) => "Local computer".into(),
+            Self::Local { .. } => "Local computer".into(),
             Self::Remote { host, .. } => host.to_string(),
         }
     }
     pub(super) fn capabilities(&self) -> FsCapabilities {
         match self {
-            Self::Local(_) => FsCapabilities {
-                metadata: true,
-                rename: cfg!(any(
-                    target_os = "linux",
-                    target_os = "android",
-                    target_os = "macos",
-                    target_os = "ios",
-                    windows
-                )),
-                remove: true,
-                set_permissions: cfg!(unix),
-            },
+            Self::Local { mutations, .. } => mutations.capabilities(),
             Self::Remote { fs, .. } => fs.capabilities(),
         }
     }
     // This future is polled on the background executor, including local I/O.
-    pub(super) fn metadata(&self) -> FsFuture<FileMetadata> {
+    pub(super) fn metadata(&self) -> OperationFuture<FileMetadata> {
         let target = self.clone();
         Box::pin(async move {
             match target {
-                Self::Local(p) => local_operations::metadata(&p),
+                Self::Local { path: p, mutations } => mutations.metadata(&p).map_err(Into::into),
                 Self::Remote { path, fs, .. } => {
                     remote_path(&path)?;
-                    fs.metadata(&path).await
+                    fs.metadata(&path).await.map_err(Into::into)
                 }
             }
         })
     }
-    pub(super) fn rename(&self, name: String) -> FsFuture<()> {
+    pub(super) fn rename(&self, name: String) -> OperationFuture<()> {
         let target = self.clone();
         Box::pin(async move {
-            if !local_operations::valid_name(&name) {
-                return Err(FsError::Other(
-                    "Enter a single nonempty name without separators.".into(),
-                ));
+            if !target.valid_name(&name) {
+                return Err(FileOperationError::InvalidName);
             }
-            if target.name() == name {
+            if target.same_name(&name) {
                 return Ok(());
             }
             match target {
-                Self::Local(p) => local_operations::rename(&p, &name),
+                Self::Local { path: p, mutations } => mutations
+                    .rename(&p, std::ffi::OsStr::new(&name))
+                    .map_err(Into::into),
                 Self::Remote { path, fs, .. } => {
                     remote_path(&path)?;
                     let destination = path::join(path::parent(&path), &name);
-                    fs.rename(&path, &destination).await
+                    fs.rename(&path, &destination).await.map_err(Into::into)
                 }
             }
         })
     }
-    pub(super) fn set_permissions(&self, mode: u32) -> FsFuture<()> {
+    pub(super) fn set_permissions(&self, mode: u32) -> OperationFuture<()> {
         let target = self.clone();
         Box::pin(async move {
             match target {
-                Self::Local(p) => local_operations::permissions(&p, mode),
+                Self::Local { path: p, mutations } => {
+                    mutations.set_permissions(&p, mode).map_err(Into::into)
+                }
                 Self::Remote { path, fs, .. } => {
                     remote_path(&path)?;
-                    fs.set_permissions(&path, mode).await
+                    fs.set_permissions(&path, mode).await.map_err(Into::into)
                 }
             }
         })
     }
-    pub(super) fn remove(&self, cancel: Arc<AtomicBool>) -> FsFuture<()> {
+    pub(super) fn remove(&self, cancel: CancelFlag) -> OperationFuture<()> {
         let target = self.clone();
         Box::pin(async move {
             match target {
-                Self::Local(p) => local_operations::remove(&p, &cancel),
+                Self::Local { path: p, mutations } => mutations
+                    .remove(&p, RemovalLimits::default(), &cancel)
+                    .map(|_| ())
+                    .map_err(Into::into),
                 Self::Remote { path, fs, .. } => {
                     remote_path(&path)?;
-                    remove_remote(fs, path, cancel).await
+                    remove_remote(fs, path, cancel).await.map_err(Into::into)
                 }
             }
         })
@@ -134,7 +157,7 @@ fn remote_path(path: &str) -> Result<(), FsError> {
 async fn remove_remote(
     fs: Arc<dyn RemoteFs>,
     root: String,
-    cancel: Arc<AtomicBool>,
+    cancel: CancelFlag,
 ) -> Result<(), FsError> {
     // Post-order traversal holds only directory listings on the current branch.
     // Every node is lstat-ed again; final links are unlinked, never traversed.
@@ -144,7 +167,7 @@ async fn remove_remote(
     let mut visited = 0usize;
     while let Some((path, remove_directory, depth)) = pending.pop() {
         pending_path_bytes -= path.len();
-        if cancel.load(Ordering::Acquire) {
+        if cancel.is_cancelled() {
             return Err(FsError::Other(
                 "Deletion cancelled; already deleted entries cannot be restored.".into(),
             ));
@@ -177,7 +200,7 @@ async fn remove_remote(
             }
             pending.push((path.clone(), true, depth));
             for entry in entries.into_iter().rev() {
-                if !local_operations::valid_name(&entry.name) {
+                if !valid_remote_name(&entry.name) {
                     return Err(FsError::Other(
                         "Server returned an unsafe directory entry; deletion stopped.".into(),
                     ));
@@ -199,6 +222,17 @@ async fn remove_remote(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nocterm_session::FsFuture;
+    use std::sync::atomic::Ordering;
+    #[test]
+    fn remote_posix_names_keep_colons_and_backslashes() {
+        for name in ["part:one", "part\\one", "資料"] {
+            assert!(valid_remote_name(name));
+        }
+        for name in ["", ".", "..", "a/b", "a\0b"] {
+            assert!(!valid_remote_name(name));
+        }
+    }
     #[test]
     fn remote_mutations_reject_roots_parent_components_and_nul() {
         for p in ["/", "relative", "/home/../outside", "/home/.", "/home/a\0"] {
@@ -254,7 +288,7 @@ mod tests {
         let result = futures::executor::block_on(remove_remote(
             Arc::new(WideFs(mutations.clone())),
             "/root".into(),
-            Arc::new(AtomicBool::new(false)),
+            CancelFlag::default(),
         ));
         assert!(
             result

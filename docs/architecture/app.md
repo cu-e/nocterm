@@ -38,3 +38,15 @@ files are deterministic and contain no timestamps. `cargo xtask docs --check`
 compares them without modifying files. CI also runs format, build, lint, tests
 and rustdoc. Behavioral architecture notes in these documents remain authored text;
 the dependency graph and references update from code.
+
+Explorer's collaborators are composed before GPUI initialization: the native local
+filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly.
+Bootstrap installs `nocterm_files::Deps` and returns `Installed` in `Booted`; every
+window receives those handles through `build_workspace`, including GUI fixtures
+that supply session's in-memory filesystem. Neither queue access nor completion
+bindings require a files global.
+
+The root composes one native `LocalProgramOpener` with the filesystem and transfer
+ports in Files `Deps`. `Booted` retains Files installation across new windows, so
+all windows share its external-program admission bound and transfer queue. GUI
+bootstrap tests inject the session `FakeExec` program port explicitly.

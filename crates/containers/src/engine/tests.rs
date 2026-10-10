@@ -1,58 +1,8 @@
-use std::sync::Mutex;
-
-use futures::{FutureExt as _, executor::block_on};
-use nocterm_session::{ExecExit, ExecFuture};
+use futures::executor::block_on;
+use nocterm_session::testing::FakeExec as FakeHost;
 
 use super::*;
 use crate::State;
-
-/// What a fake host does with a command line.
-type Answer = Result<(&'static str, u32, &'static str), ExecError>;
-
-/// A host that answers each program by the first word pair it starts with.
-struct FakeHost {
-    answers: Vec<(&'static str, Answer)>,
-    ran: Mutex<Vec<String>>,
-}
-
-impl FakeHost {
-    fn new(answers: Vec<(&'static str, Answer)>) -> Self {
-        Self {
-            answers,
-            ran: Mutex::default(),
-        }
-    }
-
-    fn ran(&self) -> Vec<String> {
-        self.ran.lock().unwrap().clone()
-    }
-}
-
-impl HostExec for FakeHost {
-    fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-        let line = request.command_line();
-        self.ran.lock().unwrap().push(line.clone());
-        let answer = self
-            .answers
-            .iter()
-            .find(|(prefix, _)| line.starts_with(prefix))
-            .map(|(_, answer)| answer.clone())
-            .unwrap_or(Ok(("", NOT_FOUND, "command not found")));
-        let started = answer.map(|(stdout, status, stderr)| {
-            let (sink, output) = ExecOutput::channel();
-            assert_eq!(
-                sink.send(stdout.as_bytes().to_vec()).now_or_never(),
-                Some(true)
-            );
-            sink.finish(ExecExit {
-                status: Some(status),
-                stderr: stderr.into(),
-            });
-            output
-        });
-        Box::pin(async move { started })
-    }
-}
 
 const CONTAINER: &str =
     r#"{"ID":"a1","Image":"alpine","Names":"box","State":"running","Status":"Up"}"#;

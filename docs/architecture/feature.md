@@ -106,12 +106,24 @@ root inject the lazy Vault page without feature-to-feature dependencies; the
 Vault page has Overview, Credentials, Security and Options tabs, and switching
 tabs, deactivation and closure clear typed master passwords. `nocterm-files`
 contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
-half uses home/listing requests; the local half owns navigation, selection and a
-cancellable background logical-size scan. Request tasks are dropped when
+half uses home/listing requests; both halves own their navigation, selection and
+background tasks in private `LocalPane`/`RemotePane` entities. Local I/O is delegated
+to injected session filesystem capabilities. Request tasks are dropped when
 superseded, and generations reject stale replies. The local cwd bridge goes
 through Workspace's `LocalTerminal` contract, without Files depending on Terminal.
 
 ## Explorer
+
+Explorer receives explicit `Deps` through `install` and `register`; application
+composition retains `Installed` and supplies it to each workspace. Transfers and
+its status view retain the supplied TransferService port, so Show Transfers also works before
+Explorer is opened. The coordinator handles transfer intents and queue snapshots;
+pane entities own their views and emit typed intents without mutating siblings.
+Local home discovery, listing, completion, statistics and mutations run through
+`LocalFs`/`LocalMutations` on background executors. `ListingState` exposes the
+presentation of navigation through a public query, rather than exposing pane state.
+Configured local program dispatch uses the injected `ProgramOpener`; the local adapter
+owns process spawning and child reaping.
 
 Explorer location editors own native input and asynchronous, bounded directory
 completion. Suggestions use a viewport-constrained popup anchored below the input,
@@ -237,3 +249,13 @@ resolution, executor identity and live-command lease checks. Terminal grants are
 cleared on attachment removal and session release; unsafe live input always needs
 an explicit choice. Session release cancels queued approvals while retaining the
 conversation and document-owned execution resources.
+
+Configured local Explorer editors use the injected `ProgramOpener`; feature code
+performs no native process spawn or wait. Launch errors use an App-owned task and
+remain scoped to the original window even after the pane is removed. Configured
+remote editors retain the host-session route. Default-application/file-manager
+operations continue through GPUI's platform open/reveal surface.
+
+Explorer refreshes the affected destination after a finished transfer that acknowledged a
+file publication or destination directory preparation, including transfers that later fail
+or cancel. Empty-directory copies therefore refresh without being counted as completed files.

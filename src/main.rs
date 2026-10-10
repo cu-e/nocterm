@@ -76,6 +76,8 @@ fn main() -> anyhow::Result<()> {
         Arc::new(nocterm_themes::ZedRegistry::new().context("creating the theme registry client")?);
     let transport = SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
 
+    let files = files_dependencies()?;
+
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets)
         .run(move |cx| {
@@ -87,6 +89,7 @@ fn main() -> anyhow::Result<()> {
                     persist: true,
                     transport: Arc::new(transport),
                     local: true,
+                    files,
                     themes: Some(bootstrap::Themes {
                         dirs: theme_dirs,
                         catalog,
@@ -100,7 +103,6 @@ fn main() -> anyhow::Result<()> {
                 },
                 cx,
             );
-            let vault = booted.vault.clone();
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -108,7 +110,7 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
 
-            if let Err(error) = open_main_window(cx, vault) {
+            if let Err(error) = open_main_window(cx, &booted) {
                 tracing::error!(%error, "could not open the window");
                 cx.quit();
             }
@@ -118,10 +120,25 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn open_main_window(
-    cx: &mut App,
-    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
-) -> anyhow::Result<()> {
+fn files_dependencies() -> anyhow::Result<nocterm_files::Deps> {
+    let local_fs =
+        Arc::new(nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?);
+    let transfers = nocterm_transfer_runtime::TransferRuntime::start(
+        nocterm_transfer_runtime::TransferRuntimeDeps::new(
+            local_fs.clone(),
+            nocterm_transfers::TransferLimits::default(),
+        ),
+    )
+    .context("starting transfers")?;
+    Ok(nocterm_files::Deps::new(
+        local_fs.clone(),
+        local_fs,
+        transfers,
+        Arc::new(nocterm_local::LocalProgramOpener::default()),
+    ))
+}
+
+fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<()> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -142,7 +159,7 @@ fn open_main_window(
 
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            bootstrap::build_workspace(&mut workspace, vault.as_deref(), window, cx);
+            bootstrap::build_workspace(&mut workspace, booted, window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);

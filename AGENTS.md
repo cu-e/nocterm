@@ -51,9 +51,12 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
   implementations before adding one; propose shared extraction for missing reuse.
 
 Layout, settings, snippets and connection state use the shared persistence service.
-Runtime chat/favorites and recording remain migration owners. `nocterm-local::fs`
-and session `test-support` are not implemented yet; inspect their existing owners
-and propose shared extraction instead of describing unavailable APIs.
+Runtime chat/favorites and recording remain migration owners. Native filesystem
+capabilities are `nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented
+by the injected `nocterm-localfs` adapter. Session `test-support` supplies shared
+in-memory port fakes for dev-dependencies. `ProgramOpener` requests external local
+programs; the injected `nocterm-local::LocalProgramOpener` owns their bounded native
+launch/wait lifecycle. `nocterm-local::fs` is not an API.
 
 ## Design rules
 
@@ -151,7 +154,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `themes` | Zed theme import, catalogue and installation |
 | `settings` | settings schema and storage |
 | `store` | common persistence service and shutdown coordination |
-| `session` | transport and remote filesystem contracts |
+| `session` | transport, filesystem and native program contracts |
 | `ssh` | SSH and SFTP adapter |
 | `vt` | terminal emulation and input encoding |
 | `ui` | shared UI theme, assets and settings globals |
@@ -166,8 +169,10 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `agent-runtime` | agent connections, admission and chat documents |
 | `agent` | agent panel, threads and composer |
 | `files` | local/remote Explorer and transfer UI |
-| `local` | local PTY and shell integration |
-| `transfers` | bounded upload/download service |
+| `local` | local PTY, shell integration and external program opening |
+| `localfs` | native filesystem capabilities |
+| `transfers` | pure transfer requests, progress and service contract |
+| `transfer-runtime` | bounded streaming transfer execution over injected ports |
 | `monitor` | host resource collection, parsing and history |
 | `monitor-ui` | status bar monitor, details popup and settings page |
 | `snippets` | snippet library, validation and connection bindings |

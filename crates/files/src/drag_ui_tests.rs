@@ -94,11 +94,12 @@ fn native_local_and_remote_previews_keep_full_rows_and_symbolic_link_names(
     std::fs::create_dir(directory.path().join("directory")).unwrap();
     std::fs::write(directory.path().join(&local_name), b"content").unwrap();
     let fs = Arc::new(PendingFs::default());
-    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    let (deps, local) = fixture_deps_at(directory.path());
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     cx.update_window(handle, |_, _, cx| {
         workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
         panel.update(cx, |panel, cx| {
-            panel.load_local(directory.path().into(), cx)
+            panel.navigate_local(directory.path().into(), cx)
         });
     })
     .unwrap();
@@ -114,27 +115,34 @@ fn native_local_and_remote_previews_keep_full_rows_and_symbolic_link_names(
         ]))
         .unwrap();
     cx.run_until_parked();
+    let target = directory.path().parent().unwrap().join("preview-target");
+    local
+        .seed_native_file(&target, b"content".to_vec())
+        .unwrap();
+    nocterm_session::local_fs::LocalMutations::remove(
+        local.as_ref(),
+        &directory.path().join(&local_name),
+        Default::default(),
+        &Default::default(),
+    )
+    .unwrap();
+    local
+        .seed_native_alias(&directory.path().join(&local_name), &target)
+        .unwrap();
     panel.update(cx, |panel, cx| {
-        // The row renderer receives link metadata on every OS, without creating a privileged Windows symlink.
-        panel
-            .local
-            .entries
-            .iter_mut()
-            .find(|entry| entry.name == local_name)
-            .unwrap()
-            .symlink = true;
-        cx.notify();
+        panel.navigate_local(directory.path().into(), cx)
     });
+    cx.run_until_parked();
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
         cx.update_window(handle, |_, window, cx| {
             Theme::change(mode, None, cx);
             window.render_frame(cx);
-            for index in 0..panel.read(cx).local.entries.len() {
+            for index in 0..panel.read(cx).local_listing(cx).names().len() {
                 let (_, position) =
                     begin_drag(("local-entry", index), Default::default(), window, cx);
                 release(position, window, cx);
             }
-            for index in 0..panel.read(cx).browser.entries.len() {
+            for index in 0..panel.read(cx).remote_listing(cx).names().len() {
                 let (_, position) =
                     begin_drag(("remote-entry", index), Default::default(), window, cx);
                 release(position, window, cx);
@@ -150,16 +158,17 @@ fn native_remote_multiselection_preview_keeps_grabbed_name_and_transfers_both_fi
     cx: &mut TestAppContext,
 ) {
     let directory = tempfile::tempdir().unwrap();
-    let fs = Arc::new(RecordedDownloads::new(false));
-    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    let fs = transfer_remote(false);
+    let (deps, _local, recording) = transfer_fixture_deps_at(directory.path());
+    let service = deps.transfers.clone();
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     let service = cx
         .update_window(handle, |_, _, cx| {
-            transfers::init(cx);
             workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
             panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
+                panel.navigate_local(directory.path().into(), cx)
             });
-            transfers::service(cx).unwrap()
+            service.clone()
         })
         .unwrap();
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
@@ -202,17 +211,9 @@ fn native_remote_multiselection_preview_keeps_grabbed_name_and_transfers_both_fi
     })
     .unwrap();
     assert_eq!(service.snapshot().len(), 1, "One drag enqueues one batch");
-    wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
-    let mut downloaded = fs.paths.lock().unwrap().clone();
-    downloaded.sort();
-    assert_eq!(downloaded, ["/home/test/a.txt", "/home/test/c.txt"]);
-    assert_eq!(
-        std::fs::read(directory.path().join("a.txt")).unwrap(),
-        b"payload"
-    );
-    assert_eq!(
-        std::fs::read(directory.path().join("c.txt")).unwrap(),
-        b"payload"
-    );
-    assert!(!directory.path().join("b.txt").exists());
+    let request = recorded_download(&recording, service.snapshot()[0].id);
+    assert_eq!(request.sources, ["/home/test/a.txt", "/home/test/c.txt"]);
+    assert_eq!(request.local_destination, directory.path());
+    let pinned: Arc<dyn RemoteFs> = fs;
+    assert!(Arc::ptr_eq(&request.fs, &pinned));
 }

@@ -10,6 +10,7 @@ publish = false
 layer = "feature"
 
 [dependencies]
+thiserror.workspace = true
 schemars.workspace = true
 serde.workspace = true
 nocterm-session.workspace = true
@@ -19,21 +20,14 @@ nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
-directories.workspace = true
 parking_lot.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
-nix = { version = "0.28", features = ["fs"] }
-
-[target.'cfg(windows)'.dependencies]
-atomicwrites = "0.4.4"
+[dev-dependencies]
+nocterm-transfers = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-uuid.workspace = true
-tempfile.workspace = true
-gpui-kit = { workspace = true, features = ["test-support"] }

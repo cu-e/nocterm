@@ -22,3 +22,6 @@ acceptance; a later record supersedes an earlier one.
 | [0014](0014-vendor-source-replay.md) | Vendored sources replay from authenticated archives and ordered patches |
 | [0015](0015-private-file-publication.md) | Private file publication shares one staged, atomic mechanism |
 | [0016](0016-vault-storage-boundary.md) | Vault format and rules are independent of storage and lifecycle |
+| [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports |
+| [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
+| [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |

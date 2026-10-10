@@ -17,6 +17,16 @@ commands, events, prompts and the `RemoteFs` contract.
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.
 
+The optional session `test-support` feature provides `InMemoryFs`, `FakeExec`,
+`ScriptedTransport` and `FakeCredentialStore` to consumers through dev-dependencies.
+They perform no real I/O or background scheduling. Tests drive the real session and
+execution channel ends and release pending filesystem/credential operations through
+`Gate`, so cancellation and back-pressure remain part of the port behavior. The
+filesystem uses one coherent tree, rejects link traversal and publishes staged
+uploads only on successful publication; `publish_as` preserves an acknowledged stage
+after a known name collision so Rename retries reuse bytes. A canceled or dropped
+uncommitted upload leaves its destination intact.
+
 ## Keyboard encoding
 
 Keyboard input is negotiated through the emulator rather than application-name
@@ -80,6 +90,11 @@ splits its output into frames, parses them into raw counters and turns
 successive readings into loads, rates and bounded histories. It knows neither
 GPUI nor the workspace.
 
+`ProgramOpener` is a distinct pure session contract for external local editors. Its
+validated request preserves literal arguments and native cwd; success acknowledges
+spawn. The adapter owns children, not the domain or the view. The same dev-only
+`FakeExec` implements this port with bounded scripted answers and deterministic gates.
+
 ## Containers
 
 `nocterm-containers` (domain) speaks the Docker and
@@ -89,23 +104,14 @@ dialect, the event stream and actions — and knows nothing of GPUI.
 
 ## Transfers
 
-`nocterm-transfers` owns bounded batch discovery and four streaming workers,
-32-KiB chunks, progress, cancellation and explicit retry. A drop pins Target,
-RemoteFs and destination. Reservations coordinate same-name sources inside a
-batch. Uploads pipeline at most eight acknowledged chunks. Downloads stream through
-bounded remote readers and stage local files before atomic publication. On Unix,
-local traversal/open/publication use directory capabilities and no-follow opens
-for every ancestor. Remote unsafe names, links and special files are rejected or
-skipped. Windows reparse checks do not provide the same active-ancestor-race guarantee.
-The SFTP adapter stages
-owned temporary files and publishes using negotiated rename capabilities, with
-cleanup on cancellation/drop/graceful disconnect. Explorer contributes a progress
-Item and always-visible status; the service outlives sidebar visibility.
-SFTP v3 cannot atomically enforce no-follow identity between remote lstat/open;
-server-side mutation remains a protocol limitation. Expected file sizes detect
-short/growing sources, but same-size concurrent content mutation is not detected.
-Each directory listing remains a Vec even though file streams and discovery queues
-are bounded. Readers/writers belong to the SFTP session and close on disconnect.
+`nocterm-transfers` owns bounded requests, collision decisions, typed diagnostics,
+progress transitions and the `TransferService` port. It has no runtime, native file
+operations, clocks or entropy. Queue, discovery and stream limits have distinct
+checked owners. Progress advances only for acknowledged bytes; terminal completion
+requires discovery and worker cleanup. Cancellation does not prematurely evict live
+batches. The optional dev-only `test-support` feature exposes an explicitly driven
+port fake, without scheduling or streaming. Execution belongs to the transfer
+adapter ([ADR 0018](../adr/0018-transfer-runtime-capabilities.md)).
 
 ## Vault
 
@@ -120,3 +126,8 @@ IDs constructed from supplied bytes in `nocterm-session`. Authentication uses on
 matching password/key-passphrase bindings; Remember commits after Connected and
 excludes MFA. See [security/lifecycle notes](../VAULT.md) and
 [ADR 0016](../adr/0016-vault-storage-boundary.md).
+
+Transfer progress distinguishes completed files from acknowledged destination directory
+preparations. A prepared directory may already have existed; the count records successful
+adapter create/open acknowledgement, not a new-file or new-directory count. Its acknowledgement
+survives later failure or cancellation without advancing file or byte counters.

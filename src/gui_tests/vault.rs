@@ -70,7 +70,7 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         settings
             .update::<nocterm_vault_ui::VaultSettings>(|section| section.prompt_on_startup = true);
         let booted = boot(tempfile::tempdir().unwrap(), settings, transport, true, cx);
-        let (window, workspace) = open_workspace(booted.vault.clone(), cx);
+        let (window, workspace) = open_workspace(&booted, cx);
         (window, workspace, ())
     });
     cx.update_window(handle, |_, window, cx| {
@@ -100,9 +100,9 @@ fn installed_vault_port_shares_credentials_and_pages_across_windows(cx: &mut Tes
             true,
             cx,
         );
-        let installed = booted.vault.unwrap();
-        let first = open_workspace(Some(installed.clone()), cx);
-        let second = open_workspace(Some(installed.clone()), cx);
+        let installed = booted.vault.clone().unwrap();
+        let first = open_workspace(&booted, cx);
+        let second = open_workspace(&booted, cx);
         (first, second, installed)
     });
     let service = installed.service();

@@ -1,5 +1,10 @@
-//! Local PTY adapter. Bounded I/O workers and an independent close observer
-//! ensure process cleanup never waits behind a blocked PTY write.
+//! Native local PTY, structured commands and detached external editors.
+//! Owns: native launch, bounded I/O and process ownership appropriate to each port.
+//! Does not own: session contracts, filesystem traversal, editor selection or views.
+//! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener.
+//! Settings section: local options are composed by the app. Globals: none.
+//! Invariants: PTY/exec cancellation owns process cleanup; external editors instead
+//! retain a bounded independent wait owner and survive receipt/application exit.
 
 use std::{
     io::{Read, Write},
@@ -20,8 +25,10 @@ use nocterm_session::{
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
 mod exec;
+mod program_opener;
 
 pub use exec::LocalExec;
+pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 
 /// A local shell factory, configured when a new terminal is opened.
 #[derive(Clone, Debug)]

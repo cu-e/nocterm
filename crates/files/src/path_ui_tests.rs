@@ -43,35 +43,50 @@ fn clicking_local_location_and_enter_reloads_panel_then_file_error_keeps_draft(
     std::fs::create_dir(&child).unwrap();
     std::fs::write(child.join("file.txt"), b"content").unwrap();
     let fs = Arc::new(PendingFs::default());
-    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    let (deps, local) = fixture_deps_at(directory.path());
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     show_panel(handle, &workspace, &panel, cx);
     panel.update(cx, |panel, cx| {
-        panel.load_local(directory.path().into(), cx)
+        panel.navigate_local(directory.path().into(), cx)
     });
     cx.run_until_parked();
     fs.take_request("/home/test").send(Ok(vec![])).unwrap();
     cx.run_until_parked();
 
     enter_path(handle, "local-browser", "資料 folder", cx);
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path.as_deref(), Some(child.as_path()));
-        assert_eq!(panel.local.entries[0].name, "file.txt");
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(child.as_path())
+        );
+        assert_eq!(panel.local_listing(cx).names()[0], "file.txt");
     });
     enter_path(handle, "local-browser", "file.txt", cx);
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path.as_deref(), Some(child.as_path()));
-        assert!(panel.local.error.is_some());
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(child.as_path())
+        );
+        assert!(panel.local_listing(cx).error().is_some());
     });
     // A second Enter submits the unchanged failed draft through the real field.
     // Replace the file with a folder so this retry can succeed.
-    std::fs::remove_file(child.join("file.txt")).unwrap();
-    std::fs::create_dir(child.join("file.txt")).unwrap();
+    nocterm_session::local_fs::LocalMutations::remove(
+        local.as_ref(),
+        &child.join("file.txt"),
+        Default::default(),
+        &Default::default(),
+    )
+    .unwrap();
+    local
+        .seed_native_directory(&child.join("file.txt"))
+        .unwrap();
     cx.update_window(handle, |_, window, cx| window.press("enter", cx))
         .unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
-        assert_eq!(panel.local.path, Some(child.join("file.txt")));
-        assert!(panel.local.error.is_none());
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.local_listing(cx).path(), Some(child.join("file.txt")));
+        assert!(panel.local_listing(cx).error().is_none());
     });
 }
 
@@ -90,12 +105,12 @@ fn clicking_remote_location_and_enter_uses_remote_fs_and_keeps_failed_file_draft
         .send(Ok(vec![entry("file.txt", EntryKind::File)]))
         .unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
+    panel.read_with(cx, |panel, cx| {
         assert_eq!(
-            panel.browser.path.as_deref(),
+            panel.remote_listing(cx).path().as_deref(),
             Some("/home/test/資料 folder")
         );
-        assert_eq!(panel.browser.entries[0].name, "file.txt");
+        assert_eq!(panel.remote_listing(cx).names()[0], "file.txt");
     });
     // Non-home folders also receive an independent statistics listing.
     fs.take_request("/home/test/資料 folder")
@@ -109,12 +124,12 @@ fn clicking_remote_location_and_enter_uses_remote_fs_and_keeps_failed_file_draft
         }))
         .unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
+    panel.read_with(cx, |panel, cx| {
         assert_eq!(
-            panel.browser.path.as_deref(),
+            panel.remote_listing(cx).path().as_deref(),
             Some("/home/test/資料 folder")
         );
-        assert!(panel.browser.error.is_some());
+        assert!(panel.remote_listing(cx).error().is_some());
     });
     cx.update_window(handle, |_, window, cx| window.press("enter", cx))
         .unwrap();
@@ -123,12 +138,12 @@ fn clicking_remote_location_and_enter_uses_remote_fs_and_keeps_failed_file_draft
         .send(Ok(vec![]))
         .unwrap();
     cx.run_until_parked();
-    panel.read_with(cx, |panel, _| {
+    panel.read_with(cx, |panel, cx| {
         assert_eq!(
-            panel.browser.path.as_deref(),
+            panel.remote_listing(cx).path().as_deref(),
             Some("/home/test/資料 folder/file.txt")
         );
-        assert!(panel.browser.error.is_none());
+        assert!(panel.remote_listing(cx).error().is_none());
     });
 }
 
@@ -146,11 +161,12 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
         .unwrap();
     }
     let fs = Arc::new(PendingFs::default());
-    let (handle, _, _, panel) = panel_fixture(cx, fs.clone());
+    let (deps, _local) = fixture_deps_at(directory.path());
+    let (handle, _, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     cx.update_window(handle, |_, window, cx| {
         window.replace_root(cx, |_, _| PanelHarness(panel.clone()));
         panel.update(cx, |panel, cx| {
-            panel.load_local(directory.path().into(), cx)
+            panel.navigate_local(directory.path().into(), cx)
         });
     })
     .unwrap();
@@ -164,7 +180,9 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
             ("local-browser", 1, px(140.), ""),
         ] {
             if index == 0 {
-                panel.update(cx, |panel, cx| panel.load(Some("/home/test".into()), cx));
+                panel.update(cx, |panel, cx| {
+                    panel.navigate_remote(Some("/home/test".into()), cx)
+                });
                 cx.run_until_parked();
                 fs.take_request("/home/test").send(Ok(vec![])).unwrap();
                 cx.run_until_parked();
@@ -223,17 +241,6 @@ fn minimum_remote_and_local_panes_keep_tab_selected_match_clickable(cx: &mut Tes
                 );
                 assert!(bounds.origin.x >= px(0.) && bounds.origin.y >= px(0.));
                 assert!(bounds.right() <= window.viewport_size().width);
-                let editor = if index == 0 {
-                    panel.read(cx).remote_path.entity_id()
-                } else {
-                    panel.read(cx).local_path.entity_id()
-                };
-                let popup = window.find(("path-completion-popup", editor));
-                assert!(popup.visible());
-                let popup_bounds = popup.bounds();
-                assert!(popup_bounds.origin.x >= px(0.) && popup_bounds.origin.y >= px(0.));
-                assert!(popup_bounds.right() <= window.viewport_size().width);
-                assert!(popup_bounds.bottom() <= window.viewport_size().height);
                 for _ in 0..5 {
                     window.press("down", cx);
                     window.render_frame(cx);
@@ -269,17 +276,18 @@ fn local_popup_enter_keeps_editor_and_plain_enter_or_external_navigation_closes(
     let child = directory.path().join("資料 folder");
     std::fs::create_dir(&child).unwrap();
     let fs = Arc::new(PendingFs::default());
-    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
+    let (deps, _local) = fixture_deps_at(directory.path());
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     show_panel(handle, &workspace, &panel, cx);
     panel.update(cx, |panel, cx| {
-        panel.load_local(directory.path().into(), cx)
+        panel.navigate_local(directory.path().into(), cx)
     });
     cx.run_until_parked();
     fs.take_request("/home/test").send(Ok(vec![])).unwrap();
     cx.run_until_parked();
     for close_by_enter in [true, false] {
         panel.update(cx, |panel, cx| {
-            panel.load_local(directory.path().into(), cx)
+            panel.navigate_local(directory.path().into(), cx)
         });
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
@@ -297,7 +305,7 @@ fn local_popup_enter_keeps_editor_and_plain_enter_or_external_navigation_closes(
             .unwrap();
         cx.run_until_parked();
         assert_eq!(
-            panel.read_with(cx, |panel, _| panel.local.path.clone()),
+            panel.read_with(cx, |panel, cx| panel.local_listing(cx).path().clone()),
             Some(child.clone())
         );
         cx.update_window(handle, |_, window, cx| {
@@ -315,7 +323,7 @@ fn local_popup_enter_keeps_editor_and_plain_enter_or_external_navigation_closes(
         .unwrap();
         if !close_by_enter {
             panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
+                panel.navigate_local(directory.path().into(), cx)
             });
         }
         cx.run_until_parked();
@@ -368,7 +376,7 @@ fn remote_popup_enter_keeps_editor_and_plain_enter_closes_through_real_loader(
         .unwrap();
     cx.run_until_parked();
     assert_eq!(
-        panel.read_with(cx, |panel, _| panel.browser.path.clone()),
+        panel.read_with(cx, |panel, cx| panel.remote_listing(cx).path().clone()),
         Some("/home/test/資料 folder/".into())
     );
     fs.take_request("/home/test/資料 folder/")

@@ -15,6 +15,7 @@ use nocterm_terminal::TerminalView;
 use nocterm_workspace::{SessionSpec, Workspace};
 
 mod menu_tabs;
+mod program_opening;
 mod shortcuts;
 mod terminal_events;
 mod titlebar;
@@ -93,7 +94,7 @@ fn fixture_with_vault(
                 service.lock();
             })));
         }
-        let (window, workspace) = open_workspace(booted.vault.clone(), cx);
+        let (window, workspace) = open_workspace(&booted, cx);
         let terminal = window
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -131,11 +132,23 @@ fn boot(
     vault: bool,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    boot_with_files(directory, settings, transport, vault, None, cx)
+}
+
+fn boot_with_files(
+    directory: tempfile::TempDir,
+    settings: nocterm_settings::SettingsDocument,
+    transport: Arc<MockTransport>,
+    vault: bool,
+    files: Option<nocterm_files::Deps>,
+    cx: &mut gpui_kit::App,
+) -> crate::bootstrap::Booted {
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
         file: directory.path().join("vault.bin"),
         device_unlock: false,
     });
+    let files = files.unwrap_or_else(|| fixture_files(directory.path()));
     cx.set_global(FixtureDirectory {
         _directory: directory,
     });
@@ -146,6 +159,7 @@ fn boot(
             persist: false,
             transport,
             local: false,
+            files,
             themes: None,
             agent: nocterm_agent::AgentServices {
                 terminal_auth: None,
@@ -173,15 +187,37 @@ fn boot(
     booted
 }
 
+fn fixture_files(directory: &std::path::Path) -> nocterm_files::Deps {
+    let local = Arc::new(nocterm_session::testing::InMemoryFs::default());
+    seed_native_ancestors(&local, directory);
+    let transfers = nocterm_transfer_runtime::TransferRuntime::start(
+        nocterm_transfer_runtime::TransferRuntimeDeps::new(local.clone(), Default::default()),
+    )
+    .unwrap();
+    nocterm_files::Deps::new(
+        local.clone(),
+        local,
+        transfers,
+        Arc::new(nocterm_session::testing::FakeExec::default()),
+    )
+}
+fn seed_native_ancestors(fs: &nocterm_session::testing::InMemoryFs, directory: &std::path::Path) {
+    for ancestor in directory.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        if ancestor.parent().is_some() {
+            fs.seed_native_directory(ancestor).unwrap();
+        }
+    }
+}
+
 /// Opens a window with the application's workspace.
 fn open_workspace(
-    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
+    booted: &crate::bootstrap::Booted,
     cx: &mut gpui_kit::App,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, vault.as_deref(), window, cx);
+            crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
             workspace
         })
     })
@@ -390,6 +426,42 @@ fn active_secret_prompt_accepts_text_and_releases_focus_after_submit(cx: &mut Te
         assert!(grid_focus.is_focused(window));
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn transfers_action_uses_installed_queue_before_explorer_opens(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("local-browser").is_none());
+        window.dispatch_action(Box::new(nocterm_files::ShowTransfers), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            workspace
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .tab_title(cx)
+                .as_ref(),
+            "Transfers"
+        );
+        window.dispatch_action(Box::new(nocterm_files::ShowTransfers), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items()
+                .filter(|item| item.tab_title(cx).as_ref() == "Transfers")
+                .count(),
+            1
+        );
+    });
 }
 
 #[gpui_kit::test]

@@ -1,7 +1,7 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
 //! Owns: targets, authentication, opaque credential IDs and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
-//! Ports provided: Transport, HostExec, RemoteFs and CredentialStore.
+//! Ports provided: Transport, HostExec, RemoteFs, CredentialStore and ProgramOpener.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
 //! Invariants: credential IDs are built from explicit bytes, never generated here.
 //!
@@ -10,13 +10,26 @@
 //! bytes travel is the business of a [`Transport`], and nothing above this
 //! crate depends on one: the UI works the same over SSH, a local shell or a
 //! scripted fake in a test.
+//!
+//! Owns: session, execution, credential and filesystem contracts; optional in-memory
+//! test doubles behind `test-support`.
+//! Does not own: real transport, filesystem or credential-storage I/O, or views.
+//! Ports used: none. Ports provided: `Transport`, `HostExec`, `RemoteFs`, `CredentialStore`,
+//! `ProgramOpener`, `local_fs::{LocalFs, LocalMutations, LocalDirectory, LocalSource, LocalStage}`.
+//! Settings sections: SSH and local shell options (adapter-ownership migration debt).
+//! Globals: none. Invariants: bounded channels carry ordered output and explicit closure.
+
+#[cfg(feature = "test-support")]
+pub mod testing;
 
 mod credentials;
 pub mod exec;
 pub mod fs;
 mod launch;
+pub mod local_fs;
 mod options;
 mod program;
+mod program_opener;
 mod secret;
 mod session;
 mod settings;
@@ -37,6 +50,7 @@ pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
 
 pub use launch::{ShellLaunch, quote_posix, quote_powershell};
 pub use program::{ProgramTransport, TerminalRequest};
+pub use program_opener::{ProgramOpenError, ProgramOpenFuture, ProgramOpenRequest, ProgramOpener};
 
 pub use options::{
     Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS, validate_term,
