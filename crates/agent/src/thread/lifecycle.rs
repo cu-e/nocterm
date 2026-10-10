@@ -42,8 +42,7 @@ impl AgentThread {
     }
     pub(crate) fn session_busy(&self) -> bool {
         self.lifecycle.busy()
-            || !self.permissions.is_empty()
-            || !self.tools.is_empty()
+            || self.approvals.pending()
             || self.operation_count.load(Ordering::Acquire) != 0
             || self.executions.active().next().is_some()
             || self.live_commands.values().any(|lease| lease.is_active())
@@ -101,7 +100,9 @@ impl AgentThread {
         }
         self.lifecycle.detach();
         self.pending_controls.clear();
-        self.grants.clear();
+        for call in self.approvals.end_session() {
+            self.finish(call, Err("Request cancelled.".into()));
+        }
     }
     pub(crate) fn release_resources(&mut self, cx: &mut Context<Self>) {
         self.composer.queue_paused = true;

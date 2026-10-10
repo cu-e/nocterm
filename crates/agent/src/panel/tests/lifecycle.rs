@@ -240,7 +240,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     cx.run_until_parked();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        assert_eq!(thread.read(cx).permissions.len(), 1);
+        assert_eq!(thread.read(cx).permission_cards().len(), 1);
         thread.update(cx, |thread, cx| thread.stop(cx));
     });
     assert!(matches!(

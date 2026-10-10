@@ -19,7 +19,7 @@ use nocterm_ui::IconName;
 use nocterm_workspace::UnlockVault;
 
 use super::{AgentPanel, widgets::menu_variant};
-use crate::thread::AgentThread;
+use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
 
 /// The password field of a sign-in card.
 pub(super) struct SignInInput {
@@ -36,9 +36,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let pending = thread.read(cx).permissions.len()
-            + thread.read(cx).tools.len()
-            + thread.read(cx).sign_ins.len();
+        let permissions = thread.read(cx).permission_cards();
+        let tools = thread.read(cx).tool_cards();
+        let pending = permissions.len() + tools.len() + thread.read(cx).sign_ins.len();
         let asking: Vec<EntityId> = self
             .threads
             .iter()
@@ -60,11 +60,11 @@ impl AgentPanel {
         for index in 0..thread.read(cx).sign_ins.len() {
             list = list.child(self.sign_in_card(thread, index, window, cx));
         }
-        for index in 0..thread.read(cx).permissions.len() {
-            list = list.child(self.permission_card(thread, index, cx));
+        for (index, permission) in permissions.into_iter().enumerate() {
+            list = list.child(self.permission_card(thread, permission, index, cx));
         }
-        for index in 0..thread.read(cx).tools.len() {
-            list = list.child(self.tool_card(thread, index, cx));
+        for (index, tool) in tools.into_iter().enumerate() {
+            list = list.child(self.tool_card(thread, tool, index, cx));
         }
         Some(
             v_flex()
@@ -247,20 +247,20 @@ impl AgentPanel {
     fn permission_card(
         &self,
         thread: &Entity<AgentThread>,
+        permission: PermissionCard,
         index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let permission = &thread.read(cx).permissions[index];
-        let generation = permission.generation;
+        let generation = permission.token();
         let title = permission
-            .request
+            .request()
             .tool_call
             .fields
             .title
             .clone()
             .unwrap_or_else(|| "Agent permission request".into());
         let options: Vec<_> = permission
-            .request
+            .request()
             .options
             .iter()
             .map(|option| (option.option_id.clone(), option.name.clone()))
@@ -299,7 +299,7 @@ impl AgentPanel {
         );
         card(cx)
             .child(div().w_full().min_w_0().truncate().text_sm().child(title))
-            .when_some(permission.explanation, |card, explanation| {
+            .when_some(permission.explanation(), |card, explanation| {
                 card.child(
                     div()
                         .id(("permission-explanation", index))
@@ -319,10 +319,13 @@ impl AgentPanel {
     fn tool_card(
         &self,
         thread: &Entity<AgentThread>,
+        approval: ToolApprovalCard,
         index: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let call = thread.read(cx).tools[index].call.clone();
+        let token = approval.token();
+        let call = approval.call().clone();
+        let owner = thread.downgrade();
         let target = thread.update(cx, |thread, cx| thread.describe_target(&call, cx));
         let reusable = thread.update(cx, |thread, cx| !thread.unsafe_live_input(&call, cx));
         let (heading, exact, grant) = match &call {
@@ -389,15 +392,16 @@ impl AgentPanel {
                     .into_iter()
                     .filter(|(_, grant, _)| !grant || reusable)
                     .map(|(allow, grant, label)| {
+                        let owner = owner.clone();
                         Button::new((SharedString::from(format!("tool-{label}")), index))
                             .custom(menu_variant(cx))
                             .small()
                             .max_w_full()
                             .label(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(thread) = this.current() {
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if let Some(thread) = owner.upgrade() {
                                     thread.update(cx, |thread, cx| {
-                                        thread.approve_tool(index, allow, grant, cx)
+                                        thread.approve_tool(token, allow, grant, cx)
                                     });
                                 }
                             }))

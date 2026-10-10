@@ -154,10 +154,10 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
     assert!(context.contains(&server));
     let (respond, response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -165,13 +165,18 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
                         server_id: server.clone(),
                     }),
                     respond,
-                },
-                cx,
-            );
-            assert_eq!(thread.tools.len(), 1, "connecting asks first");
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let answer = response.now_or_never().unwrap().unwrap().unwrap();
@@ -235,10 +240,10 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     });
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -246,12 +251,18 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
                         server_id: server,
                     }),
                     respond,
-                },
-                cx,
-            );
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
@@ -276,6 +287,14 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     );
     // Unlocking answers the session's prompt with the saved secret.
     directory.sign_in.vault_locked.set(false);
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let answer = response.try_recv().unwrap().unwrap().unwrap();
@@ -301,10 +320,10 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     });
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -312,12 +331,18 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
                         server_id: server,
                     }),
                     respond,
-                },
-                cx,
-            );
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
@@ -330,6 +355,14 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
         let input = f.panel.read(cx).sign_in_inputs[&item].input.clone();
         input.update(cx, |input, cx| input.set_value("hunter2", window, cx));
         window.click(("sign-in-submit", 0usize), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
     })
     .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
@@ -415,16 +448,17 @@ fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
 }
 
 fn open_server(
+    f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
     server: &str,
     cx: &mut TestAppContext,
 ) -> serde_json::Value {
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -432,14 +466,18 @@ fn open_server(
                         server_id: server.to_owned(),
                     }),
                     respond,
-                },
-                cx,
-            );
-            if !thread.tools.is_empty() {
-                thread.approve_tool(0, true, true, cx);
-            }
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     response.try_recv().unwrap().expect("answered").unwrap()
@@ -457,7 +495,7 @@ fn a_dropped_background_session_is_reconnected_rather_than_replaced(cx: &mut Tes
             thread.offline_servers(cx)[0].0.server_id.clone()
         })
     });
-    let first = open_server(&thread, &server, cx);
+    let first = open_server(&f, &thread, &server, cx);
     let access = directory.accesses.borrow()[0].clone();
     access.link.remote.set(true);
     access.link.closed.set(true);
@@ -471,7 +509,7 @@ fn a_dropped_background_session_is_reconnected_rather_than_replaced(cx: &mut Tes
         })
     });
 
-    let again = open_server(&thread, &server, cx);
+    let again = open_server(&f, &thread, &server, cx);
     assert_eq!(again["terminal"]["id"], first["terminal"]["id"]);
     assert_eq!(access.link.reconnects.get(), 1);
     assert_eq!(directory.background.borrow().len(), 1, "no second session");

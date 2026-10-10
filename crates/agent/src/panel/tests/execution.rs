@@ -71,9 +71,9 @@ fn submit(
     if approve {
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                if !thread.tools.is_empty() {
-                    assert_eq!(thread.tools.len(), 1);
-                    thread.approve_tool(0, true, false, cx);
+                if !thread.tool_cards().is_empty() {
+                    assert_eq!(thread.tool_cards().len(), 1);
+                    thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
                 }
             })
         });
@@ -241,9 +241,13 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         false,
         cx,
     );
-    assert_eq!(cx.update(|cx| thread.read(cx).tools.len()), 1);
+    assert_eq!(cx.update(|cx| thread.read(cx).tool_cards().len()), 1);
     f.access.sign_in.asks.set(true);
-    cx.update(|cx| thread.update(cx, |thread, cx| thread.approve_tool(0, true, false, cx)));
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
+        })
+    });
     cx.run_until_parked();
     assert!(result(pending).unwrap_err().contains("authentication"));
     assert!(programs.requests.lock().unwrap().is_empty());
@@ -344,15 +348,18 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     cx.run_until_parked();
     let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let request = serde_json::from_value(serde_json::json!({
                 "sessionId": thread.session(), "toolCall":{"toolCallId":"late-provider-tool"},
                 "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
             }))
             .unwrap();
-            thread.permission(request, respond, cx);
+            f.events
+                .try_send(AgentEvent::Permission { request, respond })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
     assert_eq!(
         permission.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Cancelled)

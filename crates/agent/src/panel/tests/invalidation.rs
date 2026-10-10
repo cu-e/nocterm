@@ -39,7 +39,7 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
         let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-        thread.update(cx, |thread, cx| thread.permission(request, send, cx));
+        f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -102,7 +102,7 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         cx.update(|cx| {
             let session = owner.read(cx).session().clone().unwrap();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":id,"title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-            owner.update(cx, |t, cx| t.permission(request, send, cx));
+            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
         });
         cx.run_until_parked();
         cx.update_window(f.handle, |_, window, cx| {
@@ -126,5 +126,5 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         })
         .unwrap();
     }
-    cx.update(|cx| assert_eq!(owner.read(cx).permissions.len(), 2));
+    cx.update(|cx| assert_eq!(owner.read(cx).permission_cards().len(), 2));
 }

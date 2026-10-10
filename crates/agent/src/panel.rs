@@ -339,16 +339,18 @@ impl AgentPanel {
         cx.notify();
     }
     fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let attention = self.threads.iter().any(|thread| {
-            !thread.read(cx).tools.is_empty() || !thread.read(cx).permissions.is_empty()
-        });
+        let attention = self
+            .threads
+            .iter()
+            .any(|thread| thread.read(cx).has_pending_approvals());
         let needs_notice = attention
-            && (self.current().is_none_or(|thread| {
-                thread.read(cx).tools.is_empty() && thread.read(cx).permissions.is_empty()
-            }) || self
-                .workspace
-                .upgrade()
-                .is_none_or(|workspace| !workspace.read(cx).right_panel_is_open()));
+            && (self
+                .current()
+                .is_none_or(|thread| !thread.read(cx).has_pending_approvals())
+                || self
+                    .workspace
+                    .upgrade()
+                    .is_none_or(|workspace| !workspace.read(cx).right_panel_is_open()));
         let _ = self.workspace.update(cx, |workspace, cx| {
             workspace.set_right_panel_attention(attention, cx)
         });
@@ -357,8 +359,9 @@ impl AgentPanel {
                 .iter()
                 .filter_map(|thread| {
                     let state = thread.read(cx);
-                    (!state.tools.is_empty() || !state.permissions.is_empty())
-                        .then_some((thread.entity_id(), state.approval_generation))
+                    state
+                        .has_pending_approvals()
+                        .then_some((thread.entity_id(), state.approval_notice_generation()))
                 })
                 .collect()
         });
@@ -390,9 +393,7 @@ impl AgentPanel {
         );
     }
     fn review_pending(&mut self, cx: &mut Context<Self>) {
-        let pending = |thread: &Entity<AgentThread>| {
-            !thread.read(cx).permissions.is_empty() || !thread.read(cx).tools.is_empty()
-        };
+        let pending = |thread: &Entity<AgentThread>| thread.read(cx).has_pending_approvals();
         let owner = self
             .current()
             .filter(pending)

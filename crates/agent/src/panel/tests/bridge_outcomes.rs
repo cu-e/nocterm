@@ -106,7 +106,9 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             if id == "denial" {
                 assert!(receive.try_recv().unwrap().is_none());
                 cx.update(|cx| {
-                    thread.update(cx, |thread, cx| thread.approve_tool(0, false, false, cx))
+                    thread.update(cx, |thread, cx| {
+                        thread.approve_tool(thread.tool_cards()[0].token(), false, false, cx)
+                    })
                 });
             }
             assert!(receive.try_recv().unwrap().is_some());

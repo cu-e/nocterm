@@ -13,17 +13,27 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     })
     .unwrap();
 }
-fn pending_permission(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) {
+fn pending_permission(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    cx: &mut TestAppContext,
+) {
     let (send, _) = nocterm_ai::PermissionResponder::channel();
-    thread.update(cx, |thread, cx| {
+    thread.update(cx, |thread, _| {
         let request = serde_json::from_value(serde_json::json!({
             "sessionId":thread.session().as_ref().unwrap(),
             "toolCall":{"toolCallId":"pending","title":"Needs approval"},
             "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
         }))
         .unwrap();
-        thread.permission(request, send, cx);
+        f.events
+            .try_send(AgentEvent::Permission {
+                request,
+                respond: send,
+            })
+            .unwrap();
     });
+    cx.run_until_parked();
 }
 
 #[gpui_kit::test]
@@ -32,7 +42,7 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
     set_input(&f, "owner draft", cx);
-    pending_permission(&owner, cx);
+    pending_permission(&f, &owner, cx);
     new_chat(&f, cx);
     let editing = cx.update(|cx| f.panel.read(cx).current().unwrap());
     editing.update(cx, |thread, cx| {
@@ -78,7 +88,7 @@ fn delete_edit_owner_then_review_does_not_keep_dangling_edit(cx: &mut TestAppCon
     let f = fixture(cx);
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    pending_permission(&owner, cx);
+    pending_permission(&f, &owner, cx);
     new_chat(&f, cx);
     let editing = cx.update(|cx| f.panel.read(cx).current().unwrap());
     editing.update(cx, |thread, cx| {

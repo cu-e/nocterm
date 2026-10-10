@@ -1,10 +1,6 @@
 //! ACP provider permissions are independent of Nocterm terminal grants.
-use gpui_kit::Context;
-use nocterm_ai::ApprovalPolicy;
+use super::approval_inbox::ApprovalToken;
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveAi as _, SettingsExt as _};
-
-use super::{AgentThread, PendingPermission};
 
 const ONE_TIME_REQUIRED: &str = "Automatic approval needs a valid Allow once option. This agent did not provide one. Review its choices or cancel this request.";
 
@@ -33,57 +29,93 @@ fn selected(id: acp::PermissionOptionId) -> acp::RequestPermissionOutcome {
     acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(id))
 }
 
-impl AgentThread {
-    fn accepts_permission(
-        &self,
-        request: &acp::RequestPermissionRequest,
-        cx: &Context<Self>,
-    ) -> bool {
-        cx.ai_enabled()
-            && self.lifecycle.accepts_updates()
-            && !self.lifecycle.stopped()
-            && self.session().as_ref() == Some(&request.session_id)
+/// Fresh provider authority, sampled by the coordinator before every transition.
+pub(super) struct PermissionGate {
+    enabled: bool,
+    accepts_updates: bool,
+    stopped: bool,
+    session: Option<acp::SessionId>,
+}
+impl PermissionGate {
+    pub(super) fn new(
+        enabled: bool,
+        accepts_updates: bool,
+        stopped: bool,
+        session: Option<acp::SessionId>,
+    ) -> Self {
+        Self {
+            enabled,
+            accepts_updates,
+            stopped,
+            session,
+        }
     }
+    fn accepts(&self, request: &acp::RequestPermissionRequest) -> bool {
+        self.enabled
+            && self.accepts_updates
+            && !self.stopped
+            && self.session.as_ref() == Some(&request.session_id)
+    }
+}
 
-    pub(crate) fn permission(
+struct PendingPermission {
+    request: acp::RequestPermissionRequest,
+    respond: nocterm_ai::PermissionResponder,
+    token: ApprovalToken,
+    explanation: Option<&'static str>,
+}
+
+/// An immutable card; responders and mutable queue state never leave their owner.
+pub(crate) struct PermissionCard {
+    request: acp::RequestPermissionRequest,
+    token: ApprovalToken,
+    explanation: Option<&'static str>,
+}
+impl PermissionCard {
+    pub(crate) fn token(&self) -> ApprovalToken {
+        self.token
+    }
+    pub(crate) fn request(&self) -> &acp::RequestPermissionRequest {
+        &self.request
+    }
+    pub(crate) fn explanation(&self) -> Option<&'static str> {
+        self.explanation
+    }
+}
+
+#[derive(Default)]
+pub(super) struct ProviderRequests {
+    pending: Vec<PendingPermission>,
+}
+impl ProviderRequests {
+    pub(super) fn receive(
         &mut self,
         request: acp::RequestPermissionRequest,
         respond: nocterm_ai::PermissionResponder,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.accepts_permission(&request, cx) {
+        token: ApprovalToken,
+        gate: &PermissionGate,
+        automatic: bool,
+    ) -> bool {
+        if !gate.accepts(&request) {
             respond.respond(acp::RequestPermissionOutcome::Cancelled);
-            return;
+            return false;
         }
-        let automatic = cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .agent_permissions
-            == ApprovalPolicy::Allow;
         if automatic && let Some(id) = allow_once(&request) {
             respond.respond(selected(id));
-            return;
+            return false;
         }
-        self.approval_generation = self.approval_generation.wrapping_add(1);
-        self.permissions.push(PendingPermission {
+        self.pending.push(PendingPermission {
             request,
             respond,
-            generation: self.approval_generation,
+            token,
             explanation: automatic.then_some(ONE_TIME_REQUIRED),
         });
-        cx.notify();
+        true
     }
-
-    /// Applies changes to queued requests without granting persistent provider permissions.
-    pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
-        let automatic = cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .agent_permissions
-            == ApprovalPolicy::Allow;
+    pub(super) fn apply_policy(&mut self, gate: &PermissionGate, automatic: bool) -> bool {
         let mut changed = false;
-        for mut permission in std::mem::take(&mut self.permissions) {
-            if !self.accepts_permission(&permission.request, cx) {
+        for mut permission in std::mem::take(&mut self.pending) {
+            if !gate.accepts(&permission.request) {
                 permission
                     .respond
                     .respond(acp::RequestPermissionOutcome::Cancelled);
@@ -95,49 +127,49 @@ impl AgentThread {
                 let explanation = automatic.then_some(ONE_TIME_REQUIRED);
                 changed |= permission.explanation != explanation;
                 permission.explanation = explanation;
-                self.permissions.push(permission);
+                self.pending.push(permission);
             }
         }
-        if changed {
-            cx.notify();
-        }
+        changed
     }
-
-    pub(crate) fn choose_permission(
+    pub(super) fn choose(
         &mut self,
-        index: usize,
+        token: ApprovalToken,
         option: Option<acp::PermissionOptionId>,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.permissions.len() {
-            return;
-        }
-        let permission = self.permissions.remove(index);
+        gate: &PermissionGate,
+    ) -> bool {
+        let Some(index) = self
+            .pending
+            .iter()
+            .position(|request| request.token == token)
+        else {
+            return false;
+        };
+        let permission = self.pending.remove(index);
         let outcome = option
             .filter(|id| {
-                self.accepts_permission(&permission.request, cx)
-                    && unique_option(&permission.request, id)
+                gate.accepts(&permission.request) && unique_option(&permission.request, id)
             })
             .map(selected)
             .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
         permission.respond.respond(outcome);
-        cx.notify();
+        true
     }
-
-    /// A rendered card can outlive a queue drain or a newly arrived request.
-    pub(crate) fn choose_permission_request(
-        &mut self,
-        generation: u64,
-        option: Option<acp::PermissionOptionId>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(index) = self
-            .permissions
+    pub(super) fn clear(&mut self) {
+        self.pending.clear();
+    }
+    pub(super) fn len(&self) -> usize {
+        self.pending.len()
+    }
+    pub(super) fn cards(&self) -> Vec<PermissionCard> {
+        self.pending
             .iter()
-            .position(|request| request.generation == generation)
-        {
-            self.choose_permission(index, option, cx);
-        }
+            .map(|permission| PermissionCard {
+                request: permission.request.clone(),
+                token: permission.token,
+                explanation: permission.explanation,
+            })
+            .collect()
     }
 }
 

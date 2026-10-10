@@ -118,11 +118,11 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            second.read(cx).tools.len(),
+            second.read(cx).tool_cards().len(),
             1,
             "the approval waits in the chat that asked"
         );
-        assert!(first.read(cx).tools.is_empty());
+        assert!(first.read(cx).tool_cards().is_empty());
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -141,7 +141,11 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
         );
     })
     .unwrap();
-    cx.update(|cx| second.update(cx, |thread, cx| thread.approve_tool(0, true, false, cx)));
+    cx.update(|cx| {
+        second.update(cx, |thread, cx| {
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
+        })
+    });
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
@@ -175,10 +179,11 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let (call, response) = cx.update(|cx| run(registration(&thread, cx), "t99"));
+    f.calls.try_send(call).unwrap();
+    cx.run_until_parked();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.handle_tool(call, cx);
-            thread.approve_tool(0, true, false, cx);
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
         })
     });
     let error = response.now_or_never().unwrap().unwrap().unwrap_err();

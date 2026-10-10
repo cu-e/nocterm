@@ -4,8 +4,7 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
 };
 use nocterm_ai::{
-    AgentInfo, BridgeCall, acp,
-    approval::ApprovalGrants,
+    AgentInfo, acp,
     context::OpaqueIds,
     session::{SessionPhase, SessionState},
     thread::ThreadState,
@@ -21,8 +20,12 @@ mod composer;
 mod config;
 pub(crate) use client::client;
 pub(crate) use composer::Composer;
+mod approval_inbox;
 mod execution;
 mod permissions;
+use approval_inbox::ApprovalInbox;
+pub(crate) use approval_inbox::ToolApprovalCard;
+pub(crate) use permissions::PermissionCard;
 mod prompt;
 mod queue;
 mod tool_display;
@@ -55,12 +58,6 @@ pub(crate) struct SignInWait {
     pub prompt: nocterm_workspace::SignInPrompt,
     /// Unlocking the vault answers the prompt with a saved secret.
     pub vault: bool,
-}
-pub(crate) struct PendingPermission {
-    pub request: acp::RequestPermissionRequest,
-    pub respond: nocterm_ai::PermissionResponder,
-    pub generation: u64,
-    pub explanation: Option<&'static str>,
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PromptMetadata {
@@ -146,16 +143,12 @@ pub(crate) struct AgentThread {
     /// The chat's mode, for agents that report modes apart from their
     /// configuration options.
     pub mode_choice: Option<acp::SessionModeId>,
-    pub permissions: Vec<PendingPermission>,
-    pub tools: Vec<BridgeCall>,
-    /// Advances only when a new request needs user approval.
-    pub approval_generation: u64,
+    approvals: ApprovalInbox,
     pub context_bytes: usize,
     pub tool_bytes: usize,
     ids: OpaqueIds,
     /// Ids of attached servers without a session, as agents see them.
     server_ids: OpaqueIds,
-    grants: ApprovalGrants,
     executions: execution::Jobs,
     live_commands: std::collections::HashMap<String, Arc<nocterm_workspace::LiveCommandLease>>,
     tool_displays: tool_display::ToolDisplays,
@@ -249,14 +242,11 @@ impl AgentThread {
             pending_controls: Vec::new(),
             config_choices: Default::default(),
             mode_choice: None,
-            permissions: Vec::new(),
-            tools: Vec::new(),
-            approval_generation: 0,
+            approvals: ApprovalInbox::default(),
             context_bytes: 0,
             tool_bytes: 0,
             ids: Default::default(),
             server_ids: OpaqueIds::with_prefix("s"),
-            grants: Default::default(),
             executions: Default::default(),
             live_commands: Default::default(),
             tool_displays: Default::default(),
@@ -280,8 +270,7 @@ impl AgentThread {
             && self.composer.is_empty()
             && self.name.is_none()
             && !self.lifecycle.generating()
-            && self.permissions.is_empty()
-            && self.tools.is_empty()
+            && !self.approvals.pending()
     }
     pub(crate) fn fail(&mut self, message: &str, cx: &mut Context<Self>) {
         self.cancel_execution();
@@ -296,7 +285,7 @@ impl AgentThread {
         self.status_error = true;
         self.cancel_pending();
         // A grant belongs to this session; a restarted chat asks again.
-        self.grants.clear();
+        self.approvals.revoke_scope();
         self.detach_session(cx);
         cx.notify();
     }
@@ -424,8 +413,7 @@ impl AgentThread {
     }
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.
-        self.permissions.clear();
-        for call in std::mem::take(&mut self.tools) {
+        for call in self.approvals.cancel_pending() {
             self.finish(call, Err("Request cancelled.".into()));
         }
     }
@@ -473,7 +461,7 @@ impl AgentThread {
                 if let Some(attached) = &mut self.prompt_attachments {
                     attached.retain(|value| value != &attachment);
                 }
-                self.grants.clear();
+                self.approvals.revoke_scope();
                 self.cancel_pending();
                 self.revoke_executions(cx);
                 if !self.lifecycle.generating() {

@@ -256,7 +256,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
         .unwrap();
     cx.run_until_parked();
     assert!(receive.try_recv().unwrap().is_none());
-    cx.update(|cx| assert_eq!(thread.read(cx).permissions.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).permission_cards().len(), 1));
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.agent_permissions = ApprovalPolicy::Allow;
@@ -268,7 +268,7 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
         matches!(receive.try_recv().unwrap(), Some(acp::RequestPermissionOutcome::Selected(choice))
         if choice.option_id == acp::PermissionOptionId::from("yes"))
     );
-    cx.update(|cx| assert!(thread.read(cx).permissions.is_empty()));
+    cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
 }
 
 #[test]

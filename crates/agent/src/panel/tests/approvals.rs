@@ -13,27 +13,35 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
         let (tx, rx) = oneshot::channel();
         let registration = thread.read(cx).registration().as_ref().unwrap().id;
         let id = thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone());
-        thread.update(cx, |thread, cx| {
-            thread.handle_tool(
-                BridgeCall {
-                    arguments: None,
-                    display_token: None,
-                    registration_id: registration,
-                    call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
-                        terminal_id: id,
-                        text: "danger".into(),
-                        press_enter: true,
-                    }),
-                    respond: tx,
-                },
-                cx,
-            )
-        });
-        assert_eq!(thread.read(cx).tools.len(), 1);
-        thread.update(cx, |thread, _| thread.composer.attachments.clear());
-        thread.update(cx, |thread, cx| thread.approve_tool(0, true, true, cx));
+        f.calls
+            .try_send(BridgeCall {
+                arguments: None,
+                display_token: None,
+                registration_id: registration,
+                call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
+                    terminal_id: id,
+                    text: "danger".into(),
+                    press_enter: true,
+                }),
+                respond: tx,
+            })
+            .unwrap();
         (rx, thread.read(cx).session().clone().unwrap())
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let thread = f.panel.read(cx).current().unwrap();
+        let token = thread.read(cx).tool_cards()[0].token();
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Terminal(f.terminal), cx)
+        });
+        // Dispatch the action captured by the obsolete card, after detachment cancelled it.
+        thread.update(cx, |thread, cx| thread.approve_tool(token, true, true, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("agent-approvals").is_none());
+    })
+    .unwrap();
     assert!(f.access.sent.borrow().is_empty());
     assert!(futures::executor::block_on(rx).unwrap().is_err());
     cx.update(|cx| {
@@ -93,7 +101,8 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
     let (registration, id) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
-            thread.composer.attachments = vec![Attachment::Group("prod".into())];
+            thread.attach(Attachment::Terminal(f.terminal), cx);
+            thread.attach(Attachment::Group("prod".into()), cx);
             let terminals = thread.resolved(cx);
             assert_eq!(terminals.len(), 1);
             (
@@ -105,25 +114,20 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
     directory.0.borrow_mut()[0].group = Some("other".into());
     for registration_id in [registration, registration + 100] {
         let (tx, rx) = oneshot::channel();
-        cx.update(|cx| {
-            let thread = f.panel.read(cx).current().unwrap();
-            thread.update(cx, |thread, cx| {
-                thread.handle_tool(
-                    BridgeCall {
-                        arguments: None,
-                        display_token: None,
-                        registration_id,
-                        call: nocterm_ai::TerminalCall::ReadTerminal(nocterm_ai::ReadTerminal {
-                            terminal_id: id.clone(),
-                            lines: None,
-                            since: None,
-                        }),
-                        respond: tx,
-                    },
-                    cx,
-                )
-            });
-        });
+        f.calls
+            .try_send(BridgeCall {
+                arguments: None,
+                display_token: None,
+                registration_id,
+                call: nocterm_ai::TerminalCall::ReadTerminal(nocterm_ai::ReadTerminal {
+                    terminal_id: id.clone(),
+                    lines: None,
+                    since: None,
+                }),
+                respond: tx,
+            })
+            .unwrap();
+        cx.run_until_parked();
         assert!(futures::executor::block_on(rx).unwrap().is_err());
     }
     directory.0.borrow_mut()[0].group = Some("prod".into());
@@ -147,27 +151,25 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
         (0..5)
             .map(|_| {
                 let (respond, receive) = oneshot::channel();
-                thread.update(cx, |thread, cx| {
-                    thread.handle_tool(
-                        BridgeCall {
-                            arguments: None,
-                            display_token: None,
-                            registration_id,
-                            call: nocterm_ai::TerminalCall::RunCommand(nocterm_ai::RunCommand {
-                                terminal_id: terminal_id.clone(),
-                                command: "long_unbroken_command_".repeat(200),
-                                timeout_ms: None,
-                                idle_ms: None,
-                            }),
-                            respond,
-                        },
-                        cx,
-                    )
-                });
+                f.calls
+                    .try_send(BridgeCall {
+                        arguments: None,
+                        display_token: None,
+                        registration_id,
+                        call: nocterm_ai::TerminalCall::RunCommand(nocterm_ai::RunCommand {
+                            terminal_id: terminal_id.clone(),
+                            command: "long_unbroken_command_".repeat(200),
+                            timeout_ms: None,
+                            idle_ms: None,
+                        }),
+                        respond,
+                    })
+                    .unwrap();
                 receive
             })
             .collect::<Vec<_>>()
     });
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(400.)));
         window.render_frame(cx);
@@ -184,9 +186,27 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
             "first approval action must be visible"
         );
         window.click(("tool-Deny", 0usize), cx);
-        assert_eq!(f.panel.read(cx).current().unwrap().read(cx).tools.len(), 4);
+        assert_eq!(
+            f.panel
+                .read(cx)
+                .current()
+                .unwrap()
+                .read(cx)
+                .tool_cards()
+                .len(),
+            4
+        );
         window.click(("tool-Allow once", 0usize), cx);
-        assert_eq!(f.panel.read(cx).current().unwrap().read(cx).tools.len(), 3);
+        assert_eq!(
+            f.panel
+                .read(cx)
+                .current()
+                .unwrap()
+                .read(cx)
+                .tool_cards()
+                .len(),
+            3
+        );
     })
     .unwrap();
     cx.run_until_parked();
@@ -235,10 +255,11 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
         (0..2).map(|_| {
             let (send, receive) = nocterm_ai::PermissionResponder::channel();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Long permission title"},"options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"deny","name":"Reject","kind":"reject_once"}]})).unwrap();
-            thread.update(cx, |thread, cx| thread.permission(request, send, cx));
+            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
             receive
         }).collect::<Vec<_>>()
     });
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(400.)));
         window.render_frame(cx);
@@ -249,7 +270,7 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
                 .current()
                 .unwrap()
                 .read(cx)
-                .permissions
+                .permission_cards()
                 .len(),
             1
         );
@@ -280,7 +301,7 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
         let session = owner.read(cx).session().clone().unwrap();
         let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Review pending request"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
         f.panel.update(cx, |panel, cx| { panel.history = true; cx.notify(); });
-        owner.update(cx, |thread, cx| thread.permission(request, send, cx));
+        f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
     });
     cx.run_until_parked();
     cx.executor()
@@ -314,9 +335,11 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
             let owner = f.panel.read(cx).current().unwrap();
             let session = owner.read(cx).session().clone().unwrap();
             let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Hidden permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-            owner.update(cx, |thread, cx| thread.permission(request, send, cx));
+            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
             owner
         });
+        // Deliver the provider event before switching away from its draft chat.
+        cx.run_until_parked();
         // Another chat in front hides the request.
         new_chat(&f, cx);
         cx.run_until_parked();
@@ -335,7 +358,11 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
             match disposition {
                 "stop" => owner.update(cx, |thread, cx| thread.stop(cx)),
                 "resolve" => owner.update(cx, |thread, cx| {
-                    thread.choose_permission(0, Some("allow".into()), cx)
+                    thread.choose_permission_request(
+                        thread.permission_cards()[0].token(),
+                        Some("allow".into()),
+                        cx,
+                    )
                 }),
                 "delete" => {
                     f.panel.update(cx, |panel, cx| panel.set_history(true, cx));
@@ -368,4 +395,159 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
             disposition == "resolve"
         );
     }
+}
+
+/// Use the same bridge intake as the provider, with the thread's public tool context.
+fn input_request(
+    f: &Fixture,
+    owner: &Entity<crate::thread::AgentThread>,
+    text: &str,
+    cx: &mut TestAppContext,
+) -> oneshot::Receiver<Result<serde_json::Value, String>> {
+    let (registration_id, terminal_id) = cx.update(|cx| {
+        owner.update(cx, |thread, cx| {
+            (
+                thread.registration().as_ref().unwrap().id,
+                thread.resolved(cx)[0].0.clone(),
+            )
+        })
+    });
+    let (respond, receive) = oneshot::channel();
+    f.calls
+        .try_send(BridgeCall {
+            arguments: None,
+            display_token: None,
+            registration_id,
+            call: nocterm_ai::TerminalCall::SendInput(nocterm_ai::SendInput {
+                terminal_id,
+                text: text.into(),
+                press_enter: false,
+            }),
+            respond,
+        })
+        .unwrap();
+    cx.run_until_parked();
+    receive
+}
+fn click_tool(f: &Fixture, label: &str, cx: &mut TestAppContext) {
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(
+            (
+                gpui_kit::SharedString::from(format!("tool-{label}")),
+                0usize,
+            ),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn obsolete_tool_card_cannot_approve_the_next_queued_request(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut first = input_request(&f, &owner, "first", cx);
+    let mut second = input_request(&f, &owner, "second", cx);
+    let old_token = cx.update(|cx| owner.read(cx).tool_cards()[0].token());
+    click_tool(&f, "Allow once", cx);
+    assert!(first.try_recv().unwrap().unwrap().is_ok());
+    cx.update(|cx| {
+        owner.update(cx, |thread, cx| {
+            thread.approve_tool(old_token, true, true, cx)
+        })
+    });
+    assert!(second.try_recv().unwrap().is_none());
+    assert_eq!(f.access.sent.borrow().as_slice(), ["first"]);
+    click_tool(&f, "Deny", cx);
+    assert!(
+        second
+            .try_recv()
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .contains("denied")
+    );
+}
+
+#[gpui_kit::test]
+fn obsolete_tool_card_stays_with_its_chat_after_switching_chats(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let original = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut first = input_request(&f, &original, "original", cx);
+    let old_token = cx.update(|cx| original.read(cx).tool_cards()[0].token());
+    new_chat(&f, cx);
+    let current = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut second = input_request(&f, &current, "current", cx);
+    cx.update(|cx| original.update(cx, |thread, cx| thread.stop(cx)));
+    assert!(first.try_recv().unwrap().unwrap().is_err());
+    cx.update(|cx| {
+        original.update(cx, |thread, cx| {
+            thread.approve_tool(old_token, true, true, cx)
+        })
+    });
+    assert!(second.try_recv().unwrap().is_none());
+    assert!(f.access.sent.borrow().is_empty());
+    click_tool(&f, "Allow once", cx);
+    assert!(second.try_recv().unwrap().unwrap().is_ok());
+    assert_eq!(f.access.sent.borrow().as_slice(), ["current"]);
+}
+
+#[gpui_kit::test]
+fn terminal_grant_never_auto_approves_unsafe_input_and_expires_with_attachment_scope(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut approved = input_request(&f, &owner, "grant", cx);
+    click_tool(&f, "Allow input at an empty prompt", cx);
+    assert!(approved.try_recv().unwrap().unwrap().is_ok());
+    let mut automatic = input_request(&f, &owner, "automatic", cx);
+    assert!(automatic.try_recv().unwrap().unwrap().is_ok());
+    f.access.at_prompt.set(false);
+    let mut unsafe_input = input_request(&f, &owner, "unsafe", cx);
+    assert!(unsafe_input.try_recv().unwrap().is_none());
+    click_tool(&f, "Deny", cx);
+    assert!(unsafe_input.try_recv().unwrap().unwrap().is_err());
+    f.access.at_prompt.set(true);
+    cx.update(|cx| {
+        owner.update(cx, |thread, cx| {
+            thread.attach(Attachment::Terminal(f.terminal), cx);
+            thread.attach(Attachment::Terminal(f.terminal), cx);
+        })
+    });
+    let mut reattached = input_request(&f, &owner, "reattached", cx);
+    assert!(reattached.try_recv().unwrap().is_none());
+    click_tool(&f, "Allow once", cx);
+    assert!(reattached.try_recv().unwrap().unwrap().is_ok());
+    assert_eq!(
+        f.access.sent.borrow().as_slice(),
+        ["grant", "automatic", "reattached"]
+    );
+}
+
+#[gpui_kit::test]
+fn terminal_grant_expires_when_the_provider_session_is_released(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut first = input_request(&f, &owner, "before release", cx);
+    click_tool(&f, "Allow input at an empty prompt", cx);
+    assert!(first.try_recv().unwrap().unwrap().is_ok());
+    cx.update(|cx| {
+        owner.update(cx, |thread, cx| {
+            thread.release_resources(cx);
+            thread.warm(cx);
+        })
+    });
+    cx.run_until_parked();
+    let mut after = input_request(&f, &owner, "after release", cx);
+    assert!(after.try_recv().unwrap().is_none());
+    click_tool(&f, "Deny", cx);
+    assert!(after.try_recv().unwrap().unwrap().is_err());
+    assert_eq!(f.access.sent.borrow().as_slice(), ["before release"]);
 }

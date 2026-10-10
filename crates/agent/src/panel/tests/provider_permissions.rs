@@ -66,12 +66,12 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
     selected_once(&mut receive);
     let mut tool_response = cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            assert!(thread.permissions.is_empty());
-            assert_eq!(thread.approval_generation, 0);
+            assert!(thread.permission_cards().is_empty());
+            assert_eq!(thread.approval_notice_generation(), 0);
             let (respond, receive) = oneshot::channel();
             let terminal_id = thread.resolved(cx)[0].0.clone();
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: thread.registration().as_ref().unwrap().id,
@@ -81,16 +81,18 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
                         press_enter: true,
                     }),
                     respond,
-                },
-                cx,
-            );
-            assert_eq!(
-                thread.tools.len(),
-                1,
-                "terminal_write Ask remains independent"
-            );
+                })
+                .unwrap();
             receive
         })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            thread.read(cx).tool_cards().len(),
+            1,
+            "terminal_write Ask remains independent"
+        );
     });
     assert!(tool_response.try_recv().unwrap().is_none());
     assert!(f.access.sent.borrow().is_empty());
@@ -120,9 +122,9 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
     selected_once(&mut second_receive);
     cx.update(|cx| {
         for thread in [&first, &second] {
-            assert!(thread.read(cx).permissions.is_empty());
+            assert!(thread.read(cx).permission_cards().is_empty());
             assert_eq!(
-                thread.read(cx).approval_generation,
+                thread.read(cx).approval_notice_generation(),
                 1,
                 "draining does not post a new approval notice"
             );
@@ -131,7 +133,7 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
     set_policy(cx, ApprovalPolicy::Ask);
     let mut future = submit(&f, cx, sessions[1].clone(), options());
     assert!(future.try_recv().unwrap().is_none());
-    cx.update(|cx| assert_eq!(second.read(cx).permissions.len(), 1));
+    cx.update(|cx| assert_eq!(second.read(cx).permission_cards().len(), 1));
 }
 
 #[gpui_kit::test]
@@ -185,7 +187,7 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
             acp::PermissionOptionKind::AllowOnce,
         )],
     );
-    let old_generation = cx.update(|cx| thread.read(cx).permissions[0].generation);
+    let old_generation = cx.update(|cx| thread.read(cx).permission_cards()[0].token());
     let mut always = submit(
         &f,
         cx,
@@ -208,8 +210,8 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
     });
     assert!(always.try_recv().unwrap().is_none());
     cx.update(|cx| {
-        assert_eq!(thread.read(cx).permissions.len(), 1);
-        let current_generation = thread.read(cx).permissions[0].generation;
+        assert_eq!(thread.read(cx).permission_cards().len(), 1);
+        let current_generation = thread.read(cx).permission_cards()[0].token();
         thread.update(cx, |thread, cx| {
             thread.choose_permission_request(current_generation, None, cx)
         });
@@ -231,7 +233,11 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let mut invalid = submit(&f, cx, session.clone(), options());
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.choose_permission(0, Some("foreign-id".into()), cx)
+            thread.choose_permission_request(
+                thread.permission_cards()[0].token(),
+                Some("foreign-id".into()),
+                cx,
+            )
         })
     });
     assert_eq!(
@@ -239,11 +245,8 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
         Some(acp::RequestPermissionOutcome::Cancelled)
     );
     let mut obsolete = submit(&f, cx, session.clone(), options());
-    cx.update(|cx| {
-        thread.update(cx, |thread, _| {
-            thread.lease.as_mut().unwrap().session = Some("replacement-session".into())
-        })
-    });
+    cx.update(|cx| thread.update(cx, |thread, cx| thread.detach_session(cx)));
+    cx.run_until_parked();
     set_policy(cx, ApprovalPolicy::Allow);
     assert_eq!(
         obsolete.try_recv().unwrap(),
@@ -252,16 +255,6 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let mut foreign = submit(&f, cx, session.clone(), options());
     assert_eq!(
         foreign.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
-    );
-    let (respond, mut direct_foreign) = nocterm_ai::PermissionResponder::channel();
-    cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
-            thread.permission(request(session, options()), respond, cx)
-        })
-    });
-    assert_eq!(
-        direct_foreign.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Cancelled)
     );
 }

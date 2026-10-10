@@ -486,7 +486,9 @@ fn releasing_acp_while_generating_does_not_interrupt_the_live_shell(cx: &mut Tes
         })
         .unwrap();
     cx.run_until_parked();
-    thread.update(cx, |thread, cx| thread.approve_tool(0, true, false, cx));
+    thread.update(cx, |thread, cx| {
+        thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
+    });
     cx.run_until_parked();
     let command_owned = f.access.lease.borrow().as_ref().unwrap().clone();
     assert!(command_owned.load(Ordering::Acquire));
@@ -512,8 +514,8 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         thread.send("work".into(), cx);
         let terminal_id = thread.resolved(cx)[0].0.clone();
         let (respond, _response) = oneshot::channel();
-        thread.handle_tool(
-            BridgeCall {
+        f.calls
+            .try_send(BridgeCall {
                 arguments: None,
                 display_token: None,
                 registration_id: thread.registration().as_ref().unwrap().id,
@@ -524,13 +526,15 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
                     idle_ms: None,
                 }),
                 respond,
-            },
-            cx,
-        );
+            })
+            .unwrap();
+    });
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
         assert!(thread.lifecycle.generating());
         // The default write policy asks first; permit this one command.
-        if !thread.tools.is_empty() {
-            thread.approve_tool(0, true, false, cx);
+        if !thread.tool_cards().is_empty() {
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
         }
         assert!(
             f.access

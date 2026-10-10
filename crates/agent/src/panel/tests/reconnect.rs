@@ -10,8 +10,8 @@ fn read(f: &Fixture, cx: &mut TestAppContext) -> Result<serde_json::Value, Strin
         thread.update(cx, |thread, cx| {
             let registration_id = thread.registration().as_ref().unwrap().id;
             let terminal_id = thread.resolved(cx)[0].0.clone();
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id,
@@ -21,14 +21,19 @@ fn read(f: &Fixture, cx: &mut TestAppContext) -> Result<serde_json::Value, Strin
                         since: None,
                     }),
                     respond,
-                },
-                cx,
-            );
-            if !thread.tools.is_empty() {
-                thread.approve_tool(0, true, false, cx);
-            }
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let thread = f.panel.read(cx).current().unwrap();
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow once", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     response.try_recv().unwrap().expect("answered")

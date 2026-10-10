@@ -215,3 +215,18 @@ isolation setting restarts running agents.
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
 from the conversation and the session ([ADR 0009](../adr/0009-thread-composer.md)).
+
+Provider permissions and terminal bridge approvals belong to a chat's private
+`ApprovalInbox`. Its provider queue owns each responder until one valid choice
+or cancellation; automatic provider policy selects only an unambiguous `AllowOnce`
+option and never grants terminal authority. Provider and bridge cards share a
+monotonic token sequence, preserved when queues drain. Panel cards carry immutable
+projections and dispatch to the original weak chat owner and token, so stale actions
+cannot approve a different queue entry or a different chat.
+
+The coordinator supplies fresh session and registration gates for each transition,
+records bridge activity before its response or execution, and retains terminal
+resolution, executor identity and live-command lease checks. Terminal grants are
+cleared on attachment removal and session release; unsafe live input always needs
+an explicit choice. Session release cancels queued approvals while retaining the
+conversation and document-owned execution resources.

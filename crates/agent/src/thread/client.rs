@@ -1,7 +1,12 @@
 //! A thread is a client of the runtime: it applies the runtime's events to itself.
-use super::AgentThread;
+use super::{
+    AgentThread, PermissionCard, ToolApprovalCard, approval_inbox::ApprovalToken,
+    permissions::PermissionGate,
+};
 use crate::runtime::{Client, ClientState, SessionClient, SessionEvent};
 use gpui_kit::{App, Context, Entity, EntityId, WeakEntity};
+use nocterm_ai::{AiSettings, PermissionResponder, acp};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::{rc::Rc, sync::Arc};
 
 /// `thread` as the runtime sees it.
@@ -55,6 +60,59 @@ impl SessionClient for ThreadClient {
 }
 
 impl AgentThread {
+    pub(crate) fn has_pending_approvals(&self) -> bool {
+        self.approvals.pending()
+    }
+    pub(crate) fn approval_notice_generation(&self) -> u64 {
+        self.approvals.generation()
+    }
+    pub(crate) fn permission_cards(&self) -> Vec<PermissionCard> {
+        self.approvals.permission_cards()
+    }
+    pub(crate) fn tool_cards(&self) -> Vec<ToolApprovalCard> {
+        self.approvals.tool_cards()
+    }
+    fn permission_gate(&self, cx: &App) -> PermissionGate {
+        PermissionGate::new(
+            cx.ai_enabled(),
+            self.lifecycle.accepts_updates(),
+            self.lifecycle.stopped(),
+            self.session().clone(),
+        )
+    }
+    pub(crate) fn permission(
+        &mut self,
+        request: acp::RequestPermissionRequest,
+        respond: PermissionResponder,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        let policy = cx.setting::<AiSettings>().approval.agent_permissions;
+        if self
+            .approvals
+            .receive_provider(request, respond, &gate, policy)
+        {
+            cx.notify();
+        }
+    }
+    pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
+        let gate = self.permission_gate(cx);
+        let policy = cx.setting::<AiSettings>().approval.agent_permissions;
+        if self.approvals.apply_provider_policy(&gate, policy) {
+            cx.notify();
+        }
+    }
+    pub(crate) fn choose_permission_request(
+        &mut self,
+        token: ApprovalToken,
+        choice: Option<acp::PermissionOptionId>,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        if self.approvals.choose_provider(token, choice, &gate) {
+            cx.notify();
+        }
+    }
     /// Whether the chat still holds connection `key`.
     fn holds(&self, key: u64) -> bool {
         self.connection_key() == Some(key)

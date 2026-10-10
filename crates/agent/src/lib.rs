@@ -1,4 +1,14 @@
-//! ACP chat UI and lifecycle, injected through domain contracts.
+//! Agent chat presentation and session coordination through injected contracts.
+//!
+//! Owns: panel views, Composer, AgentThread coordination and the session-scoped
+//! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
+//! Does not own: ACP transport, runtime connection admission or filesystem storage adapters.
+//! Ports used: AgentConnector, ToolBridge, TerminalAccess and ConnectionDirectory.
+//! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
+//! Settings section: reads ai; its schema belongs to nocterm-ai.
+//! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
+//! Invariants: approval cards retain their original chat and stable token; every
+//! choice revalidates current session, registration and attachment authority.
 mod panel;
 use nocterm_agent_runtime as runtime;
 mod thread;

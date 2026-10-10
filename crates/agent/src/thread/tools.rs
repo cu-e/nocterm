@@ -14,7 +14,10 @@ use nocterm_ai::{BridgeCall, TerminalCall};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
 
-use super::{AgentThread, SignInWait};
+use super::{
+    AgentThread, SignInWait,
+    approval_inbox::{ApprovalToken, ToolDecision, ToolGate, ToolRejection},
+};
 
 /// How long an agent waits for a background session to connect.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -35,17 +38,13 @@ impl AgentThread {
             self.finish(call, Err(error));
             return;
         }
-        if self
-            .grants
-            .requires_approval(&call.call, &cx.setting::<nocterm_ai::AiSettings>().approval)
-            || self.unsafe_live_input(&call.call, cx)
-        {
-            self.approval_generation = self.approval_generation.wrapping_add(1);
-            self.tools.push(call);
-            cx.notify();
-            return;
-        }
-        self.execute_tool(call, cx);
+        let gate = self.tool_gate(&call.call, cx);
+        let decision = self.approvals.receive_tool(
+            call,
+            &gate,
+            &cx.setting::<nocterm_ai::AiSettings>().approval,
+        );
+        self.apply_tool_decision(decision, cx);
     }
 
     pub(crate) fn unsafe_live_input(&mut self, call: &TerminalCall, cx: &App) -> bool {
@@ -59,23 +58,8 @@ impl AgentThread {
             .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
     }
 
-    pub(crate) fn approve_tool(
-        &mut self,
-        index: usize,
-        allow: bool,
-        grant: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if index >= self.tools.len() {
-            return;
-        }
-        let call = self.tools.remove(index);
-        if !allow {
-            self.finish(call, Err("User denied this request.".into()));
-            cx.notify();
-            return;
-        }
-        let attached = match (call.call.terminal_id(), call.call.server_id()) {
+    fn tool_gate(&mut self, call: &TerminalCall, cx: &App) -> ToolGate {
+        let attached = match (call.terminal_id(), call.server_id()) {
             (Some(id), _) => self
                 .resolved(cx)
                 .iter()
@@ -86,21 +70,46 @@ impl AgentThread {
                 .any(|(server, _)| server.server_id == id),
             (None, None) => true,
         };
-        if !cx.ai_enabled() || !self.lifecycle.accepts_updates() || !attached {
-            self.finish(
-                call,
-                Err(unreachable("Terminal was detached or chat is unavailable.")),
-            );
-            cx.notify();
+        let unsafe_input = self.unsafe_live_input(call, cx);
+        ToolGate::new(
+            cx.ai_enabled() && self.lifecycle.accepts_updates(),
+            self.registration().as_ref().map(|value| value.id),
+            attached,
+            unsafe_input,
+        )
+    }
+
+    pub(crate) fn approve_tool(
+        &mut self,
+        token: ApprovalToken,
+        allow: bool,
+        grant: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(call) = self.approvals.tool(token).cloned() else {
             return;
+        };
+        let gate = self.tool_gate(&call, cx);
+        let decision = self.approvals.choose_tool(token, allow, grant, &gate);
+        self.apply_tool_decision(decision, cx);
+    }
+
+    fn apply_tool_decision(&mut self, decision: ToolDecision, cx: &mut Context<Self>) {
+        match decision {
+            ToolDecision::Respond(call, reason) => {
+                let error = match reason {
+                    ToolRejection::Unavailable => "Chat is unavailable.".into(),
+                    ToolRejection::Denied => "User denied this request.".into(),
+                    ToolRejection::Detached => {
+                        unreachable("Terminal was detached or chat is unavailable.")
+                    }
+                };
+                self.finish(call, Err(error));
+            }
+            ToolDecision::Execute(call) => self.execute_tool(call, cx),
+            ToolDecision::Queue => {}
+            ToolDecision::Unchanged => return,
         }
-        if grant
-            && !self.unsafe_live_input(&call.call, cx)
-            && let Some(id) = call.call.target()
-        {
-            self.grants.grant(id, call.call.capability());
-        }
-        self.execute_tool(call, cx);
         cx.notify();
     }
 
