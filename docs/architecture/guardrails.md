@@ -10,6 +10,16 @@ existing exceptions, not a budget to spend elsewhere. A new exception or growth
 fails. A reduction also fails until its entry is lowered or removed. No command
 regenerates the inventory.
 
+Every first-party workspace package must inherit `[lints] workspace = true` in
+its actual Cargo manifest. The check uses Cargo's complete no-dependencies
+workspace membership, including the root package, binaries and proc macros;
+missing or inconsistent package IDs fail closed. Manifest TOML is parsed
+semantically, so comments and lookalike metadata do not establish inheritance.
+Root, `crates/` and `xtask/` packages are first-party; `vendor/` retains upstream
+lint ownership. Unsupported or outside workspace member locations fail rather
+than escaping the policy. This protects the workspace lint rules in addition to
+the source expectation inventory.
+
 ## What is measured
 
 | Metric | Identity and rule |
