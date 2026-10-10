@@ -31,9 +31,18 @@ scripts/setup.sh   # enables the commit-msg hook
   `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
 - Keep branches short-lived and PRs small — one logical change each.
 - Changes integrated into `dev` reach `master` through a release-ready PR from
-  `dev`. PRs into `master` are **squash-merged**: the title becomes the commit on
-  `master`, so it must be a valid commit message. Integration PRs into `dev` may
-  use merge commits; their titles and non-merge commits still follow Conventional Commits.
+  `dev`. Ordinary PRs into `master` are **squash-merged**: the title becomes the
+  commit on `master`, so it must be a valid commit message. Ordinary integration
+  PRs into `dev` may use merge commits. If a PR contains both `vendor/` and
+  `crates/` or `src/` changes, keep them in separate commits and **rebase-merge**
+  the PR to preserve that separation. This also applies when promoting such
+  history from `dev` to `master`: neither squash nor a merge commit may combine
+  the changes. Correlated commits may need each other to pass checks; the final
+  reviewed PR head must pass all required checks. Titles and non-merge commits
+  follow Conventional Commits. CI checks the actual before/head history on pushes
+  to `dev` and `master`, including commits created by GitHub; this detects invalid
+  landings after they occur. Require `CI passed` in branch protection and choose
+  the prescribed merge method before landing.
 - No force-pushes to `master`, no merge commits on `master`.
 - Review against the recorded PR target, using its merge base with the feature
   branch; reviewing integration work against `master` includes unrelated changes.
@@ -91,9 +100,12 @@ Functions that were already over carry `#[expect(clippy::too_many_lines, reason 
 once one is split, the unfulfilled expectation fails clippy, so remove the attribute.
 `#[allow]` for these lints is rejected by `cargo xtask architecture`.
 Do not add new complexity expectations; extract smaller functions instead.
-Current architecture checks reject `allow` and expectations without a reason,
-but do not yet measure growth in the number of expectations. Review must enforce
-the no-growth rule until a ratchet is implemented.
+Architecture checks reject overrides and conditional bypasses for those lints.
+Existing expectations require `reason = "predates the limit"`, and their count
+per package may only decrease. The exact inventory in `xtask/baseline.toml` also
+constrains large structs, implementation spread, public state, globals, shutdown
+hooks, string errors and domain I/O. Lower or remove entries when code improves;
+never regenerate or raise the inventory. See [architecture guardrails](docs/architecture/guardrails.md).
 
 ## Pull requests
 

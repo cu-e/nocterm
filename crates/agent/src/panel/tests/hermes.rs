@@ -38,7 +38,6 @@ fn row(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) -> a
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "one conversation, start to finish")]
 fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestAppContext) {
     let f = fixture(cx);
     f.bridge.next.store(3, Ordering::SeqCst);
@@ -57,26 +56,37 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
     let terminal_id =
         cx.update(|cx| thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone()));
 
+    assert_terminal_listing(&f, &thread, &session, &terminal_id, cx);
+    assert_completed_command(&f, &thread, &session, terminal_id, &program, cx);
+}
+
+fn assert_terminal_listing(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    session: &acp::SessionId,
+    terminal_id: &str,
+    cx: &mut TestAppContext,
+) {
     // A call without arguments arrives without input.
     update(
-        &f,
-        &session,
+        f,
+        session,
         acp::SessionUpdate::ToolCall(acp::ToolCall::new(
             "tc-list",
             "mcp_nocterm_3_list_terminals",
         )),
         cx,
     );
-    let listed = bridge(&f, TerminalCall::ListTerminals, cx);
+    let listed = bridge(f, TerminalCall::ListTerminals, cx);
     let result = json!({"result": listed.to_string()}).to_string();
     update(
-        &f,
-        &session,
+        f,
+        session,
         completed("tc-list", fenced("mcp_nocterm_3_list_terminals", &result)),
         cx,
     );
     cx.update(|cx| {
-        let call = row(&thread, 0, cx);
+        let call = row(thread, 0, cx);
         assert!(tool_display::ToolDisplay::from_call(&call).is_some());
         assert_eq!(
             tool_display::header(&call),
@@ -89,9 +99,18 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
             "content and rawOutput are one result"
         );
         assert_eq!(output.sections[0].label, "Context");
-        assert!(output.sections[0].text.contains(&terminal_id));
+        assert!(output.sections[0].text.contains(terminal_id));
     });
+}
 
+fn assert_completed_command(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    session: &acp::SessionId,
+    terminal_id: String,
+    program: &Program,
+    cx: &mut TestAppContext,
+) {
     let script = "qm config 9000; echo '--- PVE STORAGE ---'; pvesm status";
     let request = ExecCommand {
         terminal_id: terminal_id.clone(),
@@ -102,15 +121,15 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
         yield_ms: Some(0),
     };
     update(
-        &f,
-        &session,
+        f,
+        session,
         acp::SessionUpdate::ToolCall(
             acp::ToolCall::new("tc-exec", "mcp_nocterm_3_exec_command")
                 .raw_input(serde_json::to_value(&request).unwrap()),
         ),
         cx,
     );
-    let started = bridge(&f, TerminalCall::ExecCommand(request), cx);
+    let started = bridge(f, TerminalCall::ExecCommand(request), cx);
     let sink = program.sink.lock().unwrap().take().unwrap();
     assert!(futures::executor::block_on(
         sink.send(b"boot: order=scsi0\n".to_vec())
@@ -122,7 +141,7 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
     drop(sink);
     cx.run_until_parked();
     let finished = bridge(
-        &f,
+        f,
         TerminalCall::ReadCommand(ReadCommand {
             terminal_id,
             command_id: started["command_id"].as_str().unwrap().into(),
@@ -132,13 +151,22 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
     );
     let result = json!({"result": finished.to_string()}).to_string();
     update(
-        &f,
-        &session,
+        f,
+        session,
         completed("tc-exec", fenced("mcp_nocterm_3_exec_command", &result)),
         cx,
     );
+    assert_command_row(thread, script, &started, cx);
+}
+
+fn assert_command_row(
+    thread: &Entity<crate::thread::AgentThread>,
+    script: &str,
+    started: &Value,
+    cx: &mut TestAppContext,
+) {
     cx.update(|cx| {
-        let call = row(&thread, 1, cx);
+        let call = row(thread, 1, cx);
         assert_eq!(
             tool_display::header(&call),
             "This computer · Execute program · Completed",

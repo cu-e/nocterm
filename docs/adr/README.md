@@ -17,3 +17,4 @@ acceptance; a later record supersedes an earlier one.
 | [0009](0009-thread-composer.md) | A chat's composer state is kept apart from its conversation |
 | [0010](0010-session-lifecycle.md) | A chat's session is a pure state machine, connected when shown |
 | [0011](0011-chat-configuration.md) | A chat owns its configuration, and every shown chat connects |
+| [0012](0012-architecture-debt-ratchets.md) | Architectural debt is an exact inventory that may only shrink |

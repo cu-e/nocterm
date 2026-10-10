@@ -53,10 +53,12 @@ identify the existing owner and how its mechanism will be reused or extracted.
 
 ## Design rules
 
-These rules block review. `cargo xtask architecture` currently checks layers,
-file size and complexity-attribute policy; field counts, impl spread, globals,
-I/O, quit handlers and string errors still require manual review. When
-`xtask/baseline.toml` is introduced, its entries may only decrease.
+These rules block review. `cargo xtask architecture` checks layers, file size,
+complexity attributes and the exact debt inventory: field counts, public state,
+impl spread, globals and panicking reads, domain I/O, quit handlers and string
+errors. See [architecture guardrails](docs/architecture/guardrails.md) and
+[ADR 0012](docs/adr/0012-architecture-debt-ratchets.md). Entries in
+`xtask/baseline.toml` may only decrease; update them when debt shrinks.
 
 1. Add state only within a type's single responsibility. Do not add a field when
    the resulting count exceeds 15 or create a type over that limit; extract an owner with

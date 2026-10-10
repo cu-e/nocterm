@@ -10,6 +10,8 @@ the UI layer: they own GPUI entities and background work but no views, so they
 depend on GPUI alone, never on the component library, UI or features. The
 [storage and security boundaries](ARCHITECTURE_SECURITY_AUDIT.md) records protections,
 regression evidence and residual constraints.
+The [architecture guardrails](architecture/guardrails.md) also measure existing
+debt inside crates and prohibit its growth through an exact source inventory.
 
 ## Layers
 

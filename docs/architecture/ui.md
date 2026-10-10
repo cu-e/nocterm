@@ -101,7 +101,7 @@ Tabs can be grouped. Groups are workspace state the dock knows nothing of:
 `TabGroups::gather` finds the member the user moved and brings the rest of its
 group beside it in their previous order, so dragging any member drags the
 group, and a tab dropped among a group is moved out of it. Each tab's group
-color reaches the tab bar through the vendored `Panel::tab_accent`. A program
+color reaches the tab bar through the vendored `gpui_kit::component::dock::Panel::tab_accent`. A program
 opened from a session on the same host joins that session's group; splitting a
 tab off takes it out of its group, and a group left with one tab ends.
 

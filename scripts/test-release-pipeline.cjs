@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const {spawnSync} = require('node:child_process');
 const {GenericToml} = require('release-please/build/src/updaters/generic-toml');
 const {Version} = require('release-please/build/src/version');
 const YAML = require('yaml');
@@ -59,13 +60,33 @@ for (const job of Object.values(pkg.jobs)) {
     }
   }
 }
-for (const job of Object.values(ci.jobs)) {
+for (const [name, job] of Object.entries(ci.jobs)) {
   for (const step of job.steps ?? []) {
     if (step.uses?.startsWith('actions/checkout@')) {
-      assert.equal(step.with.ref, '${{ inputs.ref || github.ref }}');
+      assert.equal(step.with.ref, name === 'integration-history' ? '${{ github.sha }}' : '${{ inputs.ref || github.ref }}');
     }
   }
 }
+assert.deepEqual(ci.on.push.branches, ['master', 'dev']);
+const history = ci.jobs['integration-history'];
+assert.equal(history.if, "github.event_name == 'push'");
+assert.equal(history.steps[0].with['fetch-depth'], 0);
+const actualHistory = history.steps.find(step => step.name === 'Check actual integrated commits');
+assert.equal(actualHistory.env.BASE, '${{ github.event.before }}');
+assert.equal(actualHistory.env.HEAD, '${{ github.sha }}');
+assert.match(actualHistory.run, /check-architecture-history\.py --base "\$BASE" --head "\$HEAD"/);
+assert.match(actualHistory.run, /git fetch --no-tags origin "\$BASE"/);
+const unknownHistoryBase = spawnSync('bash', ['-e', '-c', actualHistory.run], {
+  cwd: root,
+  env: {...process.env, BASE: '0000000000000000000000000000000000000000', HEAD: 'fixture-head'},
+  encoding: 'utf8',
+});
+assert.equal(unknownHistoryBase.status, 1, 'unknown push ancestry must fail before checking commits');
+assert.match(unknownHistoryBase.stdout, /::error::/);
+assert.equal(unknownHistoryBase.stderr, '', 'unknown ancestry must not run Git or Python');
+assert.ok(ci.jobs['ci-passed'].needs.includes('integration-history'));
+const prHistory = ci.jobs.conventions.steps.find(step => step.name === 'Check architectural baseline and vendor commit separation');
+assert.equal(prHistory.env.HEAD, '${{ inputs.ref || github.event.pull_request.head.sha }}');
 assert.deepEqual(release.jobs['release-validation'].needs,
   ['release-please', 'release-ci', 'release-package-validation']);
 assert.match(release.jobs['release-validation'].if, /^always\(\)/);

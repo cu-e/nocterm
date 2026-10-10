@@ -30,7 +30,8 @@ workspace = true
 
 [dependencies.syn]
 version = "2"
-features = ["full", "parsing"]
+features = ["full", "parsing", "visit", "extra-traits"]
 
 [dependencies.proc-macro2]
 version = "1"
+features = ["span-locations"]
