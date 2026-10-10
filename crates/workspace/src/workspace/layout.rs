@@ -13,7 +13,7 @@ use gpui_kit::{
     component::{ResizablePanelEvent, ResizableState},
     rems,
 };
-use nocterm_ui::{ActiveDesign as _, LayoutMemory};
+use nocterm_ui::{ActiveDesign as _, LayoutHandle};
 
 use super::Workspace;
 
@@ -57,12 +57,83 @@ impl Arrangement {
 }
 
 /// Resize states, one per arrangement, created as arrangements come up.
-#[derive(Default)]
 pub(super) struct Body {
     states: HashMap<Arrangement, (Entity<ResizableState>, Subscription)>,
+    layout: LayoutHandle,
 }
 
 impl Body {
+    pub(super) fn arrangement(
+        &self,
+        sidebar: bool,
+        side_panel: bool,
+        cx: &gpui_kit::App,
+    ) -> Arrangement {
+        Arrangement {
+            sidebar,
+            side_panel,
+            swapped: self.swapped(cx),
+        }
+    }
+
+    pub(super) fn new(layout: LayoutHandle) -> Self {
+        Self {
+            states: HashMap::new(),
+            layout,
+        }
+    }
+
+    pub(super) fn swapped(&self, cx: &gpui_kit::App) -> bool {
+        self.layout.flag(SWAPPED, cx)
+    }
+
+    pub(super) fn swap(&self, cx: &mut gpui_kit::App) -> bool {
+        let swapped = !self.swapped(cx);
+        report_layout(self.layout.set_flag(SWAPPED, swapped, cx));
+        swapped
+    }
+
+    pub(super) fn widths(&self, window: &Window, cx: &gpui_kit::App) -> BodyWidths {
+        BodyWidths::new(&self.layout, window, cx)
+    }
+
+    pub(super) fn resized(
+        &self,
+        arrangement: Arrangement,
+        sizes: Vec<Pixels>,
+        cx: &mut gpui_kit::App,
+    ) {
+        for (column, size) in arrangement.columns().into_iter().zip(sizes) {
+            let result = match column {
+                Column::Sidebar => self.layout.set(SIDEBAR, size, cx),
+                Column::SidePanel => self.layout.set(RIGHT_PANEL, size, cx),
+                Column::Content => continue,
+            };
+            report_layout(result);
+        }
+    }
+
+    pub(super) fn widen_side_panel(
+        &mut self,
+        arrangement: Arrangement,
+        delta: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(index) = arrangement
+            .columns()
+            .iter()
+            .position(|column| *column == Column::SidePanel)
+        else {
+            return;
+        };
+        self.state(arrangement, cx).update(cx, |state, cx| {
+            if let Some(size) = state.sizes().get(index).copied() {
+                state.resize_panel(index, size + delta, window, cx);
+            }
+        });
+    }
+
     pub(super) fn state(
         &mut self,
         arrangement: Arrangement,
@@ -74,17 +145,8 @@ impl Body {
                 let state = cx.new(|_| ResizableState::default());
                 let subscription =
                     cx.subscribe(&state, move |this, state, _: &ResizablePanelEvent, cx| {
-                        if this.right_panel.maximized() {
-                            return;
-                        }
                         let sizes = state.read(cx).sizes().clone();
-                        for (column, size) in arrangement.columns().into_iter().zip(sizes) {
-                            match column {
-                                Column::Sidebar => LayoutMemory::set(SIDEBAR, size, cx),
-                                Column::SidePanel => LayoutMemory::set(RIGHT_PANEL, size, cx),
-                                Column::Content => {}
-                            }
-                        }
+                        this.body_resized(arrangement, sizes, cx);
                     });
                 (state, subscription)
             })
@@ -102,17 +164,19 @@ pub(super) struct BodyWidths {
 }
 
 impl BodyWidths {
-    pub(super) fn new(window: &Window, cx: &gpui_kit::App) -> Self {
+    pub(super) fn new(memory: &LayoutHandle, window: &Window, cx: &gpui_kit::App) -> Self {
         let layout = &cx.design().layout;
         let rem = window.rem_size();
         let sidebar_range = rems(layout.sidebar_min_width).to_pixels(rem)
             ..rems(layout.sidebar_max_width).to_pixels(rem);
         let right_panel_range = rems(layout.agent_panel_min_width).to_pixels(rem)
             ..rems(layout.agent_panel_max_width).to_pixels(rem);
-        let sidebar = LayoutMemory::get(SIDEBAR, cx)
+        let sidebar = memory
+            .get(SIDEBAR, cx)
             .unwrap_or_else(|| rems(layout.sidebar_width).to_pixels(rem))
             .clamp(sidebar_range.start, sidebar_range.end);
-        let right_panel = LayoutMemory::get(RIGHT_PANEL, cx)
+        let right_panel = memory
+            .get(RIGHT_PANEL, cx)
             .unwrap_or_else(|| rems(layout.agent_panel_width).to_pixels(rem))
             .clamp(right_panel_range.start, right_panel_range.end);
         Self {
@@ -124,59 +188,12 @@ impl BodyWidths {
     }
 }
 
-impl Workspace {
-    pub(super) fn arrangement(&self, cx: &gpui_kit::App) -> Arrangement {
-        Arrangement {
-            sidebar: self.sidebar_open,
-            side_panel: self.right_panel.open(),
-            swapped: Self::sides_swapped(cx),
-        }
-    }
-
-    /// Whether the sidebar is on the right and the side panel on the left.
-    pub fn sides_swapped(cx: &gpui_kit::App) -> bool {
-        LayoutMemory::flag(SWAPPED, cx)
-    }
-
-    /// Puts the sidebar and the side panel on each other's side.
-    pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
-        let swapped = !Self::sides_swapped(cx);
-        LayoutMemory::set_flag(SWAPPED, swapped, cx);
-        if let Some(panel) = &self.right_panel.handle {
-            panel.set_docked_left(swapped, cx);
-        }
-        cx.notify();
-    }
-
-    /// Widens (or, with a negative delta, narrows) the side panel, for a
-    /// panel that grows a column of its own.
-    pub(super) fn widen_right_panel(
-        &mut self,
-        delta: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.right_panel.maximized() || !self.right_panel.open() {
-            return;
-        }
-        let arrangement = self.arrangement(cx);
-        let Some(ix) = arrangement
-            .columns()
-            .iter()
-            .position(|column| *column == Column::SidePanel)
-        else {
-            return;
-        };
-        let body = self.body.state(arrangement, cx);
-        body.update(cx, |body, cx| {
-            if let Some(size) = body.sizes().get(ix).copied() {
-                body.resize_panel(ix, size + delta, window, cx);
-            }
-        });
-        cx.notify();
-    }
-}
-
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod tests;
+
+fn report_layout(result: Result<(), nocterm_store::StoreError>) {
+    if let Err(error) = result {
+        tracing::warn!(%error, "workspace layout change was not admitted");
+    }
+}

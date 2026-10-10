@@ -91,21 +91,10 @@ fn with(
 /// The items in each tab bar, left to right.
 fn bars(cx: &mut TestAppContext, workspace: &Entity<Workspace>) -> Vec<Vec<EntityId>> {
     workspace.read_with(cx, |workspace, cx| {
-        workspace
-            .tab_bars(cx)
+        crate::workspace::docking::TAB_PLACEMENTS
             .into_iter()
-            .map(|(_, panels)| {
-                panels
-                    .iter()
-                    .filter_map(|panel| {
-                        workspace
-                            .items
-                            .iter()
-                            .find(|open| super::panel(open) == *panel)
-                            .map(|open| open.handle.item_id())
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(|placement| workspace.tab_panes(placement, cx))
+            .map(|pane| pane.items().to_vec())
             .filter(|bar| !bar.is_empty())
             .collect()
     })
@@ -113,11 +102,11 @@ fn bars(cx: &mut TestAppContext, workspace: &Entity<Workspace>) -> Vec<Vec<Entit
 
 fn color(cx: &mut TestAppContext, workspace: &Entity<Workspace>, item: EntityId) -> Option<usize> {
     workspace.read_with(cx, |workspace, cx| {
-        let open = workspace
-            .items
+        workspace
+            .tabs(cx)
             .iter()
-            .find(|open| open.handle.item_id() == item)?;
-        open.dock_item.read(cx).group_color()
+            .find(|tab| tab.id() == item)?
+            .group_color()
     })
 }
 
@@ -184,7 +173,7 @@ fn a_tab_split_off_leaves_its_group_and_a_group_closes_together(cx: &mut TestApp
         ws.close_tab_group(b, window, cx)
     });
     assert_eq!(bars(cx, &workspace), [vec![d], vec![c]]);
-    workspace.read_with(cx, |ws, _| assert_eq!(ws.tab_groups.groups().count(), 0));
+    workspace.read_with(cx, |ws, _| assert_eq!(ws.tab_group_count(), 0));
 }
 
 #[gpui_kit::test]
@@ -225,7 +214,7 @@ fn a_program_joins_the_session_on_its_host_it_was_opened_from(cx: &mut TestAppCo
         ws.activate_item_by_id(parent, window, cx);
         ws.open_program(spec(HostKey::Remote(target.clone())), window, cx);
     });
-    let logs = workspace.read_with(cx, |ws, _| ws.items.last().unwrap().handle.item_id());
+    let logs = workspace.read_with(cx, |ws, cx| ws.tabs(cx).last().unwrap().id());
     assert_eq!(bars(cx, &workspace), [vec![parent, logs, other]]);
     workspace.read_with(cx, |ws, _| {
         assert_eq!(ws.tab_group_items(parent), [parent, logs]);
@@ -235,7 +224,7 @@ fn a_program_joins_the_session_on_its_host_it_was_opened_from(cx: &mut TestAppCo
         ws.activate_item_by_id(parent, window, cx);
         ws.open_program(spec(HostKey::Local), window, cx);
     });
-    let local = workspace.read_with(cx, |ws, _| ws.items.last().unwrap().handle.item_id());
+    let local = workspace.read_with(cx, |ws, cx| ws.tabs(cx).last().unwrap().id());
     assert_eq!(
         color(cx, &workspace, local),
         None,

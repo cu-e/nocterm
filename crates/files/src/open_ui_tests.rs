@@ -64,7 +64,9 @@ fn remote_fixture(
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let mut workspace = Workspace::new(window, cx);
+                    let deps =
+                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    let mut workspace = Workspace::new(deps, window, cx);
                     workspace
                         .set_session_opener(move |_, spec, _, _| record.borrow_mut().push(spec));
                     workspace

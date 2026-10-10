@@ -263,3 +263,68 @@ fn titlebar_close_window_retires_connected_session_and_releases_its_models(
         "closing the window must retire the connected session"
     );
 }
+
+#[gpui_kit::test]
+fn new_windows_and_surviving_windows_share_the_bootstrapped_layout(cx: &mut TestAppContext) {
+    let (first, workspace, _, _) = fixture(cx);
+    cx.update_window(first, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
+        assert!(workspace.read(cx).sides_swapped(cx));
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let second = cx.update(|cx| {
+        *cx.windows()
+            .iter()
+            .find(|window| **window != first)
+            .unwrap()
+    });
+    cx.update_window(second, |_, window, cx| {
+        let second_workspace = window_workspace(window, cx);
+        assert!(second_workspace.read(cx).sides_swapped(cx));
+        second_workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
+        assert!(!workspace.read(cx).sides_swapped(cx));
+    })
+    .unwrap();
+    cx.update_window(first, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::CloseWindow), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let first_workspace = workspace.downgrade();
+    drop(workspace);
+    cx.update(|_| {
+        assert!(
+            first_workspace.upgrade().is_none(),
+            "the closed window releases its shell and subscriptions"
+        )
+    });
+    cx.update_window(second, |_, window, cx| {
+        let workspace = window_workspace(window, cx);
+        workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
+        assert!(workspace.read(cx).sides_swapped(cx));
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let third = cx.update(|cx| {
+        *cx.windows()
+            .iter()
+            .find(|window| **window != second)
+            .unwrap()
+    });
+    cx.update_window(third, |_, window, cx| {
+        let workspace = window_workspace(window, cx);
+        assert!(workspace.read(cx).sides_swapped(cx));
+    })
+    .unwrap();
+}
+
+fn window_workspace(window: &gpui_kit::Window, cx: &gpui_kit::App) -> gpui_kit::Entity<Workspace> {
+    gpui_kit::base::Root::read(window, cx)
+        .view()
+        .clone()
+        .downcast::<Workspace>()
+        .unwrap()
+}

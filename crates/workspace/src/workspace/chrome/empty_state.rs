@@ -13,15 +13,20 @@ use gpui_kit::{
 };
 use nocterm_ui::IconName;
 
-use super::Workspace;
+use super::{Chrome, Workspace};
 use crate::{ConnectionSummary, NewTab};
+use std::rc::Rc;
 
 const RECENT_LIMIT: usize = 6;
 
-impl Workspace {
-    pub(super) fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let recent = self
-            .connection_directory()
+impl Chrome {
+    pub(super) fn render_empty_state(
+        &self,
+        directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
+        let recent = directory
+            .as_ref()
             .map(|directory| directory.recent_connections(cx))
             .unwrap_or_default();
         v_flex()
@@ -59,7 +64,13 @@ impl Workspace {
                                 .max_h(rems(12.))
                                 .overflow_y_scroll()
                                 .children(recent.into_iter().take(RECENT_LIMIT).map(
-                                    |connection| self.render_recent_connection(connection, cx),
+                                    |connection| {
+                                        self.render_recent_connection(
+                                            connection,
+                                            directory.clone(),
+                                            cx,
+                                        )
+                                    },
                                 )),
                         )
                     }),
@@ -69,10 +80,10 @@ impl Workspace {
     fn render_recent_connection(
         &self,
         connection: ConnectionSummary,
-        cx: &mut Context<Self>,
+        directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let theme = cx.theme();
-        let directory = self.connection_directory();
         let workspace = cx.entity().downgrade();
         let id = connection.id.clone();
         h_flex()

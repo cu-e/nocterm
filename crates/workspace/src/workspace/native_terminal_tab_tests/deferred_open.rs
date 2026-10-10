@@ -43,26 +43,14 @@ fn native_header_request_follows_moved_anchor_when_factory_delivers_later(cx: &m
     let requests = queue_factory(cx, &ws);
     click_plus(cx, window);
     assert_eq!(*requests.borrow(), [LocalTerminalTarget::Beside(anchor)]);
-    ws.read_with(cx, |ws, _| assert_eq!(ws.items.len(), 4));
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.tabs(cx).len(), 4));
 
-    with(cx, window, &ws, |ws, window, cx| {
-        let node = ws.item_location(central.entity_id(), cx).unwrap().1;
-        let panel = ws.panel_of(anchor).unwrap();
-        ws.dock.update(cx, |dock, cx| {
-            dock.move_panel(
-                panel,
-                InsertTarget::Tabs {
-                    node,
-                    ix: None,
-                    activate: true,
-                },
-                window,
-                cx,
-            );
-            dock.set_zoomed_in(node, window, cx);
-        });
-    });
-    let live = ws.read_with(cx, |ws, cx| ws.item_location(anchor, cx).unwrap());
+    cx.update_window(window, |_, window, cx| {
+        crate::workspace::tests::drag_tab(window, anchor, central.entity_id(), cx);
+    })
+    .unwrap();
+    zoom(cx, window, &ws, anchor);
+    let live = ws.read_with(cx, |ws, cx| ws.tab_location(anchor, cx).unwrap());
     assert_eq!(live.0, DockPlacement::Center);
     let request = requests.borrow_mut().pop().unwrap();
     let added = cx
@@ -76,9 +64,9 @@ fn native_header_request_follows_moved_anchor_when_factory_delivers_later(cx: &m
         .unwrap();
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
-        assert_eq!(ws.items.len(), 5);
-        assert_eq!(ws.item_location(added.entity_id(), cx), Some(live));
-        assert_eq!(ws.dock.read(cx).zoomed_group(), Some(live.1));
+        assert_eq!(ws.tabs(cx).len(), 5);
+        assert_eq!(ws.tab_location(added.entity_id(), cx), Some(live));
+        assert_eq!(ws.zoomed_pane(cx), Some(live.1));
         assert_eq!(ws.local_terminal_cwd(cx), Some("/delayed".into()));
         assert!(bar(ws, anchor, cx).contains(&added.entity_id()));
     });
@@ -113,10 +101,14 @@ fn native_header_request_rejects_closed_anchor_without_ghost_or_existing_item_cl
         .unwrap();
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
-        assert_eq!(ws.items.len(), 2);
-        assert!(ws.item_location(rejected.entity_id(), cx).is_none());
-        assert!(ws.local_entry(rejected.entity_id()).is_none());
-        assert!(ws.item_location(anchor, cx).is_none());
+        assert_eq!(ws.tabs(cx).len(), 2);
+        assert!(ws.tab_location(rejected.entity_id(), cx).is_none());
+        assert!(
+            ws.tabs(cx)
+                .iter()
+                .all(|tab| tab.id() != rejected.entity_id())
+        );
+        assert!(ws.tab_location(anchor, cx).is_none());
         assert_eq!(bar(ws, locals[0].entity_id(), cx).len(), 2);
     });
     assert_eq!(rejected.read_with(cx, |tab, _| tab.closed.get()), 1);

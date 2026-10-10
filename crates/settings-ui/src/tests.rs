@@ -277,7 +277,8 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
         init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
+                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let mut workspace = Workspace::new(deps, window, cx);
                 register_with_pages(&mut workspace, vec![descriptor.clone()]);
                 workspace
             })
@@ -348,7 +349,8 @@ fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
         init(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
+                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let mut workspace = Workspace::new(deps, window, cx);
                 register(&mut workspace);
                 workspace
             });

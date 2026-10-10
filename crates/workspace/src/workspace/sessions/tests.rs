@@ -59,7 +59,8 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
         cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
+                let deps = crate::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let mut workspace = Workspace::new(deps, window, cx);
                 workspace.set_session_opener(move |_, spec, _, _| record.borrow_mut().push(spec));
                 workspace
             })

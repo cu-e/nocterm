@@ -84,7 +84,7 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
             .detach();
 
         let workspace = cx.new(|cx| {
-            let mut workspace = Workspace::new(window, cx);
+            let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
             bootstrap::build_workspace(&mut workspace, booted, window, cx);
             workspace
         });

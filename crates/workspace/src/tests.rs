@@ -3,10 +3,7 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
     Window, WindowOptions,
-    component::{
-        Placement, WindowExt as _,
-        dock::{DockPlacement, PaneRef},
-    },
+    component::{Placement, WindowExt as _, dock::DockPlacement},
     div,
     prelude::*,
     px,
@@ -91,8 +88,9 @@ impl Item for Probe {
             .clone()
             .map(|target| crate::SessionContext::new(target, self.fs.clone(), self.connected))
     }
-    fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
+    fn on_close(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.closes.set(self.closes.get() + 1);
+        cx.emit(ItemEvent::Changed);
     }
 }
 impl LocalTerminal for Probe {
@@ -109,6 +107,12 @@ impl LocalTerminal for Probe {
     }
 }
 pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
+    let (window, workspace, _) = fixture_with_layout(cx);
+    (window, workspace)
+}
+pub(super) fn fixture_with_layout(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<Workspace>, nocterm_ui::LayoutHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -116,15 +120,19 @@ pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Works
             nocterm_ui::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
             cx,
         );
+        let layout = nocterm_ui::LayoutHandle::in_memory(cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| Workspace::new(window, cx))
+                cx.new(|cx| {
+                    let deps = crate::Deps::new(layout.clone());
+                    Workspace::new(deps, window, cx)
+                })
             })
             .unwrap();
         window
             .update(cx, |_, window, _| window.activate_window())
             .unwrap();
-        (window, workspace)
+        (window, workspace, layout)
     })
 }
 fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
@@ -141,9 +149,41 @@ fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
 }
 
 fn groups(workspace: &Workspace, cx: &App) -> usize {
-    let dock = workspace.dock.read(cx);
-    let tree = dock.layout(DockPlacement::Center).unwrap();
-    tree.node_ids().iter().filter(|id| matches!(tree.find_node(**id).unwrap().kind(), PaneRef::Tabs { panels, .. } if !panels.is_empty())).count()
+    workspace
+        .tab_panes(DockPlacement::Center, cx)
+        .iter()
+        .filter(|pane| !pane.items().is_empty())
+        .count()
+}
+
+/// Exercise native pointer dispatch with the shell's immutable size observation.
+pub(super) fn resize_bottom(
+    window: &mut Window,
+    workspace: &Entity<Workspace>,
+    height: gpui_kit::Pixels,
+    cx: &mut App,
+) {
+    window.render_frame(cx);
+    let current = workspace
+        .read(cx)
+        .dock_region_size(DockPlacement::Bottom, cx)
+        .unwrap();
+    let area = window.find("dock-area").bounds();
+    let from = gpui_kit::point(area.center().x, area.bottom() - current + px(1.));
+    let to = gpui_kit::point(from.x, area.bottom() - height);
+    window.drag(from, to, cx);
+    window.render_frame(cx);
+}
+
+pub(super) fn drag_tab(
+    window: &mut Window,
+    from: gpui_kit::EntityId,
+    to: gpui_kit::EntityId,
+    cx: &mut App,
+) {
+    window.render_frame(cx);
+    window.drag_to(("tab-title", from.as_u64()), ("tab-title", to.as_u64()), cx);
+    window.render_frame(cx);
 }
 
 #[gpui_kit::test]
@@ -197,22 +237,22 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
                 Some(PathBuf::from("/tmp"))
             );
             workspace.toggle_local_terminal(window, cx);
-            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.dock_region_present(DockPlacement::Bottom, cx));
             assert!(!workspace.local_terminal_is_visible(cx));
             assert_eq!(closes.get(), 0);
             assert_eq!(
-                workspace.selected_local(cx).unwrap().handle.item_id(),
+                workspace.selected_local_terminal(cx).unwrap(),
                 local.entity_id()
             );
             workspace.toggle_local_terminal(window, cx);
             assert!(workspace.local_terminal_is_visible(cx));
             assert_eq!(
-                workspace.selected_local(cx).unwrap().handle.item_id(),
+                workspace.selected_local_terminal(cx).unwrap(),
                 local.entity_id()
             );
             assert_eq!(closes.get(), 0);
             workspace.close_local_terminal(window, cx);
-            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(!workspace.dock_region_present(DockPlacement::Bottom, cx));
             assert_eq!(closes.get(), 1);
             assert_eq!(
                 workspace.active_item().unwrap().item_id(),
@@ -234,25 +274,25 @@ fn hidden_local_terminal_keeps_height_and_closes_exactly_once(cx: &mut TestAppCo
         let local = probe(cx, closes.clone());
         workspace.update(cx, |workspace, cx| {
             workspace.set_local_terminal(local.clone(), window, cx);
-            workspace.dock.update(cx, |dock, cx| {
-                dock.set_dock_size(DockPlacement::Bottom, px(260.), window, cx);
-            });
+        });
+        resize_bottom(window, &workspace, px(260.), cx);
+        workspace.update(cx, |workspace, cx| {
             workspace.toggle_local_terminal(window, cx);
-            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.dock_region_present(DockPlacement::Bottom, cx));
             assert_eq!(
                 workspace.local_terminal_cwd(cx),
                 Some(PathBuf::from("/tmp"))
             );
             workspace.toggle_local_terminal(window, cx);
             assert_eq!(
-                workspace.dock.read(cx).dock_size(DockPlacement::Bottom),
+                workspace.dock_region_size(DockPlacement::Bottom, cx),
                 Some(px(260.))
             );
             workspace.toggle_local_terminal(window, cx);
             workspace.close_local_terminal(window, cx);
             assert_eq!(closes.get(), 1);
-            assert!(workspace.selected_local_id.is_none());
-            assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.selected_local_terminal(cx).is_none());
+            assert!(!workspace.dock_region_present(DockPlacement::Bottom, cx));
         });
         window.render_frame(cx);
     })
@@ -296,15 +336,15 @@ fn close_scopes_follow_reordered_pane_tabs_and_do_not_close_other_panes(cx: &mut
                 workspace.active_item().unwrap().item_id(),
                 isolated.entity_id()
             );
-            assert_eq!(workspace.items.len(), 2);
+            assert_eq!(workspace.tabs(cx).len(), 2);
             assert_eq!(groups(workspace, cx), 2);
             assert_eq!(closes.get(), 2);
             let local = probe(cx, Rc::new(Cell::new(0)));
             workspace.set_local_terminal(local, window, cx);
             workspace.close_tabs(c.entity_id(), TabCloseScope::All, window, cx);
             assert!(workspace.items().next().is_none());
-            assert!(workspace.selected_local_id.is_some());
-            assert!(workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
+            assert!(workspace.selected_local_terminal(cx).is_some());
+            assert!(workspace.dock_region_present(DockPlacement::Bottom, cx));
             assert_eq!(closes.get(), 4);
         });
         window.render_frame(cx);
@@ -323,8 +363,7 @@ fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
     let (handle, workspace) = fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.sidebar_open = false;
-            cx.notify();
+            workspace.toggle_sidebar(window, cx);
         });
         window.render_frame(cx);
         let settings = window.find("toggle-local-terminal").bounds();
@@ -361,8 +400,8 @@ fn tab_context_menu_closes_clicked_inactive_tab_and_not_active_tab(cx: &mut Test
     })
     .unwrap();
     cx.run_until_parked();
-    workspace.read_with(cx, |workspace, _| {
-        assert_eq!(workspace.items.len(), 1);
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.tabs(cx).len(), 1);
         assert_eq!(workspace.active_item().unwrap().item_id(), b.entity_id());
         assert_ne!(workspace.active_item().unwrap().item_id(), a.entity_id());
     });
@@ -397,12 +436,12 @@ fn tab_context_menu_splits_clicked_tab_without_recreating_it(cx: &mut TestAppCon
     cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
         assert_eq!(groups(workspace, cx), 2);
-        assert_eq!(workspace.items.len(), 3);
+        assert_eq!(workspace.tabs(cx).len(), 3);
         assert!(
             workspace
-                .items
+                .tabs(cx)
                 .iter()
-                .any(|item| item.handle.item_id() == clicked.entity_id())
+                .any(|item| item.id() == clicked.entity_id())
         );
     });
     assert_eq!(closes.get(), 0);
@@ -427,11 +466,11 @@ fn aliases_accept_cancel_and_empty_restore_without_renaming_items(cx: &mut TestA
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
+            assert_eq!(workspace.tabs(cx)[0].alias(), Some("Production"));
             assert_eq!(
-                workspace.items[0].dock_item.read(cx).alias.as_deref(),
-                Some("Production")
+                workspace.items().next().unwrap().tab_title(cx).as_ref(),
+                "Original"
             );
-            assert_eq!(workspace.items[0].handle.tab_title(cx).as_ref(), "Original");
             workspace.rename_active_tab(window, cx);
         });
         window.render_frame(cx);
@@ -443,10 +482,7 @@ fn aliases_accept_cancel_and_empty_restore_without_renaming_items(cx: &mut TestA
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            assert_eq!(
-                workspace.items[0].dock_item.read(cx).alias.as_deref(),
-                Some("Production")
-            );
+            assert_eq!(workspace.tabs(cx)[0].alias(), Some("Production"));
             workspace.rename_active_tab(window, cx);
         });
         window.render_frame(cx);
@@ -457,13 +493,7 @@ fn aliases_accept_cancel_and_empty_restore_without_renaming_items(cx: &mut TestA
     .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, _, cx| {
-        assert!(
-            workspace.read(cx).items[0]
-                .dock_item
-                .read(cx)
-                .alias
-                .is_none()
-        );
+        assert!(workspace.read(cx).tabs(cx)[0].alias().is_none());
     })
     .unwrap();
     assert_eq!(closes.get(), 0);
@@ -725,3 +755,36 @@ mod menus;
 #[path = "right_panel_tests.rs"]
 mod right_panel;
 pub(super) use right_panel::RightProbe;
+
+#[gpui_kit::test]
+fn close_hook_metadata_notification_cannot_republish_removed_membership(cx: &mut TestAppContext) {
+    let (window, workspace) = fixture(cx);
+    let changes = Rc::new(Cell::new(0));
+    let closes = Rc::new(Cell::new(0));
+    cx.update_window(window, |_, window, cx| {
+        let item = probe(cx, closes.clone());
+        workspace.update(cx, |workspace, cx| workspace.add_item(item, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let counted = changes.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&workspace, move |_, event, _| {
+            if matches!(event, crate::WorkspaceEvent::ItemsChanged) {
+                counted.set(counted.get() + 1);
+            }
+        })
+    });
+    cx.update_window(window, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.close_item(0, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(closes.get(), 1);
+    assert_eq!(
+        changes.get(),
+        1,
+        "only committed removal publishes membership"
+    );
+    cx.update(|cx| assert_eq!(workspace.read(cx).items().count(), 0));
+}

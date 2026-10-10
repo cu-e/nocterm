@@ -409,6 +409,7 @@ impl Item for FakeTerminal {
     }
 }
 struct Fixture {
+    layout: nocterm_ui::LayoutHandle,
     handle: AnyWindowHandle,
     workspace: Entity<Workspace>,
     panel: Entity<AgentPanel>,
@@ -470,7 +471,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         sign_in: Default::default(),
         link: Default::default(),
     });
-    let (handle, workspace, panel, terminal, ready, shutdown) = cx.update(|cx| {
+    let (handle, workspace, panel, terminal, ready, shutdown, layout) = cx.update(|cx| {
         gpui_kit::init(cx);
         let mut tokens = nocterm_ui::DesignTokens::builtin();
         tokens.layout.agent_panel_width = width;
@@ -480,7 +481,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             cx,
         );
         let shutdown = nocterm_store::ShutdownCoordinator::default();
-        nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
+        let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
         crate::init(
             AgentServices {
                 terminal_auth: None,
@@ -509,7 +510,8 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let mut workspace = Workspace::new(window, cx);
+                    let mut workspace =
+                        Workspace::new(nocterm_workspace::Deps::new(layout.clone()), window, cx);
                     let item = cx.new(|cx| FakeTerminal {
                         access: access.clone(),
                         focus: cx.focus_handle(),
@@ -533,9 +535,11 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             terminal.unwrap(),
             ui,
             shutdown,
+            layout,
         )
     });
     Fixture {
+        layout,
         handle,
         workspace,
         panel,

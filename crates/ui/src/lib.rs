@@ -34,7 +34,7 @@ pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
-pub use layout::LayoutMemory;
+pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
 pub use sections::{
     AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy,

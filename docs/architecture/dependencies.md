@@ -42,7 +42,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-vault-store` | adapter | `nocterm-core`, `nocterm-session`, `nocterm-vault` | Durable encrypted vault adapter and bounded worker. |
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
-| `nocterm-workspace` | ui | `nocterm-keymap`, `nocterm-session`, `nocterm-settings`, `nocterm-ui` | Window shell: tab strip, sidebar and the registries features plug into. |
+| `nocterm-workspace` | ui | `nocterm-keymap`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui` | Window shell: tab strip, sidebar and the registries features plug into. |
 | `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-files`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault-ui` | Repository automation: generated documentation and architecture checks. |
 
 ```mermaid
@@ -171,6 +171,7 @@ graph TD
     nocterm_workspace --> nocterm_keymap
     nocterm_workspace --> nocterm_session
     nocterm_workspace --> nocterm_settings
+    nocterm_workspace --> nocterm_store
     nocterm_workspace --> nocterm_ui
     xtask --> nocterm_ai
     xtask --> nocterm_design

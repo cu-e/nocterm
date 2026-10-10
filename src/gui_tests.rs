@@ -223,7 +223,7 @@ fn open_workspace(
 ) -> (AnyWindowHandle, Entity<Workspace>) {
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
-            let mut workspace = Workspace::new(window, cx);
+            let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
             crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
             workspace
         })

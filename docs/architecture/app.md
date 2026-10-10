@@ -52,3 +52,9 @@ The root composes one native `LocalProgramOpener` with the filesystem and transf
 ports in Files `Deps`. `Booted` retains Files installation across new windows, so
 all windows share its external-program admission bound and transfer queue. GUI
 bootstrap tests inject the session `FakeExec` program port explicitly.
+
+Bootstrap also retains `nocterm_workspace::Deps`, containing the explicit layout
+handle returned by layout initialization. Every window clones these dependencies,
+so closing a window releases its views and subscriptions while surviving and new
+windows keep the same optimistic layout state and shutdown participant. Services
+remain the composition inputs; `Booted` owns the installed per-window dependencies.

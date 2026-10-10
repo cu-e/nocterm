@@ -61,6 +61,14 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
+`Workspace` coordinates nine private owners: focus, `Tabs`, `Chrome`, background
+sessions, sidebar, independent side panel, body, installed ports and registered
+actions. `Chrome` owns window menus, the new-tab popover and status views; the
+sidebar and side-panel owners control their own visibility and subscriptions.
+Immutable observations expose tab identities and native pane order without giving
+callers mutable native entities. Transitions commit membership and subscriptions
+before the shell emits events or changes focus (ADR 0026).
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
@@ -81,8 +89,10 @@ add controls pass an explicit `LocalTerminalTarget::Beside(EntityId)` to the ope
 resolving the live anchor pane when the new shell registers, including moves to
 Center. A stale anchor closes only the new shell; registered Items are never
 closed by a rejected registration. Native pane queries and empty-region cleanup
-belong to the shared workspace docking module. DockItem adapts presentation;
-the workspace owns focus subscriptions and active session selection.
+belong to the `Tabs` owner and its `DockTopology` capability. DockItem adapts
+presentation; each tab entry owns its feature handle, cached session and focus/event
+subscriptions. `LocalDockState` owns selection and remembered height, not a second
+placement tree.
 Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
 accepted topology changes clear it to reveal their result. Hiding Bottom leaves
 local tabs moved to Center visible. A region's last tab can be dragged to another
@@ -136,9 +146,12 @@ in the palette by declaring and handling an action, nothing more.
 ## Layout memory
 
 Widths the user drags resizable columns to, and layout choices, are kept by
-`nocterm_ui::LayoutMemory`, a global keyed by name and saved to `layout.json` in
-the state directory. Its private `nocterm_store::Persisted` entity keeps changes
-immediately visible and coalesces pending snapshots into the latest arrangement.
+an explicitly injected `nocterm_ui::LayoutHandle`, keyed by name and saved to
+`layout.json` in the state directory. Its private `nocterm_store::Persisted` entity
+keeps changes immediately visible and coalesces pending snapshots into the latest
+arrangement. Bootstrap retains that same handle in the workspace dependencies for
+every new window. The legacy `LayoutMemory` global retains the same entity for the
+agent's history-column width; it creates no second writer or shutdown participant.
 The explicitly injected `ShutdownCoordinator` captures layout before background
 drain and shares one deadline across its registered participants (ADR 0013).
 Settings also uses `nocterm-store`, with durable publication rather than optimistic

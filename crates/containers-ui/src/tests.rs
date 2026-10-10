@@ -134,7 +134,11 @@ pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>)
         );
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| Workspace::new(window, cx))
+                cx.new(|cx| {
+                    let deps =
+                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    Workspace::new(deps, window, cx)
+                })
             })
             .unwrap();
         let model = cx.new(|cx| ContainersModel::new(&workspace, None, local, cx));

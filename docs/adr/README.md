@@ -26,3 +26,4 @@ acceptance; a later record supersedes an earlier one.
 | [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
 | [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution |
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |
+| [0026](0026-workspace-state-owners.md) | Workspace transitions belong to private state owners with explicit shared layout |

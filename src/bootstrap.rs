@@ -46,8 +46,15 @@ pub(crate) struct VaultSetup {
 #[derive(Clone)]
 pub(crate) struct Booted {
     files: nocterm_files::Installed,
+    workspace: nocterm_workspace::Deps,
     /// The vault, when it opened; credentials and its settings depend on it.
     pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
+}
+
+impl Booted {
+    pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
+        self.workspace.clone()
+    }
 }
 
 /// Installs every global, in dependency order.
@@ -73,7 +80,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         nocterm_ui::init_themes(themes.dirs, themes.catalog, cx);
         nocterm_settings_ui::init_theme_registry(themes.registry, cx);
     }
-    nocterm_ui::LayoutMemory::init(
+    let layout = nocterm_ui::LayoutMemory::init(
         stored.map(|paths| paths.state_dir().join("layout.json")),
         &shutdown,
         cx,
@@ -102,7 +109,11 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         stored.map(|paths| paths.config_dir().join("keymap.toml")),
         cx,
     );
-    let booted = Booted { vault, files };
+    let booted = Booted {
+        vault,
+        files,
+        workspace: nocterm_workspace::Deps::new(layout),
+    };
     crate::application::register(paths, booted.clone(), cx);
     booted
 }

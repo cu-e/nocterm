@@ -1,24 +1,26 @@
-//! The window shell, and the seams every feature plugs into.
+//! The window shell and the seams features plug into.
 //!
-//! The workspace owns the toolkit dock tree — tabs in resizable central panes,
-//! a left sidebar and an independent bottom local terminal — and nothing
-//! of what goes in it. Features contribute through four seams:
+//! Owns: tab membership and cached session context, native dock placement,
+//! window menus and chrome, sidebar and independent side-panel visibility,
+//! background-session membership, and per-column layout projections.
+//! Does not own: session connections, feature views, filesystem capabilities,
+//! persistence workers, or external-program launch.
+//! Ports used: `SessionFactory`, `ConnectionDirectory`, `Item`, `Panel`,
+//! `RightPanel`, `LocalTerminal`; layout arrives as an explicit `LayoutHandle`.
+//! Ports provided: workspace actions, settings pages, host and terminal access,
+//! file drag contracts, and immutable tab/session observations.
+//! Settings section: none. Globals: legacy local execution in `host`.
+//! Invariants: one native dock is the placement authority; each registered tab
+//! owns its feature handle and subscriptions; cached session identity preserves
+//! its filesystem and executor Arcs; local command focus leaves central session
+//! context available. Owners commit transitions before the shell emits events
+//! and applies focus. All application windows share the bootstrapped layout handle.
+//! Background promotion retains the same Item entity; close detaches subscriptions
+//! before calling the feature's close hook.
 //!
-//! - **Items** ([`Item`]): the content of a tab. A terminal is one; a settings
-//!   page is another; an editor or an AI chat would be more.
-//! - **Panels** ([`Panel`]): the sidebar's views, switched from the strip of
-//!   icons at its foot.
-//! - **Actions** ([`Workspace::register_action`]): commands a feature handles
-//!   at workspace level, bound to keys by the keymap rather than in code.
-//! - **The session factory** ([`SessionFactory`]): how a request
-//!   to open a session becomes a tab, so the feature that asks (connections)
-//!   never depends on the feature that answers (terminal). Programs shown in
-//!   a tab of their own ([`Workspace::open_program`]) go the same way.
-//!
-//! The workspace also reports what the user is looking at
-//! ([`WorkspaceEvent`], [`Workspace::active_session`]), so that panels and
-//! future integrations follow the active session without knowing who
-//! provides it; [`host`] turns that into the machine to run programs on.
+//! Features contribute tabs through [`Item`], sidebar views through [`Panel`],
+//! commands through [`Workspace::register_action`], and session opening through
+//! [`SessionFactory`]. [`WorkspaceEvent`] reports observable shell changes.
 
 mod actions;
 pub mod command_palette;
@@ -48,7 +50,10 @@ pub use terminal_access::{
     LiveCommandLease, SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus,
     TerminalText, TextRequest,
 };
-pub use workspace::{SessionFactory, SessionSpec, TabCloseScope, Workspace, WorkspaceEvent};
+pub use workspace::{
+    Deps, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace,
+    WorkspaceEvent,
+};
 
 /// The key context of the workspace, for keymap entries.
 pub const KEY_CONTEXT: &str = "Workspace";

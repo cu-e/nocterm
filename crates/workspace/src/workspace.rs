@@ -1,47 +1,39 @@
 use std::{cell::Cell, path::PathBuf, rc::Rc};
 
-#[cfg(test)]
-use gpui_kit::component::dock::InsertTarget;
 use gpui_kit::{
-    Action, AnyView, App, ClipboardItem, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyView, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Menu, Pixels, SharedString, Subscription, Window,
-    base::GlobalState,
-    component::{
-        ActiveTheme as _,
-        dock::{
-            DockArea, DockEvent, DockPlacement, DockSkin, PaneRef, PanelId, PanelStyle,
-            panel_handle,
-        },
-        menu::AppMenuBar,
-        v_flex,
+    component::dock::{
+        DockArea, DockEvent, DockPlacement, DockSkin, PaneRef, PanelId, PanelStyle, panel_handle,
     },
     div,
     prelude::*,
     rems,
 };
 use nocterm_session::{Auth, Target};
-use nocterm_ui::ActiveDesign as _;
 
 mod background;
+mod bindings;
 mod chrome;
-mod commands;
+mod composition;
 mod docking;
 mod groups;
-mod items;
+mod interaction;
 mod layout;
 mod local_dock;
 mod openers;
+mod queries;
 mod tabs;
 pub use openers::SessionFactory;
+mod actions;
 mod panels;
-mod panes;
+mod ports;
 mod right_panel;
 mod sessions;
-mod terminal_target;
 
 use crate::{
-    CloseTab, Item, ItemEvent, ItemHandle, KEY_CONTEXT, NewTab, NextPanel, NextTab, PanelHandle,
-    PreviousTab, SessionContext, ToggleSidebar,
+    CloseTab, Item, ItemEvent, ItemHandle, NewTab, NextPanel, NextTab, PreviousTab, SessionContext,
+    ToggleSidebar,
 };
 
 /// A request to open a session in a new tab.
@@ -92,7 +84,6 @@ pub enum TabCloseScope {
     All,
 }
 
-type ActionRegistration = Box<dyn Fn(Div, &mut Context<Workspace>) -> Div>;
 type MenuBuilder = Rc<dyn Fn(&Workspace, &Window, &App) -> Vec<Menu>>;
 
 struct NewTabMenu {
@@ -100,110 +91,94 @@ struct NewTabMenu {
     focus: FocusHandle,
 }
 
-struct OpenItem {
-    handle: Rc<dyn ItemHandle>,
-    /// Updated on ItemEvent::Changed; safe to query while any Item renders.
-    session: Option<SessionContext>,
-    dock_item: Entity<crate::dock_item::DockItem>,
-    local: Option<Box<dyn crate::local_terminal::LocalTerminalHandle>>,
-    _subscription: Subscription,
-    _focus_subscription: Subscription,
+/// An immutable observation of a registered tab, independent of native view handles.
+#[derive(Clone, Debug)]
+pub struct TabSnapshot {
+    id: EntityId,
+    alias: Option<SharedString>,
+    local: bool,
+    location: Option<(DockPlacement, gpui_kit::component::dock::NodeId)>,
+    group_color: Option<usize>,
+    visible: bool,
+}
+impl TabSnapshot {
+    pub fn id(&self) -> EntityId {
+        self.id
+    }
+    pub fn alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+    pub fn is_local(&self) -> bool {
+        self.local
+    }
+    pub fn location(&self) -> Option<(DockPlacement, gpui_kit::component::dock::NodeId)> {
+        self.location
+    }
+    pub fn group_color(&self) -> Option<usize> {
+        self.group_color
+    }
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+}
+
+/// One current native pane's registered tab identities in visual order.
+#[derive(Clone, Debug)]
+pub struct TabPane {
+    placement: DockPlacement,
+    node: gpui_kit::component::dock::NodeId,
+    items: Vec<EntityId>,
+}
+impl TabPane {
+    pub fn placement(&self) -> DockPlacement {
+        self.placement
+    }
+    pub fn node(&self) -> gpui_kit::component::dock::NodeId {
+        self.node
+    }
+    pub fn items(&self) -> &[EntityId] {
+        &self.items
+    }
+}
+
+/// Collaborators shared by the windows composed by one application installation.
+#[derive(Clone)]
+pub struct Deps {
+    layout: nocterm_ui::LayoutHandle,
+}
+
+impl Deps {
+    pub fn new(layout: nocterm_ui::LayoutHandle) -> Self {
+        Self { layout }
+    }
 }
 
 pub struct Workspace {
     focus_handle: FocusHandle,
-    dock: Entity<DockArea>,
-    _dock_subscription: Subscription,
-    _dock_observer: Subscription,
-    selected_local_id: Option<EntityId>,
-    local_terminal_height: Option<Pixels>,
-    local_header_click_origin: Rc<Cell<Option<EntityId>>>,
-    items: Vec<OpenItem>,
-    tab_groups: crate::tab_groups::TabGroups<PanelId, gpui_kit::component::dock::NodeId>,
-    active_item: Option<usize>,
-    panels: Vec<Box<dyn PanelHandle>>,
-    active_panel: usize,
-    sidebar_open: bool,
-    body: layout::Body,
+    tabs: tabs::Tabs,
+    chrome: chrome::Chrome,
+    background: background::BackgroundSessions,
+    sidebar: panels::Sidebar,
     right_panel: right_panel::RightPanelSlot,
-    new_tab_menu: Option<NewTabMenu>,
-    new_tab_menu_open: bool,
-    factory: openers::Factory,
-    actions: Vec<ActionRegistration>,
-    status_views: Vec<(chrome::StatusSide, AnyView)>,
-    /// The active session as last announced, to announce only changes.
-    announced_session: Option<SessionContext>,
-    menu_builder: Option<MenuBuilder>,
-    app_menu_bar: Option<Entity<AppMenuBar>>,
-    menu_focus: FocusHandle,
-    menu_item: Option<EntityId>,
-    last_command_item: Option<EntityId>,
-    connection_directory: Option<Rc<dyn crate::ConnectionDirectory>>,
-    /// Sessions running without a tab, opened for agents.
-    background: Vec<background::BackgroundItem>,
+    body: layout::Body,
+    ports: ports::WorkspacePorts,
+    actions: actions::ActionRegistry,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
 
 impl Workspace {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (dock, skin) = DockSkin::dock_area("workspace", None, window, cx);
-        skin.set_panel_style(PanelStyle::TabBar, cx);
-        // Session tabs may close even when they are the dock's last panel.
-        // Adapter-owned buttons provide that lifecycle policy using native controls.
-        skin.set_close_button_visible(false, cx);
-        skin.set_toggle_button_visible(false, cx);
-        dock.update(cx, |dock, cx| {
-            dock.set_closed_bottom_strip_visible(false, cx);
-            dock.set_last_panel_drag_between_regions(true, window, cx);
-        });
-        let subscription = cx.subscribe_in(&dock, window, |this, _, _: &DockEvent, window, cx| {
-            this.reconcile_empty_regions(window, cx);
-            this.regroup(window, cx);
-            let focused = this
-                .items
-                .iter()
-                .find(|open| open.dock_item.read(cx).contains_focus(window, cx))
-                .map(|open| open.handle.item_id());
-            if let Some(id) = focused {
-                this.mark_active(id, cx);
-            }
-            cx.notify();
-        });
-        // Dock resizing changes its open state with `notify`, without emitting
-        // DockEvent. Observe both paths so a closed bottom strip disappears.
-        let observer = cx.observe_in(&dock, window, |this, _, window, cx| {
-            this.reconcile_bottom_visibility(window, cx);
-        });
+    pub fn new(deps: Deps, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
-            dock,
-            _dock_subscription: subscription,
-            _dock_observer: observer,
-            selected_local_id: None,
-            local_terminal_height: None,
-            local_header_click_origin: Rc::default(),
             focus_handle: cx.focus_handle(),
-            items: Vec::new(),
-            tab_groups: Default::default(),
-            active_item: None,
-            panels: Vec::new(),
-            active_panel: 0,
-            sidebar_open: true,
-            body: layout::Body::default(),
+            tabs: tabs::Tabs::new(window, cx),
+            chrome: chrome::Chrome::new(cx.focus_handle()),
+            background: background::BackgroundSessions::default(),
+            sidebar: panels::Sidebar::default(),
             right_panel: right_panel::RightPanelSlot::default(),
-            new_tab_menu: None,
-            new_tab_menu_open: false,
-            factory: Rc::new(openers::NoFactory),
-            actions: Vec::new(),
-            status_views: Vec::new(),
-            announced_session: None,
-            menu_builder: None,
-            app_menu_bar: None,
-            menu_focus: cx.focus_handle(),
-            menu_item: None,
-            last_command_item: None,
-            connection_directory: None,
-            background: Vec::new(),
+            body: layout::Body::new(deps.layout),
+            ports: ports::WorkspacePorts::default(),
+            actions: actions::ActionRegistry::default(),
         };
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
@@ -231,16 +206,13 @@ impl Workspace {
         menu: Entity<V>,
         cx: &mut Context<Self>,
     ) {
-        self.new_tab_menu = Some(NewTabMenu {
-            focus: menu.read(cx).focus_handle(cx),
-            view: menu.into(),
-        });
+        let focus = menu.read(cx).focus_handle(cx);
+        self.chrome.install_new_tab(menu.into(), focus);
         cx.notify();
     }
 
     pub fn show_new_tab_menu(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.new_tab_menu_open != open {
-            self.new_tab_menu_open = open;
+        if self.chrome.show_new_tab(open) {
             cx.notify();
         }
     }
@@ -255,20 +227,14 @@ impl Workspace {
         &mut self,
         handler: impl Fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>) + 'static,
     ) {
-        let handler = Rc::new(handler);
-        self.actions.push(Box::new(move |element, cx| {
-            let handler = handler.clone();
-            element.on_action(cx.listener(move |workspace, action: &A, window, cx| {
-                handler(workspace, action, window, cx);
-            }))
-        }));
+        self.actions.register(handler);
     }
 
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = cx.weak_entity();
         window.defer(cx, move |_, cx| {
             let _ = workspace.update(cx, |this, cx| {
-                this.show_new_tab_menu(!this.new_tab_menu_open, cx);
+                this.show_new_tab_menu(!this.chrome.new_tab_open(), cx);
             });
         });
     }
@@ -296,12 +262,7 @@ impl Workspace {
     }
 
     fn on_next_panel(&mut self, _: &NextPanel, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.panels.is_empty() {
-            let next = if self.sidebar_open {
-                (self.active_panel + 1) % self.panels.len()
-            } else {
-                self.active_panel
-            };
+        if let Some(next) = self.sidebar.next() {
             self.activate_panel(next, window, cx);
         }
     }
@@ -316,93 +277,21 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let root = self.actions.bind(&self.focus_handle, cx);
 
-        let mut root = v_flex()
-            .key_context(KEY_CONTEXT)
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .bg(Self::window_background(cx))
-            .text_color(theme.foreground)
-            .on_action(cx.listener(Self::on_new_tab))
-            .on_action(cx.listener(Self::on_close_tab))
-            .on_action(cx.listener(|this, _: &crate::CloseOtherTabs, window, cx| {
-                this.close_active_tabs(TabCloseScope::Others, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::CloseTabsLeft, window, cx| {
-                this.close_active_tabs(TabCloseScope::Left, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::CloseTabsRight, window, cx| {
-                this.close_active_tabs(TabCloseScope::Right, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::CloseAllTabs, window, cx| {
-                this.close_active_tabs(TabCloseScope::All, window, cx)
-            }))
-            .on_action(cx.listener(Self::on_next_tab))
-            .on_action(cx.listener(Self::on_previous_tab))
-            .on_action(cx.listener(Self::on_toggle_sidebar))
-            .on_action(cx.listener(Self::on_next_panel))
-            .on_action(cx.listener(|this, _: &crate::SwapSides, _, cx| this.swap_sides(cx)))
-            .on_action(
-                cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
-                    this.toggle_right_panel(window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
-                    this.set_right_panel_maximized(!this.right_panel.maximized(), cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &crate::MoveTabLeft, window, cx| {
-                this.move_active_tab(-1, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::MoveTabRight, window, cx| {
-                this.move_active_tab(1, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::SplitLeft, window, cx| {
-                this.split_active(gpui_kit::component::Placement::Left, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::SplitRight, window, cx| {
-                this.split_active(gpui_kit::component::Placement::Right, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::SplitUp, window, cx| {
-                this.split_active(gpui_kit::component::Placement::Top, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &crate::SplitDown, window, cx| {
-                this.split_active(gpui_kit::component::Placement::Bottom, window, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &crate::NextPane, window, cx| this.focus_pane(1, window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &crate::PreviousPane, window, cx| {
-                this.focus_pane(-1, window, cx)
-            }))
-            .on_action(cx.listener(|_, _: &crate::RenameTab, window, cx| {
-                let workspace = cx.weak_entity();
-                window.defer(cx, move |window, cx| {
-                    let _ = workspace.update(cx, |this, cx| this.rename_active_tab(window, cx));
-                });
-            }))
-            .on_action(
-                cx.listener(|this, _: &crate::ToggleLocalTerminal, window, cx| {
-                    this.toggle_local_terminal(window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &crate::CloseLocalTerminal, window, cx| {
-                    this.close_local_terminal(window, cx)
-                }),
-            );
-        for register in &self.actions {
-            root = register(root, cx);
-        }
-
-        let body = self.render_body(window, cx);
-        root.child(self.render_title_bar(cx))
+        let regions = chrome::Regions::new(
+            &self.tabs,
+            &self.sidebar,
+            &self.right_panel,
+            self.ports.directory(),
+        );
+        let body = self
+            .chrome
+            .render_body(&mut self.body, &regions, window, cx);
+        root.child(self.chrome.render_title_bar(cx))
             .child(div().flex_1().min_h_0().child(body))
-            .child(self.render_footer(cx))
+            .child(self.chrome.render_footer(&regions, cx))
     }
 }
 

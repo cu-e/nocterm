@@ -19,7 +19,8 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
         crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
+                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let mut workspace = Workspace::new(deps, window, cx);
                 workspace.set_session_opener(move |_, spec, _, _| calls.borrow_mut().push(spec));
                 workspace
             })

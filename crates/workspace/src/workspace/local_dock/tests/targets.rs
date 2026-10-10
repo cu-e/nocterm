@@ -1,47 +1,46 @@
 //! Explicit opener destinations and registration ownership.
 use super::*;
 use crate::LocalTerminalTarget;
-use gpui_kit::component::dock::InsertTarget;
 
 #[gpui_kit::test]
 fn explicit_destination_resolves_moved_anchor_and_reveals_closed_region(cx: &mut TestAppContext) {
     let (window, workspace, closes) = fixture(cx);
+    let (central, anchor, request) = window
+        .update(cx, |_, window, cx| {
+            let central = probe(cx, "/central", closes.clone());
+            let anchor = probe(cx, "/anchor", closes.clone());
+            let request = workspace.update(cx, |workspace, cx| {
+                workspace.add_item(central.clone(), window, cx);
+                workspace.add_local_terminal(anchor.clone(), window, cx);
+                LocalTerminalTarget::Beside(anchor.entity_id())
+            });
+            (central, anchor, request)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |_, window, cx| {
+            crate::workspace::tests::drag_tab(window, anchor.entity_id(), central.entity_id(), cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
     window
         .update(cx, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                let central = probe(cx, "/central", closes.clone());
-                workspace.add_item(central.clone(), window, cx);
-                let anchor = probe(cx, "/anchor", closes.clone());
-                workspace.add_local_terminal(anchor.clone(), window, cx);
-                let request = LocalTerminalTarget::Beside(anchor.entity_id());
-                let destination = workspace.item_location(central.entity_id(), cx).unwrap().1;
-                let panel = workspace.panel_of(anchor.entity_id()).unwrap();
-                workspace.dock.update(cx, |dock, cx| {
-                    dock.move_panel(
-                        panel,
-                        InsertTarget::Tabs {
-                            node: destination,
-                            ix: None,
-                            activate: true,
-                        },
-                        window,
-                        cx,
-                    );
-                });
                 let added = probe(cx, "/added", closes.clone());
                 assert!(workspace.add_local_terminal_at(added.clone(), request, window, cx));
                 assert_eq!(
-                    workspace.item_location(added.entity_id(), cx),
-                    workspace.item_location(anchor.entity_id(), cx)
+                    workspace.tab_location(added.entity_id(), cx),
+                    workspace.tab_location(anchor.entity_id(), cx)
                 );
                 assert_eq!(
-                    workspace.item_location(added.entity_id(), cx).unwrap().0,
+                    workspace.tab_location(added.entity_id(), cx).unwrap().0,
                     DockPlacement::Center
                 );
                 let bottom = probe(cx, "/bottom", closes.clone());
                 workspace.add_local_terminal(bottom.clone(), window, cx);
                 workspace.toggle_local_terminal(window, cx);
-                assert!(!workspace.dock.read(cx).is_dock_open(DockPlacement::Bottom));
+                assert!(!workspace.dock_region_open(DockPlacement::Bottom, cx));
                 let added = probe(cx, "/revealed", closes.clone());
                 assert!(workspace.add_local_terminal_at(
                     added.clone(),
@@ -49,10 +48,10 @@ fn explicit_destination_resolves_moved_anchor_and_reveals_closed_region(cx: &mut
                     window,
                     cx
                 ));
-                assert!(workspace.dock.read(cx).is_dock_open(DockPlacement::Bottom));
+                assert!(workspace.dock_region_open(DockPlacement::Bottom, cx));
                 assert_eq!(
-                    workspace.item_location(added.entity_id(), cx),
-                    workspace.item_location(bottom.entity_id(), cx)
+                    workspace.tab_location(added.entity_id(), cx),
+                    workspace.tab_location(bottom.entity_id(), cx)
                 );
                 assert_eq!(closes.get(), 0);
             });
@@ -81,9 +80,19 @@ fn rejected_destination_closes_only_new_item_once(cx: &mut TestAppContext) {
                 assert!(workspace.is_background(background.entity_id()));
                 assert_eq!(rejected_closes.get(), 1);
                 assert_eq!(registered_closes.get(), 0);
-                assert_eq!(workspace.items.len(), 1);
-                assert!(workspace.local_entry(rejected.entity_id()).is_none());
-                assert!(workspace.local_entry(registered.entity_id()).is_some());
+                assert_eq!(workspace.tabs(cx).len(), 1);
+                assert!(
+                    !workspace
+                        .tabs(cx)
+                        .iter()
+                        .any(|tab| tab.id() == rejected.entity_id() && tab.is_local())
+                );
+                assert!(
+                    workspace
+                        .tabs(cx)
+                        .iter()
+                        .any(|tab| tab.id() == registered.entity_id() && tab.is_local())
+                );
             });
         })
         .unwrap();

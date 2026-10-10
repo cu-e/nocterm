@@ -119,36 +119,31 @@ fn menu(cx: &mut TestAppContext, window: AnyWindowHandle, id: EntityId, item: us
     cx.run_until_parked();
 }
 fn zoom(cx: &mut TestAppContext, window: AnyWindowHandle, ws: &Entity<Workspace>, id: EntityId) {
-    with(cx, window, ws, |ws, window, cx| {
-        let (_, node) = ws.item_location(id, cx).unwrap();
-        ws.dock
-            .update(cx, |dock, cx| dock.set_zoomed_in(node, window, cx));
-    });
+    cx.update_window(window, |_, window, cx| {
+        ws.update(cx, |ws, cx| {
+            assert!(ws.activate_item_by_id(id, window, cx));
+        });
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(gpui_kit::component::dock::ToggleZoom), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
 }
 fn bar(ws: &Workspace, id: EntityId, cx: &App) -> Vec<EntityId> {
-    let (placement, node) = ws.item_location(id, cx).unwrap();
-    let PaneRef::Tabs { panels, .. } = ws
-        .dock
-        .read(cx)
-        .layout(placement)
-        .unwrap()
-        .find_node(node)
-        .unwrap()
-        .kind()
-    else {
-        panic!("tab pane");
-    };
-    panels
+    let (placement, node) = ws
+        .tabs(cx)
         .iter()
-        .map(|panel| {
-            ws.items
-                .iter()
-                .find(|open| PanelId::from(open.dock_item.entity_id()) == *panel)
-                .unwrap()
-                .handle
-                .item_id()
-        })
-        .collect()
+        .find(|tab| tab.id() == id)
+        .unwrap()
+        .location()
+        .unwrap();
+    ws.tab_panes(placement, cx)
+        .into_iter()
+        .find(|pane| pane.node() == node)
+        .unwrap()
+        .items()
+        .to_vec()
 }
 
 #[gpui_kit::test]
@@ -179,14 +174,12 @@ fn native_menu_groups_and_splits_work_in_both_placements_and_zoom_states(cx: &mu
             .unwrap();
             cx.run_until_parked();
             ws.read_with(cx, |ws, cx| {
-                assert!(ws.is_tab_grouped(clicked));
+                assert!(!ws.tab_group_items(clicked).is_empty());
                 assert!(
-                    ws.items
+                    ws.tabs(cx)
                         .iter()
-                        .find(|open| open.handle.item_id() == clicked)
+                        .find(|tab| tab.id() == clicked)
                         .unwrap()
-                        .dock_item
-                        .read(cx)
                         .group_color()
                         .is_some()
                 );
@@ -194,12 +187,12 @@ fn native_menu_groups_and_splits_work_in_both_placements_and_zoom_states(cx: &mu
             menu(cx, window, clicked, 7);
             ws.read_with(cx, |ws, cx| {
                 assert_ne!(
-                    ws.item_location(clicked, cx),
-                    ws.item_location(tabs[0].entity_id(), cx)
+                    ws.tab_location(clicked, cx),
+                    ws.tab_location(tabs[0].entity_id(), cx)
                 );
-                assert!(ws.dock.read(cx).zoomed_group().is_none());
-                assert!(!ws.is_tab_grouped(clicked));
-                assert_eq!(ws.items.len(), 3);
+                assert!(ws.zoomed_pane(cx).is_none());
+                assert!(ws.tab_group_items(clicked).is_empty());
+                assert_eq!(ws.tabs(cx).len(), 3);
             });
             for tab in tabs {
                 assert_eq!(tab.read_with(cx, |tab, _| tab.closed.get()), 0);
@@ -219,43 +212,28 @@ fn native_close_scopes_use_clicked_inactive_tab_and_current_visual_order(cx: &mu
         let (window, ws, tabs) = open_three(cx, true);
         // Reorder [a,b,c] to [c,b,a]; c stays active while b is right-clicked.
         with(cx, window, &ws, |ws, window, cx| {
-            let (_, node) = ws.item_location(tabs[0].entity_id(), cx).unwrap();
-            let a = ws.panel_of(tabs[0].entity_id()).unwrap();
-            ws.dock.update(cx, |dock, cx| {
-                dock.move_panel(
-                    a,
-                    InsertTarget::Tabs {
-                        node,
-                        ix: Some(2),
-                        activate: false,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            let c = ws.panel_of(tabs[2].entity_id()).unwrap();
-            ws.dock.update(cx, |dock, cx| {
-                dock.move_panel(
-                    c,
-                    InsertTarget::Tabs {
-                        node,
-                        ix: Some(0),
-                        activate: false,
-                    },
-                    window,
-                    cx,
-                )
-            });
+            ws.activate_item_by_id(tabs[0].entity_id(), window, cx);
+        });
+        with(cx, window, &ws, |ws, window, cx| {
+            ws.move_active_tab(2, window, cx)
+        });
+        with(cx, window, &ws, |ws, window, cx| {
+            ws.activate_item_by_id(tabs[2].entity_id(), window, cx);
+        });
+        with(cx, window, &ws, |ws, window, cx| {
+            ws.move_active_tab(-1, window, cx)
+        });
+        with(cx, window, &ws, |ws, window, cx| {
             ws.activate_item_by_id(tabs[2].entity_id(), window, cx);
         });
         zoom(cx, window, &ws, tabs[2].entity_id());
         menu(cx, window, tabs[1].entity_id(), item);
-        ws.read_with(cx, |ws, _| {
+        ws.read_with(cx, |ws, cx| {
             for (ix, tab) in tabs.iter().enumerate() {
                 assert_eq!(
-                    ws.items
+                    ws.tabs(cx)
                         .iter()
-                        .any(|open| open.handle.item_id() == tab.entity_id()),
+                        .any(|entry| entry.id() == tab.entity_id()),
                     survivors.contains(&ix),
                     "close menu item {item}, original tab {ix}"
                 );
@@ -293,7 +271,7 @@ fn native_zoom_drag_reorders_and_close_all_leaves_other_placement_alive(cx: &mut
     .unwrap();
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
-        assert!(ws.dock.read(cx).zoomed_group().is_some());
+        assert!(ws.zoomed_pane(cx).is_some());
         assert_eq!(
             bar(ws, tabs[0].entity_id(), cx),
             [
@@ -306,9 +284,9 @@ fn native_zoom_drag_reorders_and_close_all_leaves_other_placement_alive(cx: &mut
     menu(cx, window, tabs[1].entity_id(), 6);
     menu(cx, window, tabs[2].entity_id(), 4);
     ws.read_with(cx, |ws, cx| {
-        assert_eq!(ws.items.len(), 1);
-        assert!(ws.item_visible(central.entity_id(), cx));
-        assert!(!ws.dock.read(cx).has_dock(DockPlacement::Bottom));
+        assert_eq!(ws.tabs(cx).len(), 1);
+        assert!(ws.tab_is_visible(central.entity_id(), cx));
+        assert!(!ws.dock_region_present(DockPlacement::Bottom, cx));
     });
     assert_eq!(central.read_with(cx, |tab, _| tab.closed.get()), 0);
     for tab in tabs {
@@ -317,51 +295,42 @@ fn native_zoom_drag_reorders_and_close_all_leaves_other_placement_alive(cx: &mut
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn hidden_split_dock_preserves_topology_selection_sizes_and_center_local(cx: &mut TestAppContext) {
     let (window, ws, tabs) = open_three(cx, true);
-    let moved = cx
+    let (moved, anchor) = cx
         .update_window(window, |_, window, cx| {
             let anchor = tab(cx, "/anchor");
             let central = tab(cx, "/center");
             ws.update(cx, |ws, cx| {
                 ws.add_item(anchor.clone(), window, cx);
                 ws.add_local_terminal(central.clone(), window, cx);
-                let panel = ws.panel_of(central.entity_id()).unwrap();
-                let (_, node) = ws.item_location(anchor.entity_id(), cx).unwrap();
-                ws.dock.update(cx, |dock, cx| {
-                    dock.move_panel(
-                        panel,
-                        InsertTarget::Tabs {
-                            node,
-                            ix: None,
-                            activate: true,
-                        },
-                        window,
-                        cx,
-                    )
-                });
             });
-            central
+            (central, anchor)
         })
         .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        crate::workspace::tests::drag_tab(window, moved.entity_id(), anchor.entity_id(), cx);
+    })
+    .unwrap();
     cx.run_until_parked();
     with(cx, window, &ws, |ws, window, cx| {
         ws.split_item(tabs[1].entity_id(), Placement::Right, window, cx);
         ws.activate_item_by_id(tabs[1].entity_id(), window, cx);
-        ws.dock.update(cx, |dock, cx| {
-            dock.set_dock_size(DockPlacement::Bottom, px(260.), window, cx)
-        });
     });
+    cx.update_window(window, |_, window, cx| {
+        crate::workspace::tests::resize_bottom(window, &ws, px(260.), cx)
+    })
+    .unwrap();
     let before = ws.read_with(cx, |ws, cx| {
         (
-            ws.dock
-                .read(cx)
-                .layout(DockPlacement::Bottom)
+            ws.dock_layout(cx)
+                .bottom_dock
+                .as_ref()
                 .unwrap()
-                .root()
+                .panel()
                 .clone(),
-            ws.dock.read(cx).dump(cx).bottom_dock.unwrap(),
+            ws.dock_layout(cx).bottom_dock.unwrap(),
         )
     });
     zoom(cx, window, &ws, tabs[1].entity_id());
@@ -369,33 +338,23 @@ fn hidden_split_dock_preserves_topology_selection_sizes_and_center_local(cx: &mu
         ws.toggle_local_terminal(window, cx)
     });
     ws.read_with(cx, |ws, cx| {
-        let dock = ws.dock.read(cx);
-        assert!(!dock.is_dock_open(DockPlacement::Bottom));
-        assert!(dock.zoomed_group().is_none());
-        assert_eq!(
-            dock.layout(DockPlacement::Bottom).unwrap().root(),
-            &before.0
-        );
-        assert_eq!(dock.dump(cx).bottom_dock.unwrap().size(), before.1.size());
-        assert!(ws.item_visible(moved.entity_id(), cx));
-        assert!(!ws.item_visible(tabs[0].entity_id(), cx));
+        assert!(!ws.dock_region_open(DockPlacement::Bottom, cx));
+        assert!(ws.zoomed_pane(cx).is_none());
+        let layout = ws.dock_layout(cx).bottom_dock.unwrap();
+        assert_eq!(layout.panel(), &before.0);
+        assert_eq!(layout.size(), before.1.size());
+        assert!(ws.tab_is_visible(moved.entity_id(), cx));
+        assert!(!ws.tab_is_visible(tabs[0].entity_id(), cx));
     });
     with(cx, window, &ws, |ws, window, cx| {
         ws.toggle_local_terminal(window, cx)
     });
     ws.read_with(cx, |ws, cx| {
         assert_eq!(
-            ws.dock
-                .read(cx)
-                .layout(DockPlacement::Bottom)
-                .unwrap()
-                .root(),
+            ws.dock_layout(cx).bottom_dock.as_ref().unwrap().panel(),
             &before.0
         );
-        assert_eq!(
-            ws.dock.read(cx).dump(cx).bottom_dock.as_ref(),
-            Some(&before.1)
-        );
+        assert_eq!(ws.dock_layout(cx).bottom_dock.as_ref(), Some(&before.1));
         assert_eq!(ws.local_terminal_cwd(cx), Some("/b".into()));
     });
     for tab in tabs {
@@ -462,7 +421,7 @@ fn zoomed_nonfirst_header_plus_adds_into_clicked_pane_and_keeps_zoom(cx: &mut Te
     });
     zoom(cx, window, &ws, tabs[1].entity_id());
     let target = ws.read_with(cx, |ws, cx| {
-        ws.item_location(tabs[1].entity_id(), cx).unwrap()
+        ws.tab_location(tabs[1].entity_id(), cx).unwrap()
     });
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
@@ -471,10 +430,10 @@ fn zoomed_nonfirst_header_plus_adds_into_clicked_pane_and_keeps_zoom(cx: &mut Te
     .unwrap();
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
-        assert_eq!(ws.items.len(), 4);
-        let added = ws.items.last().unwrap().handle.item_id();
-        assert_eq!(ws.item_location(added, cx), Some(target));
-        assert_eq!(ws.dock.read(cx).zoomed_group(), Some(target.1));
+        assert_eq!(ws.tabs(cx).len(), 4);
+        let added = ws.tabs(cx).last().unwrap().id();
+        assert_eq!(ws.tab_location(added, cx), Some(target));
+        assert_eq!(ws.zoomed_pane(cx), Some(target.1));
         assert_eq!(bar(ws, added, cx), [tabs[1].entity_id(), added]);
     });
     for tab in tabs {
@@ -500,7 +459,7 @@ fn joining_group_in_hidden_bottom_does_not_hide_clicked_central_tab(cx: &mut Tes
     });
     ws.read_with(cx, |ws, cx| {
         assert!(
-            ws.item_visible(central.entity_id(), cx),
+            ws.tab_is_visible(central.entity_id(), cx),
             "joining a hidden group must reveal its destination or decline the move"
         );
     });
@@ -539,11 +498,11 @@ fn native_single_bottom_terminal_can_move_to_central_header_without_closing(
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
         assert_eq!(
-            ws.item_location(local.entity_id(), cx).unwrap().0,
+            ws.tab_location(local.entity_id(), cx).unwrap().0,
             DockPlacement::Center
         );
-        assert_eq!(ws.items.len(), 2);
-        assert!(!ws.dock.read(cx).has_dock(DockPlacement::Bottom));
+        assert_eq!(ws.tabs(cx).len(), 2);
+        assert!(!ws.dock_region_present(DockPlacement::Bottom, cx));
         assert_eq!(ws.local_terminal_cwd(cx), Some("/local".into()));
     });
     assert_eq!(local.read_with(cx, |tab, _| tab.closed.get()), 0);
@@ -564,7 +523,7 @@ fn hidden_mixed_bottom_cannot_receive_commands_or_close_tab_actions(cx: &mut Tes
                 ws.new_tab_group(tabs[0].entity_id(), window, cx);
                 ws.group_tab_with(central.entity_id(), tabs[0].entity_id(), window, cx);
                 assert_eq!(
-                    ws.item_location(central.entity_id(), cx).unwrap().0,
+                    ws.tab_location(central.entity_id(), cx).unwrap().0,
                     DockPlacement::Bottom
                 );
                 ws.activate_item_by_id(central.entity_id(), window, cx);
@@ -594,7 +553,7 @@ fn hidden_mixed_bottom_cannot_receive_commands_or_close_tab_actions(cx: &mut Tes
     })
     .unwrap();
     cx.run_until_parked();
-    ws.read_with(cx, |ws, _| assert_eq!(ws.items.len(), 4));
+    ws.read_with(cx, |ws, cx| assert_eq!(ws.tabs(cx).len(), 4));
     for tab in tabs.into_iter().chain([central]) {
         assert_eq!(tab.read_with(cx, |tab, _| tab.executed.get()), 0);
         assert_eq!(tab.read_with(cx, |tab, _| tab.closed.get()), 0);
@@ -621,8 +580,8 @@ fn deferred_find_is_cancelled_when_its_bottom_target_hides_before_delivery(
     .unwrap();
     cx.run_until_parked();
     ws.read_with(cx, |ws, cx| {
-        assert!(!ws.item_visible(tabs[1].entity_id(), cx));
-        assert_eq!(ws.items.len(), 3);
+        assert!(!ws.tab_is_visible(tabs[1].entity_id(), cx));
+        assert_eq!(ws.tabs(cx).len(), 3);
     });
     for tab in tabs {
         assert_eq!(tab.read_with(cx, |tab, _| tab.executed.get()), 0);

@@ -28,10 +28,91 @@ pub struct LayoutMemory {
 
 impl Global for LayoutMemory {}
 
+/// An explicit window dependency sharing the registered layout persistence owner.
+#[derive(Clone)]
+pub struct LayoutHandle {
+    persisted: Entity<Persisted<Saved>>,
+}
+
+impl LayoutHandle {
+    /// Creates unsaved layout state for an isolated window or fixture.
+    pub fn in_memory(cx: &mut App) -> Self {
+        Self {
+            persisted: cx.new(|_| {
+                Persisted::new(
+                    Saved::default(),
+                    writer(None),
+                    Publication::Optimistic,
+                    4096,
+                )
+            }),
+        }
+    }
+
+    pub fn get(&self, key: &str, cx: &App) -> Option<Pixels> {
+        self.persisted
+            .read(cx)
+            .visible()
+            .sizes
+            .get(key)
+            .filter(|size| size.is_finite() && **size > 0.)
+            .map(|size| px(*size))
+    }
+
+    pub fn flag(&self, key: &str, cx: &App) -> bool {
+        self.persisted
+            .read(cx)
+            .visible()
+            .flags
+            .get(key)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn set(&self, key: &str, size: Pixels, cx: &mut App) -> Result<(), StoreError> {
+        let size = f32::from(size).round();
+        if !size.is_finite() || size <= 0. {
+            return Ok(());
+        }
+        let key = key.to_owned();
+        self.persisted
+            .update(cx, |state, cx| {
+                state.update_latest(
+                    move |saved| {
+                        saved.sizes.insert(key, size);
+                    },
+                    cx,
+                )
+            })
+            .map(|_| ())
+    }
+
+    pub fn set_flag(&self, key: &str, value: bool, cx: &mut App) -> Result<(), StoreError> {
+        if self.flag(key, cx) == value {
+            return Ok(());
+        }
+        let key = key.to_owned();
+        self.persisted
+            .update(cx, |state, cx| {
+                state.update_latest(
+                    move |saved| {
+                        saved.flags.insert(key, value);
+                    },
+                    cx,
+                )
+            })
+            .map(|_| ())
+    }
+}
+
 impl LayoutMemory {
     /// Installs the arrangement and delegates the existing quit hook to the
     /// explicitly supplied coordinator. Other owners register with that handle.
-    pub fn init(file: Option<PathBuf>, shutdown: &ShutdownCoordinator, cx: &mut App) {
+    pub fn init(
+        file: Option<PathBuf>,
+        shutdown: &ShutdownCoordinator,
+        cx: &mut App,
+    ) -> LayoutHandle {
         let saved = file
             .as_ref()
             .and_then(|file| std::fs::read_to_string(file).ok())
@@ -43,7 +124,7 @@ impl LayoutMemory {
             tracing::warn!(%error, "layout shutdown participant was not registered");
         }
         cx.set_global(Self {
-            persisted: Some(persisted),
+            persisted: Some(persisted.clone()),
         });
         let shutdown = shutdown.clone();
         cx.on_app_quit(move |cx| {
@@ -56,6 +137,7 @@ impl LayoutMemory {
             }
         })
         .detach();
+        LayoutHandle { persisted }
     }
 
     pub fn get(key: &str, cx: &App) -> Option<Pixels> {

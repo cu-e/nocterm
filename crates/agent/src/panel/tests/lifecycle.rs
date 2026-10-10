@@ -162,7 +162,8 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let mut workspace = Workspace::new(window, cx);
+                    let mut workspace =
+                        Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
                     let view = cx.new(|cx| AgentPanel::new(owner, window, cx));
                     workspace.set_right_panel(view.clone(), window, cx);

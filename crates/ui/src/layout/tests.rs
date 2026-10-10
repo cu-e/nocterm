@@ -65,3 +65,52 @@ fn layout_latest_arrangement_survives_more_edits_than_writer_capacity(cx: &mut T
     let saved: Saved = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
     assert_eq!(saved.sizes["panel"], 10000.);
 }
+
+#[gpui_kit::test]
+fn explicit_layout_handles_and_legacy_split_share_the_registered_state(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("layout.json");
+    cx.update(|cx| {
+        let layout = LayoutMemory::init(Some(file.clone()), &ShutdownCoordinator::default(), cx);
+        let other_window = layout.clone();
+        layout.set("sidebar", px(210.4), cx).unwrap();
+        assert_eq!(other_window.get("sidebar", cx), Some(px(210.)));
+        assert_eq!(LayoutMemory::get("sidebar", cx), Some(px(210.)));
+        LayoutMemory::set("history", px(175.), cx);
+        assert_eq!(layout.get("history", cx), Some(px(175.)));
+        other_window.set_flag("swapped", true, cx).unwrap();
+        assert!(layout.flag("swapped", cx));
+        assert!(LayoutMemory::flag("swapped", cx));
+        layout.set("sidebar", px(f32::NAN), cx).unwrap();
+        assert_eq!(layout.get("sidebar", cx), Some(px(210.)));
+    });
+    cx.quit();
+    let saved: Saved = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+    assert_eq!(saved.sizes["sidebar"], 210.);
+    assert_eq!(saved.sizes["history"], 175.);
+    assert!(saved.flags["swapped"]);
+}
+
+#[gpui_kit::test]
+fn failed_layout_save_retains_the_shared_visible_arrangement(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let blocked = directory.path().join("not-a-directory");
+    std::fs::write(&blocked, b"unmodified backend").unwrap();
+    let layout = cx.update(|cx| {
+        let layout = LayoutMemory::init(
+            Some(blocked.join("layout.json")),
+            &ShutdownCoordinator::default(),
+            cx,
+        );
+        layout.set("sidebar", px(320.), cx).unwrap();
+        layout.set_flag("swapped", true, cx).unwrap();
+        layout
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(layout.get("sidebar", cx), Some(px(320.)));
+        assert!(layout.flag("swapped", cx));
+        assert_eq!(LayoutMemory::get("sidebar", cx), Some(px(320.)));
+    });
+    assert_eq!(std::fs::read(blocked).unwrap(), b"unmodified backend");
+}

@@ -9,7 +9,10 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<SnippetsPanel>) 
         cx.set_global(Design::new(DesignTokens::builtin()));
         crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Workspace::new(window, cx))
+            cx.new(|cx| {
+                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                Workspace::new(deps, window, cx)
+            })
         })
         .unwrap()
     });

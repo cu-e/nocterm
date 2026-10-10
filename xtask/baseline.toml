@@ -21,7 +21,7 @@ nocterm-themes = 2
 nocterm-ui = 3
 nocterm-vault-broker = 1
 nocterm-vt = 5
-nocterm-workspace = 8
+nocterm-workspace = 4
 
 [domain_dependencies]
 "nocterm-ai::image" = 1
@@ -91,7 +91,6 @@ nocterm-ui = 6
 "nocterm_terminal::terminal::Terminal" = 9
 "nocterm_terminal::view::TerminalView" = 10
 "nocterm_vt::emulator::Emulator" = 5
-"nocterm_workspace::workspace::Workspace" = 17
 
 [pub_fields]
 "nocterm_agent::TerminalAuth" = 1
@@ -185,4 +184,3 @@ nocterm-workspace = 13
 "nocterm_snippets_ui::editor::SnippetEditor" = 16
 "nocterm_terminal::terminal::Terminal" = 29
 "nocterm_terminal::view::TerminalView" = 19
-"nocterm_workspace::workspace::Workspace" = 28
