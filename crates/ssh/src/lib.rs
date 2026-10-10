@@ -7,6 +7,12 @@
 //!
 //! The transport owns a small Tokio runtime, so callers need none: a session
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
+//!
+//! Owns: SSH authentication, host-key policy, proxy tunnels, SFTP and remote execution.
+//! Does not own: profiles, credential storage, terminal emulation or session views.
+//! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
+//! Settings section: consumes session SSH options. Globals: none.
+//! Invariants: bounded session channels and independent closure interrupt blocked I/O.
 
 mod auth;
 mod connection;

@@ -5,6 +5,12 @@
 //! disks, uptime and graphs of network and disk throughput. Collection runs
 //! on the host itself through [`nocterm_monitor`]: while the details are
 //! closed only what the summary shows is read, at the slow interval.
+//!
+//! Owns: active-host sampling lifecycle, status/details views and monitor settings controls.
+//! Does not own: metric parsing, host execution or session establishment.
+//! Ports used: workspace active-session contracts and session `HostExec`; provided: `SettingsPageSpec`.
+//! Settings section: `[monitor]`. Globals: none.
+//! Invariants: one host script collects the current metric union; retained history is bounded.
 mod details;
 mod graph;
 mod model;

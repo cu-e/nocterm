@@ -1,5 +1,11 @@
 //! Containers on a host, independent of any UI.
 //!
+//! Owns: engine detection, CLI requests, listing parsing and container actions.
+//! Does not own: session creation, daemon sockets, credential storage or views.
+//! Ports used: HostExec. Ports provided: none. Settings section: none. Globals: none.
+//! Invariants: operations use the supplied host executor and its authority;
+//! unavailable engines remain distinct from execution or decoding failures.
+//!
 //! A host is asked about its containers through a [`HostExec`], with the
 //! container engine's own command line: Docker's, or Podman's where Docker
 //! is not installed. Nothing here opens a connection or talks to a daemon

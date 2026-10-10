@@ -6,6 +6,12 @@
 //! container's log and a shell inside it open as tabs of their own. All of
 //! it runs through [`nocterm_containers`] over the connection the host
 //! already has; the footer's switcher shows how many containers run.
+//!
+//! Owns: active-host container presentation, captured operation intents and workspace tabs.
+//! Does not own: container command formats, host execution or connection establishment.
+//! Ports used: workspace active-session/program contracts and session `HostExec`.
+//! Settings section: none. Globals: none.
+//! Invariants: host changes invalidate confirmations; completion retains its original context.
 mod model;
 mod ops;
 mod panel;

@@ -1,5 +1,11 @@
 //! Design tokens: the single source of truth for how nocterm looks.
 //!
+//! Owns: typed visual tokens, color validation and partial token overrides.
+//! Does not own: filesystem reads, user settings, toolkit themes or rendering.
+//! Ports used/provided: none. Settings section: none. Globals: none.
+//! Invariants: overrides validate against the token schema; built-in tokens remain
+//! the fallback for unspecified values.
+//!
 //! [`tokens/default.toml`](DesignTokens::BUILTIN_SOURCE) is the product's
 //! visual language written down once. This crate gives that file a type,
 //! validates it, and layers a user's partial `theme.toml` over it. It knows

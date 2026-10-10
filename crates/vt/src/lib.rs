@@ -1,5 +1,11 @@
 //! Terminal emulation: turns a byte stream into a grid, and input into bytes.
 //!
+//! Owns: screen emulation, selection, bounded text/search and negotiated input encoding.
+//! Does not own: PTYs, transport I/O, window rendering or application scheduling.
+//! Ports used/provided: none. Settings section: none. Globals: none.
+//! Invariants: input follows the negotiated terminal modes; snapshots expose this
+//! crate's types; bounded searches report limits instead of truncating silently.
+//!
 //! This crate is the only place that knows the emulation library
 //! (`alacritty_terminal`). Everything it exposes is expressed in its own
 //! types, so the renderer and the session code do not change if the engine

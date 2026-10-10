@@ -1,5 +1,11 @@
 //! Key bindings, read from data rather than written in code.
 //!
+//! Owns: keymap format, default/user merge, override persistence and GPUI installation.
+//! Does not own: action handlers, component bindings or the Keymap settings view.
+//! Ports used/provided: none. Settings section: none. Globals: Keymap (existing).
+//! Invariants: installation replaces only this crate's marked bindings; explicit
+//! unbindings remove defaults without modifying unrelated toolkit bindings.
+//!
 //! The defaults come with the application in the keymap format
 //! ([`KeymapFile`]); the user's changes live in a file of the same format,
 //! `keymap.toml` in the configuration directory, which only lists what
