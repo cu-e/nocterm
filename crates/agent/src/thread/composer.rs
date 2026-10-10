@@ -124,6 +124,13 @@ impl Composer {
         true
     }
 
+    /// Removes the queued prompt `id`. Returns whether it was queued.
+    pub(crate) fn remove(&mut self, id: u64) -> bool {
+        let before = self.queue.len();
+        self.queue.retain(|prompt| prompt.saved.id != id);
+        self.queue.len() != before
+    }
+
     /// The context new prompts get, even while a queued prompt is edited.
     pub(crate) fn default_attachments(&self) -> &[Attachment] {
         self.defaults
@@ -220,5 +227,21 @@ mod tests {
         assert!(composer.move_to_front(2));
         assert!(!composer.move_to_front(9));
         assert_eq!(composer.take_next().unwrap().saved.id, 2);
+    }
+
+    #[test]
+    fn a_removed_prompt_leaves_the_others_in_order() {
+        let mut composer = Composer {
+            queue: vec![prompt(1), prompt(2), prompt(3)],
+            ..Composer::default()
+        };
+        assert!(composer.remove(2));
+        assert!(!composer.remove(2));
+        let ids = composer
+            .queue
+            .iter()
+            .map(|prompt| prompt.saved.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [1, 3]);
     }
 }

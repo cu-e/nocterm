@@ -582,6 +582,7 @@ mod navigation;
 mod persistence;
 mod provider_intersections;
 mod provider_permissions;
+mod queue_remove;
 mod resources;
 mod restoration;
 mod routing;

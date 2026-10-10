@@ -197,6 +197,19 @@ impl AgentThread {
         self.start_prompt(saved.text, saved.images, cx);
     }
 
+    /// Drops the queued prompt `id` without sending it. A prompt being
+    /// edited stays until its edit ends.
+    pub(crate) fn remove_queued(&mut self, id: u64, editing: Option<u64>, cx: &mut Context<Self>) {
+        if editing == Some(id) || !self.composer.remove(id) {
+            return;
+        }
+        // A chat left with nothing else has no snapshot of its own; its file
+        // must still lose the prompt, or it comes back on the next start.
+        self.draft_changed = true;
+        self.persist(cx);
+        cx.notify();
+    }
+
     pub(crate) fn send_now(&mut self, id: u64, cx: &mut Context<Self>) {
         if !self.composer.move_to_front(id) {
             return;

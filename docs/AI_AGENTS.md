@@ -174,7 +174,8 @@ maximum height. The arrow sends
 a selected message next: it cancels the current response and waits for cancellation
 to finish before sending. Other messages keep their order. The pencil edits a
 queued message in place and restores your unsent composer draft after saving or
-cancelling. Send-now controls are disabled while editing. Queued images are saved
+cancelling. The bin removes a queued message without sending it; the one being
+edited cannot be removed. Send-now controls are disabled while editing. Queued images are saved
 in full; a message exceeding the saved chat's 32 MiB limit is rejected with its
 draft intact. Restored queues wait for an explicit send-now action. Stopping,
 authentication failures and session failures retain and pause the remaining queue.

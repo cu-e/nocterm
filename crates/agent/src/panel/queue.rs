@@ -238,6 +238,19 @@ impl AgentPanel {
         window.focus(&self.input.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
+    /// Whether queued message `id` is open in the composer for editing.
+    fn editing_queued(&self, id: u64) -> bool {
+        self.composer
+            .edit
+            .as_ref()
+            .is_some_and(|edit| edit.id == id)
+    }
+    pub(super) fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
+        let editing = self.composer.edit.as_ref().map(|edit| edit.id);
+        if let Some(thread) = self.current() {
+            thread.update(cx, |thread, cx| thread.remove_queued(id, editing, cx));
+        }
+    }
     pub(super) fn finish_queue_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(draft) = self.restore_queue_edit(true, cx) else {
             return;
@@ -426,6 +439,15 @@ impl AgentPanel {
                         cx.listener(move |this, _, window, cx| this.edit_queued(first, window, cx)),
                     ),
             )
+            .child(
+                Button::new("queue-remove-first")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Trash)
+                    .tooltip("Remove queued message")
+                    .disabled(self.editing_queued(first))
+                    .on_click(cx.listener(move |this, _, _, cx| this.remove_queued(first, cx))),
+            )
             .into_any_element()
     }
     fn queue_row(
@@ -475,6 +497,17 @@ impl AgentPanel {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_queued(id, window, cx)
                             })),
+                    )
+                    .child(
+                        Button::new(("queued-remove", id))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Trash)
+                            .tooltip("Remove")
+                            .disabled(self.editing_queued(id))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.remove_queued(id, cx)),
+                            ),
                     ),
             );
         for attachment in &prompt.attachments {
