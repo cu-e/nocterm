@@ -1,13 +1,15 @@
 //! A bounded worker keeps expensive KDF and atomic file writes off UI threads.
-use crate::{
-    CredentialBinding, CredentialInfo, DeviceCapability, DeviceUnlockProvider, Vault, VaultError,
-};
+use crate::Vault;
 use futures::{
     FutureExt as _,
     channel::{mpsc as progress, oneshot},
     future::BoxFuture,
 };
 use nocterm_session::{CredentialId, Secret};
+use nocterm_vault::{
+    CredentialBinding, CredentialInfo, DeviceCancellation, DeviceCapability, DeviceUnlockProvider,
+    VaultError, VaultFuture, VaultStatus,
+};
 use std::{
     path::PathBuf,
     sync::{
@@ -19,7 +21,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub type VaultFuture<T> = BoxFuture<'static, Result<T, VaultError>>;
 type Operation = Box<dyn FnOnce(&mut Vault) + Send>;
 struct Job {
     epoch: u64,
@@ -72,15 +73,6 @@ impl State {
     }
 }
 
-/// Whether the vault exists and can answer requests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum VaultStatus {
-    Missing,
-    Locked,
-    Unlocked,
-}
-
 /// Thread-safe provider. No method waits for a KDF or file I/O on the caller.
 /// At most eight operations are queued behind a single worker. Lock invalidates
 /// queued and in-flight results; intermediate secrets are zeroized when dropped.
@@ -115,8 +107,7 @@ impl VaultService {
         thread::Builder::new()
             .name("nocterm-vault".into())
             .spawn(move || {
-                let mut vault = Vault::new(path);
-                vault.device = device;
+                let mut vault = Vault::with_device(path, device);
                 let mut epoch = 0;
                 let mut touched = Instant::now();
                 loop {
@@ -140,9 +131,12 @@ impl VaultService {
                                 drop(job);
                                 continue;
                             }
-                            vault.guard = Some((worker_state.epoch.clone(), job.epoch));
+                            vault.set_cancellation(DeviceCancellation::for_epoch(
+                                worker_state.epoch.clone(),
+                                job.epoch,
+                            ));
                             (job.operation)(&mut vault);
-                            vault.guard = None;
+                            vault.set_cancellation(DeviceCancellation::never());
                             if job.epoch != worker_state.epoch.load(Ordering::SeqCst) {
                                 vault.lock();
                             }
@@ -308,6 +302,3 @@ impl VaultService {
         self.request(move |vault| vault.delete(id))
     }
 }
-
-#[cfg(test)]
-mod tests;

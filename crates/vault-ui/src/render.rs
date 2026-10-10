@@ -1,6 +1,7 @@
 //! The Vault page's tabs.
 use gpui_kit::{
     AnyElement, ClipboardItem, Context, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -51,11 +52,9 @@ impl Render for VaultView {
             .child(tabs)
             .child(body)
             .when_some(self.message.clone(), |page, (message, error)| {
-                page.child(if error {
-                    form::error_text(message, cx)
-                } else {
-                    form::note(message, cx)
-                })
+                page.child(div().id("vault-message").role(gpui_kit::Role::Alert).aria_label(message.clone()).test_support().child(if error {
+                    form::error_text(message,cx)
+                }else{form::note(message,cx)}))
             })
             .when(self.busy, |page| {
                 page.child(
@@ -141,8 +140,20 @@ impl VaultView {
             } else {
                 "Choose a master password"
             }))
-            .child(Input::new(&self.password))
-            .when(!exists, |form| form.child(Input::new(&self.confirm)))
+            .child(
+                div()
+                    .id("vault-password")
+                    .test_support()
+                    .child(Input::new(&self.password)),
+            )
+            .when(!exists, |form| {
+                form.child(
+                    div()
+                        .id("vault-confirm")
+                        .test_support()
+                        .child(Input::new(&self.confirm)),
+                )
+            })
             .child(
                 h_flex().child(
                     Button::new("vault-submit")
@@ -243,8 +254,18 @@ impl VaultView {
                 .w_full()
                 .py_3()
                 .gap_2()
-                .child(Input::new(&self.password))
-                .child(Input::new(&self.confirm))
+                .child(
+                    div()
+                        .id("vault-password")
+                        .test_support()
+                        .child(Input::new(&self.password)),
+                )
+                .child(
+                    div()
+                        .id("vault-confirm")
+                        .test_support()
+                        .child(Input::new(&self.confirm)),
+                )
                 .child(
                     h_flex().child(
                         Button::new("vault-submit")
@@ -313,7 +334,11 @@ impl VaultView {
             .child(form::row(
                 "Lock automatically",
                 "Minutes without using the vault before it locks, 1–1440.",
-                div().w(rems(6.)).child(Input::new(&self.auto_lock).small()),
+                div()
+                    .id("vault-auto-lock")
+                    .test_support()
+                    .w(rems(6.))
+                    .child(Input::new(&self.auto_lock).small()),
                 cx,
             ))
             .when_some(self.auto_lock_error.clone(), |row, error| {

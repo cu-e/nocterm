@@ -44,12 +44,9 @@ impl FakeStore {
 
     /// Saves directly, as another device or an earlier session would have.
     pub(crate) fn insert(&self, request: SecretRequest, secret: &str) -> CredentialId {
-        let id = CredentialId::generate().unwrap();
-        self.0
-            .lock()
-            .unwrap()
-            .records
-            .push((id, request, Secret::new(secret)));
+        let mut inner = self.0.lock().unwrap();
+        let id = CredentialId::from_bytes((inner.records.len() as u128 + 1).to_be_bytes());
+        inner.records.push((id, request, Secret::new(secret)));
         id
     }
 
@@ -104,7 +101,7 @@ impl CredentialStore for FakeStore {
     ) -> CredentialFuture<CredentialId> {
         let mut inner = self.0.lock().unwrap();
         let result = if inner.available && request.is_storable() {
-            let id = CredentialId::generate().unwrap();
+            let id = CredentialId::from_bytes((inner.records.len() as u128 + 1).to_be_bytes());
             inner.records.push((id, request.clone(), secret));
             Ok(id)
         } else {

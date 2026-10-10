@@ -109,9 +109,14 @@ are bounded. Readers/writers belong to the SFTP session and close on disconnect.
 
 ## Vault
 
-`nocterm-vault` owns a versioned authenticated encrypted envelope and a bounded
-worker; `nocterm-vault-ui` exposes create/unlock/lock/rotation, auto-lock and a
-credential provider contract. Profiles store opaque IDs. Authentication asks this
-provider only for matching password/key-passphrase bindings; explicit Remember
-commits after Connected and excludes MFA. Epoch checks invalidate queued results
-on lock. See [security/lifecycle notes](../VAULT.md).
+`nocterm-vault` owns the versioned authenticated envelope, bounded codecs,
+credential binding rules and pure prepared/accepted state transitions. Entropy is
+supplied as values by adapters. A prepared write leaves state unchanged; acceptance
+is infallible after publication. `VaultAccess` and `DeviceUnlockProvider` declare
+UI/service and native authentication contracts without workers or filesystem I/O.
+`nocterm-vault-store` implements storage and lifecycle in the adapter layer;
+`nocterm-vault-ui` receives an explicit `Arc<dyn VaultAccess>`. Profiles store opaque
+IDs constructed from supplied bytes in `nocterm-session`. Authentication uses only
+matching password/key-passphrase bindings; Remember commits after Connected and
+excludes MFA. See [security/lifecycle notes](../VAULT.md) and
+[ADR 0016](../adr/0016-vault-storage-boundary.md).

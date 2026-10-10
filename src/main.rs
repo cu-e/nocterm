@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
                 },
                 cx,
             );
-            let vault_ready = booted.vault_ready();
+            let vault = booted.vault.clone();
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
             })
             .detach();
 
-            if let Err(error) = open_main_window(cx, vault_ready) {
+            if let Err(error) = open_main_window(cx, vault) {
                 tracing::error!(%error, "could not open the window");
                 cx.quit();
             }
@@ -118,7 +118,10 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
+fn open_main_window(
+    cx: &mut App,
+    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
+) -> anyhow::Result<()> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -139,7 +142,7 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
 
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
+            bootstrap::build_workspace(&mut workspace, vault.as_deref(), window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
@@ -168,14 +171,14 @@ fn agent_services(paths: &Paths, executable: std::path::PathBuf) -> nocterm_agen
     }
 }
 
-fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
+fn register_settings(workspace: &mut Workspace, vault: Option<&nocterm_vault_ui::Installed>) {
     let mut pages = vec![
         nocterm_keymap_ui::settings_page(),
         nocterm_monitor_ui::settings_page(),
         nocterm_files::settings_page(),
     ];
-    if vault_ready {
-        pages.push(nocterm_vault_ui::settings_page());
+    if let Some(vault) = vault {
+        pages.push(nocterm_vault_ui::settings_page(vault));
     }
     nocterm_settings_ui::register_with_pages(workspace, pages.clone());
     /// Opens Settings at page `id` when `A` runs.
@@ -201,7 +204,7 @@ fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
     open_on::<OpenKeymap>(workspace, "keymap", &pages);
     open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages);
     open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages);
-    if vault_ready {
+    if vault.is_some() {
         open_on::<OpenVault>(workspace, "vault", &pages);
     }
 }

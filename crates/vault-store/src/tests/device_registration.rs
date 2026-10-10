@@ -1,8 +1,16 @@
-use super::*;
+use crate::Vault;
 use nocterm_session::Secret;
+use nocterm_vault::*;
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, AtomicU8},
+};
+use std::{
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 struct Fake {
     key: Mutex<Option<VaultKey>>,
@@ -10,6 +18,7 @@ struct Fake {
     corrupt: AtomicBool,
     removed: AtomicBool,
     late_cancel: AtomicBool,
+    epoch: Arc<AtomicU64>,
     session_only: AtomicBool,
     token: AtomicU8,
     locked: AtomicBool,
@@ -22,6 +31,7 @@ impl Fake {
             corrupt: AtomicBool::new(false),
             removed: AtomicBool::new(false),
             late_cancel: AtomicBool::new(false),
+            epoch: Arc::new(AtomicU64::new(0)),
             session_only: AtomicBool::new(false),
             token: AtomicU8::new(0),
             locked: AtomicBool::new(false),
@@ -69,10 +79,8 @@ impl DeviceUnlockProvider for Fake {
         if self.corrupt.load(Ordering::SeqCst) {
             key[0] ^= 1;
         }
-        if self.late_cancel.load(Ordering::SeqCst)
-            && let Some((epoch, _)) = &cancel.epoch
-        {
-            epoch.fetch_add(1, Ordering::SeqCst);
+        if self.late_cancel.load(Ordering::SeqCst) {
+            self.epoch.fetch_add(1, Ordering::SeqCst);
         }
         Ok(key)
     }
@@ -102,9 +110,8 @@ impl DeviceUnlockProvider for Fake {
 }
 fn fixture() -> (tempfile::TempDir, Vault, Arc<Fake>) {
     let temp = tempfile::tempdir().unwrap();
-    let mut vault = Vault::new(temp.path().join("vault.bin"));
     let provider = Arc::new(Fake::new());
-    vault.device = Some(provider.clone());
+    let mut vault = Vault::with_device(temp.path().join("vault.bin"), Some(provider.clone()));
     vault.create(Secret::new("long master password")).unwrap();
     (temp, vault, provider)
 }
@@ -139,16 +146,16 @@ fn late_success_cannot_reopen_after_lock_epoch_changes() {
     let (_temp, mut vault, provider) = fixture();
     vault.enable_device_unlock().unwrap();
     provider.late_cancel.store(true, Ordering::SeqCst);
-    vault.guard = Some((Arc::new(AtomicU64::new(0)), 0));
+    vault = vault.with_cancellation(DeviceCancellation::for_epoch(provider.epoch.clone(), 0));
     assert!(vault.unlock_with_device().is_err());
     assert!(!vault.is_unlocked());
 }
 #[test]
 fn device_roundtrip_preserves_portable_envelope_and_password_unlock() {
-    let (_temp, mut vault, _provider) = fixture();
-    let original = fs::read(&vault.path).unwrap();
+    let (temp, mut vault, _provider) = fixture();
+    let original = fs::read(temp.path().join("vault.bin")).unwrap();
     vault.enable_device_unlock().unwrap();
-    assert_eq!(original, fs::read(&vault.path).unwrap());
+    assert_eq!(original, fs::read(temp.path().join("vault.bin")).unwrap());
     vault.lock();
     vault.unlock_with_device().unwrap();
     assert!(vault.is_unlocked());
@@ -172,20 +179,22 @@ fn wrong_or_cancelled_device_key_never_leaves_vault_unlocked() {
 }
 #[test]
 fn password_rotation_revokes_device_registration_and_old_key() {
-    let (_temp, mut vault, provider) = fixture();
+    let (temp, mut vault, provider) = fixture();
     vault.enable_device_unlock().unwrap();
     let old_key = provider.key.lock().unwrap().as_ref().unwrap().clone();
-    let old_binding = vault.binding().unwrap();
+    let old_binding = EnvelopeInfo::parse(&fs::read(temp.path().join("vault.bin")).unwrap())
+        .unwrap()
+        .binding();
     vault
         .change_password(Secret::new("different master password"))
         .unwrap();
     assert!(provider.removed.load(Ordering::SeqCst));
-    assert!(!vault.device_path().exists());
-    let encrypted = read_file(&vault.path).unwrap();
-    let header = Header::parse(&encrypted).unwrap();
-    assert_ne!(old_binding.salt, header.salt);
+    assert!(!temp.path().join("vault.device-unlock").exists());
+    let encrypted = fs::read(temp.path().join("vault.bin")).unwrap();
+    let header = EnvelopeInfo::parse(&encrypted).unwrap();
+    assert_ne!(old_binding.salt, header.binding().salt);
     vault.lock();
-    assert!(vault.unlock_encrypted(encrypted, header, old_key).is_err());
+    assert!(VaultState::prepare_device_unlock(encrypted, old_key).is_err());
     assert!(!vault.is_unlocked());
     vault
         .unlock(Secret::new("different master password"))
@@ -193,13 +202,17 @@ fn password_rotation_revokes_device_registration_and_old_key() {
 }
 #[test]
 fn registration_for_another_vault_cannot_delete_its_os_key() {
-    let (_temp, mut vault, provider) = fixture();
+    let (temp, mut vault, provider) = fixture();
     vault.enable_device_unlock().unwrap();
-    let mut registration = vault.read_registration().unwrap();
-    registration.binding.vault_id = [99; 16];
+    let registration =
+        DeviceRegistration::parse(&fs::read(temp.path().join("vault.device-unlock")).unwrap())
+            .unwrap();
+    let mut binding = registration.binding();
+    binding.vault_id = [99; 16];
+    let registration = DeviceRegistration::new(binding, registration.token().to_vec()).unwrap();
     fs::write(
-        vault.device_path(),
-        serde_json::to_vec(&registration).unwrap(),
+        temp.path().join("vault.device-unlock"),
+        registration.encode().unwrap(),
     )
     .unwrap();
     assert!(matches!(
@@ -211,13 +224,13 @@ fn registration_for_another_vault_cannot_delete_its_os_key() {
 }
 #[test]
 fn sidecar_is_bounded_private_and_failed_enrollment_cleans_native_key() {
-    let (_temp, mut vault, provider) = fixture();
+    let (temp, mut vault, provider) = fixture();
     vault.enable_device_unlock().unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         assert_eq!(
-            fs::metadata(vault.device_path())
+            fs::metadata(temp.path().join("vault.device-unlock"))
                 .unwrap()
                 .permissions()
                 .mode()
@@ -225,29 +238,35 @@ fn sidecar_is_bounded_private_and_failed_enrollment_cleans_native_key() {
             0o600
         );
     }
-    fs::write(vault.device_path(), vec![0; MAX_REGISTRATION as usize + 1]).unwrap();
-    assert!(matches!(vault.read_registration(), Err(VaultError::Limit)));
-    fs::remove_file(vault.device_path()).unwrap();
-    fs::create_dir(vault.device_path()).unwrap();
+    fs::write(temp.path().join("vault.device-unlock"), vec![0; 32769]).unwrap();
+    assert!(matches!(
+        DeviceRegistration::parse(&fs::read(temp.path().join("vault.device-unlock")).unwrap()),
+        Err(VaultError::Limit)
+    ));
+    fs::remove_file(temp.path().join("vault.device-unlock")).unwrap();
+    fs::create_dir(temp.path().join("vault.device-unlock")).unwrap();
     assert!(vault.enable_device_unlock().is_err());
     assert!(provider.removed.load(Ordering::SeqCst));
     assert!(vault.is_unlocked());
 }
 #[test]
 fn cancelled_epoch_refuses_registration_before_provider_enrollment() {
-    let (_temp, mut vault, provider) = fixture();
-    vault.guard = Some((Arc::new(AtomicU64::new(1)), 0));
+    let (temp, mut vault, provider) = fixture();
+    vault = vault.with_cancellation(DeviceCancellation::for_epoch(
+        Arc::new(AtomicU64::new(1)),
+        0,
+    ));
     assert!(matches!(
         vault.enable_device_unlock(),
         Err(VaultError::Device(DeviceUnlockError::Cancelled))
     ));
     assert!(provider.key.lock().unwrap().is_none());
-    assert!(!vault.device_path().exists());
+    assert!(!temp.path().join("vault.device-unlock").exists());
 }
 #[test]
 fn external_revision_change_refuses_enrollment_of_stale_key() {
-    let (_temp, mut vault, provider) = fixture();
-    let mut other = Vault::new(vault.path.clone());
+    let (temp, mut vault, provider) = fixture();
+    let mut other = Vault::new(temp.path().join("vault.bin"));
     other.unlock(Secret::new("long master password")).unwrap();
     other
         .change_password(Secret::new("another master password"))
@@ -400,12 +419,10 @@ fn password_unlock_rearms_locked_registration_and_failed_password_does_not() {
 fn progress_observer_ignores_cancelled_epochs() {
     let epoch = Arc::new(AtomicU64::new(0));
     let (sender, receiver) = std::sync::mpsc::channel();
-    let cancel = DeviceCancellation {
-        epoch: Some((epoch.clone(), 0)),
-        observer: Some(Arc::new(move |remaining| {
+    let cancel =
+        DeviceCancellation::for_epoch(epoch.clone(), 0).with_progress(Arc::new(move |remaining| {
             sender.send(remaining).unwrap();
-        })),
-    };
+        }));
     cancel.report_attempts_remaining(2);
     assert_eq!(receiver.try_recv().unwrap(), 2);
     epoch.fetch_add(1, Ordering::SeqCst);
@@ -455,10 +472,10 @@ impl DeviceUnlockProvider for MissingBroker {
 
 #[test]
 fn missing_broker_preserves_install_guidance_with_an_existing_registration() {
-    let (_temp, mut vault, _) = fixture();
+    let (temp, mut vault, _) = fixture();
     vault.enable_device_unlock().unwrap();
     vault.lock();
-    vault.device = Some(Arc::new(MissingBroker));
+    vault = Vault::with_device(temp.path().join("vault.bin"), Some(Arc::new(MissingBroker)));
     let capability = vault.probe_device_unlock().unwrap();
     assert_eq!(capability.availability, DeviceAvailability::BrokerMissing);
     assert_eq!(

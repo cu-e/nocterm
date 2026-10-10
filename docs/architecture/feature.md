@@ -186,7 +186,12 @@ invalidates that confirmation; completion refreshes only its original context.
 
 ## Vault
 
-The vault feature handles `workspace::UnlockVault` and `workspace::LockVault`
+The vault feature receives `Deps::new(Arc<dyn VaultAccess>)`; `install`
+returns an owned `Installed` handle retained by the composition root and reused
+by every window. Settings page factories and action handlers capture that handle,
+so views and credential bridges do not read a vault global or import adapters.
+Each view owns its cancellable status subscription. The feature handles
+`workspace::UnlockVault` and `workspace::LockVault`
 application-wide, so the palette and a terminal's sign-in prompt can unlock the
 vault in a small dialog without opening Settings and without depending on the
 vault feature.

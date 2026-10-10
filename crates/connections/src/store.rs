@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn credential_references_and_launch_round_trip_without_secret_fields() {
-        let id = CredentialId::generate().unwrap();
+        let id = CredentialId::from_bytes([42; 16]);
         let mut item = profile("Build", "build.local", None);
         item.credential = Some(id);
         item.launch = Some(ShellLaunch {

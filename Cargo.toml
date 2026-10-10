@@ -31,6 +31,8 @@ nocterm-ssh.workspace = true
 nocterm-terminal.workspace = true
 nocterm-themes.workspace = true
 nocterm-vault-ui.workspace = true
+nocterm-vault.workspace = true
+nocterm-vault-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 
@@ -105,6 +107,7 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -159,6 +162,7 @@ nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
 nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
+nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
 
 agent-client-protocol = "=2.2.0"

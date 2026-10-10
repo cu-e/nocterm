@@ -14,7 +14,7 @@ async fn moves_preserve_latest_attributes_and_roll_back_failed_storage(
         options: Default::default(),
         target: Target::new("ci", "build", 2222),
         auth: Auth::Password,
-        credential: Some(CredentialId::generate().unwrap()),
+        credential: Some(CredentialId::from_bytes([42; 16])),
         launch: Some(Default::default()),
         icon: None,
         icon_color: None,
@@ -171,7 +171,7 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
         .update(cx, |c, cx| c.save_profile(original.clone(), cx))
         .await
         .unwrap();
-    let credential = CredentialId::generate().unwrap();
+    let credential = CredentialId::from_bytes([42; 16]);
     entity
         .update(cx, |c, cx| {
             c.associate_credential(&original.target, &original.auth, credential, cx)

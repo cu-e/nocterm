@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-vault"
-description = "Portable encrypted credential vault and bounded worker service."
+description = "Portable encrypted credential rules and lifecycle contracts."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -11,16 +11,14 @@ layer = "domain"
 nocterm-session.workspace = true
 argon2.workspace = true
 chacha20poly1305.workspace = true
-getrandom.workspace = true
 zeroize.workspace = true
-fs2.workspace = true
 futures.workspace = true
-event-listener.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tempfile.workspace = true
 [dev-dependencies]
-tempfile.workspace = true
 [lints]
 workspace = true
+
+[features]
+test-support = []

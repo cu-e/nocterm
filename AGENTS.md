@@ -171,7 +171,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `snippets-ui` | contextual snippet panel and highlighted editor |
 | `containers` | container engine CLI, listing and actions |
 | `containers-ui` | containers panel, logs and shell tabs |
-| `vault` | encrypted credential storage |
+| `vault` | encrypted format and credential rules |
+| `vault-store` | vault files, entropy and bounded lifecycle worker |
 | `vault-ui` | vault settings and authentication bridge |
 | `device-unlock` | native authenticated vault key release |
 | `vault-broker` | optional privileged Linux fingerprint broker |

@@ -64,8 +64,7 @@ impl Drop for Recorder {
 }
 impl Recorder {
     pub(crate) fn start(directory: PathBuf, max_file_mib: u32) -> Result<Self, String> {
-        let id = nocterm_session::CredentialId::generate()
-            .map_err(|_| "Could not generate a unique log filename.")?;
+        let id = uuid::Uuid::new_v4();
         let path = directory.join(format!("session-{id}.log"));
         let state = Arc::new(Mutex::new(RecordingStatus {
             path: Some(path.clone()),

@@ -34,6 +34,10 @@ of being silently retried. Unlocking can supply the still-pending initial reques
 
 ## Format and persistence
 
+The pure `nocterm-vault` domain owns this format and prepared state transitions.
+`nocterm-vault-store` owns OS entropy, files and the bounded worker; the app passes
+its `VaultAccess` contract into the vault feature. No vault service global is used.
+
 Version 1 derives a 32-byte wrapping key with Argon2id (64 MiB, three passes, four
 lanes, fresh 16-byte salt). It wraps a random 32-byte data key with
 XChaCha20-Poly1305. The data key encrypts a bounded binary payload with fresh

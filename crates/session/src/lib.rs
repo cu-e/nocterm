@@ -1,4 +1,9 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
+//! Owns: targets, authentication, opaque credential IDs and execution/FS contracts.
+//! Does not own: transport I/O, OS randomness, durable credentials or presentation.
+//! Ports provided: Transport, HostExec, RemoteFs and CredentialStore.
+//! Settings sections: ssh and local (existing adapter configuration). Globals: none.
+//! Invariants: credential IDs are built from explicit bytes, never generated here.
 //!
 //! A [`Session`] is a pair of channels. The owner sends [`Command`]s (input,
 //! resize, close) and receives [`Event`]s (output, prompts, the end). How the

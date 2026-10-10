@@ -1,5 +1,5 @@
 //! Native key-release adapters, injected by the application composition root.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", test, feature = "test-support"))]
 mod cancellation;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -42,3 +42,6 @@ mod tests {
         assert!(Arc::ptr_eq(&provider, &clone));
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;

@@ -1,0 +1,21 @@
+[package]
+name = "nocterm-vault-store"
+description = "Durable encrypted vault adapter and bounded worker."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+[package.metadata.nocterm]
+layer = "adapter"
+[dependencies]
+nocterm-vault.workspace = true
+nocterm-session.workspace = true
+nocterm-core.workspace = true
+getrandom.workspace = true
+fs2.workspace = true
+futures.workspace = true
+event-listener.workspace = true
+[dev-dependencies]
+tempfile.workspace = true
+[lints]
+workspace = true

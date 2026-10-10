@@ -6,11 +6,9 @@ use gpui_kit::{
 };
 use nocterm_session::Secret;
 use nocterm_ui::{SettingsExt as _, SettingsStore};
-use nocterm_vault::{CredentialInfo, DeviceCapability, VaultFuture, VaultService};
+use nocterm_vault::{CredentialInfo, DeviceCapability, VaultAccess, VaultFuture};
 use nocterm_workspace::SettingsPage;
 use std::sync::Arc;
-
-use crate::{Service, VaultStatusGlobal};
 
 /// The page's tabs, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,9 +31,14 @@ impl Tab {
     }
 }
 
+struct ViewBindings {
+    _subscriptions: Vec<Subscription>,
+    _status: gpui_kit::Task<()>,
+}
+
 pub struct VaultView {
     pub(crate) tab: Tab,
-    pub(crate) service: Arc<VaultService>,
+    pub(crate) service: Arc<dyn VaultAccess>,
     pub(crate) password: Entity<InputState>,
     pub(crate) confirm: Entity<InputState>,
     pub(crate) focus: FocusHandle,
@@ -49,10 +52,14 @@ pub struct VaultView {
     /// Minutes before the vault locks itself, saved when the field is left.
     pub(crate) auto_lock: Entity<InputState>,
     pub(crate) auto_lock_error: Option<SharedString>,
-    _subscriptions: Vec<Subscription>,
+    _bindings: ViewBindings,
 }
 impl VaultView {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        service: Arc<dyn VaultAccess>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
@@ -81,9 +88,6 @@ impl VaultView {
                     this.save_auto_lock(cx);
                 }
             }),
-            cx.observe_global_in::<VaultStatusGlobal>(window, |this, window, cx| {
-                this.status_changed(window, cx);
-            }),
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 let minutes = cx
                     .setting::<crate::VaultSettings>()
@@ -97,11 +101,24 @@ impl VaultView {
                 cx.notify();
             }),
         ];
+        let status_service = service.clone();
+        let mut seen = service.revision();
+        let watch = cx.spawn_in(window, async move |this, cx| {
+            loop {
+                seen = status_service.changed(seen).await;
+                if this
+                    .update_in(cx, |this, window, cx| this.status_changed(window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let mut this = Self {
             tab: Tab::Overview,
             auto_lock,
             auto_lock_error: None,
-            service: cx.global::<Service>().0.clone(),
+            service,
             focus: cx.focus_handle(),
             password,
             confirm,
@@ -112,7 +129,10 @@ impl VaultView {
             records: Vec::new(),
             unlocked: false,
             generation: 0,
-            _subscriptions: subscriptions,
+            _bindings: ViewBindings {
+                _subscriptions: subscriptions,
+                _status: watch,
+            },
         };
         this.refresh_device(cx);
         if this.service.is_unlocked() {

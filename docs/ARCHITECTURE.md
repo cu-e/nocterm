@@ -2,8 +2,10 @@
 
 The application is the composition root. `src/main.rs` loads paths, settings and
 design tokens and passes them, with the SSH/local transports and the vault, to
-`src/bootstrap.rs`, which installs every global in one order shared with the GUI
-tests and registers independent workspace features. The [dependency map](architecture/dependencies.md) is generated from
+`src/bootstrap.rs`, which installs services in one order shared with the GUI
+tests and registers independent workspace features. The vault adapter is passed
+as a `VaultAccess` port; its installed feature handle owns settings observation
+and is retained by the app. The [dependency map](architecture/dependencies.md) is generated from
 Cargo metadata; `cargo xtask architecture` enforces its declared layers and
 rejects runtime GUI dependencies below the UI layer. Service crates sit beside
 the UI layer: they own GPUI entities and background work but no views, so they

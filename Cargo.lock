@@ -4932,6 +4932,8 @@ dependencies = [
  "nocterm-terminal",
  "nocterm-themes",
  "nocterm-ui",
+ "nocterm-vault",
+ "nocterm-vault-store",
  "nocterm-vault-ui",
  "nocterm-workspace",
  "serde_json",
@@ -5087,17 +5089,14 @@ name = "nocterm-device-unlock"
 version = "0.0.0"
 dependencies = [
  "chacha20poly1305",
- "futures",
  "getrandom 0.4.3",
  "hkdf 0.12.4",
  "nix 0.31.3",
- "nocterm-session",
  "nocterm-vault",
  "security-framework",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "tid-rs",
  "tokio",
  "windows 0.62.2",
@@ -5198,7 +5197,6 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "futures",
- "getrandom 0.4.3",
  "nocterm-settings",
  "schemars 1.2.2",
  "secrecy",
@@ -5295,6 +5293,7 @@ dependencies = [
  "regex",
  "tempfile",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5354,14 +5353,10 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
- "event-listener",
- "fs2",
  "futures",
- "getrandom 0.4.3",
  "nocterm-session",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.21",
  "zeroize",
 ]
@@ -5377,6 +5372,20 @@ dependencies = [
  "tokio",
  "zbus",
  "zeroize",
+]
+
+[[package]]
+name = "nocterm-vault-store"
+version = "0.0.0"
+dependencies = [
+ "event-listener",
+ "fs2",
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-core",
+ "nocterm-session",
+ "nocterm-vault",
+ "tempfile",
 ]
 
 [[package]]

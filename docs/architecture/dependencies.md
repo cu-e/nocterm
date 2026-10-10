@@ -6,7 +6,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-ai`, `nocterm-connections`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-terminal`, `nocterm-themes`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-session`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
 | `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-core` | ACP agent connections, their admission and the chats' durable documents. |
@@ -16,7 +16,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-containers-ui` | feature | `nocterm-containers`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's containers in the sidebar, with their logs and shells in tabs. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
-| `nocterm-device-unlock` | adapter | `nocterm-session`, `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
+| `nocterm-device-unlock` | adapter | `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
 | `nocterm-files` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Keymap settings page: search, rebind and reset key bindings. |
@@ -33,8 +33,9 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded bidirectional streaming transfer queues independent of the explorer. |
 | `nocterm-ui` | ui | `nocterm-ai`, `nocterm-core`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
-| `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential vault and bounded worker service. |
+| `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential rules and lifecycle contracts. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
+| `nocterm-vault-store` | adapter | `nocterm-core`, `nocterm-session`, `nocterm-vault` | Durable encrypted vault adapter and bounded worker. |
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
 | `nocterm-workspace` | ui | `nocterm-keymap`, `nocterm-session`, `nocterm-settings`, `nocterm-ui` | Window shell: tab strip, sidebar and the registries features plug into. |
@@ -63,6 +64,8 @@ graph TD
     nocterm --> nocterm_terminal
     nocterm --> nocterm_themes
     nocterm --> nocterm_ui
+    nocterm --> nocterm_vault
+    nocterm --> nocterm_vault_store
     nocterm --> nocterm_vault_ui
     nocterm --> nocterm_workspace
     nocterm_acp --> nocterm_ai
@@ -87,7 +90,6 @@ graph TD
     nocterm_containers_ui --> nocterm_settings
     nocterm_containers_ui --> nocterm_ui
     nocterm_containers_ui --> nocterm_workspace
-    nocterm_device_unlock --> nocterm_session
     nocterm_device_unlock --> nocterm_vault
     nocterm_files --> nocterm_session
     nocterm_files --> nocterm_settings
@@ -136,6 +138,9 @@ graph TD
     nocterm_ui --> nocterm_settings
     nocterm_ui --> nocterm_themes
     nocterm_vault --> nocterm_session
+    nocterm_vault_store --> nocterm_core
+    nocterm_vault_store --> nocterm_session
+    nocterm_vault_store --> nocterm_vault
     nocterm_vault_ui --> nocterm_session
     nocterm_vault_ui --> nocterm_settings
     nocterm_vault_ui --> nocterm_ui

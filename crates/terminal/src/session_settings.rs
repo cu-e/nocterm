@@ -169,7 +169,7 @@ mod tests {
                 program: Some("/bin/bash".into()),
                 ..Default::default()
             }),
-            credential: Some(nocterm_session::CredentialId::generate().unwrap()),
+            credential: Some(nocterm_session::CredentialId::from_bytes([42; 16])),
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);

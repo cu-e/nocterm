@@ -1,14 +1,13 @@
 use super::*;
 use futures::executor::block_on;
 use nocterm_session::Target;
-use std::time::Duration;
+use nocterm_vault::testing::ScriptedVaultAccess;
 
 const MASTER: &str = "test unique master passphrase";
 
 fn store(directory: &tempfile::TempDir) -> VaultCredentials {
-    let service = Arc::new(
-        VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
-    );
+    let _ = directory;
+    let service = Arc::new(ScriptedVaultAccess::default());
     block_on(service.create(Secret::new(MASTER))).unwrap();
     VaultCredentials::new(service)
 }

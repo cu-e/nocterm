@@ -1,9 +1,18 @@
-use super::*;
+use crate::VaultService;
 use futures::{
     executor::block_on,
     task::{ArcWake, waker},
 };
+use nocterm_session::Secret;
+use nocterm_vault::VaultStatus;
 use std::task::{Context, Poll};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 const MASTER: &str = "test unique master passphrase";
 

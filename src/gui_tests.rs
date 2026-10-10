@@ -82,7 +82,8 @@ fn fixture_with_vault(
             section.cwd = Some(directory.path().to_string_lossy().into_owned())
         });
         let booted = boot(directory, settings, transport.clone(), vault_ready, cx);
-        if let Some(service) = booted.vault {
+        if let Some(installed) = booted.vault.as_ref() {
+            let service = installed.service();
             // Creates the vault with a master password and leaves it locked.
             cx.set_global(FixtureVault(Box::new(move || {
                 futures::executor::block_on(
@@ -92,7 +93,7 @@ fn fixture_with_vault(
                 service.lock();
             })));
         }
-        let (window, workspace) = open_workspace(vault_ready, cx);
+        let (window, workspace) = open_workspace(booted.vault.clone(), cx);
         let terminal = window
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
@@ -174,13 +175,13 @@ fn boot(
 
 /// Opens a window with the application's workspace.
 fn open_workspace(
-    vault_ready: bool,
+    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
     cx: &mut gpui_kit::App,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
+            crate::bootstrap::build_workspace(&mut workspace, vault.as_deref(), window, cx);
             workspace
         })
     })

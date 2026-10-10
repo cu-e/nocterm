@@ -1,29 +1,12 @@
-use super::*;
-use format::encode_records;
+use crate::{Vault, VaultService};
+use fs2::FileExt as _;
+use nocterm_session::{Secret, Target};
+use nocterm_vault::*;
+use std::{
+    fs::{self, OpenOptions},
+    path::Path,
+};
 
-#[test]
-fn bounded_payload_parser_preserves_secret_bytes_and_rejects_lengths() {
-    let secret = "a\"quoted\\password\nwith unicode λ";
-    let records = vec![Record {
-        info: CredentialInfo {
-            id: CredentialId::generate().unwrap(),
-            label: "label".into(),
-            binding: binding(),
-        },
-        secret: Secret::new(secret),
-    }];
-    let encoded = encode_records(&records).unwrap();
-    let decoded = decode_records(&encoded).unwrap();
-    assert_eq!(decoded[0].secret.expose(), secret);
-    for length in [0, 3, 7, encoded.len() - 1] {
-        assert!(decode_records(&encoded[..length]).is_err());
-    }
-    let mut hostile = encoded.to_vec();
-    hostile[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
-    assert!(decode_records(&hostile).is_err());
-    hostile[..8].copy_from_slice(b"CRD1\xff\xff\xff\xff");
-    assert!(decode_records(&hostile).is_err());
-}
 fn password() -> Secret {
     Secret::new("unique test master passphrase")
 }
@@ -91,20 +74,26 @@ fn hostile_and_truncated_headers_reject_before_kdf() {
     let path = directory.path().join("vault");
     let _vault = created(&path);
     let original = fs::read(&path).unwrap();
-    for length in [0, 7, 24, HEADER_SIZE, HEADER_SIZE + WRAPPED_SIZE + 15] {
+    for length in [0, 7, 24, 108, 171] {
         assert!(matches!(
-            Header::parse(&original[..length.min(original.len())]),
+            EnvelopeInfo::parse(&original[..length.min(original.len())]),
             Err(VaultError::Format)
         ));
     }
     for offset in [8, 10, 11, 12, 16, 20, 104] {
         let mut bytes = original.clone();
         bytes[offset] ^= 255;
-        assert!(matches!(Header::parse(&bytes), Err(VaultError::Format)));
+        assert!(matches!(
+            EnvelopeInfo::parse(&bytes),
+            Err(VaultError::Format)
+        ));
     }
     let mut bytes = original;
     bytes.push(0);
-    assert!(matches!(Header::parse(&bytes), Err(VaultError::Format)));
+    assert!(matches!(
+        EnvelopeInfo::parse(&bytes),
+        Err(VaultError::Format)
+    ));
 }
 #[test]
 fn rotation_changes_master_password_and_uses_fresh_nonces() {
@@ -152,7 +141,10 @@ fn stale_writers_and_cancelled_commit_preserve_last_good_file() {
     ));
     assert_eq!(fs::read(&path).unwrap(), good);
     assert!(second.list().unwrap().is_empty());
-    first.guard = Some((std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2)), 1));
+    first = first.with_cancellation(DeviceCancellation::for_epoch(
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2)),
+        1,
+    ));
     assert!(matches!(
         first.put(None, "three".into(), binding(), Secret::new("three-secret")),
         Err(VaultError::Cancelled)
@@ -165,7 +157,7 @@ fn stale_writers_and_cancelled_commit_preserve_last_good_file() {
         .open(path.with_extension("lock"))
         .unwrap();
     lock.try_lock_exclusive().unwrap();
-    first.guard = None;
+    first = first.with_cancellation(DeviceCancellation::never());
     assert!(matches!(
         first.delete(first.list().unwrap()[0].id),
         Err(VaultError::Busy)
@@ -215,4 +207,50 @@ fn worker_lock_invalidates_inflight_unlock_and_autolocks() {
     std::thread::sleep(std::time::Duration::from_millis(1400));
     assert!(!service.is_unlocked());
     assert!(matches!(block_on(service.list()), Err(VaultError::Locked)));
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_staging_retains_disk_and_unlocked_records() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("vault");
+    let mut vault = created(&path);
+    let original = fs::read(&path).unwrap();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
+    let result = vault.put(None, "rejected".into(), binding(), Secret::new("secret"));
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(result, Err(VaultError::Io(_))));
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(vault.list().unwrap().is_empty());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn bounded_file_reads_reject_oversized_envelopes_and_non_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("vault");
+    let mut vault = Vault::new(&path);
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(2_000_000).unwrap();
+    assert!(matches!(vault.unlock(password()), Err(VaultError::Limit)));
+    assert!(!vault.is_unlocked());
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+}
+
+#[cfg(unix)]
+#[test]
+fn envelope_symlink_rejection_preserves_its_target() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let victim = directory.path().join("victim");
+    fs::write(&victim, b"unrelated bytes").unwrap();
+    let path = directory.path().join("vault");
+    symlink(&victim, &path).unwrap();
+    let mut vault = Vault::new(&path);
+    assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+    assert!(!vault.is_unlocked());
+    assert_eq!(fs::read(&victim).unwrap(), b"unrelated bytes");
 }

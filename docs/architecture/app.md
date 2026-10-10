@@ -10,8 +10,11 @@ Tooling (`xtask`) may depend on anything but the app and other tooling.
 
 The application is the composition root. `src/main.rs` loads paths, settings and
 design tokens and passes them, with the SSH/local transports and the vault, to
-`src/bootstrap.rs`, which installs every global in one order shared with the GUI
-tests and registers independent workspace features. The application window factory reuses global services rather than initializing another vault or transfer queue.
+`src/bootstrap.rs`, which installs services in one order shared with the GUI
+tests and registers independent workspace features. The vault adapter is passed
+as a `VaultAccess` port; its installed feature handle owns settings observation
+and is retained by the app. The application window factory reuses installed service handles rather than
+initializing another vault or transfer queue.
 
 ## Menus
 

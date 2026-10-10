@@ -16,18 +16,22 @@ pub(crate) const VERSION: &str = include_str!("../version.txt");
 
 struct ApplicationState {
     paths: Paths,
-    vault_ready: bool,
+    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
 }
 impl Global for ApplicationState {}
 
-pub(crate) fn register(paths: Paths, vault_ready: bool, cx: &mut App) {
-    cx.set_global(ApplicationState { paths, vault_ready });
+pub(crate) fn register(
+    paths: Paths,
+    vault: Option<std::rc::Rc<nocterm_vault_ui::Installed>>,
+    cx: &mut App,
+) {
+    cx.set_global(ApplicationState { paths, vault });
     nocterm_workspace::command_palette::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &NewWindow, cx| {
-        let vault_ready = cx.global::<ApplicationState>().vault_ready;
+        let vault = cx.global::<ApplicationState>().vault.clone();
         cx.defer(move |cx| {
-            if let Err(error) = super::open_main_window(cx, vault_ready) {
+            if let Err(error) = super::open_main_window(cx, vault) {
                 report_error(format!("Could not open a window: {error}"), cx);
             }
         });

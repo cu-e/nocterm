@@ -232,11 +232,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Compile and link native adapters
-        run: cargo build --locked -p nocterm-device-unlock --all-targets
+        run: cargo build --locked -p nocterm-vault-store -p nocterm-device-unlock --all-targets
       - name: Lint native adapters
-        run: cargo clippy --locked -p nocterm-vault -p nocterm-device-unlock --all-targets -- -D warnings
+        run: cargo clippy --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock --all-targets -- -D warnings
       - name: Test portable envelope and native metadata without authentication prompts
-        run: cargo test --locked -p nocterm-vault -p nocterm-device-unlock
+        run: cargo test --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock
 
   # The one check to require in branch protection: it passes only when every
   # job above passed or was skipped by design, so adding a job never needs a

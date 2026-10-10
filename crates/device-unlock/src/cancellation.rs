@@ -56,118 +56,10 @@ pub(crate) fn run<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nocterm_vault::{
-        DeviceAvailability, DeviceCapability, DeviceUnlockProvider, VaultBinding, VaultKey,
-        VaultService,
-    };
-    use std::sync::{Arc, Condvar, Mutex};
+    use nocterm_vault::VaultKey;
+    use std::sync::Arc;
 
-    #[derive(Default)]
-    struct Context {
-        invalidated: Mutex<bool>,
-        changed: Condvar,
-    }
-    impl Context {
-        fn invalidate(&self) {
-            *self.invalidated.lock().unwrap() = true;
-            self.changed.notify_all();
-        }
-        fn query(&self) {
-            let state = self.invalidated.lock().unwrap();
-            let (state, _) = self
-                .changed
-                .wait_timeout_while(state, Duration::from_secs(5), |state| !*state)
-                .unwrap();
-            assert!(*state, "native authentication was never invalidated");
-        }
-    }
-    struct Provider {
-        key: Mutex<Option<VaultKey>>,
-        started: mpsc::Sender<()>,
-        context: Arc<Context>,
-    }
-    impl DeviceUnlockProvider for Provider {
-        fn probe(&self) -> Result<DeviceCapability, E> {
-            Ok(DeviceCapability {
-                availability: DeviceAvailability::Available,
-                label: "Native test".into(),
-                detail: String::new(),
-                enabled: false,
-                armed: false,
-                session_only: false,
-            })
-        }
-        fn enroll(
-            &self,
-            _binding: VaultBinding,
-            key: VaultKey,
-            _cancel: &DeviceCancellation,
-        ) -> Result<Vec<u8>, E> {
-            *self.key.lock().unwrap() = Some(key);
-            Ok(vec![1])
-        }
-        fn release(
-            &self,
-            _binding: VaultBinding,
-            _token: &[u8],
-            cancel: &DeviceCancellation,
-        ) -> Result<VaultKey, E> {
-            let context = self.context.clone();
-            run(
-                cancel,
-                Duration::from_secs(30),
-                move || context.invalidate(),
-                || {
-                    self.started.send(()).unwrap();
-                    self.context.query();
-                    // Native late success must still be rejected after invalidation.
-                    Ok(self.key.lock().unwrap().as_ref().unwrap().clone())
-                },
-            )
-        }
-        fn remove(&self, _binding: VaultBinding, _token: &[u8]) -> Result<(), E> {
-            Ok(())
-        }
-    }
-    #[test]
-    fn cancel_releases_single_vault_worker_for_password_without_native_resume() {
-        let directory = tempfile::tempdir().unwrap();
-        let (started, event) = mpsc::channel();
-        let provider = Arc::new(Provider {
-            key: Mutex::new(None),
-            started,
-            context: Arc::new(Context::default()),
-        });
-        let service = VaultService::new_with_device_unlock(
-            directory.path().join("vault.bin"),
-            Duration::from_secs(60),
-            Some(provider.clone()),
-        )
-        .unwrap();
-        futures::executor::block_on(
-            service.create(nocterm_session::Secret::new("native test password")),
-        )
-        .unwrap();
-        futures::executor::block_on(service.enable_device_unlock()).unwrap();
-        service.lock();
-        let native = service.unlock_with_device();
-        event.recv_timeout(Duration::from_secs(2)).unwrap();
-        service.lock();
-        assert!(!service.is_unlocked());
-        let password = service.unlock(nocterm_session::Secret::new("native test password"));
-        let (finished, completion) = mpsc::channel();
-        let waiter = std::thread::spawn(move || {
-            let native = futures::executor::block_on(native);
-            let password = futures::executor::block_on(password);
-            finished.send((native, password)).unwrap();
-        });
-        let (native, password) = completion.recv_timeout(Duration::from_secs(2)).unwrap();
-        waiter.join().unwrap();
-        assert!(matches!(native, Err(nocterm_vault::VaultError::Cancelled)));
-        password.unwrap();
-        assert!(*provider.context.invalidated.lock().unwrap());
-        assert!(service.is_unlocked());
-    }
+    use crate::testing::Context;
     #[test]
     fn timeout_invalidates_native_context_and_rejects_late_success() {
         let context = Arc::new(Context::default());
@@ -196,6 +88,6 @@ mod tests {
             || Ok(42),
         );
         assert_eq!(result.unwrap(), 42);
-        assert!(!*context.invalidated.lock().unwrap());
+        assert!(!context.was_invalidated());
     }
 }

@@ -1,5 +1,7 @@
-use super::*;
+use crate::Vault;
 use nocterm_session::Secret;
+use nocterm_vault::*;
+use std::sync::Arc;
 
 struct FaultingProvider(DeviceAvailability);
 impl DeviceUnlockProvider for FaultingProvider {
@@ -45,8 +47,10 @@ impl DeviceUnlockProvider for FaultingProvider {
 #[test]
 fn available_provider_registration_errors_are_preserved() {
     let temp = tempfile::tempdir().unwrap();
-    let mut vault = Vault::new(temp.path().join("vault.bin"));
-    vault.device = Some(Arc::new(FaultingProvider(DeviceAvailability::Available)));
+    let mut vault = Vault::with_device(
+        temp.path().join("vault.bin"),
+        Some(Arc::new(FaultingProvider(DeviceAvailability::Available))),
+    );
     vault.create(Secret::new("long master password")).unwrap();
     vault.enable_device_unlock().unwrap();
     vault.lock();
@@ -58,8 +62,10 @@ fn available_provider_registration_errors_are_preserved() {
 #[test]
 fn unavailable_provider_guidance_survives_existing_registration() {
     let temp = tempfile::tempdir().unwrap();
-    let mut vault = Vault::new(temp.path().join("vault.bin"));
-    vault.device = Some(Arc::new(FaultingProvider(DeviceAvailability::Available)));
+    let mut vault = Vault::with_device(
+        temp.path().join("vault.bin"),
+        Some(Arc::new(FaultingProvider(DeviceAvailability::Available))),
+    );
     vault.create(Secret::new("long master password")).unwrap();
     vault.enable_device_unlock().unwrap();
     vault.lock();
@@ -71,7 +77,10 @@ fn unavailable_provider_guidance_survives_existing_registration() {
         DeviceAvailability::SigningRequired,
         DeviceAvailability::LockedOut,
     ] {
-        vault.device = Some(Arc::new(FaultingProvider(availability.clone())));
+        vault = Vault::with_device(
+            temp.path().join("vault.bin"),
+            Some(Arc::new(FaultingProvider(availability.clone()))),
+        );
         let capability = vault.probe_device_unlock().unwrap();
         assert_eq!(capability.availability, availability);
         assert_eq!(capability.detail, "Provider guidance");

@@ -8,8 +8,10 @@ use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
 use nocterm_ui::{SettingsExt as _, SettingsStore};
-use nocterm_vault_ui::VaultService;
+use nocterm_vault::VaultAccess;
+use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
+use std::rc::Rc;
 
 /// What differs between the application and its tests.
 pub(crate) struct Services {
@@ -42,13 +44,7 @@ pub(crate) struct VaultSetup {
 /// What the installed globals leave for the windows.
 pub(crate) struct Booted {
     /// The vault, when it opened; credentials and its settings depend on it.
-    pub(crate) vault: Option<Arc<VaultService>>,
-}
-
-impl Booted {
-    pub(crate) fn vault_ready(&self) -> bool {
-        self.vault.is_some()
-    }
+    pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
 
 /// Installs every global, in dependency order.
@@ -89,25 +85,37 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     nocterm_connections::init(stored, cx);
     nocterm_snippets_ui::init(stored, cx);
     nocterm_agent::init(agent, &ui, cx);
-    let vault = vault.and_then(|setup| open_vault(setup, cx));
+    let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     crate::keymap::load(
         stored.map(|paths| paths.config_dir().join("keymap.toml")),
         cx,
     );
-    crate::application::register(paths, vault.is_some(), cx);
+    crate::application::register(paths, vault.clone(), cx);
     Booted { vault }
 }
 
 /// Opens the vault and lets terminals keep credentials in it.
-fn open_vault(setup: VaultSetup, cx: &mut App) -> Option<Arc<VaultService>> {
+fn open_vault(
+    setup: VaultSetup,
+    ready: &nocterm_ui::UiReady,
+    cx: &mut App,
+) -> Option<Rc<nocterm_vault_ui::Installed>> {
     let device = setup.device_unlock.then(nocterm_device_unlock::provider);
-    let vault = match nocterm_vault_ui::init_with_device_unlock(setup.file, device, cx) {
-        Ok(vault) => vault,
-        Err(error) => {
-            tracing::error!(%error, "could not initialize the credential vault");
-            return None;
-        }
-    };
+    nocterm_ui::register_setting::<nocterm_vault_ui::VaultSettings>(cx);
+    let duration = std::time::Duration::from_secs(
+        u64::from(
+            cx.setting::<nocterm_vault_ui::VaultSettings>()
+                .auto_lock_minutes,
+        ) * 60,
+    );
+    let vault: Arc<dyn VaultAccess> =
+        match VaultService::new_with_device_unlock(setup.file, duration, device) {
+            Ok(vault) => Arc::new(vault),
+            Err(error) => {
+                tracing::error!(%error, "could not initialize the credential vault");
+                return None;
+            }
+        };
     nocterm_terminal::init_credentials(
         Arc::new(nocterm_vault_ui::VaultCredentials::new(vault.clone())),
         |spec, id, cx| {
@@ -117,19 +125,23 @@ fn open_vault(setup: VaultSetup, cx: &mut App) -> Option<Arc<VaultService>> {
         },
         cx,
     );
-    Some(vault)
+    Some(Rc::new(nocterm_vault_ui::install(
+        nocterm_vault_ui::Deps::new(vault),
+        ready,
+        cx,
+    )))
 }
 
 /// Plugs every feature into a new window's workspace.
 pub(crate) fn build_workspace(
     workspace: &mut Workspace,
-    vault_ready: bool,
+    vault: Option<&nocterm_vault_ui::Installed>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     workspace.set_session_factory(nocterm_terminal::Factory);
     nocterm_connections::register(workspace, window, cx);
-    crate::register_settings(workspace, vault_ready);
+    crate::register_settings(workspace, vault);
     nocterm_files::register(workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     nocterm_snippets_ui::register(workspace, window, cx);
@@ -137,12 +149,12 @@ pub(crate) fn build_workspace(
     nocterm_monitor_ui::register(workspace, window, cx);
     nocterm_agent::register(workspace, window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
-    if vault_ready
+    if let Some(vault) = vault
         && cx
             .setting::<nocterm_vault_ui::VaultSettings>()
             .prompt_on_startup
     {
-        let pages = vec![nocterm_vault_ui::settings_page()];
+        let pages = vec![nocterm_vault_ui::settings_page(vault)];
         nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
     }
 }

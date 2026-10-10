@@ -1,13 +1,5 @@
-//! Version 1 of the vault file: key derivation, the record codec, encryption
-//! and bounded reading of the file.
-
 use super::*;
 
-pub(crate) fn random<const N: usize>() -> Result<[u8; N], VaultError> {
-    let mut bytes = [0; N];
-    getrandom::fill(&mut bytes).map_err(|_| VaultError::Randomness)?;
-    Ok(bytes)
-}
 pub(crate) fn derive(password: &Secret, salt: &[u8; 16]) -> Result<VaultKey, VaultError> {
     if password.expose().len() > 4096 {
         return Err(VaultError::Password);
@@ -145,10 +137,9 @@ pub(crate) fn decode_records(mut bytes: &[u8]) -> Result<Vec<Record>, VaultError
     }
     Ok(records)
 }
-pub(crate) fn encrypt(state: &Unlocked) -> Result<Vec<u8>, VaultError> {
+pub(crate) fn encrypt(state: &Unlocked, nonces: SealNonces) -> Result<Vec<u8>, VaultError> {
     let plaintext = encode_records(&state.records)?;
-    let wrap_nonce: [u8; 24] = random()?;
-    let payload_nonce: [u8; 24] = random()?;
+    let (wrap_nonce, payload_nonce) = nonces.into_parts();
     let mut bytes = Vec::with_capacity(HEADER_SIZE + WRAPPED_SIZE + plaintext.len() + 16);
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&[0, 1, 1, 19]);
@@ -180,23 +171,5 @@ pub(crate) fn encrypt(state: &Unlocked) -> Result<Vec<u8>, VaultError> {
         )
         .map_err(|_| VaultError::Authentication)?;
     bytes.extend_from_slice(&payload);
-    Ok(bytes)
-}
-pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, VaultError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() {
-        return Err(VaultError::Format);
-    }
-    let mut file = File::open(path)?;
-    if file.metadata()?.len() > MAX_FILE as u64 {
-        return Err(VaultError::Limit);
-    }
-    let mut bytes = Vec::new();
-    std::io::Read::by_ref(&mut file)
-        .take(MAX_FILE as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_FILE {
-        return Err(VaultError::Limit);
-    }
     Ok(bytes)
 }

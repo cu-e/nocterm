@@ -4,7 +4,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-acp` and
-`nocterm-device-unlock`. The composition root chooses and injects them
+`nocterm-device-unlock` and `nocterm-vault-store`. The composition root chooses and injects them
 ([app layer](app.md)).
 
 ## SSH and local sessions
@@ -40,7 +40,18 @@ output or startup future cancels the owned command.
 
 `nocterm-vault` declares the device-unlock provider contract and owns envelope,
 binding and cancellation rules. The composition root injects
-`nocterm-device-unlock`; native adapters remain outside the vault and its UI.
+`nocterm-device-unlock` into `nocterm-vault-store`; native adapters remain outside
+the pure vault and its UI.
 An optional `nocterm-vault-broker` Linux system service enforces fingerprint
 verification for user-bound memory-only keys. See [device unlock](../DEVICE_UNLOCK.md)
 for the platform boundaries and explicit installation.
+
+## Vault storage
+
+`nocterm-vault-store` implements `VaultAccess` with bounded serial background work.
+It owns filesystem reads, revision comparison under a sibling exclusive lock,
+OS entropy, auto-lock epochs and native registration orchestration. Publication
+uses `nocterm_core::fs::AtomicPublication`; the lock remains held through rename,
+and pure state is accepted only after success. Device registration is checked
+against the current envelope and cancellation epoch before publication or key
+installation. Only the app composes this adapter with native authentication.

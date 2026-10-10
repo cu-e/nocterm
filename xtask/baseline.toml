@@ -34,8 +34,6 @@ nocterm-workspace = 8
 "nocterm-transfers::rustix" = 1
 "nocterm-transfers::tempfile" = 1
 "nocterm-transfers::tokio" = 1
-"nocterm-vault::fs2" = 1
-"nocterm-vault::tempfile" = 1
 
 [domain_io]
 "nocterm_ai::favorites::nocterm_core::persist::save" = 1
@@ -121,19 +119,6 @@ nocterm-workspace = 8
 "nocterm_transfers::tokio::sync::mpsc::channel" = 2
 "nocterm_transfers::tokio::task::JoinSet::new" = 1
 "nocterm_transfers::tokio::time::sleep" = 1
-"nocterm_vault::device_unlock::std::fs::File" = 1
-"nocterm_vault::device_unlock::std::fs::File::open" = 1
-"nocterm_vault::device_unlock::std::fs::OpenOptions::new" = 1
-"nocterm_vault::device_unlock::std::fs::Permissions::from_mode" = 1
-"nocterm_vault::device_unlock::std::fs::remove_file" = 1
-"nocterm_vault::device_unlock::tempfile::NamedTempFile::new_in" = 1
-"nocterm_vault::format::std::fs::File::open" = 1
-"nocterm_vault::format::std::fs::symlink_metadata" = 1
-"nocterm_vault::std::fs::File::open" = 1
-"nocterm_vault::std::fs::OpenOptions::new" = 1
-"nocterm_vault::std::fs::Permissions::from_mode" = 1
-"nocterm_vault::std::fs::create_dir_all" = 1
-"nocterm_vault::tempfile::NamedTempFile::new_in" = 1
 
 [global_reads]
 nocterm = 4
@@ -143,7 +128,6 @@ nocterm-keymap = 2
 nocterm-settings-ui = 2
 nocterm-snippets-ui = 1
 nocterm-ui = 14
-nocterm-vault-ui = 3
 
 [globals]
 "nocterm::application::ApplicationState" = 1
@@ -168,8 +152,6 @@ nocterm-vault-ui = 3
 "nocterm_ui::settings::SettingsStore" = 1
 "nocterm_ui::settings::writer::SettingsWriter" = 1
 "nocterm_ui::themes::Themes" = 1
-"nocterm_vault_ui::Service" = 1
-"nocterm_vault_ui::VaultStatusGlobal" = 1
 "nocterm_workspace::host::LocalExec" = 1
 
 [impl_spread]
@@ -236,7 +218,6 @@ nocterm-vault-ui = 3
 "nocterm_terminal::terminal::FindState" = 5
 "nocterm_terminal::terminal::Terminal" = 1
 "nocterm_terminal::view::host_key::ChangedKey" = 7
-"nocterm_vault_ui::VaultStatusGlobal" = 1
 "nocterm_vault_ui::unlock::UnlockPrompt" = 5
 "nocterm_vault_ui::view::VaultView" = 14
 

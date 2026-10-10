@@ -17,36 +17,31 @@ use gpui_kit::{
 };
 use nocterm_session::Secret;
 use nocterm_ui::IconName;
-use nocterm_vault::{DeviceAvailability, DeviceUnlockError, VaultError, VaultService};
+use nocterm_vault::{DeviceAvailability, DeviceUnlockError, VaultAccess, VaultError};
 use nocterm_workspace::{LockVault, OpenVault, UnlockVault};
 use std::sync::Arc;
 
-use crate::Service;
-
 /// Lets `workspace::UnlockVault` and `workspace::LockVault` work in any
 /// window.
-pub(crate) fn init(cx: &mut App) {
-    cx.on_action(|_: &UnlockVault, cx| {
+pub(crate) fn init(service: Arc<dyn VaultAccess>, cx: &mut App) {
+    let unlock_service = service.clone();
+    cx.on_action(move |_: &UnlockVault, cx| {
         if let Some(window) = cx.active_window() {
+            let service = unlock_service.clone();
             cx.defer(move |cx| {
-                let _ = window.update(cx, |_, window, cx| open(window, cx));
+                let _ = window.update(cx, |_, window, cx| open(service, window, cx));
             });
         }
     });
-    cx.on_action(|_: &LockVault, cx| {
-        if let Some(service) = cx.try_global::<Service>() {
-            service.0.lock();
-        }
+    cx.on_action(move |_: &LockVault, cx| {
+        service.lock();
         cx.refresh_windows();
     });
 }
 
 /// Asks for the master password in a small dialog. A vault that does not
 /// exist yet is created in Settings, so that is opened instead.
-pub(crate) fn open(window: &mut Window, cx: &mut App) {
-    let Some(service) = cx.try_global::<Service>().map(|service| service.0.clone()) else {
-        return;
-    };
+pub(crate) fn open(service: Arc<dyn VaultAccess>, window: &mut Window, cx: &mut App) {
     if service.is_unlocked() {
         return;
     }
@@ -58,6 +53,7 @@ pub(crate) fn open(window: &mut Window, cx: &mut App) {
     let focus = prompt.read(cx).focus_handle(cx);
     window.open_dialog(cx, move |dialog, _, _| {
         let submit = prompt.clone();
+        let dismiss = prompt.downgrade();
         dialog
             .title("Unlock the vault")
             .w(px(420.))
@@ -67,13 +63,16 @@ pub(crate) fn open(window: &mut Window, cx: &mut App) {
                 submit.update(cx, |prompt, cx| prompt.submit(window, cx));
                 false
             })
+            .on_close(move |_, _, cx| {
+                let _ = dismiss.update(cx, |prompt, _| prompt.cancel_device());
+            })
             .child(prompt.clone())
     });
     window.focus(&focus, cx);
 }
 
 pub(crate) struct UnlockPrompt {
-    service: Arc<VaultService>,
+    service: Arc<dyn VaultAccess>,
     password: Entity<InputState>,
     busy: bool,
     pub(crate) error: Option<SharedString>,
@@ -89,7 +88,7 @@ pub(crate) struct UnlockPrompt {
 
 impl UnlockPrompt {
     pub(crate) fn new(
-        service: Arc<VaultService>,
+        service: Arc<dyn VaultAccess>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -105,6 +104,9 @@ impl UnlockPrompt {
             };
             if capability.availability == DeviceAvailability::LockedOut {
                 let _ = this.update_in(cx, |this, _, cx| {
+                    if this.scan != 0 {
+                        return;
+                    }
                     this.device = Some(capability.label.into());
                     this.device_locked = true;
                     this.attempts_remaining = Some(0);
@@ -117,6 +119,9 @@ impl UnlockPrompt {
                 return;
             }
             let _ = this.update_in(cx, |this, window, cx| {
+                if this.scan != 0 {
+                    return;
+                }
                 this.device = Some(capability.label.into());
                 this.unlock_with_device(window, cx);
             });
@@ -195,6 +200,9 @@ impl UnlockPrompt {
         }
     }
     fn cancel_device(&mut self) {
+        // A dismissed prompt may remain alive in a rendered frame. Invalidate
+        // the pending capability probe as well as an already-running scan.
+        self.scan += 1;
         if std::mem::take(&mut self.scanning) {
             // Locking advances the vault epoch, which cancels the native prompt.
             self.service.lock();
@@ -292,13 +300,14 @@ impl Render for UnlockPrompt {
                 };
                 prompt.child(
                     div()
+                        .id("vault-scan-progress").role(gpui_kit::Role::Status).aria_label(detail.clone()).test_support()
                         .text_xs()
                         .text_color(theme.muted_foreground)
                         .child(detail),
                 )
             })
             .when_some(self.error.clone(), |prompt, error| {
-                prompt.child(div().text_xs().text_color(theme.danger).child(error))
+                prompt.child(div().id("vault-unlock-error").role(gpui_kit::Role::Alert).aria_label(error.clone()).test_support().text_xs().text_color(theme.danger).child(error))
             })
             .child(
                 h_flex()
@@ -308,7 +317,10 @@ impl Render for UnlockPrompt {
                         Button::new("vault-unlock-cancel")
                             .ghost()
                             .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_device();
+                                window.close_dialog(cx);
+                            })),
                     )
                     .child(
                         Button::new("vault-unlock-submit")

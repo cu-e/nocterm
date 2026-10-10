@@ -220,10 +220,8 @@ mod tests {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CredentialId([u8; 16]);
 impl CredentialId {
-    pub fn generate() -> Result<Self, getrandom::Error> {
-        let mut bytes = [0; 16];
-        getrandom::fill(&mut bytes)?;
-        Ok(Self(bytes))
+    pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
     }
 }
 impl fmt::Display for CredentialId {
@@ -263,5 +261,22 @@ impl<'de> Deserialize<'de> for CredentialId {
         String::deserialize(deserializer)?
             .parse()
             .map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod credential_ids {
+    use super::*;
+    #[test]
+    fn explicit_bytes_keep_the_existing_identifier_wire_format() {
+        let id = CredentialId::from_bytes([0xab; 16]);
+        assert_eq!(id.to_string(), "abababababababababababababababab");
+        assert_eq!(id.to_string().parse::<CredentialId>().unwrap(), id);
+        #[derive(Serialize, Deserialize)]
+        struct Saved {
+            id: CredentialId,
+        }
+        let text = toml::to_string(&Saved { id }).unwrap();
+        assert_eq!(toml::from_str::<Saved>(&text).unwrap().id, id);
     }
 }

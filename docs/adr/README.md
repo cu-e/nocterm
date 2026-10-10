@@ -19,3 +19,4 @@ acceptance; a later record supersedes an earlier one.
 | [0011](0011-chat-configuration.md) | A chat owns its configuration, and every shown chat connects |
 | [0012](0012-architecture-debt-ratchets.md) | Architectural debt is an exact inventory that may only shrink |
 | [0015](0015-private-file-publication.md) | Private file publication shares one staged, atomic mechanism |
+| [0016](0016-vault-storage-boundary.md) | Vault format and rules are independent of storage and lifecycle |

@@ -1,13 +1,13 @@
 //! The vault as the [`CredentialStore`] terminals answer prompts from.
 use futures::{FutureExt as _, TryFutureExt as _, future::BoxFuture};
 use nocterm_session::{CredentialFuture, CredentialId, CredentialStore, Secret, SecretRequest};
-use nocterm_vault::{CredentialBinding, VaultService};
+use nocterm_vault::{CredentialBinding, VaultAccess};
 use std::sync::Arc;
 
-pub struct VaultCredentials(Arc<VaultService>);
+pub struct VaultCredentials(Arc<dyn VaultAccess>);
 
 impl VaultCredentials {
-    pub fn new(service: Arc<VaultService>) -> Self {
+    pub fn new(service: Arc<dyn VaultAccess>) -> Self {
         Self(service)
     }
 }

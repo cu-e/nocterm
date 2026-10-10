@@ -538,7 +538,7 @@ fn every_field_is_used() {
 fn launch_override_and_credential_id_validate_and_preserve_arguments() {
     let mut draft = fields("example.com");
     assert!(build(&draft, AuthKind::Auto).unwrap().launch.is_none());
-    let id = nocterm_session::CredentialId::generate().unwrap();
+    let id = nocterm_session::CredentialId::from_bytes([42; 16]);
     draft.credential = id.to_string();
     draft.override_launch = true;
     draft.program = "/bin/bash".into();
