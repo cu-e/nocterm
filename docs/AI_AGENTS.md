@@ -404,7 +404,9 @@ starting, live and closing sessions; `max_idle = 3` retains warm sessions;
 `idle_timeout_secs = 1800` releases idle sessions. The chat a panel shows keeps its
 session warm regardless of both and yields only when a waiting chat needs its slot
 and no other idle session is left. Requests wait in their saved FIFO queues when
-the limit is reached, and the oldest idle session yields first.
+the limit is reached, and the oldest idle session yields first. A session already
+yielding or closing counts as a freed slot, so one waiting chat never evicts more
+than one other.
 Generating, authentication, permissions, bridge calls, configuration requests and
 active command jobs retain a session. A paused queue, composer edit, pin or draft
 does not. Idle release leaves background terminals and shell command ownership
