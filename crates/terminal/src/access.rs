@@ -118,4 +118,18 @@ impl TerminalAccess for Access {
             })
             .map_err(|_| "Terminal was closed.".to_owned())?
     }
+
+    fn reconnect(&self, cx: &mut App) -> Result<(), String> {
+        self.0
+            .update(cx, |terminal, cx| {
+                if terminal.is_local() || terminal.is_command() {
+                    return Err("Only a remote session can reconnect.".to_owned());
+                }
+                if matches!(terminal.status(), Status::Closed(_)) {
+                    terminal.reconnect(cx);
+                }
+                Ok(())
+            })
+            .map_err(|_| "Terminal was closed.".to_owned())?
+    }
 }

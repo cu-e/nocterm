@@ -129,6 +129,9 @@ pub(crate) struct AgentThread {
     pub background: Vec<EntityId>,
     /// Background sessions waiting for the user to sign in from the chat.
     pub sign_ins: Vec<SignInWait>,
+    /// Closed server terminals reconnecting for a tool call; calls that
+    /// arrive meanwhile wait for the same connection.
+    pub(crate) reconnecting: std::collections::HashSet<EntityId>,
     pub prompt_attachments: Option<Vec<Attachment>>,
     pub dirty_rows: std::collections::HashSet<usize>,
     storage_dirty: std::collections::HashSet<usize>,
@@ -231,6 +234,7 @@ impl AgentThread {
             window: None,
             background: Vec::new(),
             sign_ins: Vec::new(),
+            reconnecting: Default::default(),
             prompt_attachments: None,
             dirty_rows: Default::default(),
             storage_dirty: Default::default(),

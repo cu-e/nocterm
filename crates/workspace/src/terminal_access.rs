@@ -121,6 +121,12 @@ pub trait TerminalAccess: 'static {
     /// Answers [`TerminalInfo::sign_in`] with what the user typed. Never
     /// exposed to agent tools.
     fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String>;
+    /// Connects a remote session that has closed again, in place. Does
+    /// nothing while it is still connecting or connected; local shells and
+    /// one-off commands refuse.
+    fn reconnect(&self, _cx: &mut App) -> Result<(), String> {
+        Err("This terminal cannot reconnect.".into())
+    }
 }
 
 #[derive(Clone)]

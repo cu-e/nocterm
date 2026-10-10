@@ -213,7 +213,12 @@ session of that server, whether you opened it or an agent did. A server without
 a session is listed to the agent as an *offline server*; the agent connects to
 it with the `open_terminal` tool, in the background, without opening a tab or
 taking focus. If the connection needs you, the agent waits up to three
-minutes; only a new host key moves the session into a tab so you can answer. Background sessions a chat opened end when the chat
+minutes; only a new host key moves the session into a tab so you can answer.
+When the connection of an attached server's terminal drops, the agent's next
+call on it reconnects it in place and then goes ahead, and `open_terminal`
+reconnects a background session the chat opened instead of adding another; the
+agent tells you only when connecting fails. Your tab stays open either way, and
+local shells and one-off commands are never restarted. Background sessions a chat opened end when the chat
 closes or no longer attaches the server. Credentials remembered in the vault and
 key or agent authentication let background sessions connect without a prompt.
 A password, passphrase or one-time code is asked in the chat: the session stays
@@ -304,7 +309,8 @@ turns, and is dropped when the chat restarts or fails or when an attachment is
 removed. A new member of a group does not inherit an existing grant. Detaching
 or closing a terminal prevents further tool calls. The application checks the
 attachment and terminal state again after approval immediately before input.
-Connecting, closed, and authentication states refuse input. Live `run_command`
+Connecting and authentication states refuse input; a closed remote terminal is
+reconnected first, as described above. Live `run_command`
 also rejects alternate-screen programs and unknown, busy or dirty prompts,
 including SSH shells without OSC 133 integration. Grants are separate for reading,
 live input, structured execution and opening connections. Explicit `send_input`
