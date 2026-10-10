@@ -180,7 +180,7 @@ impl AgentThread {
                     if let Some(chat) = snapshot {
                         runtime.save_chat(chat, id, revision, cx);
                     }
-                    runtime.unregister_document(id);
+                    runtime.unregister_document(id, cx);
                 });
             });
             if let Some(window) = this.window {
@@ -394,7 +394,9 @@ impl AgentThread {
     }
     pub(super) fn refresh_storage_budget(&mut self) -> Result<(), String> {
         let dirty = self.storage_dirty.drain().collect::<Vec<_>>();
-        self.storage_budget.refresh(&self.state.entries, &dirty)
+        self.storage_budget
+            .refresh(&self.state.entries, &dirty)
+            .map_err(|error| error.to_string())
     }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();

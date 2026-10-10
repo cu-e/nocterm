@@ -173,8 +173,15 @@ fn boot_with_files(
                         args: vec![crate::AGENT_BRIDGE.into()],
                     },
                 )),
-                state_file: paths.state_dir().join("agents.toml"),
-                chats_dir: paths.state_dir().join("agent-chats"),
+                storage: {
+                    let repository =
+                        Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
+                    nocterm_agent_runtime::AgentStorage::prepared(
+                        repository.clone(),
+                        repository,
+                        Ok(Default::default()),
+                    )
+                },
                 codex_home: None,
                 workdir: paths.state_dir().join("agent-workspace"),
             },

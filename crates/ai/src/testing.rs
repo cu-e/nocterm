@@ -36,3 +36,6 @@ impl AgentConnector for ScriptedConnector {
         Box::pin(async move { result })
     }
 }
+
+mod storage;
+pub use storage::{InMemoryAgentRepository, StorageOperation};

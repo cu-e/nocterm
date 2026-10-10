@@ -1,4 +1,13 @@
-//! Runtime-neutral agent contracts and bounded, explicitly selected terminal context.
+//! Agent contracts, bounded context rules and legacy version-one history formats.
+//!
+//! Owns: configuration, session/tool rules, bounded history codecs and storage ports.
+//! Does not own: history/favorites files or persistence scheduling; repositories are adapters.
+//! Ports used: none for history codecs. Ports provided: AgentConnector, ToolBridge,
+//! AgentStateRepository and ChatRepository.
+//! Settings section: ai. Globals: none.
+//! Invariants: saved records validate identity/version and encoded/structural limits.
+//! Existing ACP-backed DTOs, usage/sandbox/image I/O and clock/entropy are explicit
+//! migration debt; storage ports add no new protocol-specific types.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
 pub mod commands;
@@ -31,3 +40,5 @@ pub use settings::{
 pub use tools::*;
 #[cfg(test)]
 mod tests;
+
+pub mod storage;

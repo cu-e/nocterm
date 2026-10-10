@@ -204,15 +204,13 @@ fn redacts_keys_tokens_assignments_and_error_payload() {
 }
 #[test]
 fn favorites_round_trip_and_stable_order() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("agents.toml");
     let mut state = AgentStateFile::default();
     assert!(state.toggle("codex", "model", "b"));
     let mut options = vec!["a", "b", "c"];
     state.sort("codex", "model", &mut options, |v| *v);
     assert_eq!(options, ["b", "a", "c"]);
-    state.save(&path).unwrap();
-    assert_eq!(AgentStateFile::load(&path).unwrap(), state);
+    let encoded = toml::to_string(&state).unwrap();
+    assert_eq!(toml::from_str::<AgentStateFile>(&encoded).unwrap(), state);
     assert!(!state.toggle("codex", "model", "b"));
 }
 #[test]

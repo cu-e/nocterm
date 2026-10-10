@@ -4,8 +4,9 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
-`nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock` and
-`nocterm-vault-store`. The composition root chooses and injects them
+`nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
+`nocterm-vault-store` and `nocterm-agent-storage`. The composition root chooses
+and injects them
 ([app layer](app.md)).
 
 ## SSH and local sessions
@@ -108,3 +109,17 @@ successful files. Native and SFTP limitations are described in
 Its drain port freezes admission synchronously and retains executor ownership
 through joined cleanup. Application composition bridges that future into the
 common shutdown coordinator; the adapter introduces no quit hook or separate budget.
+
+## Agent history and preferences
+
+`nocterm-agent-storage` implements the AI domain's `ChatRepository` and
+`AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
+publication, catalog scanning and rebuildable metadata sidecars. The transcript
+is authoritative: a sidecar failure cannot revoke a successful publication.
+An archived-draft update merges only its draft and timestamp into the original
+transcript under the service's shared serial gate.
+
+The app injects these repositories; service and feature crates have no adapter
+dependency. Repository futures run filesystem work when polled on the background
+executor. The adapter owns no writer loop, per-chat gate or shutdown timer.
+See [ADR0022](../adr/0022-agent-storage-owners.md).

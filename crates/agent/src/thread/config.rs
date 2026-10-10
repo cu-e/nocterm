@@ -24,7 +24,7 @@ impl AgentThread {
     /// own choice starts with the model and reasoning effort last chosen for
     /// the agent.
     pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
-        let state = &Runtime::global(cx).read(cx).favorites;
+        let state = &Runtime::global(cx).read(cx).favorites(cx);
         let mut choices = state.choices(&self.agent_id);
         choices.extend(std::mem::take(&mut self.config_choices));
         self.config_choices = choices;

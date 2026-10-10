@@ -39,7 +39,7 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     });
     cx.run_until_parked();
     assert_eq!(texts(&f), ["first"]);
-    let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let saved = f.repository.chats();
     assert_eq!(saved[0].queue.len(), 2);
     assert_eq!(saved[0].queue[0].text, "edited second");
     complete_active(&f, cx);
@@ -380,12 +380,18 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
 fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    std::fs::write(
-        f._directory.path().join("chats"),
-        "blocks directory creation",
-    )
-    .unwrap();
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    f.repository.reject(
+        nocterm_ai::testing::StorageOperation::Save(id),
+        nocterm_ai::storage::AgentStorageError::Directory {
+            path: f._directory.path().join("chats"),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "blocks directory creation",
+            )),
+        },
+    );
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
         thread.send("retained".into(), cx);
@@ -462,7 +468,7 @@ fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
-    let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let saved = f.repository.chats();
     assert_eq!(saved[0].queue[0].text, "after restart");
     assert!(
         saved[0]

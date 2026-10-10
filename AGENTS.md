@@ -7,6 +7,8 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
+- Run every Cargo command with `CARGO_BUILD_JOBS=1` and serialize top-level Cargo
+  commands, including those from other agents, to stay within available memory.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
@@ -50,13 +52,14 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
 - Shutdown, link-safe filesystem traversal and test fakes: inspect existing
   implementations before adding one; propose shared extraction for missing reuse.
 
-Layout, settings, snippets and connection state use the shared persistence service.
-Runtime chat/favorites and recording remain migration owners. Native filesystem
-capabilities are `nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented
-by the injected `nocterm-localfs` adapter. Session `test-support` supplies shared
-in-memory port fakes for dev-dependencies. `ProgramOpener` requests external local
-programs; the injected `nocterm-local::LocalProgramOpener` owns their bounded native
-launch/wait lifecycle. `nocterm-local::fs` is not an API.
+Layout, settings, snippets, connection state and Runtime chat/favorites use the
+shared persistence service; keyed documents share its driver. Recording remains
+a migration owner. Native filesystem capabilities are
+`nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented by the injected
+`nocterm-localfs` adapter. Session `test-support` supplies shared in-memory port
+fakes for dev-dependencies. `ProgramOpener` requests external local programs; the
+injected `nocterm-local::LocalProgramOpener` owns their bounded native launch/wait
+lifecycle. `nocterm-local::fs` is not an API.
 
 ## Design rules
 
@@ -167,6 +170,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `ai` | agent registry, thread model, context and tool protocol |
 | `acp` | ACP client and local MCP bridge adapter |
 | `agent-runtime` | agent connections, admission and chat documents |
+| `agent-storage` | history and preferences filesystem repositories |
 | `agent` | agent panel, threads and composer |
 | `files` | local/remote Explorer and transfer UI |
 | `local` | local PTY, shell integration and external program opening |
@@ -190,6 +194,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 ## Commands
 
 ```sh
+export CARGO_BUILD_JOBS=1
 cargo run
 cargo fmt --all --check
 cargo build --workspace --all-targets
@@ -200,7 +205,7 @@ cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
 cargo machete --skip-target-dir
-cargo doc --workspace --no-deps
+cargo doc --workspace --no-deps -j1
 python3 scripts/generate-license-notices.py --check-inputs
 ```
 

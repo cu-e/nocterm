@@ -114,7 +114,8 @@ impl AgentThread {
             attachments: self.stable_attachments(&self.composer.attachments, cx),
         };
         let mut saved = saved;
-        let encoded_len = nocterm_ai::history::prompt_size(&saved)?
+        let encoded_len = nocterm_ai::history::prompt_size(&saved)
+            .map_err(|error| error.to_string())?
             + self
                 .composer
                 .images
@@ -152,9 +153,11 @@ impl AgentThread {
             metadata.draft = None;
         }
         self.storage_budget
-            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
+            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))
+            .map_err(|error| error.to_string())?;
         self.storage_budget
-            .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
+            .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))
+            .map_err(|error| error.to_string())?;
         self.composer.accept(queue, replace.is_some());
         if replace.is_none() {
             self.draft_save = None;

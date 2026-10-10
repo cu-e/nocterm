@@ -7,7 +7,14 @@ use std::{
 use futures::{channel::oneshot, future::BoxFuture};
 use nocterm_core::persist::WriteGate;
 
-use crate::{Publication, Revision, SnapshotWriter, StoreError, persisted::Candidate};
+use crate::{
+    Publication, Revision, SnapshotWriter, StoreError,
+    persisted::Candidate,
+    worker::{
+        DiskOperation,
+        captured::{self as runner, CapturedPolicy},
+    },
+};
 
 /// A physically successful snapshot and its admission revision.
 #[derive(Clone, Debug)]
@@ -151,28 +158,15 @@ impl<T: Clone + PartialEq + Send + 'static> Captured<T> {
         work
     }
 
-    pub fn run_observed(mut self) -> (BoxFuture<'static, CapturedOutcome<T>>, CapturedFeed<T>) {
+    pub fn run_observed(self) -> (BoxFuture<'static, CapturedOutcome<T>>, CapturedFeed<T>) {
         let (prefix, prefix_receiver) = oneshot::channel();
         let (final_commit, final_receiver) = oneshot::channel();
-        let work = Box::pin(async move {
-            let gate = self.gate.clone();
-            let _guard = gate.final_write().await;
-            let prefix_snapshot = self.settle_active_prefix();
-            let _ = prefix.send(prefix_snapshot);
-            let result = self.write_final().await;
-            self.final_candidate.finish(result.clone());
-            if let Some(active) = &self.active {
-                if self.publication == Publication::Optimistic {
-                    active.finish_at(result.clone(), self.final_revision());
-                } else {
-                    active.finish(result.clone());
-                }
-            }
-            let committed = self.projection.read();
-            if result.is_ok() {
-                let _ = final_commit.send(committed.clone());
-            }
-            CapturedOutcome { result, committed }
+        let work = runner::run(ObservedSnapshot {
+            captured: self,
+            prefix: Some(prefix),
+            final_commit: Some(final_commit),
+            result: Ok(()),
+            pending: true,
         });
         (
             work,
@@ -193,49 +187,47 @@ impl<T: Clone + PartialEq + Send + 'static> Captured<T> {
         committed
     }
 
-    async fn write_final(&mut self) -> Result<(), StoreError> {
-        let committed = self.projection.read();
-        let snapshot = self.final_candidate.snapshot().clone();
-        if &snapshot != committed.snapshot()
-            || (self.dirty && self.publication == Publication::Optimistic)
-        {
-            (self.writer)(snapshot.clone()).await?;
-        }
-        self.projection.record(Committed::new(
-            snapshot.clone(),
-            self.final_candidate.revision(),
-        ));
-        Ok(())
+    fn final_operation(&self) -> DiskOperation<()> {
+        self.snapshot_operation(self.final_candidate.snapshot().clone(), true)
     }
-
+    fn snapshot_operation(&self, snapshot: T, baseline: bool) -> DiskOperation<()> {
+        let write = &snapshot != self.projection.read().snapshot()
+            || (baseline && self.dirty && self.publication == Publication::Optimistic);
+        let writer = self.writer.clone();
+        let saved = snapshot.clone();
+        let revision = self.final_revision();
+        let projection = self.projection.clone();
+        DiskOperation::new(
+            move || {
+                Box::pin(async move {
+                    if write {
+                        writer(snapshot).await
+                    } else {
+                        Ok(())
+                    }
+                })
+            },
+            move |result| {
+                if result.is_ok() {
+                    projection.record(Committed::new(saved, revision));
+                }
+            },
+        )
+    }
     /// Save independent accepted edits before waiting for either dependency event.
     /// Derived projections use the same gate sequentially, with at most three writes.
     pub fn run_projected<P: Send + 'static>(
-        mut self,
+        self,
         feed: CapturedFeed<P>,
-        mut project: impl Fn(CommitPhase, &Committed<P>) -> Result<Option<T>, StoreError>
-        + Send
-        + 'static,
+        project: impl Fn(CommitPhase, &Committed<P>) -> Result<Option<T>, StoreError> + Send + 'static,
     ) -> BoxFuture<'static, CapturedOutcome<T>> {
-        Box::pin(async move {
-            let gate = self.gate.clone();
-            let _guard = gate.final_write().await;
-            self.settle_active_prefix();
-            let mut result = self.write_final().await;
-            if result.is_ok() {
-                self.finish_baseline(Ok(()));
-            }
-            result = self
-                .project_event(feed.prefix, CommitPhase::Prefix, &mut project, result)
-                .await;
-            result = self
-                .project_event(feed.final_commit, CommitPhase::Final, &mut project, result)
-                .await;
-            self.finish_baseline(result.clone());
-            CapturedOutcome {
-                result,
-                committed: self.projection.read(),
-            }
+        runner::run(ProjectedSnapshot {
+            captured: self,
+            prefix: Some(feed.prefix),
+            final_commit: Some(feed.final_commit),
+            project,
+            stage: ProjectionStage::Baseline,
+            result: Ok(()),
         })
     }
 
@@ -245,30 +237,153 @@ impl<T: Clone + PartialEq + Send + 'static> Captured<T> {
             active.finish_at(result, self.final_revision());
         }
     }
+}
 
-    async fn project_event<P>(
-        &mut self,
-        event: oneshot::Receiver<Committed<P>>,
-        phase: CommitPhase,
-        project: &mut (impl Fn(CommitPhase, &Committed<P>) -> Result<Option<T>, StoreError> + Send),
-        previous: Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        let Ok(committed) = event.await else {
-            return match phase {
-                CommitPhase::Prefix => Err(previous.err().unwrap_or(StoreError::CompletionDropped)),
-                CommitPhase::Final => previous,
-            };
-        };
-        let Some(snapshot) = project(phase, &committed)? else {
-            return previous;
-        };
-        if &snapshot != self.projection.read().snapshot() {
-            (self.writer)(snapshot.clone()).await?;
+struct ObservedSnapshot<T> {
+    captured: Captured<T>,
+    prefix: Option<oneshot::Sender<Committed<T>>>,
+    final_commit: Option<oneshot::Sender<Committed<T>>>,
+    result: Result<(), StoreError>,
+    pending: bool,
+}
+impl<T: Clone + PartialEq + Send + 'static> CapturedPolicy for ObservedSnapshot<T> {
+    type Physical = ();
+    type Output = CapturedOutcome<T>;
+    fn gate(&self) -> WriteGate {
+        self.captured.gate.clone()
+    }
+    fn joined(&mut self) {
+        let committed = self.captured.settle_active_prefix();
+        if let Some(prefix) = self.prefix.take() {
+            let _ = prefix.send(committed);
         }
-        self.projection
-            .record(Committed::new(snapshot, self.final_revision()));
-        self.finish_baseline(Ok(()));
-        Ok(())
+    }
+    fn next_operation(&mut self) -> BoxFuture<'_, Option<DiskOperation<()>>> {
+        let operation = self.pending.then(|| self.captured.final_operation());
+        self.pending = false;
+        Box::pin(async move { operation })
+    }
+    fn apply_outcome(&mut self, result: Result<(), StoreError>) {
+        self.captured.final_candidate.finish(result.clone());
+        if let Some(active) = &self.captured.active {
+            if self.captured.publication == Publication::Optimistic {
+                active.finish_at(result.clone(), self.captured.final_revision());
+            } else {
+                active.finish(result.clone());
+            }
+        }
+        if result.is_ok()
+            && let Some(final_commit) = self.final_commit.take()
+        {
+            let _ = final_commit.send(self.captured.projection.read());
+        }
+        self.result = result;
+    }
+    fn finish(self) -> CapturedOutcome<T> {
+        CapturedOutcome {
+            result: self.result,
+            committed: self.captured.projection.read(),
+        }
+    }
+}
+#[derive(Clone, Copy)]
+enum ProjectionStage {
+    Baseline,
+    Prefix,
+    Final,
+    Done,
+}
+struct ProjectedSnapshot<T, P, F> {
+    captured: Captured<T>,
+    prefix: Option<oneshot::Receiver<Committed<P>>>,
+    final_commit: Option<oneshot::Receiver<Committed<P>>>,
+    project: F,
+    stage: ProjectionStage,
+    result: Result<(), StoreError>,
+}
+impl<
+    T: Clone + PartialEq + Send + 'static,
+    P: Send + 'static,
+    F: Fn(CommitPhase, &Committed<P>) -> Result<Option<T>, StoreError> + Send + 'static,
+> ProjectedSnapshot<T, P, F>
+{
+    async fn projected(
+        &mut self,
+        phase: CommitPhase,
+        event: oneshot::Receiver<Committed<P>>,
+    ) -> Option<DiskOperation<()>> {
+        let Ok(committed) = event.await else {
+            if phase == CommitPhase::Prefix {
+                self.result = Err(self
+                    .result
+                    .clone()
+                    .err()
+                    .unwrap_or(StoreError::CompletionDropped));
+            }
+            return None;
+        };
+        match (self.project)(phase, &committed) {
+            Ok(Some(snapshot)) => Some(self.captured.snapshot_operation(snapshot, false)),
+            Ok(None) => None,
+            Err(error) => {
+                self.result = Err(error);
+                None
+            }
+        }
+    }
+}
+impl<
+    T: Clone + PartialEq + Send + 'static,
+    P: Send + 'static,
+    F: Fn(CommitPhase, &Committed<P>) -> Result<Option<T>, StoreError> + Send + 'static,
+> CapturedPolicy for ProjectedSnapshot<T, P, F>
+{
+    type Physical = ();
+    type Output = CapturedOutcome<T>;
+    fn gate(&self) -> WriteGate {
+        self.captured.gate.clone()
+    }
+    fn joined(&mut self) {
+        self.captured.settle_active_prefix();
+    }
+    fn next_operation(&mut self) -> BoxFuture<'_, Option<DiskOperation<()>>> {
+        Box::pin(async move {
+            loop {
+                let next = match self.stage {
+                    ProjectionStage::Baseline => {
+                        self.stage = ProjectionStage::Prefix;
+                        Some(self.captured.final_operation())
+                    }
+                    ProjectionStage::Prefix => {
+                        self.stage = ProjectionStage::Final;
+                        let event = self.prefix.take()?;
+                        self.projected(CommitPhase::Prefix, event).await
+                    }
+                    ProjectionStage::Final => {
+                        self.stage = ProjectionStage::Done;
+                        let event = self.final_commit.take()?;
+                        self.projected(CommitPhase::Final, event).await
+                    }
+                    ProjectionStage::Done => return None,
+                };
+                if next.is_some() {
+                    return next;
+                }
+            }
+        })
+    }
+    fn apply_outcome(&mut self, result: Result<(), StoreError>) {
+        if result.is_ok() {
+            self.captured.finish_baseline(Ok(()));
+        }
+        self.result = result;
+    }
+    fn finish(self) -> CapturedOutcome<T> {
+        self.captured.finish_baseline(self.result.clone());
+        CapturedOutcome {
+            result: self.result,
+            committed: self.captured.projection.read(),
+        }
     }
 }
 

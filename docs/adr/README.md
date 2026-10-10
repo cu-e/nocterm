@@ -24,4 +24,5 @@ acceptance; a later record supersedes an earlier one.
 | [0016](0016-vault-storage-boundary.md) | Vault format and rules are independent of storage and lifecycle |
 | [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports |
 | [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
+| [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution |
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |

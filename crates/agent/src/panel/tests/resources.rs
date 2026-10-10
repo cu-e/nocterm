@@ -207,12 +207,15 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
 fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestAppContext) {
     let f = fixture(cx);
     lazy_start(cx);
-    let blocked = f._directory.path().join("not-a-directory");
-    std::fs::write(&blocked, b"file").unwrap();
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.services.chats_dir = blocked)
-    });
     let thread = draft(&f, cx);
+    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    f.repository.fail_next(
+        nocterm_ai::testing::StorageOperation::Save(id),
+        nocterm_ai::storage::AgentStorageError::Read {
+            path: f._directory.path().join("chats"),
+            source: Arc::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        },
+    );
     thread.update(cx, |thread, cx| thread.send("retain me".into(), cx));
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -221,11 +224,6 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
         assert!(thread.read(cx).composer.queue_paused);
         assert_eq!(thread.read(cx).composer.queue[0].saved.text, "retain me");
         assert_eq!(thread.read(cx).persisted_revision, 0);
-    });
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| {
-            runtime.services.chats_dir = f._directory.path().join("chats")
-        })
     });
     thread.update(cx, |thread, cx| thread.send("next".into(), cx));
     cx.run_until_parked();
@@ -251,7 +249,7 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     });
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
     cx.run_until_parked();
-    let chats = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert!(
         matches!(&chats[0].entries[0],nocterm_ai::thread::Entry::User(blocks) if matches!(&blocks[0],acp::ContentBlock::Text(text) if text.text == "unsaved dormant edit"))
@@ -450,7 +448,7 @@ fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut
     thread.update(cx, |thread, _| thread.name = Some("latest document".into()));
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
     cx.run_until_parked();
-    let chats = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(chats[0].name.as_deref(), Some("latest document"));
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -603,10 +601,9 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
             thread.save(cx);
         }
     });
-    let chats_dir = f._directory.path().join("chats");
     // Stop the scheduler after the atomic disk write, before its foreground acknowledgement.
     for _ in 0..100 {
-        if !nocterm_ai::history::load_all(&chats_dir).is_empty() {
+        if !f.repository.chats().is_empty() {
             break;
         }
         assert!(
@@ -614,7 +611,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
             "old snapshot was never written"
         );
     }
-    assert_eq!(nocterm_ai::history::load_all(&chats_dir).len(), 1);
+    assert_eq!(f.repository.chats().len(), 1);
     cx.update(|cx| assert_eq!(old.read(cx).persisted_revision, 0));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
@@ -623,9 +620,15 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     let replacement = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_ne!(old.entity_id(), replacement.entity_id());
     replacement.update(cx, |thread, cx| thread.send("new unsaved queue".into(), cx));
-    // Simulate disk becoming unwritable for new snapshots while the old successful ACK is queued.
-    std::fs::rename(&chats_dir, f._directory.path().join("previous-chats")).unwrap();
-    std::fs::write(&chats_dir, b"not a directory").unwrap();
+    // Reject the replacement's physical publication while the old successful ACK is queued.
+    let replacement_id = cx.update(|cx| replacement.read(cx).chat_id.clone());
+    f.repository.fail_next(
+        nocterm_ai::testing::StorageOperation::Save(replacement_id),
+        nocterm_ai::storage::AgentStorageError::Read {
+            path: f._directory.path().join("chats"),
+            source: Arc::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        },
+    );
     while cx.background_executor.tick() {
         cx.update(|cx| {
             assert_eq!(
@@ -708,9 +711,8 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     .unwrap();
     tick(cx, 1);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
-    let chats = f._directory.path().join("chats");
     assert_eq!(
-        nocterm_ai::history::load_all(&chats)[0].draft.as_deref(),
+        f.repository.chats()[0].draft.as_deref(),
         Some("draft before activation")
     );
     cx.update_window(f.handle, |_, window, cx| {
@@ -741,7 +743,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert_eq!(
-        nocterm_ai::history::load_all(&chats)[0].draft.as_deref(),
+        f.repository.chats()[0].draft.as_deref(),
         Some("draft retained after idle")
     );
     f.panel

@@ -103,7 +103,7 @@ fn a_message_being_edited_cannot_be_removed(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     lazy_start(cx);
     let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
     saved.queue.push(nocterm_ai::history::SavedPrompt {
@@ -113,11 +113,8 @@ fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppC
         attachments: Vec::new(),
     });
     let id = saved.id.clone();
-    let dir = cx.update(|cx| Runtime::global(cx).read(cx).services.chats_dir.clone());
-    nocterm_ai::history::save(&dir, &saved).unwrap();
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![saved]))
-    });
+    f.repository.seed_chat(&saved).unwrap();
+    reinstall_history(&mut f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
@@ -127,10 +124,5 @@ fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppC
     let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
     thread.update(cx, |thread, cx| thread.remove_queued(4, None, cx));
     cx.run_until_parked();
-    assert!(
-        nocterm_ai::history::load(&dir, &id)
-            .unwrap()
-            .queue
-            .is_empty()
-    );
+    assert!(f.repository.transcript(&id).unwrap().queue.is_empty());
 }

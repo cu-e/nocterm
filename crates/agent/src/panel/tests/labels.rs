@@ -94,7 +94,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
         assert_eq!(thread.state.title.as_deref(), Some(agent_title));
     });
     cx.run_until_parked();
-    let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let saved = f.repository.chats();
     assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
     assert_eq!(saved[0].title.as_deref(), Some(agent_title));
     assert!(matches!(&saved[0].entries[0], Entry::User(parts)

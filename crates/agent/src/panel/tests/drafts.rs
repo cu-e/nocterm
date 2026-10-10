@@ -15,10 +15,8 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
 }
 
 fn saved_value(f: &Fixture, id: &str) -> serde_json::Value {
-    let text =
-        std::fs::read_to_string(f._directory.path().join("chats").join(format!("{id}.json")))
-            .unwrap();
-    serde_json::from_str(&text).unwrap()
+    let bytes = f.repository.encoded(id).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }
 
 #[gpui_kit::test]
@@ -68,19 +66,13 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let chat = nocterm_ai::history::SavedChat::new("codex".into());
     let mut value = serde_json::to_value(chat).unwrap();
     value["draft"] = serde_json::json!("restored\ntext");
     let chat = serde_json::from_value(value).unwrap();
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![chat]))
-    });
-    let panel = cx
-        .update_window(f.handle, |_, window, cx| {
-            cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), window, cx))
-        })
-        .unwrap();
+    reinstall_history(&mut f, vec![chat], cx);
+    let panel = f.panel.clone();
     cx.run_until_parked();
     let thread = cx.update(|cx| panel.read(cx).threads[0].clone());
     panel.update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
@@ -113,7 +105,7 @@ fn clear_save_and_quit_in_one_update_cannot_resurrect_an_old_draft(cx: &mut Test
     });
     cx.foreground_executor().block_test(shutdown);
     cx.run_until_parked();
-    assert!(nocterm_ai::history::load_all(&f._directory.path().join("chats")).is_empty());
+    assert!(f.repository.chats().is_empty());
     assert!(saved_value(&f, &id)["draft"].is_null());
 }
 
@@ -126,7 +118,7 @@ fn clearing_a_draft_is_reversible_for_the_same_chat_id(cx: &mut TestAppContext) 
         set_input(&f, text, cx);
         cx.background_executor.advance_clock(Duration::from_secs(1));
         cx.run_until_parked();
-        let chats = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+        let chats = f.repository.chats();
         if text.is_empty() {
             assert!(chats.is_empty());
         } else {
@@ -351,12 +343,7 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
 }
 
 fn history_file_count(f: &Fixture) -> usize {
-    let path = f._directory.path().join("chats");
-    if path.exists() {
-        std::fs::read_dir(path).unwrap().map(Result::unwrap).count()
-    } else {
-        0
-    }
+    f.repository.chats().len()
 }
 
 #[gpui_kit::test]

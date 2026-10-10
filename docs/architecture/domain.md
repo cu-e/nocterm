@@ -131,3 +131,14 @@ Transfer progress distinguishes completed files from acknowledged destination di
 preparations. A prepared directory may already have existed; the count records successful
 adapter create/open acknowledgement, not a new-file or new-directory count. Its acknowledgement
 survives later failure or cancellation without advancing file or byte counters.
+
+## Agent history
+
+`nocterm-ai` owns pure version-one transcript codecs, structural/collection
+validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
+contracts. Filesystem history/preferences implementation belongs to
+`nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
+Existing SavedChat/SharedChat ACP payloads remain protocol migration debt, as do
+separate usage, sandbox/image and clock/entropy responsibilities. New storage
+contracts use the existing typed records without adding protocol-specific fields.
+See [ADR0022](../adr/0022-agent-storage-owners.md).

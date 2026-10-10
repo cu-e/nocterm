@@ -167,7 +167,7 @@ impl AgentPanel {
                                         );
                                     }
                                     values.sort_by_key(|value| {
-                                        !Runtime::global(cx).read(cx).favorites.contains(
+                                        !Runtime::global(cx).read(cx).favorites(cx).contains(
                                             &thread.read(cx).agent_id,
                                             &id,
                                             value.value.0.as_ref(),
@@ -178,7 +178,7 @@ impl AgentPanel {
                                         .filter(|value| value.name.to_lowercase().contains(&query))
                                     {
                                         let favorite =
-                                            Runtime::global(cx).read(cx).favorites.contains(
+                                            Runtime::global(cx).read(cx).favorites(cx).contains(
                                                 &thread.read(cx).agent_id,
                                                 &id,
                                                 value.value.0.as_ref(),

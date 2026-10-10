@@ -1,6 +1,6 @@
 //! Draft ownership survives view teardown and temporary queue editing.
 use super::*;
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
@@ -14,8 +14,11 @@ fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-fn disk_value(directory: &Path, id: &str) -> serde_json::Value {
-    let bytes = std::fs::read(directory.join("chats").join(format!("{id}.json"))).unwrap();
+fn disk_value(
+    repository: &nocterm_ai::testing::InMemoryAgentRepository,
+    id: &str,
+) -> serde_json::Value {
+    let bytes = repository.encoded(id).unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
 
@@ -33,7 +36,7 @@ fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestA
     let panel = f.panel.downgrade();
     cx.update_window(f.handle, |_, window, _| window.remove_window())
         .unwrap();
-    let directory = f._directory;
+    let repository = f.repository;
     // Release the fixture handles inside an effect cycle so GPUI collects
     // the workspace and its owned panel before checking the weak handles.
     cx.update(|_| {
@@ -43,7 +46,7 @@ fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestA
     cx.run_until_parked();
     panel.assert_released();
     thread.assert_released();
-    let value = disk_value(directory.path(), &id);
+    let value = disk_value(&repository, &id);
     assert_eq!(value["draft"], "window's final text\n界");
     assert!(value["entries"].as_array().unwrap().is_empty());
 }
@@ -65,19 +68,17 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
         assert!(f.panel.read(cx).threads.is_empty());
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
     });
-    let value = disk_value(f._directory.path(), &id);
+    let value = disk_value(&f.repository, &id);
     assert_eq!(value["draft"], "draft before disabling AI");
     assert!(value["entries"].as_array().unwrap().is_empty());
     // A retained entity must not replace the saved text with its cleared UI state at quit.
     shutdown_runtime(cx);
     assert_eq!(thread.read_with(cx, |thread, _| thread.chat_id.clone()), id);
-    assert_eq!(disk_value(f._directory.path(), &id), value);
+    assert_eq!(disk_value(&f.repository, &id), value);
 }
 
-fn adopt(f: &Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![saved]));
-    });
+fn adopt(f: &mut Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAppContext) {
+    reinstall_history(f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
@@ -88,11 +89,11 @@ fn adopt(f: &Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
     let id = saved.id.clone();
     saved.draft = Some("saved text".into());
-    adopt(&f, saved, cx);
+    adopt(&mut f, saved, cx);
     let shutdown = cx.update(|cx| {
         let thread = f.panel.read(cx).threads[0].clone();
         assert!(thread.read(cx).dormant());
@@ -104,7 +105,7 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
     });
     cx.foreground_executor().block_test(shutdown);
     assert_eq!(
-        disk_value(f._directory.path(), &id)["draft"],
+        disk_value(&f.repository, &id)["draft"],
         "latest dormant text"
     );
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -112,11 +113,11 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let mut saved = nocterm_ai::history::SavedChat::new("removed-provider".into());
     let id = saved.id.clone();
     saved.draft = Some("previous text".into());
-    adopt(&f, saved, cx);
+    adopt(&mut f, saved, cx);
     let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
     cx.update(|cx| assert!(!thread.read(cx).status_error));
     // Listing history stays lazy; opening the chat connects, which reports
@@ -131,7 +132,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
     type_draft(&f, "latest text after provider failure", cx);
     shutdown_runtime(cx);
     assert_eq!(
-        disk_value(f._directory.path(), &id)["draft"],
+        disk_value(&f.repository, &id)["draft"],
         "latest text after provider failure"
     );
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -157,7 +158,7 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
-    let before = disk_value(f._directory.path(), &id);
+    let before = disk_value(&f.repository, &id);
     assert_eq!(before["draft"], "separate unsent draft");
     assert_eq!(before["queue"][0]["text"], "queued original");
     cx.update_window(f.handle, |_, window, cx| {
@@ -166,7 +167,7 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
     })
     .unwrap();
     cx.run_until_parked();
-    let after = disk_value(f._directory.path(), &id);
+    let after = disk_value(&f.repository, &id);
     assert_eq!(after["draft"], "separate unsent draft");
     assert_eq!(after["queue"][0]["text"], "replacement being edited");
     cx.update(|cx| {

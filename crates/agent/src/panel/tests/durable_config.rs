@@ -73,10 +73,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     tick(cx, 3);
     cx.update(|cx| assert!(first.read(cx).lease.is_none(), "the hidden chat slept"));
     assert_eq!(current_model(&first, cx), "Opus");
-    let saved = cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        nocterm_ai::history::load(&dir, &id).unwrap()
-    });
+    let saved = cx.update(|_| f.repository.transcript(&id).unwrap());
     assert_eq!(
         saved.config.get("model"),
         Some(&ConfigValue::Value("opus".into()))
@@ -102,7 +99,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     lazy_start(cx);
     cx.update(|cx| {
         Runtime::global(cx).update(cx, |runtime, cx| {
@@ -116,9 +113,7 @@ fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) 
     saved
         .config
         .insert("model".into(), ConfigValue::Value("opus".into()));
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![saved]))
-    });
+    reinstall_history(&mut f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));

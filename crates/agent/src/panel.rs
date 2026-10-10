@@ -283,7 +283,7 @@ impl AgentPanel {
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
-            .favorites
+            .favorites(cx)
             .last_agent
             .as_ref()
             .filter(known)
@@ -643,7 +643,7 @@ impl Render for AgentPanel {
                     .child(error.clone()),
             );
         }
-        if let Some(error) = &Runtime::global(cx).read(cx).favorites_error {
+        if let Some(error) = &Runtime::global(cx).read(cx).favorites_error(cx) {
             body = body.child(
                 div()
                     .p_2()

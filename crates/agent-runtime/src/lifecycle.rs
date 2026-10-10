@@ -1,33 +1,24 @@
 //! One admission queue and resource policy for every window.
-use super::admission::{IdleConnection, releases};
+use super::admission::ConnectionObservation;
 use super::lease::ReleasedLease;
 use super::*;
 use std::time::Duration;
 impl Runtime {
     pub fn register_document(&mut self, client: Client, cx: &mut Context<Self>) {
-        let owner = client.id();
-        let Some(state) = client.state(cx) else {
-            return;
-        };
-        let chat_id = state.chat_id;
-        // A replacement may have been tracked under its temporary new-chat id.
-        self.document_owners.retain(|_, current| *current != owner);
-        self.document_owners.insert(chat_id, owner);
-        self.documents.insert(owner, client);
+        self.chats.register(client, cx);
     }
     fn start_session_maintenance(&mut self, cx: &mut Context<Self>) {
-        if self._lifecycle.is_none() {
-            self._lifecycle = Some(cx.spawn(async move |this, cx| {
+        if !self.admission.running() {
+            self.admission.install(cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(Duration::from_secs(1)).await;
                     if !this
                         .update(cx, |this, cx| {
                             this.maintain_sessions(cx);
-                            let active = !this.connections.is_empty()
-                                || !this.closing.is_empty()
-                                || !this.pending_activation.is_empty();
+                            let active =
+                                this.connections.active() || this.admission.pending_len() > 0;
                             if !active {
-                                this._lifecycle = None;
+                                this.admission.idle_task();
                             }
                             active
                         })
@@ -39,28 +30,21 @@ impl Runtime {
             }));
         }
     }
-    pub fn unregister_document(&mut self, id: EntityId) {
-        self.documents.remove(&id);
-        self.document_owners.retain(|_, owner| *owner != id);
-        self.pending_activation.retain(|client| client.id() != id);
+    pub fn unregister_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        self.chats.retire(id, cx);
+        self.admission.withdraw(id);
     }
     pub fn request_activation(&mut self, client: Client, cx: &mut Context<Self>) {
         if self.shutting_down || !self.ai_enabled(cx) {
             return;
         }
-        if !self
-            .pending_activation
-            .iter()
-            .any(|pending| pending.id() == client.id())
-        {
-            self.pending_activation.push_back(client);
-        }
+        self.admission.request(client);
         self.start_session_maintenance(cx);
         self.maintain_sessions(cx);
     }
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down || !self.ai_enabled(cx) {
-            self.pending_activation.clear();
+            self.admission.clear();
             return;
         }
         let policy = self.ai(cx).sessions.clone();
@@ -71,53 +55,39 @@ impl Runtime {
     /// to yield.
     fn release_idle(&mut self, policy: &nocterm_ai::AgentSessionSettings, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
-        let mut idle = Vec::new();
-        self.yielding
-            .retain(|key| self.connections.contains_key(key));
-        for (key, connection) in &self.connections {
-            if self.yielding.contains(key) {
-                continue;
-            }
-            let states = connection
-                .users
-                .values()
-                .filter_map(|client| client.state(cx))
-                .collect::<Vec<_>>();
-            if states.iter().any(|state| state.busy) {
-                self.idle_since.remove(key);
-            } else {
-                idle.push(IdleConnection {
-                    key: *key,
-                    since: *self.idle_since.entry(*key).or_insert(now),
-                    shown: states.iter().any(|state| state.shown),
-                });
-            }
-        }
-        // Slots already on their way back: connections told to yield and
-        // closes still in progress. Without counting them, every tick until
-        // a close finished would evict another idle session.
-        let freeing = self.yielding.len()
-            + self
-                .closing
-                .keys()
-                .filter(|key| !self.stalled_closes.contains(key))
-                .count();
-        let waiting = self
-            .pending_activation
+        let observations = self
+            .connections
             .iter()
+            .map(|(key, connection)| {
+                let states = connection
+                    .users
+                    .values()
+                    .filter_map(|client| client.state(cx))
+                    .collect::<Vec<_>>();
+                ConnectionObservation::new(
+                    *key,
+                    states.iter().any(|state| state.busy),
+                    states.iter().any(|state| state.shown),
+                )
+            })
+            .collect::<Vec<_>>();
+        let closing = self.connections.closing_keys().copied().collect::<Vec<_>>();
+        let waiting = self
+            .admission
+            .pending()
             .filter(|client| {
                 client
                     .state(cx)
                     .is_some_and(|state| state.activation_pending && !state.leased)
             })
             .count();
-        let needs_slot =
-            waiting > freeing && self.connections.len() + self.closing.len() >= policy.max_live;
-        for key in releases(&idle, policy, now, needs_slot) {
-            self.yielding.insert(key);
+        for key in self
+            .admission
+            .decisions(&observations, &closing, policy, now, waiting)
+        {
             let clients: Vec<_> = self
                 .connections
-                .get(&key)
+                .get(key)
                 .into_iter()
                 .flat_map(|connection| connection.users.values().cloned())
                 .collect();
@@ -128,29 +98,23 @@ impl Runtime {
     }
     /// Connects waiting chats, oldest first, while slots are free.
     fn admit_pending(&mut self, policy: &nocterm_ai::AgentSessionSettings, cx: &mut Context<Self>) {
-        let mut pending = self.pending_activation.len();
-        while pending > 0 && self.connections.len() + self.closing.len() < policy.max_live {
+        let mut pending = self.admission.pending_len();
+        while pending > 0 && self.connections.occupied() < policy.max_live {
             pending -= 1;
-            let Some(client) = self.pending_activation.pop_front() else {
+            let Some(client) = self.admission.pop() else {
                 break;
             };
             let Some(state) = client.state(cx) else {
                 continue;
             };
-            if self.document_owners.get(&state.chat_id) != Some(&client.id())
+            if !self.chats.current(&state.chat_id, client.id())
                 || state.leased
                 || !state.activation_pending
             {
                 continue;
             }
-            if state.closing
-                || self
-                    .connections
-                    .values()
-                    .any(|connection| connection.chat_id == state.chat_id)
-                || self.closing.values().any(|chat| chat == &state.chat_id)
-            {
-                self.pending_activation.push_back(client);
+            if state.closing || self.connections.same_chat(&state.chat_id) {
+                self.admission.defer(client);
                 continue;
             }
             if let Some(launch) = nocterm_ai::AgentRegistry::new(self.ai(cx))
@@ -166,14 +130,14 @@ impl Runtime {
     fn cleanup_failed(&mut self, chat_id: &str, error: &str, cx: &mut Context<Self>) {
         tracing::warn!(%error, "agent process cleanup could not be confirmed");
         let clients: Vec<_> = self
-            .documents
-            .values()
+            .chats
+            .clients()
+            .into_iter()
             .filter(|client| {
                 client
                     .state(cx)
                     .is_some_and(|state| state.chat_id == chat_id)
             })
-            .cloned()
             .collect();
         for client in clients {
             client.emit(SessionEvent::CleanupUnconfirmed(error.to_owned()), cx);
@@ -183,25 +147,16 @@ impl Runtime {
         let id = lease.owner;
         let key = lease.connection_key;
         if let Some(registration) = lease.registration.take() {
-            self.registrations.remove(&registration.id);
+            self.bridge.remove(registration.id);
             drop(registration);
         }
-        self.idle_since.remove(&key);
-        self.yielding.remove(&key);
-        let connection = self.connections.remove(&key);
-        if connection.is_none() {
+        self.admission.released(key);
+        let Some((mut connection, commands)) =
+            self.connections.release(key, id, lease.commands.take())
+        else {
             return;
-        }
-        // Keep the event pump alive until close's FIFO barrier is acknowledged.
-        let mut connection = connection.expect("owned connection");
+        };
         let chat_id = connection.chat_id.clone();
-        self.closing.insert(key, chat_id.clone());
-        connection.cancellation.cancel();
-        connection.users.remove(&id);
-        let commands = lease.commands.take().or_else(|| connection.commands.take());
-        if let Some(commands) = &commands {
-            self.closing_commands.insert(key, commands.clone());
-        }
         let connecting = connection._connecting.take();
         let startup_completion = connection.startup_completion.take();
         cx.spawn(async move |this, cx| {
@@ -210,19 +165,18 @@ impl Runtime {
             {
                 connecting.await;
                 if let Some(completion) = startup_completion {
-                    let result = completion
-                        .await
-                        .unwrap_or_else(|_| Err("Startup cleanup acknowledgement was lost".into()));
+                    let result = completion.await;
                     if let Err(error) = result {
                         let _ = this.update(cx, |this, cx| {
-                            this.stalled_closes.insert(key);
-                            this.cleanup_failed(&chat_id, &error, cx)
+                            this.admission.failed_close(key);
+                            this.cleanup_failed(&chat_id, &error.to_string(), cx)
                         });
                         return;
                     }
                 }
             }
-            if let Some(commands) = commands {
+            if let Some(cleanup) = commands {
+                let commands = cleanup.commands();
                 if let Some(session) = lease.session.take() {
                     commands.cancel(session.clone());
                     let close = commands.close_session(session);
@@ -235,9 +189,9 @@ impl Runtime {
                         tracing::warn!(%error, "agent session close failed");
                     }
                 }
-                if let Err(error) = commands.shutdown_gracefully().await {
+                if let Err(error) = cleanup.join().await {
                     let _ = this.update(cx, |this, cx| {
-                        this.stalled_closes.insert(key);
+                        this.admission.failed_close(key);
                         this.cleanup_failed(&chat_id, &error.to_string(), cx)
                     });
                     return; // Keep Closing counted: the process may still be alive.
@@ -245,15 +199,72 @@ impl Runtime {
             }
             drop(connection);
             let _ = this.update(cx, |this, cx| {
-                this.closing.remove(&key);
-                this.closing_commands.remove(&key);
-                if let Some(client) = this.documents.get(&id).cloned() {
+                this.connections.closed(key);
+                if let Some(client) = this.chats.client(id) {
                     client.emit(SessionEvent::SessionClosed, cx);
                 }
                 this.maintain_sessions(cx);
             });
         })
         .detach();
+    }
+}
+
+impl Runtime {
+    /// Capture every UI-dependent transition now; returned work is App-free.
+    pub fn capture_shutdown(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<(), nocterm_store::StoreError>> {
+        if self.shutting_down {
+            return Box::pin(async { Ok(()) });
+        }
+        self.shutting_down = true;
+        self.admission.stop();
+        self.chats.begin_shutdown();
+        for client in self.chats.clients() {
+            client.emit(SessionEvent::Shutdown, cx)
+        }
+        for released in self.releases.drain() {
+            self.release_lease(released, cx)
+        }
+        self.releases.stop();
+        let chats = self.chats.capture(cx);
+        let state = self.state.capture(cx);
+        let cleanup = self.connections.take_cleanup();
+        self.bridge.stop();
+        self.services.bridge.stop();
+        self.usage.stop();
+        let executor = cx.background_executor().clone();
+        Box::pin(async move {
+            // Independent process cleanup cannot be serialized behind synchronous file I/O.
+            let chats = executor.spawn(chats);
+            let state = executor.spawn(state);
+            let cleanup = executor.spawn(cleanup.run());
+            let (chats, state, cleanup) = futures::future::join3(chats, state, cleanup).await;
+            let mut failure = None;
+            for result in [chats, state, cleanup] {
+                if let Err(error) = result {
+                    failure = Some(match failure {
+                        None => error,
+                        Some(first) => nocterm_store::StoreError::Joined {
+                            first: Arc::new(first),
+                            second: Arc::new(error),
+                        },
+                    })
+                }
+            }
+            failure.map_or(Ok(()), Err)
+        })
+    }
+    /// Immediate host/test drain; application quit supplies its shared coordinator budget.
+    pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let work = self.capture_shutdown(cx);
+        cx.background_executor().spawn(async move {
+            if let Err(error) = work.await {
+                tracing::warn!(%error,"agent final drain failed")
+            }
+        })
     }
 }
 
@@ -265,7 +276,7 @@ impl Runtime {
         events: async_channel::Receiver<AgentEvent>,
         cx: &mut Context<Self>,
     ) {
-        cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let _ = this.update(cx, |this, cx| {
                     let session = match &event {
@@ -297,7 +308,7 @@ impl Runtime {
                     }
                 });
             }
-        })
-        .detach();
+        });
+        self.bridge.install_test_events(task);
     }
 }

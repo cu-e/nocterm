@@ -11,6 +11,8 @@ layer = "app"
 
 [dependencies]
 nocterm-ai.workspace = true
+nocterm-agent-storage.workspace = true
+nocterm-agent-runtime.workspace = true
 nocterm-acp.workspace = true
 nocterm-agent.workspace = true
 nocterm-device-unlock.workspace = true
@@ -111,6 +113,7 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
@@ -138,6 +141,7 @@ license-file = "LICENSE"
 
 [workspace.dependencies]
 nocterm-ai = { path = "crates/ai" }
+nocterm-agent-storage = { path = "crates/agent-storage" }
 nocterm-acp = { path = "crates/acp" }
 nocterm-agent = { path = "crates/agent" }
 nocterm-agent-runtime = { path = "crates/agent-runtime" }

@@ -82,29 +82,23 @@ impl AgentConnector for DelayedConnector {
 }
 #[gpui_kit::test]
 async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let started = Arc::new(AtomicUsize::new(0));
     let cancelled = Arc::new(AtomicUsize::new(0));
-    cx.update(|cx| {
-        crate::init(
-            AgentServices {
-                terminal_auth: None,
-                private_dirs: Vec::new(),
-                shared_dirs: Vec::new(),
-                connector: Arc::new(DelayedConnector {
-                    started: started.clone(),
-                    cancelled: cancelled.clone(),
-                }),
-                bridge: f.bridge.clone(),
-                state_file: f._directory.path().join("state.toml"),
-                chats_dir: f._directory.path().join("chats"),
-                codex_home: None,
-                workdir: f._directory.path().join("pending"),
-            },
-            &nocterm_ui::UiReady::installed(cx).unwrap(),
-            cx,
-        )
-    });
+    install_fixture(
+        &mut f,
+        |f| {
+            let mut services = fixture_services(f);
+            services.connector = Arc::new(DelayedConnector {
+                started: started.clone(),
+                cancelled: cancelled.clone(),
+            });
+            services.codex_home = None;
+            services.workdir = f._directory.path().join("pending");
+            services
+        },
+        cx,
+    );
     new_chat(&f, cx);
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(cancelled.load(Ordering::SeqCst), 0);
@@ -154,9 +148,7 @@ fn favorites_latest_snapshot_is_persisted_in_order(cx: &mut TestAppContext) {
         })
     });
     cx.run_until_parked();
-    let state =
-        nocterm_ai::favorites::AgentStateFile::load(&f._directory.path().join("agents.toml"))
-            .unwrap();
+    let state = f.repository.state();
     assert!(!state.contains("codex", "model", "a"));
     assert!(state.contains("codex", "model", "b"));
 }
@@ -437,28 +429,31 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
 
 #[gpui_kit::test]
 fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     f.commands.auth_required.store(true, Ordering::SeqCst);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let captured = requests.clone();
     let commands = f.commands.clone();
-    cx.update(|cx| {
-        crate::runtime::Runtime::global(cx).update(cx, |runtime, _| {
-            runtime.services.terminal_auth = true;
-        });
-        cx.set_global(crate::TerminalAuth(Some(Arc::new(
-            move |_, request, _, _| {
-                let mut requests = captured.lock().unwrap();
-                requests.push(request);
-                let (send, receive) = oneshot::channel();
-                if requests.len() > 1 {
-                    commands.auth_required.store(false, Ordering::SeqCst);
-                    send.send(Ok(())).unwrap();
-                }
-                receive
-            },
-        ))));
+    let opener: crate::TerminalAuthOpener = Arc::new(move |_, request, _, _| {
+        let mut requests = captured.lock().unwrap();
+        requests.push(request);
+        let (send, receive) = oneshot::channel();
+        if requests.len() > 1 {
+            commands.auth_required.store(false, Ordering::SeqCst);
+            send.send(Ok(())).unwrap();
+        }
+        receive
     });
+    install_fixture(
+        &mut f,
+        |f| {
+            let mut services = fixture_services(f);
+            services.terminal_auth = Some(opener);
+            services.codex_home = None;
+            services
+        },
+        cx,
+    );
     new_chat(&f, cx);
     cx.update(|cx| {
         f.panel

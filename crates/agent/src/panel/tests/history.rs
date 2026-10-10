@@ -2,8 +2,7 @@ use super::*;
 
 #[gpui_kit::test]
 fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    let chats = f._directory.path().join("chats");
+    let mut f = fixture(cx);
     new_chat(&f, cx);
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -26,7 +25,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         .unwrap();
     cx.run_until_parked();
 
-    let saved = nocterm_ai::history::load_all(&chats);
+    let saved = f.repository.chats();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].session_id.as_deref(), Some(&*session.0));
     assert!(matches!(
@@ -34,7 +33,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         [nocterm_ai::thread::Entry::User(_), nocterm_ai::thread::Entry::Agent(answer)] if answer == "answer"
     ));
     // The terminal context sent with the prompt is not part of the chat.
-    let text = std::fs::read_to_string(chats.join(format!("{}.json", saved[0].id))).unwrap();
+    let text = String::from_utf8(f.repository.encoded(&saved[0].id).unwrap()).unwrap();
     assert!(
         !text.contains(nocterm_ai::context::TERMINAL_RULES),
         "{text}"
@@ -49,14 +48,8 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     });
     cx.run_until_parked();
     // A new panel shows the saved chat, not yet connected.
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(saved.clone()))
-    });
-    let panel = cx
-        .update_window(f.handle, |_, window, cx| {
-            cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), window, cx))
-        })
-        .unwrap();
+    reinstall_history(&mut f, saved.clone(), cx);
+    let panel = f.panel.clone();
     cx.run_until_parked();
     let thread = cx.update(|cx| {
         let panel = panel.read(cx);
@@ -85,7 +78,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     let id = cx.update(|cx| thread.read(cx).chat_id.clone());
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
     cx.run_until_parked();
-    assert!(nocterm_ai::history::load_all(&chats).is_empty());
+    assert!(f.repository.chats().is_empty());
 }
 /// Sends `text` in the open chat and lets the agent answer `answer`.
 #[gpui_kit::test]
@@ -135,7 +128,6 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    let chats = f._directory.path().join("chats");
     new_chat(&f, cx);
     exchange(&f, "check disk usage", "Use df -h.", cx);
     let disk = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -195,7 +187,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    let saved = nocterm_ai::history::load_all(&chats);
+    let saved = f.repository.chats();
     assert_eq!(saved[0].name.as_deref(), Some("Disks"));
     assert!(saved[0].pinned);
 
@@ -226,7 +218,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         *f.commands.restores.lock().unwrap(),
         vec![(nginx_session, true)]
     );
-    assert_eq!(nocterm_ai::history::load_all(&chats).len(), 3);
+    assert_eq!(f.repository.chats().len(), 3);
 }
 
 #[test]

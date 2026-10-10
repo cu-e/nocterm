@@ -7,14 +7,12 @@ use nocterm_ai::{
 
 /// Opens `chat` without warm start, so it restores when work starts.
 fn adopt_saved(
-    f: &Fixture,
+    f: &mut Fixture,
     chat: SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
     lazy_start(cx);
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![chat]))
-    });
+    reinstall_history(f, vec![chat], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
@@ -38,8 +36,9 @@ fn empty_chat(f: &Fixture) -> SavedChat {
 
 #[gpui_kit::test]
 fn draft_only_history_starts_one_fresh_session_without_restoring(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    let thread = adopt_saved(&f, empty_chat(&f), cx);
+    let mut f = fixture(cx);
+    let saved = empty_chat(&f);
+    let thread = adopt_saved(&mut f, saved, cx);
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 0);
     assert!(f.commands.restores.lock().unwrap().is_empty());
     cx.update(|cx| {
@@ -60,7 +59,7 @@ fn draft_only_history_starts_one_fresh_session_without_restoring(cx: &mut TestAp
 
 #[gpui_kit::test]
 fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let mut saved = empty_chat(&f);
     saved.queue.push(SavedPrompt {
         id: 1,
@@ -68,7 +67,7 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
         images: Vec::new(),
         attachments: Vec::new(),
     });
-    let thread = adopt_saved(&f, saved, cx);
+    let thread = adopt_saved(&mut f, saved, cx);
     thread.update(cx, |thread, cx| {
         thread.restore.as_mut().unwrap().fork = true;
         thread.send_now(1, cx);
@@ -86,7 +85,7 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     let mut saved = empty_chat(&f);
     saved.entries = vec![
         Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
@@ -100,7 +99,7 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
         images: Vec::new(),
         attachments: Vec::new(),
     });
-    let thread = adopt_saved(&f, saved, cx);
+    let thread = adopt_saved(&mut f, saved, cx);
     f.commands
         .restore_errors
         .lock()

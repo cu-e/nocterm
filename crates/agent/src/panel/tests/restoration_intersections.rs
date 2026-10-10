@@ -4,16 +4,15 @@ use nocterm_ai::history::{SavedChat, SavedPrompt};
 use std::time::Duration;
 
 fn adopt_json(
-    f: &Fixture,
+    f: &mut Fixture,
     chat: SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
     cx.run_until_parked();
-    let dir = f._directory.path().join("chats");
-    nocterm_ai::history::save(&dir, &chat).unwrap();
-    let saved = nocterm_ai::history::load_all(&dir);
+    f.repository.seed_chat(&chat).unwrap();
+    let saved = f.repository.chats();
     assert_eq!(saved.len(), 1);
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(saved)));
+    reinstall_history(f, saved, cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.adopt_saved_chats(window, cx);
@@ -56,9 +55,10 @@ fn send_composer(f: &Fixture, cx: &mut TestAppContext) {
 fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     lazy_start(cx);
-    let thread = adopt_json(&f, saved_chat(&f, false), cx);
+    let saved = saved_chat(&f, false);
+    let thread = adopt_json(&mut f, saved, cx);
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     send_composer(&f, cx);
@@ -97,8 +97,9 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
 fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture(cx);
-    let thread = adopt_json(&f, saved_chat(&f, true), cx);
+    let mut f = fixture(cx);
+    let saved = saved_chat(&f, true);
+    let thread = adopt_json(&mut f, saved, cx);
     for _ in 0..2 {
         f.commands
             .restore_errors

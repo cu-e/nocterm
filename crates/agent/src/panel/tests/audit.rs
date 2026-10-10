@@ -264,7 +264,7 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         assert_eq!(thread.composer.queue[0].saved.text, "edited");
         assert_eq!(thread.snapshot(cx).unwrap().queue[0].attachments, refs);
     });
-    let disk = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let disk = f.repository.chats();
     assert_eq!(disk[0].queue[0].attachments, refs);
 }
 

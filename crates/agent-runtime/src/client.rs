@@ -56,7 +56,7 @@ pub enum SessionEvent {
         revision: u64,
     },
     /// The chat's last snapshot could not be written.
-    SaveFailed(String),
+    SaveFailed(super::AgentPersistenceError),
     /// The permission settings changed.
     PolicyChanged,
     /// The application is quitting: release everything the agent holds.

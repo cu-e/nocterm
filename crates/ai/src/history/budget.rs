@@ -1,5 +1,5 @@
 //! Exact row and payload budgets are prepared once and reused on the UI thread.
-use super::{MAX_SAVED_ENTRIES, SavedChat, check_size, prompt_size, size, wire};
+use super::{HistoryCodecError, MAX_SAVED_ENTRIES, SavedChat, check_size, prompt_size, size, wire};
 use crate::thread::Entry;
 use std::sync::Arc;
 #[derive(Clone, Debug)]
@@ -10,7 +10,7 @@ pub struct PreparedBudget {
     prompts: Arc<Vec<usize>>,
 }
 impl PreparedBudget {
-    pub(super) fn new(chat: &SavedChat) -> Result<Self, String> {
+    pub(super) fn new(chat: &SavedChat) -> Result<Self, HistoryCodecError> {
         Ok(Self {
             resident_bytes: 0,
             memory: Arc::new(
@@ -18,14 +18,14 @@ impl PreparedBudget {
                     .iter()
                     .map(wire::entry_memory)
                     .collect::<Result<_, _>>()
-                    .map_err(|error| error.to_string())?,
+                    .map_err(HistoryCodecError::from)?,
             ),
             entries: Arc::new(
                 chat.entries
                     .iter()
                     .map(wire::entry_size)
                     .collect::<Result<_, _>>()
-                    .map_err(|error| error.to_string())?,
+                    .map_err(HistoryCodecError::from)?,
             ),
             prompts: Arc::new(
                 chat.queue
@@ -54,7 +54,7 @@ impl HistoryBudget {
             entries: prepared.map_or_else(Vec::new, |prepared| (*prepared.entries).clone()),
         }
     }
-    pub fn refresh(&mut self, entries: &[Entry], dirty: &[usize]) -> Result<(), String> {
+    pub fn refresh(&mut self, entries: &[Entry], dirty: &[usize]) -> Result<(), HistoryCodecError> {
         let old = self.entries.len();
         self.entries.resize(entries.len(), 0);
         self.memory.resize(entries.len(), 0);
@@ -63,9 +63,9 @@ impl HistoryBudget {
             .filter(|index| *index < entries.len())
         {
             self.memory[index] =
-                wire::entry_memory(&entries[index]).map_err(|error| error.to_string())?;
+                wire::entry_memory(&entries[index]).map_err(HistoryCodecError::from)?;
             self.entries[index] =
-                wire::entry_size(&entries[index]).map_err(|error| error.to_string())?;
+                wire::entry_size(&entries[index]).map_err(HistoryCodecError::from)?;
         }
         Ok(())
     }
@@ -73,9 +73,9 @@ impl HistoryBudget {
         &self,
         metadata: &SavedChat,
         prompts: impl Iterator<Item = usize>,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryCodecError> {
         let base = size::structural_size(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-            .map_err(|error| error.to_string())?;
+            .map_err(HistoryCodecError::from)?;
         let rows = &self.memory[self.memory.len().saturating_sub(MAX_SAVED_ENTRIES)..];
         let (count, prompts) =
             prompts.fold((0, 0), |(count, total), bytes| (count + 1, total + bytes));
@@ -88,10 +88,10 @@ impl HistoryBudget {
         &self,
         metadata: &SavedChat,
         prompts: impl Iterator<Item = usize>,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryCodecError> {
         let mut metadata_size =
             size::encoded_len(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-                .map_err(|error| error.to_string())?;
+                .map_err(HistoryCodecError::from)?;
         let entries = &self.entries[self.entries.len().saturating_sub(MAX_SAVED_ENTRIES)..];
         metadata_size += entries.iter().sum::<usize>() + entries.len().saturating_sub(1);
         let prompts = prompts.collect::<Vec<_>>();
@@ -108,9 +108,9 @@ impl HistoryBudget {
                 &with_queue,
                 Some(&Vec::<super::SavedPrompt>::new()),
             ))
-            .map_err(|error| error.to_string())?
+            .map_err(HistoryCodecError::from)?
                 - size::encoded_len(&wire::Wire::new(&with_queue, None::<&[super::SavedPrompt]>))
-                    .map_err(|error| error.to_string())?;
+                    .map_err(HistoryCodecError::from)?;
             metadata_size += framing + prompts.iter().sum::<usize>() + prompts.len() - 1;
         }
         check_size(metadata_size)

@@ -16,7 +16,7 @@ fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mu
     let Fixture {
         panel,
         workspace,
-        _directory: directory,
+        repository,
         ..
     } = f;
     drop(panel);
@@ -27,7 +27,7 @@ fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mu
         weak.upgrade().is_none(),
         "test accidentally retained the document past window destruction"
     );
-    let chats = nocterm_ai::history::load_all(&directory.path().join("chats"));
+    let chats = repository.chats();
     assert_eq!(chats.len(), 1);
     assert!(
         matches!(&chats[0].entries[0], nocterm_ai::thread::Entry::User(blocks) if matches!(&blocks[0], acp::ContentBlock::Text(text) if text.text == "latest dormant document"))
@@ -56,7 +56,7 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     // Native GPUI may drop this cleanup task after its 200ms grace period.
     // Durability must already hold when the synchronous quit callback returns.
     shutdown_runtime(cx);
-    let read = || nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let read = || f.repository.chats();
     assert_eq!(read().len(), 1);
     assert_eq!(read()[0].name.as_deref(), Some("latest unsaved document"));
     cx.run_until_parked();

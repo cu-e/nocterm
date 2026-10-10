@@ -39,12 +39,10 @@ impl AgentThread {
         self.status = "Loading saved chat…".into();
         let id = self.chat_id.clone();
         let ticket = self.lifecycle.ticket();
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        let gate = Runtime::global(cx).read(cx).history_gate.clone();
-        let loading = cx.background_executor().spawn(async move {
-            let permit = gate.acquire().await;
-            (nocterm_ai::history::load(&dir, &id), permit)
-        });
+        let reader = Runtime::global(cx).read(cx).history_reader();
+        let loading = cx
+            .background_executor()
+            .spawn(async move { reader.load(id).await });
         cx.spawn(async move |this, cx| {
             let (result, permit) = loading.await;
             let _ = this.update(cx, |this, cx| {

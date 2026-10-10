@@ -1,4 +1,9 @@
-use crate::{AgentServices, panel::AgentPanel, runtime::Runtime, thread::Attachment};
+use crate::{
+    AgentServices,
+    panel::AgentPanel,
+    runtime::{self, Runtime},
+    thread::Attachment,
+};
 use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -24,7 +29,17 @@ use std::{
 };
 
 fn shutdown_runtime(cx: &mut TestAppContext) {
-    let task = cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx)));
+    let task = cx.update(|cx| {
+        let coordinator = nocterm_store::ShutdownCoordinator::default();
+        let runtime = Runtime::global(cx);
+        coordinator
+            .register_capture(move |cx| {
+                runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx))
+            })
+            .unwrap();
+        let work = coordinator.capture_all(cx);
+        cx.background_executor().spawn(work)
+    });
     cx.foreground_executor().block_test(task);
 }
 #[derive(Default)]
@@ -407,6 +422,9 @@ struct Fixture {
     calls: async_channel::Sender<BridgeCall>,
     rejections: async_channel::Sender<nocterm_ai::BridgeRejection>,
     _directory: tempfile::TempDir,
+    repository: Arc<nocterm_ai::testing::InMemoryAgentRepository>,
+    ready: nocterm_ui::UiReady,
+    shutdown: nocterm_store::ShutdownCoordinator,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     fixture_with_width(cx, 26.)
@@ -414,6 +432,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
+    let repository = Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
     let (commands, bridge, connector, events, sender, rejection_sender) = {
         let commands = Arc::new(Commands::default());
         let (events, rx) = async_channel::bounded(256);
@@ -451,7 +470,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         sign_in: Default::default(),
         link: Default::default(),
     });
-    let (handle, workspace, panel, terminal) = cx.update(|cx| {
+    let (handle, workspace, panel, terminal, ready, shutdown) = cx.update(|cx| {
         gpui_kit::init(cx);
         let mut tokens = nocterm_ui::DesignTokens::builtin();
         tokens.layout.agent_panel_width = width;
@@ -460,6 +479,8 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
+        let shutdown = nocterm_store::ShutdownCoordinator::default();
+        nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
         crate::init(
             AgentServices {
                 terminal_auth: None,
@@ -467,14 +488,19 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
                 shared_dirs: Vec::new(),
                 connector: connector.clone(),
                 bridge: bridge.clone(),
-                state_file: directory.path().join("agents.toml"),
-                chats_dir: directory.path().join("chats"),
+                storage: runtime::AgentStorage::prepared(
+                    repository.clone(),
+                    repository.clone(),
+                    Ok(Default::default()),
+                ),
                 codex_home: Some(directory.path().join("codex")),
                 workdir: directory.path().join("work"),
             },
             &ui,
+            &shutdown,
             cx,
-        );
+        )
+        .unwrap();
         let mut panel = None;
         Runtime::global(cx).update(cx, |runtime, cx| {
             runtime.inject_events(connector.events.clone(), cx)
@@ -500,7 +526,14 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
                 })
             })
             .unwrap();
-        (handle, workspace, panel.unwrap(), terminal.unwrap())
+        (
+            handle,
+            workspace,
+            panel.unwrap(),
+            terminal.unwrap(),
+            ui,
+            shutdown,
+        )
     });
     Fixture {
         handle,
@@ -515,7 +548,68 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         calls: sender,
         rejections: rejection_sender,
         _directory: directory,
+        repository,
+        ready,
+        shutdown,
     }
+}
+fn fixture_services(f: &Fixture) -> AgentServices {
+    AgentServices {
+        connector: f.connector.clone(),
+        bridge: f.bridge.clone(),
+        storage: runtime::AgentStorage::prepared(
+            f.repository.clone(),
+            f.repository.clone(),
+            Ok(f.repository.state()),
+        ),
+        codex_home: Some(f._directory.path().join("codex")),
+        workdir: f._directory.path().join("work"),
+        terminal_auth: None,
+        private_dirs: Vec::new(),
+        shared_dirs: Vec::new(),
+    }
+}
+/// Simulates a fresh host through public shutdown, installation and view creation.
+fn install_fixture(
+    f: &mut Fixture,
+    services: impl FnOnce(&Fixture) -> AgentServices,
+    cx: &mut TestAppContext,
+) {
+    shutdown_runtime(cx);
+    let services = services(f);
+    cx.update(|cx| {
+        crate::init(services, &f.ready, &f.shutdown, cx).unwrap();
+        Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.inject_events(f.connector.events.clone(), cx)
+        });
+    });
+    let panel = cx
+        .update_window(f.handle, |_, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), window, cx));
+            f.workspace.update(cx, |workspace, cx| {
+                workspace.set_right_panel(panel.clone(), window, cx)
+            });
+            panel
+        })
+        .unwrap();
+    f.panel = panel;
+}
+/// Supplies bounded prepared records to the real take-once catalog owner.
+fn reinstall_history(
+    f: &mut Fixture,
+    chats: Vec<nocterm_ai::history::SavedChat>,
+    cx: &mut TestAppContext,
+) {
+    let history = runtime::PreparedHistory::new(chats).unwrap();
+    install_fixture(
+        f,
+        |f| {
+            let mut services = fixture_services(f);
+            services.storage = services.storage.with_history(history);
+            services
+        },
+        cx,
+    );
 }
 /// Connects chats on their first message instead of when shown, for tests
 /// of what happens before a chat connects.

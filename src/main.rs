@@ -13,21 +13,17 @@ mod app_menus;
 mod application;
 mod bootstrap;
 mod keymap;
+mod startup;
 
 #[cfg(test)]
 mod gui_tests;
 
-use std::{fs, io, sync::Arc};
+use std::io;
 
-use anyhow::Context as _;
 use gpui_kit::{
     App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, component::TitleBar,
     px, size,
 };
-use nocterm_core::Paths;
-use nocterm_design::DesignTokens;
-use nocterm_settings::{SettingsDocument, SettingsFile};
-use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_ui::SettingsStore;
 use nocterm_workspace::{
     DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
@@ -61,81 +57,11 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    // Resolved before anything can replace the binary: afterwards Linux reports
-    // the running image as "<path> (deleted)", which no agent can start.
-    let executable = std::env::current_exe().context("locating the nocterm executable")?;
-    let paths = Paths::discover()?;
-    let tokens = load_tokens(&paths);
-    let settings = load_settings(&paths);
-    let theme_dirs = nocterm_themes::ThemeDirs {
-        user: paths.user_themes_dir(),
-        installed: paths.installed_themes_dir(),
-    };
-    let catalog = nocterm_themes::ThemeCatalog::load(&theme_dirs);
-    let registry =
-        Arc::new(nocterm_themes::ZedRegistry::new().context("creating the theme registry client")?);
-    let transport = SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
-
-    let files = files_dependencies()?;
-
+    let prepared = startup::PreparedApp::load()?;
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets)
-        .run(move |cx| {
-            let booted = bootstrap::bootstrap(
-                bootstrap::Services {
-                    tokens,
-                    settings,
-                    paths: paths.clone(),
-                    persist: true,
-                    transport: Arc::new(transport),
-                    local: true,
-                    files,
-                    themes: Some(bootstrap::Themes {
-                        dirs: theme_dirs,
-                        catalog,
-                        registry,
-                    }),
-                    agent: agent_services(&paths, executable),
-                    vault: Some(bootstrap::VaultSetup {
-                        file: paths.config_dir().join("vault.bin"),
-                        device_unlock: true,
-                    }),
-                },
-                cx,
-            );
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-
-            if let Err(error) = open_main_window(cx, &booted) {
-                tracing::error!(%error, "could not open the window");
-                cx.quit();
-            }
-            report_settings_errors(cx);
-            cx.activate(true);
-        });
+        .run(move |cx| prepared.install_when_ready(cx));
     Ok(())
-}
-
-fn files_dependencies() -> anyhow::Result<nocterm_files::Deps> {
-    let local_fs =
-        Arc::new(nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?);
-    let transfers = nocterm_transfer_runtime::TransferRuntime::start(
-        nocterm_transfer_runtime::TransferRuntimeDeps::new(
-            local_fs.clone(),
-            nocterm_transfers::TransferLimits::default(),
-        ),
-    )
-    .context("starting transfers")?;
-    Ok(nocterm_files::Deps::new(
-        local_fs.clone(),
-        local_fs,
-        transfers,
-        Arc::new(nocterm_local::LocalProgramOpener::default()),
-    ))
 }
 
 fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<()> {
@@ -166,26 +92,6 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
         workspace
     })?;
     Ok(())
-}
-
-fn agent_services(paths: &Paths, executable: std::path::PathBuf) -> nocterm_agent::AgentServices {
-    nocterm_agent::AgentServices {
-        connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
-        terminal_auth: Some(Arc::new(agent_auth::open)),
-        bridge: Arc::new(nocterm_acp::BridgeServer::new(
-            paths.clone(),
-            nocterm_acp::RelayCommand {
-                program: executable,
-                args: vec![AGENT_BRIDGE.into()],
-            },
-        )),
-        state_file: paths.state_dir().join("agents.toml"),
-        chats_dir: paths.state_dir().join("agent-chats"),
-        codex_home: nocterm_ai::usage::codex_home(),
-        workdir: paths.state_dir().join("agent-workspace"),
-        private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
-        shared_dirs: vec![paths.effective_runtime_dir()],
-    }
 }
 
 fn register_settings(workspace: &mut Workspace, vault: Option<&nocterm_vault_ui::Installed>) {
@@ -226,53 +132,10 @@ fn register_settings(workspace: &mut Workspace, vault: Option<&nocterm_vault_ui:
     }
 }
 
-/// The built-in design tokens with the user's `theme.toml` over them. A
-/// broken theme is reported and ignored, so the window still opens.
-fn load_tokens(paths: &Paths) -> DesignTokens {
-    let file = paths.theme_file();
-    let overrides = match fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return DesignTokens::builtin(),
-        Err(error) => {
-            tracing::error!(file = %file.display(), %error, "could not read the theme");
-            return DesignTokens::builtin();
-        }
-    };
-    DesignTokens::with_overrides(&overrides).unwrap_or_else(|error| {
-        tracing::error!(file = %file.display(), %error, "the theme is invalid; using the default");
-        DesignTokens::builtin()
-    })
-}
-
 /// Logs the sections of the settings file that could not be read. Every
 /// section is registered once the window's features are.
 fn report_settings_errors(cx: &App) {
     for error in cx.global::<SettingsStore>().section_errors(cx) {
         tracing::error!(%error, "a settings section is invalid; using its defaults");
-    }
-}
-
-/// The user's settings. A broken section runs on its defaults and is shown on
-/// the settings page; saving leaves it in the file. A file that is not TOML
-/// at all is replaced by the defaults for this run only, so nothing in it is
-/// lost.
-fn load_settings(paths: &Paths) -> SettingsStore {
-    let file = SettingsFile::new(paths.settings_file());
-    match file.load() {
-        Ok(document) => SettingsStore::new(document, file),
-        Err(error) => {
-            tracing::error!(%error, "could not read the settings; changes will not be saved");
-            SettingsStore::in_memory(SettingsDocument::default())
-        }
-    }
-}
-
-fn ssh_config(paths: &Paths) -> SshConfig {
-    let openssh = paths.openssh_dir();
-    SshConfig {
-        known_hosts: paths.known_hosts_file(),
-        read_only_known_hosts: openssh.iter().map(|dir| dir.join("known_hosts")).collect(),
-        identity_dir: openssh,
-        use_agent: true,
     }
 }

@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 /// A connection whose chats have no work that closing it would interrupt.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct IdleConnection<K> {
-    pub key: K,
+    key: K,
     /// When the connection last had work.
-    pub since: Instant,
+    since: Instant,
     /// A panel shows one of its chats.
-    pub shown: bool,
+    shown: bool,
 }
 
 /// The idle connections to release, oldest first.
@@ -91,5 +91,225 @@ mod tests {
         let connections = [idle(1, 5, true, now), idle(2, 900, true, now)];
         assert_eq!(releases(&connections, &policy(0, 60), now, true), [2]);
         assert!(releases(&connections, &policy(0, 60), now, false).is_empty());
+    }
+}
+
+/// Immutable observations supplied by the coordinator; admission itself reads no App.
+pub(super) struct ConnectionObservation {
+    key: u64,
+    busy: bool,
+    shown: bool,
+}
+impl ConnectionObservation {
+    pub(super) fn new(key: u64, busy: bool, shown: bool) -> Self {
+        Self { key, busy, shown }
+    }
+}
+#[derive(Default)]
+struct AdmissionPolicy {
+    idle: std::collections::HashMap<u64, Instant>,
+    yielding: std::collections::HashSet<u64>,
+    stalled: std::collections::HashSet<u64>,
+}
+#[derive(Default)]
+pub(super) struct AdmissionState {
+    pending: std::collections::VecDeque<super::Client>,
+    policy: AdmissionPolicy,
+    maintenance: Option<gpui::Task<()>>,
+}
+impl AdmissionState {
+    pub(super) fn request(&mut self, client: super::Client) {
+        if !self
+            .pending
+            .iter()
+            .any(|pending| pending.id() == client.id())
+        {
+            self.pending.push_back(client)
+        }
+    }
+    pub(super) fn withdraw(&mut self, id: gpui::EntityId) {
+        self.pending.retain(|client| client.id() != id)
+    }
+    pub(super) fn pending(&self) -> impl Iterator<Item = &super::Client> {
+        self.pending.iter()
+    }
+    pub(super) fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+    pub(super) fn pop(&mut self) -> Option<super::Client> {
+        self.pending.pop_front()
+    }
+    pub(super) fn defer(&mut self, client: super::Client) {
+        self.pending.push_back(client)
+    }
+    pub(super) fn clear(&mut self) {
+        self.pending.clear()
+    }
+    pub(super) fn running(&self) -> bool {
+        self.maintenance.is_some()
+    }
+    pub(super) fn install(&mut self, task: gpui::Task<()>) {
+        self.maintenance = Some(task)
+    }
+    pub(super) fn stop(&mut self) {
+        self.pending.clear();
+        self.maintenance.take();
+    }
+    pub(super) fn idle_task(&mut self) {
+        self.maintenance.take();
+    }
+    pub(super) fn released(&mut self, key: u64) {
+        self.policy.released(key);
+    }
+    pub(super) fn failed_close(&mut self, key: u64) {
+        self.policy.failed_close(key);
+    }
+    pub(super) fn decisions(
+        &mut self,
+        observations: &[ConnectionObservation],
+        closing: &[u64],
+        policy: &AgentSessionSettings,
+        now: Instant,
+        waiting: usize,
+    ) -> Vec<u64> {
+        self.policy
+            .decisions(observations, closing, policy, now, waiting)
+    }
+}
+
+impl AdmissionPolicy {
+    pub(super) fn released(&mut self, key: u64) {
+        self.idle.remove(&key);
+        self.yielding.remove(&key);
+    }
+    pub(super) fn failed_close(&mut self, key: u64) {
+        self.stalled.insert(key);
+    }
+    pub(super) fn decisions(
+        &mut self,
+        observations: &[ConnectionObservation],
+        closing: &[u64],
+        policy: &AgentSessionSettings,
+        now: Instant,
+        waiting: usize,
+    ) -> Vec<u64> {
+        self.yielding.retain(|key| {
+            observations
+                .iter()
+                .any(|observation| observation.key == *key)
+        });
+        let mut idle = Vec::new();
+        for observation in observations {
+            if self.yielding.contains(&observation.key) {
+                continue;
+            }
+            if observation.busy {
+                self.idle.remove(&observation.key);
+            } else {
+                idle.push(IdleConnection {
+                    key: observation.key,
+                    since: *self.idle.entry(observation.key).or_insert(now),
+                    shown: observation.shown,
+                });
+            }
+        }
+        let freeing = self.yielding.len()
+            + closing
+                .iter()
+                .filter(|key| !self.stalled.contains(key))
+                .count();
+        let needs_slot = waiting > freeing && observations.len() + closing.len() >= policy.max_live;
+        let decisions = releases(&idle, policy, now, needs_slot);
+        self.yielding.extend(decisions.iter().copied());
+        decisions
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    fn policy() -> AgentSessionSettings {
+        AgentSessionSettings {
+            max_live: 2,
+            max_idle: 2,
+            idle_timeout_secs: 60,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn yielding_and_confirmed_cleanup_reserve_only_the_slot_already_returning() {
+        let now = Instant::now();
+        let mut admission = AdmissionPolicy::default();
+        let observations = [
+            ConnectionObservation {
+                key: 1,
+                busy: false,
+                shown: false,
+            },
+            ConnectionObservation {
+                key: 2,
+                busy: false,
+                shown: false,
+            },
+        ];
+        assert_eq!(
+            admission.decisions(&observations, &[], &policy(), now, 1),
+            [1]
+        );
+        assert!(
+            admission
+                .decisions(&observations, &[], &policy(), now, 1)
+                .is_empty()
+        );
+        admission.released(1);
+        assert!(
+            admission
+                .decisions(&observations[1..], &[1], &policy(), now, 1)
+                .is_empty()
+        );
+        admission.failed_close(1);
+        assert_eq!(
+            admission.decisions(&observations[1..], &[1], &policy(), now, 1),
+            [2]
+        );
+    }
+    #[test]
+    fn busy_work_resets_idle_age_before_a_later_timeout() {
+        let now = Instant::now();
+        let mut admission = AdmissionPolicy::default();
+        let hidden = [ConnectionObservation {
+            key: 1,
+            busy: false,
+            shown: false,
+        }];
+        assert!(
+            admission
+                .decisions(&hidden, &[], &policy(), now, 0)
+                .is_empty()
+        );
+        assert!(
+            admission
+                .decisions(
+                    &[ConnectionObservation {
+                        key: 1,
+                        busy: true,
+                        shown: false
+                    }],
+                    &[],
+                    &policy(),
+                    now + Duration::from_secs(59),
+                    0
+                )
+                .is_empty()
+        );
+        assert!(
+            admission
+                .decisions(&hidden, &[], &policy(), now + Duration::from_secs(60), 0)
+                .is_empty()
+        );
+        assert_eq!(
+            admission.decisions(&hidden, &[], &policy(), now + Duration::from_secs(120), 0),
+            [1]
+        );
     }
 }

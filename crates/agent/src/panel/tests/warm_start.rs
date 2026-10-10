@@ -58,7 +58,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
     exchange(&f, "hello", "Hi.", cx);
     cx.update(|cx| {
         assert_eq!(thread.read(cx).model().as_deref(), Some("Opus"));
-        let state = &Runtime::global(cx).read(cx).favorites;
+        let state = &Runtime::global(cx).read(cx).favorites(cx);
         assert_eq!(
             state.choices("codex").get("model"),
             Some(&ConfigValue::Value("opus".into()))
@@ -151,7 +151,7 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
 
 #[gpui_kit::test]
 fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let mut f = fixture(cx);
     *f.commands.config.lock().unwrap() = models();
     let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
     saved
@@ -163,9 +163,7 @@ fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppC
         images: Vec::new(),
         attachments: Vec::new(),
     });
-    cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![saved]))
-    });
+    reinstall_history(&mut f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));

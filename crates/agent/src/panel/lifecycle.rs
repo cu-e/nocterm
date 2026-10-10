@@ -164,7 +164,7 @@ impl AgentPanel {
         });
         self.load_composer(cx);
         let old = old.entity_id();
-        Runtime::global(cx).update(cx, |runtime, _| runtime.unregister_document(old));
+        Runtime::global(cx).update(cx, |runtime, cx| runtime.unregister_document(old, cx));
         self.retain_threads(|thread, _| thread.entity_id() != old, cx);
     }
     /// Shows the chats saved in earlier runs, oldest first, before the

@@ -16,8 +16,7 @@ impl AgentPanel {
             .filter(|thread| thread.read(cx).archive.is_some())
             .map(|thread| thread.read(cx).chat_id.clone())
             .collect::<Vec<_>>();
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        let gate = Runtime::global(cx).read(cx).history_gate.clone();
+        let reader = Runtime::global(cx).read(cx).history_reader();
         let expected = query.clone();
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = cancellation.clone();
@@ -27,8 +26,8 @@ impl AgentPanel {
                 if flag.load(std::sync::atomic::Ordering::Acquire) {
                     break;
                 }
-                let _permit = gate.acquire().await;
-                if let Ok(chat) = nocterm_ai::history::load(&dir, &id) {
+                let (loaded, _permit) = reader.load(id.clone()).await;
+                if let Ok(chat) = loaded {
                     let state = nocterm_ai::thread::ThreadState {
                         entries: chat.entries,
                         ..Default::default()

@@ -176,7 +176,7 @@ impl AgentThread {
                 self.status = format!(
                     "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
                 );
-                self.persistence_error = Some(error);
+                self.persistence_error = Some(error.to_string());
                 self.composer.queue_paused = true;
                 self.status_error = true;
                 cx.notify();

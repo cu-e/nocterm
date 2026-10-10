@@ -35,7 +35,8 @@ impl PromptImage {
             .map_err(|_| "Invalid image data or decoding limit exceeded")?;
         let content =
             acp::ContentBlock::Image(acp::ImageContent::new(STANDARD.encode(&data), mime));
-        let encoded_len = crate::history::content_size(&content)?;
+        let encoded_len =
+            crate::history::content_size(&content).map_err(|error| error.to_string())?;
         Ok(Self {
             mime_type: mime.into(),
             data: data.into(),

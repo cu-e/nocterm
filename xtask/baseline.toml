@@ -4,7 +4,6 @@
 nocterm = 4
 nocterm-acp = 7
 nocterm-agent = 28
-nocterm-agent-runtime = 1
 nocterm-ai = 3
 nocterm-connections = 11
 nocterm-design = 1
@@ -32,17 +31,6 @@ nocterm-workspace = 8
 "nocterm-themes::tempfile" = 1
 
 [domain_io]
-"nocterm_ai::favorites::nocterm_core::persist::save" = 1
-"nocterm_ai::favorites::std::fs::read_to_string" = 1
-"nocterm_ai::history::catalog::nocterm_core::persist::save_text" = 1
-"nocterm_ai::history::catalog::std::fs::File::open" = 1
-"nocterm_ai::history::catalog::std::fs::Metadata" = 2
-"nocterm_ai::history::catalog::std::fs::metadata" = 1
-"nocterm_ai::history::catalog::std::fs::read_dir" = 1
-"nocterm_ai::history::catalog::std::fs::remove_file" = 1
-"nocterm_ai::history::nocterm_core::persist::save_text" = 1
-"nocterm_ai::history::preflight::std::fs::File::open" = 1
-"nocterm_ai::history::std::fs::remove_file" = 1
 "nocterm_ai::images::image::ImageReader::new" = 1
 "nocterm_ai::images::image::Limits::default" = 1
 "nocterm_ai::sandbox::std::fs::canonicalize" = 3
@@ -125,9 +113,7 @@ nocterm-ui = 6
 "nocterm_agent::thread::execution::jobs::Snapshot" = 5
 "nocterm_agent::thread::queue::QueuedPrompt" = 5
 "nocterm_agent::thread::restart::RestartData" = 1
-"nocterm_agent_runtime::Runtime" = 7
 "nocterm_agent_runtime::RuntimeGlobal" = 1
-"nocterm_agent_runtime::admission::IdleConnection" = 3
 "nocterm_agent_runtime::client::ClientState" = 9
 "nocterm_agent_runtime::lease::ReleasedLease" = 5
 "nocterm_agent_runtime::lease::SessionLease" = 5
@@ -162,7 +148,6 @@ nocterm-ui = 6
 "nocterm_vault_ui::view::VaultView" = 14
 
 [quit_handlers]
-"nocterm_agent::init" = 1
 "nocterm_terminal::init_recording" = 1
 "nocterm_ui::layout::LayoutMemory::init" = 1
 
@@ -170,8 +155,8 @@ nocterm-ui = 6
 nocterm = 1
 nocterm-acp = 10
 nocterm-agent = 10
-nocterm-agent-runtime = 2
-nocterm-ai = 29
+nocterm-agent-runtime = 1
+nocterm-ai = 9
 nocterm-connections = 5
 nocterm-containers = 3
 nocterm-files = 1
@@ -191,7 +176,6 @@ nocterm-workspace = 13
 [struct_fields]
 "nocterm_agent::panel::AgentPanel" = 34
 "nocterm_agent::thread::AgentThread" = 53
-"nocterm_agent_runtime::Runtime" = 34
 "nocterm_ai::history::SavedChat" = 20
 "nocterm_ai::history::wire::Wire" = 18
 "nocterm_connections::editor::ConnectionEditor" = 27

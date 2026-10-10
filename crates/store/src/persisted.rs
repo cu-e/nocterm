@@ -1,10 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use futures::{channel::oneshot, future::BoxFuture};
-use gpui::{Context, Entity, Task};
-use nocterm_core::persist::{Rejected, WriteGate, WriteQueue};
+use gpui::{Context, Entity};
+use nocterm_core::persist::{Rejected, WriteQueue};
 
-use crate::{Captured, Committed, StoreError, captured::DiskProjection};
+use crate::{
+    Captured, Committed, StoreError,
+    captured::DiskProjection,
+    worker::{self, DiskOperation, DiskWork, DriverControl, NormalOwner},
+};
 
 type PublicationHook<T> = Box<dyn Fn(&T, &T, &mut gpui::App)>;
 
@@ -94,8 +98,7 @@ pub struct Persisted<T> {
     queue: WriteQueue<Change<T>>,
     candidate: Option<Candidate<T>>,
     writer: SnapshotWriter<T>,
-    gate: WriteGate,
-    task: Option<Task<()>>,
+    control: DriverControl,
     error: Option<StoreError>,
     publication: Publication,
     latest_pending: bool,
@@ -119,8 +122,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             queue: WriteQueue::new(capacity),
             candidate: None,
             writer,
-            gate: WriteGate::default(),
-            task: None,
+            control: DriverControl::default(),
             error: None,
             publication,
             latest_pending: false,
@@ -216,7 +218,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
         self.revision = revision;
         self.desired = desired;
         cx.notify();
-        if self.task.is_none() {
+        if !self.control.is_running() {
             self.start(cx);
         }
         Ok(receipt)
@@ -245,7 +247,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
         self.desired = desired;
         self.latest_pending = true;
         cx.notify();
-        if self.task.is_none() {
+        if !self.control.is_running() {
             self.start(cx);
         }
         Ok(self.revision)
@@ -293,67 +295,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        let gate = self.gate.clone();
-        self.task = Some(cx.spawn(async move |entity, cx| {
-            while !gate.is_frozen() {
-                let Ok(Some((candidate, writer, writing, unchanged, projection))) =
-                    entity.update(cx, |state, cx| {
-                        let next = state.next();
-                        if state.error.is_some() {
-                            cx.notify();
-                        }
-                        next.map(|candidate| {
-                            let unchanged = &candidate.snapshot == state.durable.snapshot();
-                            (
-                                candidate,
-                                state.writer.clone(),
-                                state.queue.begin_write(),
-                                unchanged,
-                                state.projection.clone(),
-                            )
-                        })
-                    })
-                else {
-                    break;
-                };
-                let disk_gate = gate.clone();
-                let (sender, result) = oneshot::channel();
-                cx.background_executor()
-                    .spawn(async move {
-                        let _writing = writing;
-                        let outcome = match disk_gate.normal().await {
-                            Some(_guard) => {
-                                let outcome = if unchanged {
-                                    Ok(())
-                                } else {
-                                    writer(candidate.snapshot.clone()).await
-                                };
-                                if outcome.is_ok() {
-                                    projection.record(Committed::new(
-                                        candidate.snapshot,
-                                        candidate.revision,
-                                    ));
-                                }
-                                outcome
-                            }
-                            None => Err(StoreError::Closing),
-                        };
-                        let _ = sender.send(outcome);
-                    })
-                    .detach();
-                let outcome = result.await.unwrap_or(Err(StoreError::CompletionDropped));
-                if gate.is_frozen() {
-                    break;
-                }
-                if entity
-                    .update(cx, |state, cx| state.completed(outcome, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            let _ = entity.update(cx, |state, _| state.task = None);
-        }));
+        worker::start(self, cx);
     }
 
     fn completed(&mut self, outcome: Result<(), StoreError>, cx: &mut Context<Self>) {
@@ -439,9 +381,8 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
     /// Freeze admission and capture immutable work while the App is still alive.
     pub fn capture(&mut self) -> Captured<T> {
         let dirty = self.is_dirty();
-        self.gate.freeze();
+        self.control.freeze();
         self.queue.close();
-        self.task.take();
         self.latest_pending = false;
         let active = self.candidate.take();
         let mut snapshot = match self.publication {
@@ -469,7 +410,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             Candidate::new(self.revision, snapshot, completions),
             (self.publication, dirty),
             self.writer.clone(),
-            self.gate.clone(),
+            self.control.gate(),
             self.projection.clone(),
         )
     }
@@ -478,6 +419,46 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
     pub fn capture_shutdown(&mut self) -> BoxFuture<'static, Result<(), StoreError>> {
         let work = self.capture();
         Box::pin(async move { work.run().await.into_result() })
+    }
+}
+
+impl<T: Clone + PartialEq + Send + 'static> NormalOwner for Persisted<T> {
+    type Physical = ();
+    type Tag = ();
+    fn control(&mut self) -> &mut DriverControl {
+        &mut self.control
+    }
+    fn take_operation(&mut self, cx: &mut Context<Self>) -> Option<DiskWork<(), ()>> {
+        let next = self.next();
+        if self.error.is_some() {
+            cx.notify();
+        }
+        let candidate = next?;
+        let unchanged = &candidate.snapshot == self.durable.snapshot();
+        let snapshot = candidate.snapshot.clone();
+        let committed = Committed::new(candidate.snapshot, candidate.revision);
+        let writer = self.writer.clone();
+        let projection = self.projection.clone();
+        let operation = DiskOperation::new(
+            move || {
+                Box::pin(async move {
+                    if unchanged {
+                        Ok(())
+                    } else {
+                        writer(snapshot).await
+                    }
+                })
+            },
+            move |outcome| {
+                if outcome.is_ok() {
+                    projection.record(committed);
+                }
+            },
+        );
+        Some(DiskWork::new(operation, (), Some(self.queue.begin_write())))
+    }
+    fn apply_outcome(&mut self, _: (), outcome: Result<(), StoreError>, cx: &mut Context<Self>) {
+        self.completed(outcome, cx);
     }
 }
 

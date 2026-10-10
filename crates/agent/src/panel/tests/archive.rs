@@ -9,12 +9,9 @@ fn archived(
     chat: &SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
-    let rows = cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        nocterm_ai::history::save(&dir, chat).unwrap();
-        nocterm_ai::history::load_catalog(&dir)
-    });
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, _| runtime.saved_catalog = Some(rows)));
+    f.repository.seed_chat(chat).unwrap();
+    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.reload_history(cx)));
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
@@ -94,9 +91,8 @@ fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
         thread.set_pinned(true, cx);
     });
     cx.run_until_parked();
-    cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        let loaded = nocterm_ai::history::load(&dir, &chat.id).unwrap();
+    cx.update(|_| {
+        let loaded = f.repository.transcript(&chat.id).unwrap();
         assert_eq!(loaded.name.as_deref(), Some("New name"));
         assert!(loaded.pinned);
         assert_eq!(loaded.entries.len(), 1);
@@ -117,8 +113,7 @@ fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext)
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        assert!(nocterm_ai::history::load(&dir, &chat.id).is_err());
+        assert!(f.repository.transcript(&chat.id).is_err());
         assert!(
             f.panel
                 .read(cx)
@@ -178,8 +173,6 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
 fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let gate = cx.update(|cx| Runtime::global(cx).read(cx).history_gate.clone());
-    let permit = futures::executor::block_on(gate.acquire());
     let mut chats = Vec::new();
     for index in 0..15 {
         let mut chat = saved();
@@ -187,14 +180,16 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
         chat.entries = (0..2000).map(|_| Entry::Agent("row".into())).collect();
         chats.push(chat);
     }
-    let rows = cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        for chat in &chats {
-            nocterm_ai::history::save(&dir, chat).unwrap();
-        }
-        nocterm_ai::history::load_catalog(&dir)
-    });
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, _| runtime.saved_catalog = Some(rows)));
+    for chat in &chats {
+        f.repository.seed_chat(chat).unwrap();
+    }
+    let blocked = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Load(
+            chats.first().unwrap().id.clone(),
+        ));
+    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.reload_history(cx)));
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx))
@@ -207,7 +202,21 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
     });
     cx.run_until_parked();
     cx.update(|cx| assert!(threads[0].read(cx).archive.is_some()));
-    drop(permit);
+    f.panel.update(cx, |panel, cx| {
+        panel.open_thread(threads[1].entity_id(), cx)
+    });
+    cx.run_until_parked();
+    let loads = f
+        .repository
+        .operations()
+        .into_iter()
+        .filter(|operation| matches!(operation, nocterm_ai::testing::StorageOperation::Load(_)))
+        .count();
+    assert_eq!(
+        loads, 1,
+        "a second payload crossed the shared hydration gate"
+    );
+    let _ = blocked.send(Ok(()));
     cx.run_until_parked();
     cx.update(|cx| assert!(threads[0].read(cx).archive.is_none()));
     for thread in &threads[1..] {
@@ -237,8 +246,9 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
     chat.updated = 1;
     chat.draft = Some("old saved draft".into());
     let thread = archived(&f, &chat, cx);
-    let gate = cx.update(|cx| Runtime::global(cx).read(cx).history_gate.clone());
-    let permit = futures::executor::block_on(gate.acquire());
+    let blocked = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -257,7 +267,7 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
         assert!(thread.updated > chat.updated);
         thread.updated
     });
-    drop(permit);
+    let _ = blocked.send(Ok(()));
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
@@ -269,8 +279,7 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
             Some("new literal\ndraft")
         );
         assert_eq!(thread.read(cx).updated, edited_at);
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        let loaded = nocterm_ai::history::load(&dir, &chat.id).unwrap();
+        let loaded = f.repository.transcript(&chat.id).unwrap();
         assert_eq!(loaded.draft.as_deref(), Some("new literal\ndraft"));
         assert_eq!(loaded.updated, edited_at);
     });
@@ -287,8 +296,9 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
         attachments: vec![],
     });
     let thread = archived(&f, &chat, cx);
-    let gate = cx.update(|cx| Runtime::global(cx).read(cx).history_gate.clone());
-    let permit = futures::executor::block_on(gate.acquire());
+    let blocked = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -306,14 +316,13 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
             .detach()
     });
     cx.run_until_parked();
-    cx.update(|cx| {
-        let dir = Runtime::global(cx).read(cx).services.chats_dir.clone();
-        let saved = nocterm_ai::history::load(&dir, &chat.id).unwrap();
+    cx.update(|_| {
+        let saved = f.repository.transcript(&chat.id).unwrap();
         assert_eq!(saved.draft.as_deref(), Some("draft before disable"));
         assert_eq!(saved.entries.len(), 1);
         assert_eq!(saved.queue[0].id, 3);
     });
-    drop(permit);
+    let _ = blocked.send(Ok(()));
     cx.run_until_parked();
 }
 #[gpui_kit::test]
@@ -329,14 +338,9 @@ fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut Te
         attachments: vec![],
     });
     let thread = archived(&f, &chat, cx);
-    let (gate, dir) = cx.update(|cx| {
-        let runtime = Runtime::global(cx);
-        (
-            runtime.read(cx).history_gate.clone(),
-            runtime.read(cx).services.chats_dir.clone(),
-        )
-    });
-    let permit = futures::executor::block_on(gate.acquire());
+    let blocked = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -350,12 +354,12 @@ fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut Te
     .unwrap();
     cx.run_until_parked();
     cx.update(App::shutdown);
-    let saved = nocterm_ai::history::load(&dir, &chat.id).unwrap();
+    let saved = f.repository.transcript(&chat.id).unwrap();
     assert_eq!(saved.draft.as_deref(), Some("draft at quit"));
     assert_eq!(saved.entries.len(), 1);
     assert_eq!(saved.queue[0].id, 4);
     assert_eq!(saved.name.as_deref(), Some("original name"));
-    drop(permit);
+    let _ = blocked.send(Ok(()));
 }
 #[gpui_kit::test]
 fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut TestAppContext) {

@@ -195,7 +195,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     // Nothing reconnects by itself.
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
-    let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let saved = f.repository.chats();
     assert_eq!(saved[0].queue[0].text, "retained");
 
     // Sending reconnects the chat and goes on with its queue.
@@ -288,9 +288,17 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         window.click("queue-edit-first", cx);
     })
     .unwrap();
-    let chats = f._directory.path().join("chats");
-    std::fs::remove_dir_all(&chats).unwrap();
-    std::fs::write(&chats, "blocks directory creation").unwrap();
+    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    f.repository.reject(
+        nocterm_ai::testing::StorageOperation::Save(id),
+        nocterm_ai::storage::AgentStorageError::Directory {
+            path: f._directory.path().join("chats"),
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "blocks directory creation",
+            )),
+        },
+    );
     complete_active(&f, cx);
     cx.update(|cx| {
         assert!(thread.read(cx).composer.queue_paused);
@@ -344,7 +352,8 @@ fn cancelling_queue_edit_does_not_resume_after_explicit_stop(cx: &mut TestAppCon
 }
 
 fn disk_chat(f: &Fixture, id: &str) -> nocterm_ai::history::SavedChat {
-    nocterm_ai::history::load_all(&f._directory.path().join("chats"))
+    f.repository
+        .chats()
         .into_iter()
         .find(|chat| chat.id == id)
         .unwrap()

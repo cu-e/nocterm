@@ -48,14 +48,13 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
         thread.save(cx);
     });
     assert!(cx.background_executor.tick());
-    let dir = f._directory.path().join("chats");
     assert!(
-        nocterm_ai::history::load_all(&dir).is_empty(),
+        f.repository.chats().is_empty(),
         "background IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
     shutdown_runtime(cx);
-    let chats = nocterm_ai::history::load_all(&dir);
+    let chats = f.repository.chats();
     assert_eq!(
         chats.len(),
         1,
@@ -64,7 +63,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
     assert_eq!(chats[0].name.as_deref(), Some("pending extracted snapshot"));
     cx.run_until_parked();
     assert_eq!(
-        nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
+        f.repository.chats()[0].name.as_deref(),
         Some("pending extracted snapshot")
     );
 }
@@ -77,24 +76,23 @@ fn shutdown_preserves_a_delete_extracted_by_the_writer_after_document_release(
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| thread.save(cx));
     cx.run_until_parked();
-    let dir = f._directory.path().join("chats");
-    assert_eq!(nocterm_ai::history::load_all(&dir).len(), 1);
+    assert_eq!(f.repository.chats().len(), 1);
     let id = cx.update(|cx| thread.read(cx).chat_id.clone());
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
     assert!(cx.background_executor.tick());
     assert_eq!(
-        nocterm_ai::history::load_all(&dir).len(),
+        f.repository.chats().len(),
         1,
         "delete IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
     shutdown_runtime(cx);
     assert!(
-        nocterm_ai::history::load_all(&dir).is_empty(),
+        f.repository.chats().is_empty(),
         "quit lost the writer-owned deletion"
     );
     cx.run_until_parked();
-    assert!(nocterm_ai::history::load_all(&dir).is_empty());
+    assert!(f.repository.chats().is_empty());
 }
 
 #[gpui_kit::test]
@@ -119,7 +117,7 @@ fn shutdown_saves_the_replacement_when_the_old_document_is_retained_elsewhere(
         thread.name = Some("replacement wins".into())
     });
     shutdown_runtime(cx);
-    let chats = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(
         chats[0].name.as_deref(),
@@ -151,9 +149,8 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
         thread.save(cx);
     });
     cx.run_until_parked();
-    let dir = f._directory.path().join("chats");
     assert_eq!(
-        nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
+        f.repository.chats()[0].name.as_deref(),
         Some("replacement owner")
     );
     // An outstanding callback can retain the old Entity and eventually attempt to save it.
@@ -163,13 +160,13 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
     });
     cx.run_until_parked();
     assert_eq!(
-        nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
+        f.repository.chats()[0].name.as_deref(),
         Some("replacement owner"),
         "a stale owner saved over the replacement outside shutdown"
     );
     shutdown_runtime(cx);
     assert_eq!(
-        nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
+        f.repository.chats()[0].name.as_deref(),
         Some("replacement owner")
     );
 }
@@ -186,20 +183,19 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
         thread.save(cx);
     });
     assert!(cx.background_executor.tick());
-    let dir = f._directory.path().join("chats");
-    assert!(nocterm_ai::history::load_all(&dir).is_empty());
+    assert!(f.repository.chats().is_empty());
     thread.update(cx, |thread, cx| {
         thread.name = Some("latest queued snapshot".into());
         thread.save(cx);
     });
     remove_document(&f, thread, cx);
     shutdown_runtime(cx);
-    let chats = nocterm_ai::history::load_all(&dir);
+    let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(chats[0].name.as_deref(), Some("latest queued snapshot"));
     cx.run_until_parked();
     assert_eq!(
-        nocterm_ai::history::load_all(&dir)[0].name.as_deref(),
+        f.repository.chats()[0].name.as_deref(),
         Some("latest queued snapshot")
     );
 }

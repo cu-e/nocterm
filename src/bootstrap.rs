@@ -94,7 +94,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         nocterm_connections::init(stored, &shutdown, cx),
     );
     report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
-    nocterm_agent::init(agent, &ui, cx);
+    report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
     let files = nocterm_files::install(files, &ui, cx);
     register_transfer_shutdown(&files, &shutdown);
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));

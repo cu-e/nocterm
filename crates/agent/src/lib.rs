@@ -35,9 +35,7 @@ pub type TerminalAuthOpener = Arc<
 pub struct AgentServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
-    pub state_file: PathBuf,
-    /// Saved chats, one file each.
-    pub chats_dir: PathBuf,
+    pub storage: runtime::AgentStorage,
     /// Where Codex keeps its session logs, read for its plan limits.
     pub codex_home: Option<PathBuf>,
     pub workdir: PathBuf,
@@ -63,15 +61,19 @@ impl TerminalAuth {
 }
 
 /// Installs services without starting an agent or opening a listener.
-pub fn init(services: AgentServices, ready: &nocterm_ui::UiReady, cx: &mut App) {
+pub fn init(
+    services: AgentServices,
+    ready: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Result<(), nocterm_store::StoreError> {
     panel::commands::init(cx);
     cx.set_global(TerminalAuth(services.terminal_auth.clone()));
     let services = runtime::RuntimeServices {
         settings: ready.settings().clone(),
         connector: services.connector,
         bridge: services.bridge,
-        state_file: services.state_file,
-        chats_dir: services.chats_dir,
+        storage: services.storage,
         codex_home: services.codex_home,
         workdir: services.workdir,
         terminal_auth: services.terminal_auth.is_some(),
@@ -87,8 +89,8 @@ pub fn init(services: AgentServices, ready: &nocterm_ui::UiReady, cx: &mut App) 
             let _ = observed.update(cx, |runtime, cx| runtime.settings_changed(cx));
         })
         .detach();
-    cx.on_app_quit(move |cx| runtime.update(cx, |runtime, cx| runtime.shutdown(cx)))
-        .detach();
+    shutdown
+        .register_capture(move |cx| runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx)))
 }
 
 gpui_kit::actions!(
