@@ -25,7 +25,7 @@ pub mod notice;
 mod sections;
 mod session_options;
 mod settings;
-pub use session_options::SessionOptionsEditor;
+pub use session_options::{SessionOptionsEditor, SessionOptionsInputError};
 mod terminal_style;
 mod theme;
 mod themes;

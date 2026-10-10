@@ -52,6 +52,9 @@ impl Transport for IsolatedLocalTransport {
 
 /// Starts `launch` on a new PTY, on a thread of its own.
 fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
+    if let Err(error) = launch.validate() {
+        return Session::failed(SessionError::InvalidLaunch(error));
+    }
     let (session, driver) = channel(None);
     let session = session.with_exec(Arc::new(LocalExec));
     thread::spawn(move || {
@@ -83,7 +86,6 @@ fn start(
     pty: PtySize,
     driver: nocterm_session::SessionDriver,
 ) -> Result<(), String> {
-    launch.validate()?;
     let pair = native_pty_system()
         .openpty(size(pty))
         .map_err(|e| e.to_string())?;

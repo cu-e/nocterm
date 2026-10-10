@@ -124,9 +124,6 @@ async fn session(
     driver
         .emit(Event::Connecting(ConnectStage::StartingShell))
         .await;
-    if let Err(error) = request.launch.validate() {
-        return CloseReason::Failed(SessionError::Other(error));
-    }
     let starting = tokio::select! {
         () = driver.closed() => return CloseReason::ClosedByUser,
         result = timeout(SHELL_TIMEOUT, start_shell(&handle, &request.term, size, &request.launch)) => result,

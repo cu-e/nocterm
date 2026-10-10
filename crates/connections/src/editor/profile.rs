@@ -117,7 +117,7 @@ pub(super) fn build_profile(
         };
         launch
             .validate()
-            .map_err(|message| FormError::new(ValidationField::Launch, message))?;
+            .map_err(|message| FormError::new(ValidationField::Launch, message.to_string()))?;
         Some(launch)
     } else {
         None
@@ -126,7 +126,7 @@ pub(super) fn build_profile(
     fields
         .options
         .validate()
-        .map_err(|message| FormError::new(ValidationField::Session, message))?;
+        .map_err(|message| FormError::new(ValidationField::Session, message.to_string()))?;
     let icon = Some(fields.icon.trim())
         .filter(|icon| !icon.is_empty())
         .map(str::to_owned);

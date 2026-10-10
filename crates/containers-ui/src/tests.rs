@@ -154,10 +154,18 @@ pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>)
     fixture
 }
 
-fn status(cx: &mut TestAppContext, fixture: &Fixture) -> Status {
-    fixture
-        .model
-        .read_with(cx, |model, _| model.status().clone())
+fn assert_status(
+    cx: &mut TestAppContext,
+    fixture: &Fixture,
+    expected: impl FnOnce(&Status) -> bool,
+) {
+    fixture.model.read_with(cx, |model, _| {
+        assert!(
+            expected(model.status()),
+            "unexpected status: {:?}",
+            model.status()
+        );
+    });
 }
 
 fn badge(cx: &mut TestAppContext, fixture: &Fixture) -> Option<SharedString> {
@@ -187,7 +195,7 @@ pub(crate) fn remote(host: &Arc<FakeHost>, connected: bool) -> SessionContext {
 fn containers_are_listed_again_when_the_engine_reports_a_change(cx: &mut TestAppContext) {
     let local = FakeHost::new(true);
     let fixture = fixture(cx, Some(local.clone()));
-    assert_eq!(status(cx, &fixture), Status::Ready);
+    assert_status(cx, &fixture, |status| matches!(status, Status::Ready));
     assert_eq!(badge(cx, &fixture).as_deref(), Some("1"));
     assert!(
         local
@@ -214,7 +222,7 @@ fn actions_and_programs_run_on_the_followed_host(cx: &mut TestAppContext) {
         model.perform(Action::Stop, vec!["a1".into()], cx)
     });
     cx.run_until_parked();
-    assert_eq!(done.now_or_never(), Some(Ok(())));
+    assert!(matches!(done.now_or_never(), Some(Ok(()))));
     assert!(local.ran().contains(&"docker stop a1".to_owned()));
     assert!(!local.following(0), "a refresh follows the engine anew");
 
@@ -239,10 +247,9 @@ fn the_panel_follows_the_active_session_without_connections_of_its_own(cx: &mut 
 
     let bare = FakeHost::new(false);
     open_session(cx, &fixture, remote(&bare, true));
-    assert_eq!(
-        status(cx, &fixture),
-        Status::Failed(ContainersError::NotInstalled)
-    );
+    assert_status(cx, &fixture, |status| {
+        matches!(status, Status::Failed(ContainersError::NotInstalled))
+    });
     assert!(!local.following(0), "the previous host is let go");
     assert_eq!(badge(cx, &fixture), None, "another host's count is dropped");
     let asked = bare.ran().len();
@@ -257,7 +264,7 @@ fn the_panel_follows_the_active_session_without_connections_of_its_own(cx: &mut 
 
     let offline = FakeHost::new(true);
     open_session(cx, &fixture, remote(&offline, false));
-    assert_eq!(status(cx, &fixture), Status::Offline);
+    assert_status(cx, &fixture, |status| matches!(status, Status::Offline));
     assert!(offline.ran().is_empty());
     assert!(
         fixture
@@ -272,14 +279,14 @@ fn the_panel_follows_the_active_session_without_connections_of_its_own(cx: &mut 
 #[gpui_kit::test]
 fn nothing_is_listed_without_a_host(cx: &mut TestAppContext) {
     let fixture = fixture(cx, None);
-    assert_eq!(status(cx, &fixture), Status::Off);
+    assert_status(cx, &fixture, |status| matches!(status, Status::Off));
     let done = fixture.model.update(cx, |model, cx| {
         model.perform(Action::Start, vec!["a1".into()], cx)
     });
-    assert_eq!(
+    assert!(matches!(
         done.now_or_never(),
         Some(Err(ContainersError::Disconnected))
-    );
+    ));
 }
 
 #[gpui_kit::test]
@@ -297,10 +304,10 @@ fn destructive_intents_cannot_move_to_another_host_or_reconnect(cx: &mut TestApp
         .model
         .update(cx, |model, cx| model.perform_intent(intent, cx));
     cx.run_until_parked();
-    assert_eq!(
+    assert!(matches!(
         done.now_or_never(),
         Some(Err(ContainersError::Disconnected))
-    );
+    ));
     assert!(!local.ran().iter().any(|line| line.contains("same-image")));
     assert!(!another.ran().iter().any(|line| line.contains("same-image")));
 
@@ -316,10 +323,10 @@ fn destructive_intents_cannot_move_to_another_host_or_reconnect(cx: &mut TestApp
         .model
         .update(cx, |model, cx| model.perform_intent(intent, cx));
     cx.run_until_parked();
-    assert_eq!(
+    assert!(matches!(
         done.now_or_never(),
         Some(Err(ContainersError::Disconnected))
-    );
+    ));
     assert!(
         !reconnected
             .ran()
@@ -348,10 +355,34 @@ fn disconnecting_invalidates_captured_intent_and_rejects_new_actions(cx: &mut Te
         .model
         .update(cx, |model, cx| model.perform_intent(intent, cx));
     cx.run_until_parked();
-    assert_eq!(
+    assert!(matches!(
         done.now_or_never(),
         Some(Err(ContainersError::Disconnected))
-    );
+    ));
     open_session(cx, &fixture, remote(&host, true));
     assert!(!host.ran().iter().any(|line| line == "docker rm -f a1"));
+}
+
+#[gpui_kit::test]
+fn malformed_successful_listing_remains_a_retryable_failure(cx: &mut TestAppContext) {
+    let local = FakeHost::new(true);
+    *local.containers.lock().unwrap() = "not JSON";
+    let fixture = fixture(cx, Some(local.clone()));
+    assert_status(cx, &fixture, |status| {
+        let Status::Failed(ContainersError::Parse(error)) = status else {
+            return false;
+        };
+        matches!(
+            error,
+            nocterm_containers::ListingError::Json { line: 1, .. }
+        )
+    });
+    let attempts = local.ran().len();
+    *local.containers.lock().unwrap() = RUNNING;
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(10));
+    cx.run_until_parked();
+    assert!(local.ran().len() > attempts);
+    assert_status(cx, &fixture, |status| matches!(status, Status::Ready));
+    assert_eq!(badge(cx, &fixture).as_deref(), Some("1"));
 }

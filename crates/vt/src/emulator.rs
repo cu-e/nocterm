@@ -497,7 +497,7 @@ impl Emulator {
         query: &str,
         direction: crate::SearchDirection,
         anchor: Option<crate::SearchPoint>,
-    ) -> Result<crate::SearchScan, String> {
+    ) -> Result<crate::SearchScan, crate::SearchError> {
         self.search_with_options(query, crate::SearchOptions::default(), direction, anchor)
     }
 
@@ -507,7 +507,7 @@ impl Emulator {
         options: crate::SearchOptions,
         direction: crate::SearchDirection,
         anchor: Option<crate::SearchPoint>,
-    ) -> Result<crate::SearchScan, String> {
+    ) -> Result<crate::SearchScan, crate::SearchError> {
         crate::SearchScan::new(self, query, options, direction, anchor)
     }
 

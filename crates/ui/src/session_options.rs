@@ -10,7 +10,34 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_session::{Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS};
+use nocterm_session::{
+    Charset, LoggingOptions, ProxyConfig, SessionOptions, SessionOptionsError, TERM_PRESETS,
+};
+/// An input that cannot be turned into validated session overrides.
+#[derive(Debug, thiserror::Error)]
+pub enum SessionOptionsInputError {
+    #[error("Proxy port must be from 1 to 65535.")]
+    ProxyPort(#[source] std::num::ParseIntError),
+    #[error("Log size must be from 1 to 1024 MiB.")]
+    LogSize(#[source] std::num::ParseIntError),
+    #[error(transparent)]
+    Validation(#[from] SessionOptionsError),
+}
+
+fn proxy_port(value: &str) -> Result<u16, SessionOptionsInputError> {
+    value
+        .trim()
+        .parse()
+        .map_err(SessionOptionsInputError::ProxyPort)
+}
+
+fn log_size(value: &str) -> Result<u32, SessionOptionsInputError> {
+    value
+        .trim()
+        .parse()
+        .map_err(SessionOptionsInputError::LogSize)
+}
+
 type Choice = Entity<SelectState<SearchableVec<&'static str>>>;
 pub struct SessionOptionsEditor {
     inherit: bool,
@@ -154,7 +181,7 @@ impl SessionOptionsEditor {
             .copied()
             .unwrap_or("Inherit")
     }
-    pub fn options(&self, cx: &App) -> Result<SessionOptions, String> {
+    pub fn options(&self, cx: &App) -> Result<SessionOptions, SessionOptionsInputError> {
         let term = match Self::selected(&self.term, cx) {
             "Inherit" => None,
             "Custom" => Some(self.custom.read(cx).value().trim().to_owned()),
@@ -168,13 +195,7 @@ impl SessionOptionsEditor {
             "Direct" => Some(ProxyConfig::Direct),
             kind => {
                 let host = self.host.read(cx).value().trim().to_owned();
-                let port = self
-                    .port
-                    .read(cx)
-                    .value()
-                    .trim()
-                    .parse()
-                    .map_err(|_| "Proxy port must be from 1 to 65535.".to_owned())?;
+                let port = proxy_port(self.port.read(cx).value().as_ref())?;
                 Some(if kind == "HTTP CONNECT" {
                     ProxyConfig::HttpConnect { host, port }
                 } else {
@@ -193,13 +214,7 @@ impl SessionOptionsEditor {
                 directory: Some(self.directory.read(cx).value().trim().to_owned())
                     .filter(|text| !text.is_empty())
                     .map(Into::into),
-                max_file_mib: self
-                    .limit
-                    .read(cx)
-                    .value()
-                    .trim()
-                    .parse()
-                    .map_err(|_| "Log size must be from 1 to 1024 MiB.".to_owned())?,
+                max_file_mib: log_size(self.limit.read(cx).value().as_ref())?,
             }),
         };
         let options = SessionOptions {
@@ -274,6 +289,94 @@ impl Render for SessionOptionsEditor {
 mod tests {
     use super::*;
     use gpui_kit::{TestAppContext, WindowOptions, test::TestWindowExt as _};
+    #[test]
+    fn numeric_input_errors_preserve_parse_causes_and_field_identity() {
+        let proxy = proxy_port("65536").unwrap_err();
+        assert!(matches!(proxy, SessionOptionsInputError::ProxyPort(_)));
+        let source = std::error::Error::source(&proxy)
+            .unwrap()
+            .downcast_ref::<std::num::ParseIntError>()
+            .unwrap();
+        assert_eq!(source.kind(), &std::num::IntErrorKind::PosOverflow);
+        let log = log_size("private-invalid-number").unwrap_err();
+        assert!(matches!(log, SessionOptionsInputError::LogSize(_)));
+        assert!(
+            std::error::Error::source(&log)
+                .unwrap()
+                .is::<std::num::ParseIntError>()
+        );
+        assert!(!format!("{log:?}").contains("private-invalid-number"));
+        assert_eq!(proxy.to_string(), "Proxy port must be from 1 to 65535.");
+        assert_eq!(log.to_string(), "Log size must be from 1 to 1024 MiB.");
+        assert_eq!(proxy_port(" 65535 ").unwrap(), 65535);
+        assert_eq!(log_size(" 1024 ").unwrap(), 1024);
+        assert_eq!(
+            proxy_port("0").unwrap(),
+            0,
+            "domain validation owns the range"
+        );
+        assert!(log_size("").is_err());
+    }
+
+    #[gpui_kit::test]
+    fn options_keeps_domain_range_errors_after_numeric_input(cx: &mut TestAppContext) {
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(
+                crate::DesignTokens::builtin(),
+                crate::SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    SessionOptionsEditor::new(
+                        SessionOptions {
+                            proxy: Some(ProxyConfig::HttpConnect {
+                                host: "proxy.example".into(),
+                                port: 0,
+                            }),
+                            ..Default::default()
+                        },
+                        true,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            assert!(matches!(
+                editor.read(cx).options(cx),
+                Err(SessionOptionsInputError::Validation(
+                    SessionOptionsError::Proxy(nocterm_session::ProxyError::ZeroPort)
+                ))
+            ));
+            editor.update(cx, |editor, cx| {
+                editor.reset(
+                    SessionOptions {
+                        logging: Some(LoggingOptions {
+                            max_file_mib: 1025,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            });
+            assert!(matches!(
+                editor.read(cx).options(cx),
+                Err(SessionOptionsInputError::Validation(
+                    SessionOptionsError::Logging(nocterm_session::LoggingError::InvalidSize {
+                        value: 1025
+                    })
+                ))
+            ));
+        })
+        .unwrap();
+    }
+
     #[gpui_kit::test]
     fn native_term_choice_and_custom_validation_preserve_inheritance(cx: &mut TestAppContext) {
         let (handle, editor) = cx.update(|cx| {

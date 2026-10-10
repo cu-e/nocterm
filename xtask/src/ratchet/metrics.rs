@@ -624,6 +624,14 @@ fn pure_network_value(name: &str) -> bool {
     };
     matches!(
         path.split("::").next(),
-        Some("IpAddr" | "Ipv4Addr" | "Ipv6Addr" | "SocketAddr" | "SocketAddrV4" | "SocketAddrV6")
+        Some(
+            "IpAddr"
+                | "Ipv4Addr"
+                | "Ipv6Addr"
+                | "SocketAddr"
+                | "SocketAddrV4"
+                | "SocketAddrV6"
+                | "AddrParseError"
+        )
     )
 }

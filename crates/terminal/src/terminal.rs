@@ -201,7 +201,7 @@ impl Terminal {
         &mut self,
         options: nocterm_session::SessionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), nocterm_session::SessionOptionsError> {
         options.validate()?;
         self.spec.options = options;
         cx.emit(TerminalEvent::Changed);
@@ -241,7 +241,7 @@ impl Terminal {
         self.close();
         if let Err(error) = self.spec.options.validate() {
             self.set_status(
-                Status::Closed(CloseReason::Failed(SessionError::Other(error))),
+                Status::Closed(CloseReason::Failed(SessionError::InvalidOptions(error))),
                 cx,
             );
             return;

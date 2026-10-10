@@ -19,7 +19,7 @@ fn finish_options(
     options: SearchOptions,
     direction: SearchDirection,
     anchor: Option<SearchPoint>,
-) -> Result<SearchResult, String> {
+) -> Result<SearchResult, SearchError> {
     let mut scan = e.search_with_options(query, options, direction, anchor)?;
     loop {
         match scan.step(e, 4096) {
@@ -181,10 +181,11 @@ fn regex_limit_is_explicit_and_greedy_long_line_is_one_bounded_match() {
     let result = finish_options(&e, "a*", options, SearchDirection::Next, None).unwrap();
     assert_eq!(result.count, 1);
     e.advance(b"a");
-    assert!(
-        finish_options(&e, "a*", options, SearchDirection::Next, None)
-            .unwrap_err()
-            .contains("65536 bytes")
+    assert_eq!(
+        finish_options(&e, "a*", options, SearchDirection::Next, None).unwrap_err(),
+        SearchError::LogicalLineTooLong {
+            max: MAX_REGEX_LINE_BYTES
+        }
     );
     assert_eq!(
         finish(&e, "aa", SearchDirection::Next, None).count,
@@ -249,7 +250,7 @@ fn abandoned_or_invalidated_regex_work_cannot_publish_results() {
         panic!("expected work")
     };
     drop(scan);
-    assert_eq!(work.run().unwrap_err(), "Search was cancelled.");
+    assert_eq!(work.run().unwrap_err(), SearchError::Cancelled);
     let mut scan = e
         .search_with_options("target", options, SearchDirection::Next, None)
         .unwrap();
@@ -407,4 +408,98 @@ fn many_combining_scalars_use_bounded_steps_and_distinct_overlap_anchors() {
         second.active.unwrap().start.column
     );
     assert_ne!(first.active.unwrap().start, second.active.unwrap().start);
+}
+
+#[test]
+fn query_failures_preserve_unicode_limits_and_native_regex_sources() {
+    let e = Emulator::new(TermSize::default(), EmulatorOptions::default());
+    assert_eq!(
+        e.search("", SearchDirection::Next, None).err().unwrap(),
+        SearchError::EmptyQuery
+    );
+    assert!(
+        e.search(&"界".repeat(MAX_SEARCH_QUERY), SearchDirection::Next, None)
+            .is_ok()
+    );
+    assert_eq!(
+        e.search(
+            &"界".repeat(MAX_SEARCH_QUERY + 1),
+            SearchDirection::Next,
+            None
+        )
+        .err()
+        .unwrap(),
+        SearchError::QueryTooLong {
+            max: MAX_SEARCH_QUERY
+        }
+    );
+    let options = SearchOptions {
+        regex: true,
+        ..Default::default()
+    };
+    let syntax = e
+        .search_with_options("[", options, SearchDirection::Next, None)
+        .err()
+        .unwrap();
+    assert!(matches!(
+        &syntax,
+        SearchError::InvalidRegex(regex::Error::Syntax(_))
+    ));
+    assert!(
+        std::error::Error::source(&syntax)
+            .unwrap()
+            .is::<regex::Error>()
+    );
+    assert!(
+        syntax
+            .to_string()
+            .starts_with("Invalid or oversized regular expression: ")
+    );
+    let compiled = e
+        .search_with_options("a{1000000}", options, SearchDirection::Next, None)
+        .err()
+        .unwrap();
+    assert!(matches!(
+        &compiled,
+        SearchError::InvalidRegex(regex::Error::CompiledTooBig(_))
+    ));
+    assert!(
+        std::error::Error::source(&compiled)
+            .unwrap()
+            .is::<regex::Error>()
+    );
+}
+
+#[test]
+fn failed_worker_is_sticky_without_fallback_and_stale_failures_are_discarded() {
+    let mut e = Emulator::new(TermSize::new(80, 3, 0, 0), EmulatorOptions::default());
+    e.advance(b"target");
+    let options = SearchOptions {
+        regex: true,
+        ..Default::default()
+    };
+    let mut scan = e
+        .search_with_options("target", options, SearchDirection::Next, None)
+        .unwrap();
+    let SearchProgress::Work(work) = scan.step(&e, 4096) else {
+        panic!("expected regex batch")
+    };
+    drop(work);
+    assert_eq!(
+        scan.accept_work(&e, Err(SearchError::WorkBudgetExceeded)),
+        SearchProgress::Failed(SearchError::WorkBudgetExceeded)
+    );
+    assert_eq!(
+        scan.step(&e, 4096),
+        SearchProgress::Failed(SearchError::WorkBudgetExceeded)
+    );
+    assert!(scan.provisional().is_none());
+    e.advance(b" changed");
+    assert_eq!(
+        scan.accept_work(&e, Err(SearchError::WorkBudgetExceeded)),
+        SearchProgress::Invalidated
+    );
+    assert_eq!(scan.step(&e, 4096), SearchProgress::Invalidated);
+    let current = finish_options(&e, "target", options, SearchDirection::Next, None).unwrap();
+    assert_eq!(current.count, 1);
 }

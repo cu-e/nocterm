@@ -1,9 +1,10 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, opaque credential IDs and execution/FS contracts.
+//! Owns: targets, authentication, launch/override validation, opaque IDs and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore and ProgramOpener.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
-//! Invariants: credential IDs are built from explicit bytes, never generated here.
+//! Invariants: IDs use explicit bytes; launch validation performs no I/O or value expansion.
+//! InvalidLaunch/InvalidOptions preserve typed causes; errors never retain environment values.
 //!
 //! A [`Session`] is a pair of channels. The owner sends [`Command`]s (input,
 //! resize, close) and receives [`Event`]s (output, prompts, the end). How the
@@ -48,12 +49,13 @@ pub use session::{
 };
 pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
 
-pub use launch::{ShellLaunch, quote_posix, quote_powershell};
+pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};
 pub use program::{ProgramTransport, TerminalRequest};
 pub use program_opener::{ProgramOpenError, ProgramOpenFuture, ProgramOpenRequest, ProgramOpener};
 
 pub use options::{
-    Charset, LoggingOptions, ProxyConfig, SessionOptions, TERM_PRESETS, validate_term,
+    Charset, LoggingError, LoggingOptions, ProxyConfig, ProxyError, SessionOptions,
+    SessionOptionsError, TERM_PRESETS, TermError, validate_term,
 };
 pub use settings::{
     CONNECT_TIMEOUT_RANGE, KEEPALIVE_RANGE, LocalShellSettings, ShellSettings, SshSettings,

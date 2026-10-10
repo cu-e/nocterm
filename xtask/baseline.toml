@@ -157,19 +157,14 @@ nocterm-agent = 10
 nocterm-agent-runtime = 1
 nocterm-ai = 9
 nocterm-connections = 5
-nocterm-containers = 3
 nocterm-files = 1
-nocterm-keymap = 5
-nocterm-keymap-ui = 1
 nocterm-local = 3
-nocterm-session = 6
+nocterm-session = 1
 nocterm-settings-ui = 12
 nocterm-snippets-ui = 1
 nocterm-ssh = 3
-nocterm-terminal = 21
-nocterm-ui = 1
+nocterm-terminal = 20
 nocterm-vault-broker = 3
-nocterm-vt = 6
 nocterm-workspace = 13
 
 [struct_fields]

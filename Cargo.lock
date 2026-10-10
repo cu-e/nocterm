@@ -5070,6 +5070,7 @@ dependencies = [
  "futures",
  "nocterm-session",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5157,6 +5158,7 @@ dependencies = [
  "nocterm-core",
  "serde",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
@@ -5400,6 +5402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
@@ -5468,6 +5471,7 @@ dependencies = [
  "alacritty_terminal",
  "regex",
  "regex-syntax",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

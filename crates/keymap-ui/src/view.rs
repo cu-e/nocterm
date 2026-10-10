@@ -4,7 +4,7 @@ use gpui_kit::{
     Subscription, Window,
     component::input::{InputEvent, InputState},
 };
-use nocterm_keymap::{Keymap, humanize};
+use nocterm_keymap::{Keymap, KeymapError, humanize};
 use nocterm_workspace::SettingsPage;
 
 use crate::rows::default_context;
@@ -151,7 +151,7 @@ impl KeymapView {
         );
     }
 
-    pub(crate) fn report(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+    pub(crate) fn report(&mut self, result: Result<(), KeymapError>, cx: &mut Context<Self>) {
         self.message = result
             .err()
             .map(|error| (format!("Not saved: {error}").into(), true));

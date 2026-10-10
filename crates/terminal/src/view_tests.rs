@@ -489,6 +489,59 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
 }
 
 #[gpui_kit::test]
+fn bounded_regex_failure_is_inline_and_a_new_search_clears_it(cx: &mut TestAppContext) {
+    let (_, view, transport) = fixture(cx);
+    let driver = scripted_driver(&transport, 0);
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(vec![b'a'; nocterm_vt::MAX_REGEX_LINE_BYTES + 1]),
+    );
+    let terminal = view.read_with(cx, |view, _| view.terminal().clone());
+    terminal.update(cx, |terminal, cx| {
+        terminal.set_find_options(
+            nocterm_vt::SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        terminal.begin_find("a+".into(), nocterm_vt::SearchDirection::Next, None, cx);
+    });
+    complete(cx, &view);
+    terminal.read_with(cx, |terminal, _| {
+        assert_eq!(terminal.find().error.as_deref(), Some("Regular expression search is limited to 65536 bytes per logical line. Use literal mode for longer lines."));
+        assert_eq!(terminal.find().result.count, 0);
+        assert!(!terminal.find().searching);
+    });
+    terminal.update(cx, |terminal, cx| {
+        terminal.set_find_options(Default::default(), cx);
+        terminal.begin_find("aaa".into(), nocterm_vt::SearchDirection::Next, None, cx);
+    });
+    complete(cx, &view);
+    terminal.read_with(cx, |terminal, _| {
+        assert!(terminal.find().error.is_none());
+        assert_eq!(
+            terminal.find().result.count,
+            (nocterm_vt::MAX_REGEX_LINE_BYTES - 1) as u64
+        );
+    });
+    terminal.update(cx, |terminal, cx| terminal.clear_find(cx));
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    terminal.read_with(cx, |terminal, _| {
+        assert!(terminal.find().query.is_empty());
+        assert!(terminal.find().error.is_none());
+        assert!(!terminal.find().searching);
+    });
+    assert!(
+        drain(&driver).is_empty(),
+        "search sent text to the terminal input"
+    );
+}
+
+#[gpui_kit::test]
 fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
     cx: &mut TestAppContext,
 ) {

@@ -2,6 +2,7 @@
 //! how the two combine.
 use std::{collections::BTreeMap, env};
 
+use crate::KeymapError;
 use gpui_kit::Keystroke;
 use serde::{Deserialize, Serialize};
 
@@ -54,17 +55,18 @@ pub struct Binding {
 
 /// `keystrokes` written the one way the keymap writes them: `ctrl-shift-p`,
 /// sequences separated by single spaces.
-pub fn normalize(keystrokes: &str) -> Result<String, String> {
+pub fn normalize(keystrokes: &str) -> Result<String, KeymapError> {
     let parts = keystrokes
         .split_whitespace()
-        .map(|part| {
+        .enumerate()
+        .map(|(index, part)| {
             Keystroke::parse(part)
                 .map(|keystroke| keystroke.unparse())
-                .map_err(|error| format!("{part}: {error}"))
+                .map_err(|source| KeymapError::InvalidStroke { index, source })
         })
         .collect::<Result<Vec<_>, _>>()?;
     if parts.is_empty() {
-        return Err("no keystroke".into());
+        return Err(KeymapError::EmptySequence);
     }
     Ok(parts.join(" "))
 }
@@ -224,5 +226,38 @@ context = "Workspace"
         assert_eq!(user.action_for(&context, "ctrl-shift-k"), Some("a::C"));
         user.remove(&context, "ctrl-shift-k");
         assert!(user.sections.is_empty());
+    }
+
+    #[test]
+    fn invalid_shortcuts_keep_the_native_parse_cause_and_chord_position() {
+        assert!(matches!(
+            normalize(" \n\t "),
+            Err(KeymapError::EmptySequence)
+        ));
+        let error = normalize("ctrl-k invalid-key").unwrap_err();
+        let KeymapError::InvalidStroke { index, source } = &error else {
+            panic!("expected native keystroke failure")
+        };
+        assert_eq!(*index, 1);
+        assert_eq!(source.keystroke, "invalid-key");
+        assert!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .is::<gpui_kit::InvalidKeystrokeError>()
+        );
+        assert!(
+            error
+                .to_string()
+                .starts_with("invalid-key: Invalid keystroke")
+        );
+    }
+
+    #[test]
+    fn invalid_legacy_keystrokes_still_use_the_raw_key_for_lookup_and_removal() {
+        let mut user = KeymapFile::default();
+        user.set(&None, "invalid-key", "a::B");
+        assert_eq!(user.action_for(&None, "invalid-key"), Some("a::B"));
+        user.remove(&None, "invalid-key");
+        assert!(user.action_for(&None, "invalid-key").is_none());
     }
 }

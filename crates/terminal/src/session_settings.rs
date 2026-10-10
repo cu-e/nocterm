@@ -65,6 +65,16 @@ pub(crate) fn open(terminal: Entity<Terminal>, window: &mut Window, cx: &mut App
     });
 }
 
+#[derive(Debug, thiserror::Error)]
+enum ApplyOptionsError {
+    #[error(transparent)]
+    Input(#[from] nocterm_ui::SessionOptionsInputError),
+    #[error(transparent)]
+    Validation(#[from] nocterm_session::SessionOptionsError),
+    #[error("This session is no longer available. Close this dialog.")]
+    Unavailable,
+}
+
 struct SessionSettings {
     terminal: WeakEntity<Terminal>,
     options: Entity<SessionOptionsEditor>,
@@ -97,18 +107,24 @@ impl SessionSettings {
         if self.closed {
             return;
         }
-        let result = self.options.read(cx).options(cx).and_then(|options| {
-            self.terminal
-                .update(cx, |terminal, cx| terminal.set_session_options(options, cx))
-                .map_err(|_| "This session is no longer available. Close this dialog.".to_owned())?
-        });
+        let result = self
+            .options
+            .read(cx)
+            .options(cx)
+            .map_err(ApplyOptionsError::from)
+            .and_then(|options| {
+                self.terminal
+                    .update(cx, |terminal, cx| terminal.set_session_options(options, cx))
+                    .map_err(|_| ApplyOptionsError::Unavailable)?
+                    .map_err(ApplyOptionsError::from)
+            });
         match result {
             Ok(()) => {
                 self.closed = true;
                 window.close_dialog(cx);
             }
             Err(error) => {
-                self.error = Some(error);
+                self.error = Some(error.to_string());
                 cx.notify();
             }
         }
@@ -207,6 +223,34 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn invalid_override_returns_its_typed_cause_without_changing_the_session(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, terminal, expected) = fixture(Default::default(), cx);
+        cx.update_window(handle, |_, _, cx| {
+            let error = terminal
+                .update(cx, |terminal, cx| {
+                    terminal.set_session_options(
+                        SessionOptions {
+                            term: Some("invalid TERM".into()),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(
+                error,
+                nocterm_session::SessionOptionsError::Term(
+                    nocterm_session::TermError::InvalidCharacter
+                )
+            );
+            assert_eq!(terminal.read(cx).spec(), &expected);
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]

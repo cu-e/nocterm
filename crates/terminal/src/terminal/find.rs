@@ -104,7 +104,7 @@ impl Terminal {
         ) {
             Ok(scan) => scan,
             Err(error) => {
-                self.find.error = Some(error);
+                self.find.error = Some(error.to_string());
                 self.find.searching = false;
                 self.emit_output(cx);
                 return;
@@ -142,7 +142,7 @@ impl Terminal {
                         this.emit_output(cx);
                     }
                     if let SearchProgress::Failed(error) = &progress {
-                        this.find.error = Some(error.clone());
+                        this.find.error = Some(error.to_string());
                         this.find.result = SearchResult::default();
                         this.find.searching = false;
                         this.find_task = None;

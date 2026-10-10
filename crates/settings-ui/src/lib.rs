@@ -345,7 +345,7 @@ impl SettingsView {
                 );
             }
             Err(error) => {
-                self.session_options_error = Some(error.into());
+                self.session_options_error = Some(error.to_string().into());
                 cx.notify();
             }
         }

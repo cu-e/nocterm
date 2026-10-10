@@ -283,7 +283,7 @@ impl Workspace {
             env,
             integration: false,
         };
-        launch.validate()?;
+        launch.validate().map_err(|error| error.to_string())?;
         let spec = super::SessionSpec {
             title,
             launch: Some(launch),

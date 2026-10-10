@@ -24,7 +24,7 @@ const RETRY: Duration = Duration::from_secs(10);
 const SETTLE: Duration = Duration::from_millis(300);
 
 /// Where the listing of the current host stands.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum Status {
     /// There is no host to list.
     Off,
@@ -220,7 +220,16 @@ impl ContainersModel {
     }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        if self.status != status {
+        // Native error sources have no equality contract. Deduplicate only the
+        // visible status category and text; recovery always matches typed variants.
+        let unchanged = match (&self.status, &status) {
+            (Status::Failed(previous), Status::Failed(next)) => {
+                std::mem::discriminant(previous) == std::mem::discriminant(next)
+                    && previous.to_string() == next.to_string()
+            }
+            (previous, next) => std::mem::discriminant(previous) == std::mem::discriminant(next),
+        };
+        if !unchanged {
             self.status = status;
             cx.notify();
         }

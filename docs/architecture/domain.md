@@ -12,7 +12,9 @@ features present them ([feature layer](feature.md)).
 ## Sessions and terminal emulation
 
 `nocterm-session` defines transport-independent targets, authentication,
-commands, events, prompts and the `RemoteFs` contract.
+commands, events, prompts and the `RemoteFs` contract. Launch and session-override
+validation returns typed field/constraint errors without filesystem access or
+value expansion; native transports reject invalid launches before starting I/O.
 `nocterm-vt` turns a byte stream into a terminal grid using
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.
@@ -52,7 +54,9 @@ number of matches or history size. It supports case sensitivity and Unicode
 whole-word boundaries, preserves soft wraps and can match an explicit hard line
 break. Regex mode joins soft wraps but matches only within each complete logical
 line. It limits each line to 64 KiB, caps compiled regex size and returns an
-explicit error when a limit is exceeded. Regex batches run off the UI thread;
+explicit typed `SearchError` when a limit is exceeded. Regex compilation retains
+its native cause; cancellation and obsolete generations cannot publish matches.
+Regex batches run off the UI thread;
 Terminal schedules scan slices and invalidates matches when output, geometry or
 screen changes. A rapidly changing buffer can defer a complete result, but
 stale highlights are cleared and input remains responsive. Search highlights
@@ -101,6 +105,11 @@ spawn. The adapter owns children, not the domain or the view. The same dev-only
 Podman command lines over `HostExec` — detection (exit 127 or
 `ExecError::NotFound` means not installed), listings parsed from either JSON
 dialect, the event stream and actions — and knows nothing of GPUI.
+`ListingError` distinguishes native JSON failures (with line and column), non-object
+entries and missing container/image identifiers. `ContainersError` preserves those
+parse sources and startup `ExecError` sources separately from process exit status
+and its bounded 4-KiB stderr tail. Malformed successful output remains a retryable
+listing failure; absence and unsupported execution remain separate outcomes.
 
 ## Transfers
 

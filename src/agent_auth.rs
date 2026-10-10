@@ -21,7 +21,7 @@ pub(crate) fn open(
         integration: false,
     };
     if let Err(error) = launch.validate() {
-        let _ = send.send(Err(error));
+        let _ = send.send(Err(error.to_string()));
         return receive;
     }
     let transport = Arc::new(nocterm_local::IsolatedLocalTransport(launch.clone()));

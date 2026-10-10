@@ -73,6 +73,9 @@ impl Transport for SshTransport {
         let Some(runtime) = &self.runtime else {
             return Session::failed(SessionError::Other("the SSH transport has stopped".into()));
         };
+        if let Err(error) = request.launch.validate() {
+            return Session::failed(SessionError::InvalidLaunch(error));
+        }
         let (fs, fs_requests) = sftp::channel();
         let (exec, exec_requests) = exec::channel(runtime.handle().clone());
         let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));

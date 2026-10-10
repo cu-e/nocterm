@@ -503,8 +503,9 @@ fn address_values_are_pure_but_connections_and_dns_remain_domain_io() {
         "lib.rs",
         r#"
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
-            TcpStream, TcpListener, UdpSocket, ToSocketAddrs};
+            AddrParseError, TcpStream, TcpListener, UdpSocket, ToSocketAddrs};
         fn address() { IpAddr::from(Ipv4Addr::LOCALHOST); Ipv6Addr::LOCALHOST;
+            let _: Option<AddrParseError> = None;
             SocketAddr::new(todo!(), 80); SocketAddrV4::new(todo!(), 80);
             SocketAddrV6::new(todo!(), 80, 0, 0); }
         fn connect() { TcpStream::connect(todo!()); TcpListener::bind(todo!());

@@ -429,7 +429,11 @@ impl ConnectionEditor {
         fields.options = match self.options.read(cx).options(cx) {
             Ok(options) => options,
             Err(error) => {
-                self.show_validation(FormError::new(ValidationField::Session, error), window, cx);
+                self.show_validation(
+                    FormError::new(ValidationField::Session, error.to_string()),
+                    window,
+                    cx,
+                );
                 cx.notify();
                 return;
             }

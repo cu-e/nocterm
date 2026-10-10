@@ -7,6 +7,10 @@ domain, service and the foundation: `nocterm-ui`, `nocterm-workspace` and
 `nocterm-keymap`. The workspace's seams are how features meet without depending
 on each other ([ADR 0006](../adr/0006-workspace-ports.md)).
 
+The shared `SessionOptionsEditor` returns `SessionOptionsInputError`, retaining
+numeric parse sources and domain override validation. Callers format it when
+presenting a form error; malformed numeric text never becomes a saved override.
+
 ## Theme, icons and notices
 
 `nocterm-ui` projects tokens/settings into the standard GPUI Kit theme and
@@ -178,6 +182,9 @@ merge of the application's defaults (`assets/keymap.toml`) with the user's
 `keymap.toml`, which lists only differences (`"none"` unbinds), and installs the
 merge in GPUI. Its bindings carry a metadata mark, so a change replaces exactly
 them without a restart and leaves the component library's own bindings alone.
+Edit APIs return `KeymapError`, preserving native keystroke and persistence causes.
+A failed save leaves the desired binding installed and reports the failure;
+a later successful edit persists the current desired keymap.
 It also names actions for people (`humanize`) and decides which are user
 commands (`offered`), for the command palette and the keymap page alike.
 `nocterm-keymap-ui` is the Keymap settings page, a guest page like the vault's:

@@ -4,7 +4,8 @@
 //! Does not own: action handlers, component bindings or the Keymap settings view.
 //! Ports used/provided: none. Settings section: none. Globals: Keymap (existing).
 //! Invariants: installation replaces only this crate's marked bindings; explicit
-//! unbindings remove defaults without modifying unrelated toolkit bindings.
+//! unbindings remove defaults without modifying unrelated toolkit bindings;
+//! desired edits remain installed when typed persistence errors are reported.
 //!
 //! The defaults come with the application in the keymap format
 //! ([`KeymapFile`]); the user's changes live in a file of the same format,
@@ -15,6 +16,7 @@
 //! install in code (the component library's text fields, lists and menus)
 //! are left alone.
 
+mod error;
 mod file;
 mod names;
 
@@ -25,6 +27,7 @@ use gpui_kit::{
     NoAction,
 };
 
+pub use error::KeymapError;
 pub use file::{Binding, KeymapFile, Section, Source, UNBOUND, merge, normalize};
 pub use names::{OFFERED_NAMESPACES, humanize, offered};
 
@@ -103,7 +106,7 @@ impl Keymap {
         replacing: Option<&str>,
         keystrokes: &str,
         cx: &mut App,
-    ) -> Result<(), String> {
+    ) -> Result<(), KeymapError> {
         let keystrokes = normalize(keystrokes)?;
         Self::change(cx, |keymap| {
             if let Some(old) = replacing {
@@ -119,14 +122,14 @@ impl Keymap {
         context: Option<String>,
         keystrokes: &str,
         cx: &mut App,
-    ) -> Result<(), String> {
+    ) -> Result<(), KeymapError> {
         Self::change(cx, |keymap| {
             keymap.unbind_entry(action, &context, keystrokes)
         })
     }
 
     /// Returns `action` to its default bindings.
-    pub fn reset(action: &str, cx: &mut App) -> Result<(), String> {
+    pub fn reset(action: &str, cx: &mut App) -> Result<(), KeymapError> {
         Self::change(cx, |keymap| {
             let defaults = keymap.defaults.clone();
             keymap.user.retain(|context, keys, bound| {
@@ -166,16 +169,16 @@ impl Keymap {
     }
 
     /// Applies `edit` to the user's changes, saves them and rebinds.
-    fn change(cx: &mut App, edit: impl FnOnce(&mut Self)) -> Result<(), String> {
+    fn change(cx: &mut App, edit: impl FnOnce(&mut Self)) -> Result<(), KeymapError> {
         let keymap = cx.global_mut::<Self>();
         edit(keymap);
         let result = match &keymap.file {
             Some(file) => {
-                nocterm_core::persist::save(file, &keymap.user).map_err(|error| error.to_string())
+                nocterm_core::persist::save(file, &keymap.user).map_err(KeymapError::Persistence)
             }
             None => Ok(()),
         };
-        keymap.error = result.clone().err();
+        keymap.error = result.as_ref().err().map(ToString::to_string);
         Self::install(cx);
         result
     }

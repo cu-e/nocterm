@@ -4,7 +4,8 @@
 //! Does not own: PTYs, transport I/O, window rendering or application scheduling.
 //! Ports used/provided: none. Settings section: none. Globals: none.
 //! Invariants: input follows the negotiated terminal modes; snapshots expose this
-//! crate's types; bounded searches report limits instead of truncating silently.
+//! crate's types; searches report typed limits instead of truncating silently,
+//! and cancellation never publishes matches from an older generation.
 //!
 //! This crate is the only place that knows the emulation library
 //! (`alacritty_terminal`). Everything it exposes is expressed in its own
@@ -26,8 +27,8 @@ mod search;
 mod text;
 
 pub use search::{
-    MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchMatch,
-    SearchOptions, SearchPoint, SearchProgress, SearchResult, SearchScan,
+    MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchError,
+    SearchMatch, SearchOptions, SearchPoint, SearchProgress, SearchResult, SearchScan,
 };
 
 pub use emulator::{

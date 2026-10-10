@@ -22,6 +22,27 @@ const MAX_REGEX_BATCH_BYTES: usize = 64 * 1024;
 const MAX_REGEX_COMPILED_BYTES: usize = 256 * 1024;
 const MAX_REGEX_WORK_TIME: Duration = Duration::from_millis(250);
 
+/// Why a bounded search could not produce a result.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum SearchError {
+    #[error("Search is limited to {max} characters.")]
+    QueryTooLong { max: usize },
+    #[error("Enter text to search.")]
+    EmptyQuery,
+    #[error("Invalid or oversized regular expression: {0}")]
+    InvalidRegex(#[source] regex::Error),
+    #[error("Search was cancelled.")]
+    Cancelled,
+    #[error("Regular expression exceeded the search work budget. Simplify the pattern.")]
+    WorkBudgetExceeded,
+    #[error(
+        "Regular expression search is limited to {max} bytes per logical line. Use literal mode for longer lines."
+    )]
+    LogicalLineTooLong { max: usize },
+    #[error("Unexpected regular expression work.")]
+    UnexpectedRegexWork,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchOptions {
     pub regex: bool,
@@ -62,12 +83,12 @@ pub struct SearchResult {
     pub ordinal: u64,
     pub count: u64,
 }
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SearchProgress {
     Searching,
     Invalidated,
     Complete(SearchResult),
-    Failed(String),
+    Failed(SearchError),
     /// Run this bounded work on a background executor, then call accept_work.
     Work(RegexWork),
 }
@@ -153,19 +174,17 @@ pub struct SearchBatch {
     summary: Summary,
 }
 impl RegexWork {
-    fn check_budget(&self, started: Instant) -> Result<(), String> {
+    fn check_budget(&self, started: Instant) -> Result<(), SearchError> {
         if self.cancelled.load(Ordering::Relaxed) {
-            return Err("Search was cancelled.".into());
+            return Err(SearchError::Cancelled);
         }
         if started.elapsed() > MAX_REGEX_WORK_TIME {
-            return Err(
-                "Regular expression exceeded the search work budget. Simplify the pattern.".into(),
-            );
+            return Err(SearchError::WorkBudgetExceeded);
         }
         Ok(())
     }
     /// No terminal state is accessed here. No list of matches is retained.
-    pub fn run(self) -> Result<SearchBatch, String> {
+    pub fn run(self) -> Result<SearchBatch, SearchError> {
         let started = Instant::now();
         let mut summary = Summary::default();
         for line in &self.lines {
@@ -347,7 +366,7 @@ pub struct SearchScan {
     direction: SearchDirection,
     summary: Summary,
     complete: Option<SearchResult>,
-    error: Option<String>,
+    error: Option<SearchError>,
     cancelled: Arc<AtomicBool>,
 }
 impl Drop for SearchScan {
@@ -369,15 +388,15 @@ impl SearchScan {
         options: SearchOptions,
         direction: SearchDirection,
         anchor: Option<SearchPoint>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, SearchError> {
         let mut chars: Vec<_> = query.chars().take(MAX_SEARCH_QUERY + 1).collect();
         if chars.len() > MAX_SEARCH_QUERY {
-            return Err(format!(
-                "Search is limited to {MAX_SEARCH_QUERY} characters."
-            ));
+            return Err(SearchError::QueryTooLong {
+                max: MAX_SEARCH_QUERY,
+            });
         }
         if chars.is_empty() {
-            return Err("Enter text to search.".into());
+            return Err(SearchError::EmptyQuery);
         }
         let matcher = if options.regex {
             let pattern = if options.whole_word {
@@ -390,7 +409,7 @@ impl SearchScan {
                 .size_limit(MAX_REGEX_COMPILED_BYTES)
                 .dfa_size_limit(MAX_REGEX_COMPILED_BYTES)
                 .build()
-                .map_err(|error| format!("Invalid or oversized regular expression: {error}"))?;
+                .map_err(SearchError::InvalidRegex)?;
             Matcher::Regex(RegexState {
                 regex: Arc::new(regex),
                 line: LogicalLine::default(),
@@ -460,13 +479,13 @@ impl SearchScan {
     pub fn accept_work(
         &mut self,
         e: &Emulator,
-        result: Result<SearchBatch, String>,
+        result: Result<SearchBatch, SearchError>,
     ) -> SearchProgress {
         if e.generation() != self.generation {
             return SearchProgress::Invalidated;
         }
         let Matcher::Regex(state) = &mut self.matcher else {
-            return SearchProgress::Failed("Unexpected regular expression work.".into());
+            return SearchProgress::Failed(SearchError::UnexpectedRegexWork);
         };
         state.waiting = false;
         match result {
@@ -567,9 +586,9 @@ impl SearchScan {
                             state.lines.push(std::mem::take(&mut state.line));
                         } else {
                             if state.line.text.len() + scalar.len_utf8() > MAX_REGEX_LINE_BYTES {
-                                let error = format!(
-                                    "Regular expression search is limited to {MAX_REGEX_LINE_BYTES} bytes per logical line. Use literal mode for longer lines."
-                                );
+                                let error = SearchError::LogicalLineTooLong {
+                                    max: MAX_REGEX_LINE_BYTES,
+                                };
                                 self.error = Some(error.clone());
                                 return SearchProgress::Failed(error);
                             }
