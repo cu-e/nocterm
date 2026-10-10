@@ -29,6 +29,22 @@ permissions:
   pull-requests: read
 
 jobs:
+  vendor-patches:
+    name: Vendored source replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test archive authentication and replay failures
+        run: python3 scripts/test-vendor-patches.py
+      - name: Replay published archives and patches
+        run: python3 scripts/check-vendor-patches.py
+
   release-pipeline:
     name: Release pipeline regressions
     runs-on: ubuntu-latest
@@ -244,7 +260,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, device-unlock-native]
+    needs: [release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, device-unlock-native, vendor-patches]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

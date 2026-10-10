@@ -109,6 +109,12 @@ never regenerate or raise the inventory. See [architecture guardrails](docs/arch
 
 ## Pull requests
 
+Vendored forks have reproducible binary patches against checksum-pinned published
+archives. Run `python3 scripts/test-vendor-patches.py` and
+`python3 scripts/check-vendor-patches.py` for vendor changes; see
+[vendor patch maintenance](vendor/patches/README.md). Keep vendor updates in
+separate commits from application changes under `crates/` or `src/`.
+
 - Title: Conventional Commit, as above.
 - Description: what, why, how it was verified.
 - CI must be green; at least one review (human or the `reviewer` agent plus human sign-off).
