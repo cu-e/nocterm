@@ -23,12 +23,20 @@ scripts/setup.sh   # enables the commit-msg hook
 
 ## Branching
 
-Trunk-based. `master` is always releasable and is only changed through pull requests.
+`master` is the release branch and is only changed through pull requests.
+`dev` is the integration branch for work being validated before release.
 
-- Branch from `master`, name it `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
+- Choose and record the PR target before branching: `master` for release-ready
+  changes, `dev` for integration work. Branch from that target and name the branch
+  `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
 - Keep branches short-lived and PRs small — one logical change each.
-- PRs are **squash-merged**. The PR title becomes the commit on `master`, so it must be a valid commit message.
+- Changes integrated into `dev` reach `master` through a release-ready PR from
+  `dev`. PRs into `master` are **squash-merged**: the title becomes the commit on
+  `master`, so it must be a valid commit message. Integration PRs into `dev` may
+  use merge commits; their titles and non-merge commits still follow Conventional Commits.
 - No force-pushes to `master`, no merge commits on `master`.
+- Review against the recorded PR target, using its merge base with the feature
+  branch; reviewing integration work against `master` includes unrelated changes.
 
 ## Commit messages
 
@@ -72,6 +80,8 @@ Pick the type by what the *user of the software* sees, not by which files change
 A Rust source file may have at most 800 lines, tests included. `cargo xtask architecture`
 (run in CI) enforces it. When a file approaches the limit, split it by responsibility into
 child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
+For production code, an extracted module owns a responsibility and its own type;
+moving more methods of the same growing type into another file is not an extraction.
 Files that were already longer are listed in `xtask/oversized-files.toml`; they may only
 shrink, and their entry is lowered or removed as they do. Never raise an entry to make a
 check pass.
@@ -80,6 +90,10 @@ A function may have at most 80 lines and a cognitive complexity of 20 (`clippy.t
 Functions that were already over carry `#[expect(clippy::too_many_lines, reason = "...")]`;
 once one is split, the unfulfilled expectation fails clippy, so remove the attribute.
 `#[allow]` for these lints is rejected by `cargo xtask architecture`.
+Do not add new complexity expectations; extract smaller functions instead.
+Current architecture checks reject `allow` and expectations without a reason,
+but do not yet measure growth in the number of expectations. Review must enforce
+the no-growth rule until a ratchet is implemented.
 
 ## Pull requests
 

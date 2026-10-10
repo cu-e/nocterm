@@ -1,22 +1,8 @@
-# Architecture and security audit
+# Storage and security boundaries
 
-Scope: the Rust workspace and composition root at `6b51496`, followed by the
-changes on `refactor/architecture-security-audit`. This is a source audit with
-regression tests, not a claim that every possible defect has been excluded.
-The device-unlock feature is developed and reviewed separately.
-
-## Plan and boundaries
-
-The architect stage examined trust boundaries, storage, asynchronous work,
-resource budgets, feature dependencies and reusable UI contracts. The user
-explicitly authorized implementation, verification, review, local commits and
-merges into `master` without an additional confirmation. Release-owned files
-and unrelated local data are outside this work. No screenshots are used.
-
-Implement confirmed findings in Core/SSH, Connections/Explorer/Transfers,
-Settings/UI, Terminal and xtask. Keep domain crates free of GUI dependencies;
-compose adapters in the application. Verify failure paths and concurrency,
-then require a read-only reviewer with no blocking findings before merging.
+This document records implemented storage and resource protections, their
+regression coverage, and residual constraints. Device unlock has its own
+[boundary and setup documentation](DEVICE_UNLOCK.md).
 
 ## Findings and corrections
 
@@ -57,8 +43,7 @@ then require a read-only reviewer with no blocking findings before merging.
 The existing bounded session channels, transport-independent filesystem API,
 native dock pane tree, settings schema and separate style tokens remain the
 extension seams. Features communicate through Workspace contracts and the
-composition root, not by importing sibling features. No speculative plugin,
-account, cloud or IDE framework is introduced.
+composition root, not by importing sibling features.
 
 Persistence queues keep the interface responsive, but filesystem sync can
 still block an operating-system worker. The GPUI dependency allows native quit
@@ -68,8 +53,8 @@ cannot guarantee queued persistence.
 
 Transfer batches currently run sequentially with four file workers per batch.
 A stalled batch may delay a later batch on another host. A fair scheduler needs
-measured workloads and a separate policy decision; this audit makes no untested
-throughput claim. Retained job history is bounded without evicting active work. The Connections
+measured workloads and a separate policy decision; no throughput benchmark is
+recorded here. Retained job history is bounded without evicting active work. The Connections
 sidebar still constructs all visible rows; no FPS benchmark was performed.
 
 Unix local scans/operations pin directories and reject symlink traversal where
@@ -109,40 +94,15 @@ an attacker-controlled PKCS#1 v1.5 decryption oracle was not identified.
 That reachability observation does not prove all RSA operations safe. Follow
 upstream fixes and re-run dependency auditing when upgrading russh/ssh-key.
 
-## Verification
+## Verification scope
 
-The implementation includes targeted storage, trust-store, SFTP protocol,
-concurrency, resource-budget and terminal regressions. Required final gates are
-`cargo fmt --all --check`, locked workspace build and tests, all-target clippy
-with warnings denied, mandatory local OpenSSH/SFTP tests, generated-doc freshness,
-architecture boundaries and rustdoc with warnings denied. Exact final results
-are recorded in the completion report. Native macOS/Windows execution and
-fingerprint interaction cannot be established by Linux tests.
-
-Initial Linux audit gates: **348 workspace tests, 0 failed, 0 ignored**, and **24
-mandatory real OpenSSH/SFTP tests**. Formatting, locked all-target workspace
-build/clippy, generated-document freshness, architecture checks and rustdoc with
-warnings denied passed. The independent tester added inactive-window OSC 52 and
-pre-I/O download admission regressions. A temporary-config native Wayland smoke
-mapped a 948 × 562 window and selected the AMD hardware Vulkan adapter; no image
-was captured and existing application sessions were left running. This smoke
-establishes window creation/render startup, not interactive behavior of every UI
-control. Independent source review is the final merge gate.
-
-First independent review requested the cell-metadata cap and separate ownership
-of profile/history persistence errors. Both findings were reproduced and fixed;
-successful profile writes now leave an outstanding history error visible. The
-patched engine retains its original 132 tests and adds three regressions.
-Standalone engine clippy also exposed three original Unix error-propagation
-style warnings; equivalent `?` propagation fixed them without disabling a lint.
-
-After review corrections, the same required gates passed again with **353
-workspace tests, 0 failed, 0 ignored**, including the 24 OpenSSH/SFTP tests.
-The standalone patched engine passed **135 tests** and all-target clippy with
-warnings denied. A separate optional standalone vendor format check differs
-from default stable rustfmt because the copied upstream sources retain their
-original style; the required workspace format check passes. No formatting
-check was weakened and no mass vendor reformat was introduced.
+Storage, trust-store, SFTP protocol, concurrency, resource-budget and terminal
+regressions exercise the protections above. The findings table names the
+behavior to verify; command-by-command results and review histories belong in
+PR reports or local audit notes.
+Native macOS/Windows execution and fingerprint interaction cannot be established
+by Linux tests. See [CONTRIBUTING.md](../CONTRIBUTING.md) and
+[the agent verification guide](../AGENTS.md#definition-of-done) for required checks.
 
 ## ACP AI panel boundary
 

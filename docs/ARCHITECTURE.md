@@ -8,7 +8,7 @@ Cargo metadata; `cargo xtask architecture` enforces its declared layers and
 rejects runtime GUI dependencies below the UI layer. Service crates sit beside
 the UI layer: they own GPUI entities and background work but no views, so they
 depend on GPUI alone, never on the component library, UI or features. The
-[architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
+[storage and security boundaries](ARCHITECTURE_SECURITY_AUDIT.md) records protections,
 regression evidence and residual constraints.
 
 ## Layers

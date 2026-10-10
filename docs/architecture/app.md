@@ -16,8 +16,10 @@ tests and registers independent workspace features. The application window facto
 ## Menus
 
 The composition root supplies Session/Edit/Search/Window/Help descriptors to
-Workspace's native `AppMenuBar`. `ItemCommand` routes feature operations without
-Workspace depending on Terminal. Each window snapshots enabled/checked state
+Workspace's native `AppMenuBar`. Feature commands are ordinary GPUI actions:
+Workspace forwards them to the command item's focus handle and checks action
+availability on its last rendered frame ([ADR 0002](../adr/0002-commands-through-dispatch.md)).
+Each window snapshots enabled/checked state
 before opening; an open popup retains its originating Item. A focused bottom
 terminal takes priority over the central Item. Native clipboard/edit actions
 continue to dispatch to native text fields, including dialogs. The maintained

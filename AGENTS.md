@@ -4,7 +4,7 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 
 ## Hard rules
 
-- Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `main` directly.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
 - Commit, push and open PRs only when the user asks.
@@ -12,6 +12,90 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
   growing file into child modules by responsibility instead of adding to it. Never raise an
   entry in `xtask/oversized-files.toml`.
+
+## Read first
+
+Before designing or changing code, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+the layer note of each touched crate, the [ADR index](docs/adr/README.md) and relevant
+accepted decisions, and the crate's `//!` documentation in `lib.rs`.
+Accepted ADRs are immutable; supersede a decision with a new ADR.
+
+## Where code goes
+
+Name the crate and layer in the plan, in this order:
+
+1. Rules and data formats without I/O belong in domain crates.
+2. Real filesystem, network and process I/O behind contracts belongs in adapters.
+3. GPUI entities with background work and no views belong in service crates.
+4. Views and presentation state belong in feature crates.
+5. Features communicate through narrow workspace ports named for the consumer's
+   need; do not expand a broad trait for another feature pair.
+
+If the right crate does not exist, propose it instead of using the nearest crate.
+Existing mixed responsibilities are migration debt, not a pattern for new code.
+Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
+[ADR 0010](docs/adr/0010-session-lifecycle.md)), `containers` / `containers-ui`, and
+`src/bootstrap.rs` as examples of ownership and composition.
+
+## Reuse before writing
+
+- Ordered persistence: `nocterm_core::persist::{WriteQueue, WriteGate,
+  ShutdownDeadline}` ([ADR 0004](docs/adr/0004-write-queue.md)).
+- Atomic files: the public `nocterm_core::persist::{save, save_text,
+  save_preserving}` APIs; check their symlink and format semantics before reuse.
+- Shutdown, link-safe filesystem traversal and test fakes: inspect existing
+  implementations before adding one; propose shared extraction for missing reuse.
+
+`nocterm-store`, `Persisted<T>`, `ShutdownCoordinator`, `nocterm_core::fs`,
+`nocterm-local::fs` and session `test-support` are not implemented yet. Do not
+refer to them as available APIs. Until shared mechanisms exist, a plan must
+identify the existing owner and how its mechanism will be reused or extracted.
+
+## Design rules
+
+These rules block review. `cargo xtask architecture` currently checks layers,
+file size and complexity-attribute policy; field counts, impl spread, globals,
+I/O, quit handlers and string errors still require manual review. When
+`xtask/baseline.toml` is introduced, its entries may only decrease.
+
+1. Add state only within a type's single responsibility. Do not add a field when
+   the resulting count exceeds 15 or create a type over that limit; extract an owner with
+   private fields and transition methods. Do not spread its impl across more files.
+2. Stateful types gain no `pub` or `pub(crate)` fields. DTOs and settings may expose
+   plain data; methods preserve stateful invariants.
+3. No new `impl Global`, reads of another crate's global, or `on_app_quit` handlers.
+   Pass collaborators through explicit dependencies and constructors; compose
+   them in bootstrap. Existing globals do not authorize new service lookup.
+4. Fallible APIs crossing crate boundaries use typed errors (`thiserror`);
+   convert them to `String` at display only.
+5. Add no I/O to domain code or protocol-specific types (including ACP) to its APIs, and no
+   domain rules to views. Existing violations do not authorize growth.
+6. Never add `#[expect]` or `#[allow]` for `clippy::too_many_lines` or
+   `clippy::cognitive_complexity`, and never raise a baseline to pass a check.
+7. Extract responsibilities into modules that own types, not extra methods of a
+   parent type. Keep vendor changes separate from application code changes.
+
+## Tests
+
+- Test behavior through actions, events, rendering and public methods; do not
+  read or write private view/model fields to reproduce a regression.
+- Name tests and files after behavior, and extend its existing test file. Do not
+  create files named after review rounds (`audit`, `verification`, `round2`, etc.).
+- Reuse existing port fakes and extend their capabilities. If they cannot be
+  shared yet, propose a shared home instead of duplicating another fake.
+
+## Documents
+
+- `docs/` describes the current system. Plans, progress, session logs and audit
+  trails belong in ignored `.claude/plans/` or the PR description.
+- Never record session authorization or implementation status in `docs/`.
+- When removing or renaming a symbol, search `docs/` and update current references;
+  accepted ADRs retain historical context.
+- Cross-cutting decisions get an ADR. Architecture notes describe layers, ports
+  and invariants; product instructions belong in user documentation.
+- For new crates, start `lib.rs` with a short `//!` card: purpose, `Owns:`,
+  `Does not own:`, ports used/provided, settings section, globals and invariants.
+  Describe actual boundaries; existing crates gain cards when their boundaries change.
 
 ## Pipeline
 
@@ -31,6 +115,23 @@ Gates:
 - **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
 
 Trivial changes (typos, one-line fixes, docs) skip the pipeline.
+Pass the target branch and verification scope to every stage. Review includes
+uncommitted changes as well as commits so it can finish before commit authorization.
+
+## Definition of done
+
+Code changes require `cargo fmt --all --check`,
+`cargo build --workspace --all-targets`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+`cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
+checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes).
+For documentation-only changes, check links, stale references and generated-doc
+freshness; architecture checks still apply. Build, lint and runtime tests may be
+omitted because executable inputs did not change.
+
+Report each command and its result. Report omitted or unavailable checks with the
+reason. No blocking review findings may remain; commit, push and PR creation
+still require the user's request.
 
 ## Scopes
 
