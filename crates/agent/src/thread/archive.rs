@@ -62,6 +62,7 @@ impl AgentThread {
                 match result {
                     Ok(chat) => {
                         this.restore_content(chat);
+                        this.preview_config(cx);
                         if this.draft_changed {
                             this.save(cx);
                         }

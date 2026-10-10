@@ -190,6 +190,25 @@ pub fn restore(stored: &[StoredOption]) -> Vec<acp::SessionConfigOption> {
         .collect()
 }
 
+/// The values `options` currently have, by option id.
+pub fn current(options: &[acp::SessionConfigOption]) -> Choices {
+    options
+        .iter()
+        .filter_map(|option| Some((option.id.to_string(), ConfigValue::current(option)?)))
+        .collect()
+}
+
+/// `options` showing the `choices` they offer as their current values.
+pub fn with_choices(
+    mut options: Vec<acp::SessionConfigOption>,
+    choices: &Choices,
+) -> Vec<acp::SessionConfigOption> {
+    for (id, value) in choices {
+        choose(&mut options, id, value);
+    }
+    options
+}
+
 /// Whether `option` offers `value`.
 fn offers(option: &acp::SessionConfigOption, value: &ConfigValue) -> bool {
     match (&option.kind, value) {

@@ -94,7 +94,12 @@ impl AgentCommands for Commands {
         } else {
             request.session_id
         };
-        async move { Ok(acp::NewSessionResponse::new(session)) }.boxed()
+        let config = self.config.lock().unwrap().clone();
+        async move {
+            Ok(acp::NewSessionResponse::new(session)
+                .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
+        }
+        .boxed()
     }
     fn prompt(
         &self,
@@ -596,6 +601,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod bridge_outcomes;
 mod composer;
+mod durable_config;
 mod hermes;
 mod history;
 mod invalidation;

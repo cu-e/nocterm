@@ -14,6 +14,8 @@ pub(crate) struct RestartData {
     composer: Composer,
     fallback_history: bool,
     restore: Option<Restore>,
+    config_choices: nocterm_ai::session_config::Choices,
+    mode_choice: Option<nocterm_ai::acp::SessionModeId>,
 }
 impl AgentThread {
     pub(crate) fn restart_data(&self) -> RestartData {
@@ -30,6 +32,8 @@ impl AgentThread {
             composer: self.composer.restarted(),
             fallback_history: self.fallback_history,
             restore: self.restore_descriptor(),
+            config_choices: self.config_choices.clone(),
+            mode_choice: self.mode_choice.clone(),
         }
     }
     pub(crate) fn apply_restart(&mut self, data: RestartData) {
@@ -44,5 +48,7 @@ impl AgentThread {
         self.composer = data.composer;
         self.fallback_history = data.fallback_history;
         self.restore = data.restore;
+        self.config_choices = data.config_choices;
+        self.mode_choice = data.mode_choice;
     }
 }

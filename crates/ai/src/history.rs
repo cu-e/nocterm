@@ -78,6 +78,14 @@ pub struct SavedChat {
     /// The model of the last prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The configuration the chat last had (model, effort, mode, …) by
+    /// option id; given to every session the chat opens.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub config: crate::session_config::Choices,
+    /// The mode the chat last had, for agents that report modes apart from
+    /// their configuration options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     /// Saved transcript still needs delivery to the current agent session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending_history: bool,
@@ -126,6 +134,8 @@ impl SavedChat {
             session_id: None,
             workdir: None,
             model: None,
+            config: Default::default(),
+            mode: None,
             pending_history: false,
             draft: None,
             updated: now(),
@@ -336,6 +346,21 @@ mod tests {
             Entry::Agent("Use `df -h`.".into()),
         ];
         chat
+    }
+
+    #[test]
+    fn a_chat_keeps_its_configuration_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = chat();
+        saved.config.insert(
+            "model".into(),
+            crate::session_config::ConfigValue::Value("opus".into()),
+        );
+        saved.mode = Some("plan".into());
+        save(dir.path(), &saved).unwrap();
+        let loaded = load(dir.path(), &saved.id).unwrap();
+        assert_eq!(loaded.config, saved.config);
+        assert_eq!(loaded.mode.as_deref(), Some("plan"));
     }
 
     #[test]

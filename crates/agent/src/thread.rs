@@ -138,8 +138,14 @@ pub(crate) struct AgentThread {
     storage_budget: nocterm_ai::history::HistoryBudget,
     pub fallback_history: bool,
     pub pending_controls: Vec<(acp::SessionId, acp::SessionUpdate)>,
-    /// Configuration chosen before the session opened; applied when it does.
+    /// The chat's configuration (model, effort, mode, …): chosen before a
+    /// session opens or reported by an open one. Saved with the chat and
+    /// given to every session it opens, so it survives idle release,
+    /// failures and restarts.
     pub config_choices: nocterm_ai::session_config::Choices,
+    /// The chat's mode, for agents that report modes apart from their
+    /// configuration options.
+    pub mode_choice: Option<acp::SessionModeId>,
     pub permissions: Vec<PendingPermission>,
     pub tools: Vec<BridgeCall>,
     /// Advances only when a new request needs user approval.
@@ -242,6 +248,7 @@ impl AgentThread {
             fallback_history: false,
             pending_controls: Vec::new(),
             config_choices: Default::default(),
+            mode_choice: None,
             permissions: Vec::new(),
             tools: Vec::new(),
             approval_generation: 0,
@@ -421,44 +428,6 @@ impl AgentThread {
         for call in std::mem::take(&mut self.tools) {
             self.finish(call, Err("Request cancelled.".into()));
         }
-    }
-    pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
-        if self.lifecycle.generating() || !cx.ai_enabled() {
-            return;
-        }
-        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
-        else {
-            return;
-        };
-        let ticket = self.lifecycle.ticket();
-        let guard = self.hold_operation();
-        let request_id = id.clone();
-        let future = cx.background_executor().spawn(async move {
-            let _guard = guard;
-            commands
-                .set_mode(acp::SetSessionModeRequest::new(session, request_id))
-                .await
-        });
-        cx.spawn(async move |this, cx| {
-            let result = future.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
-                    return;
-                }
-                match result {
-                    Ok(()) => {
-                        this.state.current_mode = Some(id);
-                        this.status_error = false;
-                    }
-                    Err(error) => {
-                        this.status = nocterm_ai::redact::redact(&error.to_string());
-                        this.status_error = true;
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
     /// Cancels the turn in progress. The session stays open for the next
     /// prompt.

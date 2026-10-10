@@ -21,6 +21,10 @@ pub(super) struct Wire<'a, Q: Serialize + ?Sized> {
     workdir: &'a Option<std::path::PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: &'a Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    config: &'a crate::session_config::Choices,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: &'a Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pending_history: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +51,8 @@ impl<'a, Q: Serialize + ?Sized> Wire<'a, Q> {
             session_id: &chat.session_id,
             workdir: &chat.workdir,
             model: &chat.model,
+            config: &chat.config,
+            mode: &chat.mode,
             pending_history: chat.pending_history,
             draft: &chat.draft,
             updated: chat.updated,

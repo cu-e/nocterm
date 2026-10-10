@@ -80,8 +80,9 @@ message clears its draft after acceptance; temporary queue edits preserve the
 original unsent text.
 
 A saved chat holds the agent id, the agent's title, your name for it, the pin,
-the agent session id and its working directory, the last model, unsent text,
-and the transcript: your messages, the agent's replies and reasoning, and tool
+the agent session id and its working directory, the last model, the chat's
+own configuration (mode, model, effort and the agent's other options), unsent
+text, and the transcript: your messages, the agent's replies and reasoning, and tool
 calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
 terminal text. Images over 512 KiB are replaced by a note, only the last 2000
@@ -240,10 +241,12 @@ capabilities/configuration. A missing capability does not mean that a default
 model or token count can be invented. Model favorites are keyed by agent,
 configuration option and value. `agents.toml` also keeps the options each agent
 last reported and the model and reasoning effort last chosen for it: a new chat
-shows them before its session opens and starts with that model and effort. A
-choice made before the session opens is applied, one option at a time, before
-the first prompt; a value the agent no longer offers is skipped. Modes are
-chosen per chat and never carried over. Image input accepts validated PNG, JPEG, GIF and
+shows them before its session opens and starts with that model and effort. Each
+chat then keeps its own configuration, mode included, in its saved file: every
+session the chat opens (after idle release, a failure or a restart) is given the
+chat's values, one option at a time, before the first prompt; a value the agent
+no longer offers is skipped. Changes the agent reports itself become the chat's.
+Modes are kept per chat and never carried over to other chats. Image input accepts validated PNG, JPEG, GIF and
 WebP, at most 5 MiB per image, eight images and 20 MiB per prompt. Decoding is
 bounded to 4096 pixels per axis, 16 million pixels and 64 MiB allocation.
 

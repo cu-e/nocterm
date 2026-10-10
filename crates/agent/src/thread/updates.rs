@@ -34,6 +34,10 @@ impl AgentThread {
             ),
             _ => self.state.entries.len().checked_sub(1),
         };
+        let configuration = matches!(
+            notification.update,
+            acp::SessionUpdate::ConfigOptionUpdate(_) | acp::SessionUpdate::CurrentModeUpdate(_)
+        );
         match self.apply_presented_update(notification.update.clone()) {
             ThreadChange::Transcript => {
                 if let Some(index) = index {
@@ -44,6 +48,8 @@ impl AgentThread {
                 }
             }
             ThreadChange::Metadata => self.persist(cx),
+            // The agent changed its configuration itself, e.g. left plan mode.
+            ThreadChange::Controls if configuration => self.sync_config(true, cx),
             _ => {}
         }
         cx.notify();

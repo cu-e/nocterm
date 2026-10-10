@@ -56,12 +56,10 @@ impl AgentStateFile {
     /// The options a chat of `agent` shows before its session opens: the
     /// last reported ones with the remembered choices.
     pub fn preview(&self, agent: &str) -> Vec<acp::SessionConfigOption> {
-        let mut options =
-            session_config::restore(self.options.get(agent).map_or(&[], Vec::as_slice));
-        for (id, value) in self.choices.get(agent).into_iter().flatten() {
-            session_config::choose(&mut options, id, value);
-        }
-        options
+        session_config::with_choices(
+            session_config::restore(self.options.get(agent).map_or(&[], Vec::as_slice)),
+            &self.choices(agent),
+        )
     }
     pub fn contains(&self, agent: &str, option: &str, value: &str) -> bool {
         self.favorites
