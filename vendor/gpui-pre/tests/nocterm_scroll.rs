@@ -454,62 +454,63 @@ fn deepest_duplicate_backdrops_hide_unsupported_earlier_layers() {
     }
 }
 
+fn masked_rounded_pane(offset: u32) -> SceneSnapshot {
+    let mut scene = scene(offset, false);
+    let pane = rect(246.0, 161.0, 813.0, 442.0);
+    scene.quads[0].bounds = pane;
+    scene.quads[0].content_mask.bounds = pane;
+    let template = scene.monochrome_sprites[0];
+    scene.monochrome_sprites.clear();
+    for row in 0..25 {
+        for column in 0..80 {
+            let mut glyph = template;
+            glyph.bounds = rect(
+                271.0 + column as f32 * 8.0,
+                168.0 + row as f32 * 17.0,
+                7.0,
+                13.0,
+            );
+            glyph.content_mask.bounds = pane;
+            glyph.tile.tile_id = TileId(row + offset);
+            scene.monochrome_sprites.push(glyph);
+        }
+    }
+    for (order, bounds, mask, radius, border) in [
+        (
+            2,
+            rect(235.0, 139.0, 835.0, 507.0),
+            rect(246.0, 161.0, 10.0, 474.0),
+            20.0,
+            10.0,
+        ),
+        (
+            3,
+            rect(245.0, 149.0, 815.0, 487.0),
+            rect(246.0, 161.0, 10.0, 473.0),
+            10.0,
+            1.0,
+        ),
+    ] {
+        scene.quads.push(Quad {
+            order,
+            bounds,
+            content_mask: ContentMask { bounds: mask },
+            background: hsla(0.0, 0.0, 0.93, 0.0).into(),
+            border_color: hsla(0.0, 0.0, 0.8, 1.0),
+            corner_radii: Corners::all(ScaledPixels(radius)),
+            border_widths: Edges::all(ScaledPixels(border)),
+            ..Default::default()
+        });
+    }
+    scene.finish();
+    SceneSnapshot::capture(&scene, [1064, 672])
+}
+
 #[::core::prelude::v1::test]
 fn actual_pane_masked_rounded_left_borders_preserve_scroll_interior() {
-    let make = |offset: u32| {
-        let mut scene = scene(offset, false);
-        let pane = rect(246.0, 161.0, 813.0, 442.0);
-        scene.quads[0].bounds = pane;
-        scene.quads[0].content_mask.bounds = pane;
-        let template = scene.monochrome_sprites[0];
-        scene.monochrome_sprites.clear();
-        for row in 0..25 {
-            for column in 0..80 {
-                let mut glyph = template;
-                glyph.bounds = rect(
-                    271.0 + column as f32 * 8.0,
-                    168.0 + row as f32 * 17.0,
-                    7.0,
-                    13.0,
-                );
-                glyph.content_mask.bounds = pane;
-                glyph.tile.tile_id = TileId(row + offset);
-                scene.monochrome_sprites.push(glyph);
-            }
-        }
-        for (order, bounds, mask, radius, border) in [
-            (
-                2,
-                rect(235.0, 139.0, 835.0, 507.0),
-                rect(246.0, 161.0, 10.0, 474.0),
-                20.0,
-                10.0,
-            ),
-            (
-                3,
-                rect(245.0, 149.0, 815.0, 487.0),
-                rect(246.0, 161.0, 10.0, 473.0),
-                10.0,
-                1.0,
-            ),
-        ] {
-            scene.quads.push(Quad {
-                order,
-                bounds,
-                content_mask: ContentMask { bounds: mask },
-                background: hsla(0.0, 0.0, 0.93, 0.0).into(),
-                border_color: hsla(0.0, 0.0, 0.8, 1.0),
-                corner_radii: Corners::all(ScaledPixels(radius)),
-                border_widths: Edges::all(ScaledPixels(border)),
-                ..Default::default()
-            });
-        }
-        scene.finish();
-        SceneSnapshot::capture(&scene, [1064, 672])
-    };
     for (old_offset, offset, dy) in [(0, 6, -102), (6, 0, 102)] {
-        let old = make(old_offset);
-        let current = make(offset);
+        let old = masked_rounded_pane(old_offset);
+        let current = masked_rounded_pane(offset);
         let SceneDamage::Partial(damage) = current.damage_since(&old) else {
             panic!("partial scene");
         };
