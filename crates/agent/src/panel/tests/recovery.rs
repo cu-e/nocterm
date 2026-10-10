@@ -36,6 +36,15 @@ fn a_fork_the_agent_cannot_copy_starts_fresh_and_sends(cx: &mut TestAppContext) 
     new_chat(&f, cx);
     let source_session = exchange(&f, "restart nginx", "Use systemctl.", cx);
     let source = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    // The fork connects as soon as it is shown, so it meets these first.
+    for _ in 0..2 {
+        f.commands
+            .restore_errors
+            .lock()
+            .unwrap()
+            .push_back(overloaded());
+    }
+    let sessions = f.commands.sessions.load(Ordering::SeqCst);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(source.entity_id(), window, cx)
@@ -45,14 +54,6 @@ fn a_fork_the_agent_cannot_copy_starts_fresh_and_sends(cx: &mut TestAppContext) 
     cx.run_until_parked();
     let fork = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_ne!(fork.entity_id(), source.entity_id());
-    for _ in 0..2 {
-        f.commands
-            .restore_errors
-            .lock()
-            .unwrap()
-            .push_back(overloaded());
-    }
-    let sessions = f.commands.sessions.load(Ordering::SeqCst);
 
     send(&fork, "and reload it", cx);
 

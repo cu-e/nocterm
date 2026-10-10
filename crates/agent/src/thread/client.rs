@@ -55,26 +55,45 @@ impl SessionClient for ThreadClient {
 }
 
 impl AgentThread {
+    /// Whether the chat still holds connection `key`.
+    fn holds(&self, key: u64) -> bool {
+        self.connection_key() == Some(key)
+    }
     fn runtime_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Leased(lease) => self.begin_lease(lease),
             SessionEvent::Connected {
+                connection,
                 commands,
                 info,
                 workdir,
-            } => self.create_session(commands, *info, workdir, cx),
+            } => {
+                if self.holds(connection) && self.lifecycle.opening() {
+                    self.create_session(commands, *info, workdir, cx);
+                }
+            }
             SessionEvent::Update(notification) => self.session_update(&notification, cx),
             SessionEvent::Permission { request, respond } => {
                 self.permission(*request, respond, cx);
             }
             SessionEvent::Tool(call) => self.handle_tool(call, cx),
             SessionEvent::ToolRejected(rejected) => self.record_rejected_tool(rejected, cx),
-            SessionEvent::Stopped(message) => self.connection_stopped(&message, cx),
+            SessionEvent::Stopped {
+                connection,
+                message,
+            } => {
+                if self.holds(connection) {
+                    self.connection_stopped(&message, cx);
+                }
+            }
             SessionEvent::Failed(message) => self.fail(&message, cx),
             SessionEvent::AgentRemoved => {
                 self.fail("The agent is no longer configured.", cx);
             }
-            SessionEvent::Idle => {
+            SessionEvent::Idle { connection } => {
+                if !self.holds(connection) {
+                    return;
+                }
                 self.detach_session(cx);
                 self.status = "Agent idle; conversation retained.".into();
                 cx.notify();

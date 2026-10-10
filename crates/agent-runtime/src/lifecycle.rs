@@ -64,9 +64,20 @@ impl Runtime {
             return;
         }
         let policy = cx.ai().sessions.clone();
+        self.release_idle(&policy, cx);
+        self.admit_pending(&policy, cx);
+    }
+    /// Tells idle connections past the policy, or needed by a waiting chat,
+    /// to yield.
+    fn release_idle(&mut self, policy: &nocterm_ai::AgentSessionSettings, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
         let mut idle = Vec::new();
+        self.yielding
+            .retain(|key| self.connections.contains_key(key));
         for (key, connection) in &self.connections {
+            if self.yielding.contains(key) {
+                continue;
+            }
             let states = connection
                 .users
                 .values()
@@ -82,9 +93,28 @@ impl Runtime {
                 });
             }
         }
-        let needs_slot = !self.pending_activation.is_empty()
-            && self.connections.len() + self.closing.len() >= policy.max_live;
-        for key in releases(&idle, &policy, now, needs_slot) {
+        // Slots already on their way back: connections told to yield and
+        // closes still in progress. Without counting them, every tick until
+        // a close finished would evict another idle session.
+        let freeing = self.yielding.len()
+            + self
+                .closing
+                .keys()
+                .filter(|key| !self.stalled_closes.contains(key))
+                .count();
+        let waiting = self
+            .pending_activation
+            .iter()
+            .filter(|client| {
+                client
+                    .state(cx)
+                    .is_some_and(|state| state.activation_pending && !state.leased)
+            })
+            .count();
+        let needs_slot =
+            waiting > freeing && self.connections.len() + self.closing.len() >= policy.max_live;
+        for key in releases(&idle, policy, now, needs_slot) {
+            self.yielding.insert(key);
             let clients: Vec<_> = self
                 .connections
                 .get(&key)
@@ -92,9 +122,12 @@ impl Runtime {
                 .flat_map(|connection| connection.users.values().cloned())
                 .collect();
             for client in clients {
-                client.emit(SessionEvent::Idle, cx);
+                client.emit(SessionEvent::Idle { connection: key }, cx);
             }
         }
+    }
+    /// Connects waiting chats, oldest first, while slots are free.
+    fn admit_pending(&mut self, policy: &nocterm_ai::AgentSessionSettings, cx: &mut Context<Self>) {
         let mut pending = self.pending_activation.len();
         while pending > 0 && self.connections.len() + self.closing.len() < policy.max_live {
             pending -= 1;
@@ -154,6 +187,7 @@ impl Runtime {
             drop(registration);
         }
         self.idle_since.remove(&key);
+        self.yielding.remove(&key);
         let connection = self.connections.remove(&key);
         if connection.is_none() {
             return;
@@ -180,8 +214,10 @@ impl Runtime {
                         .await
                         .unwrap_or_else(|_| Err("Startup cleanup acknowledgement was lost".into()));
                     if let Err(error) = result {
-                        let _ =
-                            this.update(cx, |this, cx| this.cleanup_failed(&chat_id, &error, cx));
+                        let _ = this.update(cx, |this, cx| {
+                            this.stalled_closes.insert(key);
+                            this.cleanup_failed(&chat_id, &error, cx)
+                        });
                         return;
                     }
                 }
@@ -201,6 +237,7 @@ impl Runtime {
                 }
                 if let Err(error) = commands.shutdown_gracefully().await {
                     let _ = this.update(cx, |this, cx| {
+                        this.stalled_closes.insert(key);
                         this.cleanup_failed(&chat_id, &error.to_string(), cx)
                     });
                     return; // Keep Closing counted: the process may still be alive.

@@ -80,6 +80,11 @@ pub struct Runtime {
     /// Cleanup ownership survives a foreground close/FIFO barrier.
     closing_commands: HashMap<u64, Arc<dyn AgentCommands>>,
     idle_since: HashMap<u64, std::time::Instant>,
+    /// Connections told to yield their slot whose lease is not released yet.
+    yielding: std::collections::HashSet<u64>,
+    /// Closing connections whose process cleanup failed: their slot stays
+    /// taken and is not coming back.
+    stalled_closes: std::collections::HashSet<u64>,
     _lifecycle: Option<Task<()>>,
     shutting_down: bool,
     chat_revisions: HashMap<String, (EntityId, u64)>,
@@ -166,6 +171,8 @@ impl Runtime {
             closing: Default::default(),
             closing_commands: Default::default(),
             idle_since: Default::default(),
+            yielding: Default::default(),
+            stalled_closes: Default::default(),
             _lifecycle: None,
             shutting_down: false,
             chat_revisions: Default::default(),
@@ -599,6 +606,7 @@ impl Runtime {
                             for client in clients {
                                 client.emit(
                                     SessionEvent::Connected {
+                                        connection: key,
                                         commands: connection.commands.clone(),
                                         info: Box::new(connection.info.clone()),
                                         workdir: workdir.clone(),
@@ -711,7 +719,13 @@ impl Runtime {
         connection.cancellation.cancel();
         let clients: Vec<_> = connection.users.values().cloned().collect();
         for client in clients {
-            client.emit(SessionEvent::Stopped(message.to_owned()), cx);
+            client.emit(
+                SessionEvent::Stopped {
+                    connection: key,
+                    message: message.to_owned(),
+                },
+                cx,
+            );
         }
     }
 }

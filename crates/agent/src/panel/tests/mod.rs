@@ -94,7 +94,12 @@ impl AgentCommands for Commands {
         } else {
             request.session_id
         };
-        async move { Ok(acp::NewSessionResponse::new(session)) }.boxed()
+        let config = self.config.lock().unwrap().clone();
+        async move {
+            Ok(acp::NewSessionResponse::new(session)
+                .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
+        }
+        .boxed()
     }
     fn prompt(
         &self,
@@ -255,6 +260,16 @@ struct Access {
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
     /// Shared by the sessions of a test.
     sign_in: Rc<SignIn>,
+    link: Link,
+}
+/// The connection of a remote session, which may drop.
+#[derive(Default)]
+struct Link {
+    remote: std::cell::Cell<bool>,
+    closed: std::cell::Cell<bool>,
+    /// Reconnecting fails, leaving it closed.
+    unreachable: std::cell::Cell<bool>,
+    reconnects: std::cell::Cell<usize>,
 }
 /// What the sessions of a test ask before they connect.
 #[derive(Default)]
@@ -269,10 +284,12 @@ impl TerminalAccess for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         Some(TerminalInfo {
             title: "Terminal".into(),
-            local: true,
+            local: !self.link.remote.get(),
             target: None,
             profile: self.profile.borrow().clone(),
-            status: if self.sign_in.vault_locked.get() {
+            status: if self.link.closed.get() {
+                TerminalStatus::Closed
+            } else if self.sign_in.vault_locked.get() {
                 TerminalStatus::AwaitingVault
             } else if self.sign_in.asks.get() {
                 TerminalStatus::AwaitingUser
@@ -340,6 +357,16 @@ impl TerminalAccess for Access {
         self.sign_in.answers.borrow_mut().push(answer);
         self.sign_in.vault_locked.set(false);
         self.sign_in.asks.set(false);
+        Ok(())
+    }
+    fn reconnect(&self, _: &mut App) -> Result<(), String> {
+        if !self.link.remote.get() {
+            return Err("Only a remote session can reconnect.".into());
+        }
+        if self.link.closed.get() {
+            self.link.reconnects.set(self.link.reconnects.get() + 1);
+            self.link.closed.set(self.link.unreachable.get());
+        }
         Ok(())
     }
 }
@@ -422,6 +449,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
         sent: Default::default(),
         profile: Default::default(),
         sign_in: Default::default(),
+        link: Default::default(),
     });
     let (handle, workspace, panel, terminal) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -573,6 +601,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod bridge_outcomes;
 mod composer;
+mod durable_config;
 mod hermes;
 mod history;
 mod invalidation;
@@ -582,6 +611,8 @@ mod navigation;
 mod persistence;
 mod provider_intersections;
 mod provider_permissions;
+mod queue_remove;
+mod reconnect;
 mod resources;
 mod restoration;
 mod routing;

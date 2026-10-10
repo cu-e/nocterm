@@ -117,7 +117,7 @@ impl AgentPanel {
         let thread = cx.new(|cx| {
             let mut thread = AgentThread::new(id, self.workspace.clone(), cx);
             if !restarting {
-                thread.adopt_agent_config(cx);
+                thread.preview_config(cx);
             }
             thread
         });

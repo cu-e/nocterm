@@ -119,12 +119,16 @@ impl AgentThread {
                 }
                 match result {
                     Ok(response) => {
+                        // The agent's values for the new session; the chat's
+                        // own configuration is given to it in `configure`.
                         this.state.modes = response.modes;
+                        this.state.current_mode = None;
                         this.state.config_options = response.config_options.unwrap_or_default();
                         let session = response.session_id;
                         for (id, update) in std::mem::take(&mut this.pending_controls) {
                             if id == session { this.state.apply(update); }
                         }
+                        let reported = std::mem::take(&mut this.state.config_options);
                         this.lease.as_mut().expect("starting lease").session = Some(session);
                         this.restore = None;
                         this.fallback_history = this.fallback_history || (restored != Some(true) && !this.state.entries.is_empty());
@@ -134,7 +138,7 @@ impl AgentThread {
                             "Ready".into()
                         };
                         this.save(cx);
-                        this.configure(ticket, cx);
+                        this.configure(ticket, reported, Vec::new(), cx);
                     }
                     Err(nocterm_ai::AgentError::AuthRequired(message)) => {
                         this.require_authentication(&message, cx);

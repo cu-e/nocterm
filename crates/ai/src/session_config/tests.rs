@@ -123,3 +123,24 @@ fn values_round_trip_through_the_protocol() {
         assert_eq!(ConfigValue::from_acp(&value.to_acp()), Some(value));
     }
 }
+
+#[test]
+fn a_chat_keeps_every_current_value_and_shows_its_choices_over_reported_options() {
+    let current = current(&options());
+    assert_eq!(current.get("model"), Some(&value("sonnet")));
+    assert_eq!(current.get("mode"), Some(&value("ask")));
+    assert_eq!(current.get("web"), Some(&ConfigValue::Flag(false)));
+    let choices = Choices::from([
+        ("model".into(), value("opus")),
+        ("mode".into(), value("auto")),
+        ("effort".into(), value("unknown")),
+    ]);
+    let shown = super::current(&with_choices(options(), &choices));
+    assert_eq!(shown.get("model"), Some(&value("opus")));
+    assert_eq!(shown.get("mode"), Some(&value("auto")));
+    assert_eq!(
+        shown.get("effort"),
+        Some(&value("low")),
+        "a value the agent does not offer is not shown"
+    );
+}

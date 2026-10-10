@@ -62,12 +62,15 @@ impl AgentThread {
                 match result {
                     Ok(chat) => {
                         this.restore_content(chat);
+                        this.preview_config(cx);
                         if this.draft_changed {
                             this.save(cx);
                         }
                         for action in std::mem::take(&mut this.archive_actions) {
                             action(this, cx);
                         }
+                        // Opened from the history: connect like any shown chat.
+                        this.warm(cx);
                     }
                     Err(error) => {
                         this.archive_actions.clear();

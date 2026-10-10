@@ -29,6 +29,8 @@ struct OpeningDirectory {
     opened: Cell<usize>,
     background: RefCell<Vec<gpui_kit::EntityId>>,
     sign_in: Rc<SignIn>,
+    /// Every session opened, in order.
+    accesses: RefCell<Vec<Rc<Access>>>,
 }
 impl OpeningDirectory {
     fn terminal(&self, id: &str, cx: &mut Context<Workspace>) -> Entity<FakeTerminal> {
@@ -39,7 +41,9 @@ impl OpeningDirectory {
             sent: Default::default(),
             profile: RefCell::new(Some(id.to_owned().into())),
             sign_in: self.sign_in.clone(),
+            link: Default::default(),
         });
+        self.accesses.borrow_mut().push(access.clone());
         cx.new(|cx| FakeTerminal {
             access,
             focus: cx.focus_handle(),
@@ -89,6 +93,7 @@ fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
         opened: Cell::new(0),
         background: RefCell::new(Vec::new()),
         sign_in: Default::default(),
+        accesses: Default::default(),
     });
     cx.update(|cx| {
         f.workspace.update(cx, |workspace, _| {
@@ -109,6 +114,10 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.try_find("Active sessions").is_some());
         assert!(window.try_find("Saved servers").is_some());
+        // A server inside a folder is indented, yet its button stays in the menu.
+        let menu = window.try_find("agent-picker").unwrap().bounds();
+        let open = window.try_find("open-connection-web").unwrap().bounds();
+        assert!(open.right() <= menu.right(), "{open:?} overflows {menu:?}");
         window.click("open-connection-web", cx);
     })
     .unwrap();
@@ -402,5 +411,73 @@ fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
             labels.label(&Attachment::Connection("deleted".into())),
             "Unavailable connection"
         );
+    });
+}
+
+fn open_server(
+    thread: &Entity<crate::thread::AgentThread>,
+    server: &str,
+    cx: &mut TestAppContext,
+) -> serde_json::Value {
+    let (respond, mut response) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            let registration = thread.registration().as_ref().unwrap().id;
+            thread.handle_tool(
+                BridgeCall {
+                    arguments: None,
+                    display_token: None,
+                    registration_id: registration,
+                    call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
+                        server_id: server.to_owned(),
+                    }),
+                    respond,
+                },
+                cx,
+            );
+            if !thread.tools.is_empty() {
+                thread.approve_tool(0, true, true, cx);
+            }
+        })
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    response.try_recv().unwrap().expect("answered").unwrap()
+}
+
+#[gpui_kit::test]
+fn a_dropped_background_session_is_reconnected_rather_than_replaced(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let directory = install(&f, cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let server = cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Connection("web".into()), cx);
+            thread.offline_servers(cx)[0].0.server_id.clone()
+        })
+    });
+    let first = open_server(&thread, &server, cx);
+    let access = directory.accesses.borrow()[0].clone();
+    access.link.remote.set(true);
+    access.link.closed.set(true);
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.offline_servers(cx).len(),
+                1,
+                "the dropped server is offline"
+            )
+        })
+    });
+
+    let again = open_server(&thread, &server, cx);
+    assert_eq!(again["terminal"]["id"], first["terminal"]["id"]);
+    assert_eq!(access.link.reconnects.get(), 1);
+    assert_eq!(directory.background.borrow().len(), 1, "no second session");
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            assert!(thread.offline_servers(cx).is_empty())
+        })
     });
 }

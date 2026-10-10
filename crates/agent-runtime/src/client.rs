@@ -2,7 +2,10 @@
 //!
 //! The runtime knows no chat type. A chat registers a [`SessionClient`] and
 //! changes its own state when it receives a [`SessionEvent`]. Events are
-//! delivered synchronously, in the order the runtime emits them.
+//! delivered synchronously, in the order the runtime emits them. A chat
+//! releases its connection by dropping its lease, which the runtime learns
+//! of a moment later; events naming a connection let the chat ignore those
+//! of one it no longer holds.
 use super::SessionLease;
 use gpui::{App, EntityId};
 use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
@@ -12,8 +15,10 @@ use std::{path::PathBuf, rc::Rc, sync::Arc};
 pub enum SessionEvent {
     /// A connection is being started for the chat; the lease holds it.
     Leased(SessionLease),
-    /// The agent process is up: open or load the session.
+    /// The agent process of connection `connection` is up: open or load
+    /// the session.
     Connected {
+        connection: u64,
         commands: Arc<dyn AgentCommands>,
         info: Box<AgentInfo>,
         workdir: PathBuf,
@@ -28,14 +33,20 @@ pub enum SessionEvent {
     /// A call to one of the chat's terminal tools.
     Tool(BridgeCall),
     ToolRejected(BridgeRejection),
-    /// The connection ended with `0`.
-    Stopped(String),
+    /// Connection `connection` ended with `message`.
+    Stopped {
+        connection: u64,
+        message: String,
+    },
     /// The connection could not be started.
     Failed(String),
     /// The chat's agent was removed from the settings before it started.
     AgentRemoved,
-    /// The connection was closed to free a slot; the conversation stays.
-    Idle,
+    /// Connection `connection` is closed to free a slot; the conversation
+    /// stays.
+    Idle {
+        connection: u64,
+    },
     /// The agent process may still be running after its connection closed.
     CleanupUnconfirmed(String),
     /// The previous session's close finished; a new one may start.

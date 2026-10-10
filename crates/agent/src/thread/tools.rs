@@ -5,13 +5,14 @@
 //! are. An attached saved server without a session is "offline": the agent
 //! opens it with `open_terminal`, which connects in the background without a
 //! tab. A background session that needs the user (a password or a host key)
-//! is moved into a tab so they can answer.
+//! is moved into a tab so they can answer. A server terminal whose
+//! connection closed reconnects in place when a call needs it.
 use std::time::{Duration, Instant};
 
-use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, WeakEntity};
+use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, Task, WeakEntity};
 use nocterm_ai::{BridgeCall, TerminalCall};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
-use nocterm_workspace::{TerminalStatus, TextRequest};
+use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
 
 use super::{AgentThread, SignInWait};
 
@@ -104,6 +105,12 @@ impl AgentThread {
     }
 
     fn execute_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+        self.execute_tool_with(call, true, cx);
+    }
+
+    /// Carries out `call`; with `reconnect`, a closed server terminal it
+    /// needs is connected again first.
+    fn execute_tool_with(&mut self, call: BridgeCall, reconnect: bool, cx: &mut Context<Self>) {
         // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
         if !cx.ai_enabled()
             || !self.lifecycle.accepts_updates()
@@ -136,6 +143,10 @@ impl AgentThread {
             )));
             return;
         };
+        if reconnect && self.needs_reconnect(&call.call, &entry, cx) {
+            self.reconnect_then_execute(call, &entry, cx);
+            return;
+        }
 
         match &call.call {
             TerminalCall::ReadTerminal(request) => {
@@ -201,6 +212,20 @@ impl AgentThread {
             );
             return;
         };
+        // A session the chat opened before and lost is connected again
+        // rather than left behind for another.
+        if let Some(entry) = self.closed_background(summary.id.as_ref(), cx) {
+            let connected = self.reconnect(&entry, cx);
+            cx.spawn(async move |this, cx| {
+                let result = connected.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.finish(call, result);
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
         let (Some(window), Some(directory)) = (
             self.window,
             self.workspace
@@ -244,6 +269,93 @@ impl AgentThread {
             });
         })
         .detach();
+    }
+
+    /// Whether `call` acts on a server terminal that closed, or that is
+    /// already reconnecting for another call.
+    fn needs_reconnect(&self, call: &TerminalCall, entry: &TerminalEntry, cx: &App) -> bool {
+        let uses_session = matches!(
+            call,
+            TerminalCall::ReadTerminal(_)
+                | TerminalCall::SendInput(_)
+                | TerminalCall::RunCommand(_)
+                | TerminalCall::ExecCommand(_)
+        );
+        uses_session
+            && (self.reconnecting.contains(&entry.item)
+                || entry
+                    .access
+                    .info(cx)
+                    .is_some_and(|info| !info.local && info.status == TerminalStatus::Closed))
+    }
+
+    /// Reconnects `entry` in place, then carries out `call` once more. The
+    /// user's tab stays open if connecting fails.
+    fn reconnect_then_execute(
+        &mut self,
+        call: BridgeCall,
+        entry: &TerminalEntry,
+        cx: &mut Context<Self>,
+    ) {
+        let connected = self.reconnect(entry, cx);
+        cx.spawn(async move |this, cx| {
+            let result = connected.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => this.execute_tool_with(call, false, cx),
+                    Err(error) => this.finish(call, Err(error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Connects the closed session `entry` again, or joins a reconnect
+    /// already under way; resolves with its descriptor once connected.
+    fn reconnect(
+        &mut self,
+        entry: &TerminalEntry,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<serde_json::Value, String>> {
+        let item = entry.item;
+        let Some(window) = self.window else {
+            return Task::ready(Err(unreachable("The workspace is unavailable.")));
+        };
+        if self.reconnecting.insert(item)
+            && let Err(error) = entry.access.reconnect(cx)
+        {
+            self.reconnecting.remove(&item);
+            return Task::ready(Err(unreachable(&error)));
+        }
+        let workspace = self.workspace.clone();
+        let ticket = self.lifecycle.ticket();
+        let guard = self.hold_operation();
+        cx.spawn(async move |this, cx| {
+            let _guard = guard;
+            let result = wait_until_connected(&this, &workspace, window, item, ticket, cx).await;
+            let _ = this.update(cx, |this, _| this.reconnecting.remove(&item));
+            result
+        })
+    }
+
+    /// A session this chat opened for `profile` whose connection closed.
+    fn closed_background(&mut self, profile: &str, cx: &App) -> Option<TerminalEntry> {
+        let background = self.background.clone();
+        self.resolved(cx)
+            .into_iter()
+            .find(|(_, entry, descriptor)| {
+                background.contains(&entry.item)
+                    && descriptor
+                        .connection
+                        .as_ref()
+                        .is_some_and(|connection| connection.id == profile)
+                    && entry
+                        .access
+                        .info(cx)
+                        .is_some_and(|info| info.status == TerminalStatus::Closed)
+            })
+            .map(|(_, entry, _)| entry)
     }
 
     /// Ends background sessions this chat opened that it can no longer use.

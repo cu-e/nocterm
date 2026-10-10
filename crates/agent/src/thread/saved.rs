@@ -15,6 +15,7 @@ impl AgentThread {
     ) -> Self {
         let mut thread = Self::new(chat.agent_id.clone(), workspace, cx);
         thread.restore_content(chat);
+        thread.preview_config(cx);
         thread
     }
     pub(crate) fn restore_content(&mut self, chat: nocterm_ai::history::SavedChat) {
@@ -68,6 +69,8 @@ impl AgentThread {
             fork: false,
         });
         self.last_model = chat.model;
+        self.config_choices = chat.config;
+        self.mode_choice = chat.mode.map(acp::SessionModeId::new);
     }
     /// A copy of this chat, to go on with separately. When opened, the copy
     /// continues in a copy of this chat's agent session.
@@ -87,6 +90,8 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
+        chat.config = self.config_choices.clone();
+        chat.mode = self.mode_choice.as_ref().map(ToString::to_string);
         chat.pending_history = self.fallback_history || !whole;
         let restore = match (&self.session(), &self.restore) {
             (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
@@ -172,6 +177,8 @@ impl AgentThread {
             &self.state.times,
         );
         chat.model = self.model();
+        chat.config = self.config_choices.clone();
+        chat.mode = self.mode_choice.as_ref().map(ToString::to_string);
         chat.pending_history = self.fallback_history;
         // Providers may not persist an empty session until its first prompt.
         if self.state.entries.is_empty() {

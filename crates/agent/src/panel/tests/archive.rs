@@ -37,7 +37,9 @@ fn saved() -> SavedChat {
     chat
 }
 #[gpui_kit::test]
-fn catalog_rows_are_idle_and_opening_hydrates_draft_and_queue(cx: &mut TestAppContext) {
+fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused(
+    cx: &mut TestAppContext,
+) {
     let f = fixture(cx);
     cx.run_until_parked();
     let mut chat = saved();
@@ -70,8 +72,16 @@ fn catalog_rows_are_idle_and_opening_hydrates_draft_and_queue(cx: &mut TestAppCo
         assert_eq!(thread.state.entries.len(), 1);
         assert_eq!(thread.composer.draft.as_deref(), Some("literal draft"));
         assert_eq!(thread.composer.queue[0].saved.id, 8);
+        // Opened, the chat connects so its pickers work, but the queue it
+        // was saved with waits for the user.
+        assert_eq!(
+            thread.lifecycle.phase(),
+            nocterm_ai::session::SessionPhase::Ready
+        );
+        assert!(thread.composer.queue_paused);
     });
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
 }
 #[gpui_kit::test]
 fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
@@ -139,14 +149,15 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
     chat.workdir = Some(a.clone());
     chat.session_id = Some("previous-session".into());
     let thread = archived(&f, &chat, cx);
-    f.panel
-        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
-    cx.run_until_parked();
+    // Opening warms the chat, which restores it right away.
     f.commands
         .restore_errors
         .lock()
         .unwrap()
         .push_back(AgentError::RestoreUnavailable("no rollout".into()));
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
     cx.run_until_parked();
     assert_eq!(

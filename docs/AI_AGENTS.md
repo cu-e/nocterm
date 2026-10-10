@@ -80,8 +80,9 @@ message clears its draft after acceptance; temporary queue edits preserve the
 original unsent text.
 
 A saved chat holds the agent id, the agent's title, your name for it, the pin,
-the agent session id and its working directory, the last model, unsent text,
-and the transcript: your messages, the agent's replies and reasoning, and tool
+the agent session id and its working directory, the last model, the chat's
+own configuration (mode, model, effort and the agent's other options), unsent
+text, and the transcript: your messages, the agent's replies and reasoning, and tool
 calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
 terminal text. Images over 512 KiB are replaced by a note, only the last 2000
@@ -89,12 +90,14 @@ entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 
 After a restart, saved chats appear in the history without starting their
-agent. Opening history or a saved chat does not start an agent or MCP; the
-saved chat connects on its next message. A new chat connects as soon as it is
-shown, unless `warm_start` is off. Leaving a chat before the runtime
-admitted it withdraws its request unless it has messages to send.
-Sending a message saves its queue entry before starting the agent and reopens its session with
-`session/resume` (no replay) or `session/load`, whichever the agent advertises.
+agent. Browsing the history does not start an agent or MCP. A chat connects as
+soon as it is shown, whether new, saved or loaded from the history, unless
+`warm_start` is off; then it connects on its next message. A restored queue
+still waits for send-now. Leaving a chat before the runtime admitted it
+withdraws its request unless it has messages to send.
+Opening a saved chat, or sending a message, reopens its session with
+`session/resume` (no replay) or `session/load`, whichever the agent advertises;
+a message's queue entry is saved before the agent starts.
 Chats containing only a draft or queued messages start a new session even if an
 older saved record includes an empty provider session id.
 An agent without restoration, or whose saved session no longer exists, starts
@@ -174,7 +177,8 @@ maximum height. The arrow sends
 a selected message next: it cancels the current response and waits for cancellation
 to finish before sending. Other messages keep their order. The pencil edits a
 queued message in place and restores your unsent composer draft after saving or
-cancelling. Send-now controls are disabled while editing. Queued images are saved
+cancelling. The bin removes a queued message without sending it; the one being
+edited cannot be removed. Send-now controls are disabled while editing. Queued images are saved
 in full; a message exceeding the saved chat's 32 MiB limit is rejected with its
 draft intact. Restored queues wait for an explicit send-now action. Stopping,
 authentication failures and session failures retain and pause the remaining queue.
@@ -204,15 +208,20 @@ composer has two parts:
 - **Saved servers**, laid out as in the sidebar: connections outside folders
   first, then each folder with its connections indented under it, all by name.
   Clicking a server attaches it; clicking a folder attaches every server in it.
-  A green dot marks servers with an open session. **Open** opens the server in
-  a new tab through the normal connection and sign-in flow.
+  A green dot marks servers with an open session. The arrow (↗) beside a server
+  opens it in a new tab through the normal connection and sign-in flow.
 
 An attached server (directly or through its folder) gives the agent every open
 session of that server, whether you opened it or an agent did. A server without
 a session is listed to the agent as an *offline server*; the agent connects to
 it with the `open_terminal` tool, in the background, without opening a tab or
 taking focus. If the connection needs you, the agent waits up to three
-minutes; only a new host key moves the session into a tab so you can answer. Background sessions a chat opened end when the chat
+minutes; only a new host key moves the session into a tab so you can answer.
+When the connection of an attached server's terminal drops, the agent's next
+call on it reconnects it in place and then goes ahead, and `open_terminal`
+reconnects a background session the chat opened instead of adding another; the
+agent tells you only when connecting fails. Your tab stays open either way, and
+local shells and one-off commands are never restarted. Background sessions a chat opened end when the chat
 closes or no longer attaches the server. Credentials remembered in the vault and
 key or agent authentication let background sessions connect without a prompt.
 A password, passphrase or one-time code is asked in the chat: the session stays
@@ -234,10 +243,12 @@ capabilities/configuration. A missing capability does not mean that a default
 model or token count can be invented. Model favorites are keyed by agent,
 configuration option and value. `agents.toml` also keeps the options each agent
 last reported and the model and reasoning effort last chosen for it: a new chat
-shows them before its session opens and starts with that model and effort. A
-choice made before the session opens is applied, one option at a time, before
-the first prompt; a value the agent no longer offers is skipped. Modes are
-chosen per chat and never carried over. Image input accepts validated PNG, JPEG, GIF and
+shows them before its session opens and starts with that model and effort. Each
+chat then keeps its own configuration, mode included, in its saved file: every
+session the chat opens (after idle release, a failure or a restart) is given the
+chat's values, one option at a time, before the first prompt; a value the agent
+no longer offers is skipped. Changes the agent reports itself become the chat's.
+Modes are kept per chat and never carried over to other chats. Image input accepts validated PNG, JPEG, GIF and
 WebP, at most 5 MiB per image, eight images and 20 MiB per prompt. Decoding is
 bounded to 4096 pixels per axis, 16 million pixels and 64 MiB allocation.
 
@@ -303,7 +314,8 @@ turns, and is dropped when the chat restarts or fails or when an attachment is
 removed. A new member of a group does not inherit an existing grant. Detaching
 or closing a terminal prevents further tool calls. The application checks the
 attachment and terminal state again after approval immediately before input.
-Connecting, closed, and authentication states refuse input. Live `run_command`
+Connecting and authentication states refuse input; a closed remote terminal is
+reconnected first, as described above. Live `run_command`
 also rejects alternate-screen programs and unknown, busy or dirty prompts,
 including SSH shells without OSC 133 integration. Grants are separate for reading,
 live input, structured execution and opening connections. Explicit `send_input`
@@ -404,7 +416,9 @@ starting, live and closing sessions; `max_idle = 3` retains warm sessions;
 `idle_timeout_secs = 1800` releases idle sessions. The chat a panel shows keeps its
 session warm regardless of both and yields only when a waiting chat needs its slot
 and no other idle session is left. Requests wait in their saved FIFO queues when
-the limit is reached, and the oldest idle session yields first.
+the limit is reached, and the oldest idle session yields first. A session already
+yielding or closing counts as a freed slot, so one waiting chat never evicts more
+than one other.
 Generating, authentication, permissions, bridge calls, configuration requests and
 active command jobs retain a session. A paused queue, composer edit, pin or draft
 does not. Idle release leaves background terminals and shell command ownership
