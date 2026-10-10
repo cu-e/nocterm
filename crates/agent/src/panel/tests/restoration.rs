@@ -5,11 +5,13 @@ use nocterm_ai::{
     thread::Entry,
 };
 
+/// Opens `chat` without warm start, so it restores when work starts.
 fn adopt_saved(
     f: &Fixture,
     chat: SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
+    lazy_start(cx);
     cx.update(|cx| {
         Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![chat]))
     });

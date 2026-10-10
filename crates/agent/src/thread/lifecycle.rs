@@ -62,26 +62,30 @@ impl AgentThread {
         });
         cx.notify();
     }
-    /// A panel starts or stops showing the chat. With warm start on, a
-    /// shown chat connects at once, so its model and options can be chosen
-    /// before the first message. A chat hidden before it was admitted gives
-    /// up its place unless it has messages to send. A failed or released
-    /// chat waits for the next message.
+    /// A panel starts or stops showing the chat. A chat hidden before it
+    /// was admitted gives up its place unless it has messages to send.
     pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.shown = shown;
-        if !shown {
-            if !self.composer.dispatchable() && self.lifecycle.withdraw() {
-                self.status.clear();
-                cx.notify();
-            }
-            return;
+        if shown {
+            self.warm(cx);
+        } else if !self.composer.dispatchable() && self.lifecycle.withdraw() {
+            self.status.clear();
+            cx.notify();
         }
-        // A chat restored from history, stopped by a failure or unable to
-        // save waits paused; it connects on the user's next message.
-        if cx.ai_enabled()
+    }
+    /// With warm start on, a shown chat connects at once, so its model and
+    /// options can be chosen before the first message. A chat opened from
+    /// the history connects too once it is loaded; its restored queue stays
+    /// paused until the user sends. A failed chat waits for the next
+    /// message, so a broken agent is not restarted on every visit, and a
+    /// chat that cannot save waits until it can.
+    pub(crate) fn warm(&mut self, cx: &mut Context<Self>) {
+        if self.shown
+            && self.archive.is_none()
+            && self.persistence_error.is_none()
+            && cx.ai_enabled()
             && cx.setting::<AiSettings>().sessions.warm_start
             && self.lifecycle.phase() == SessionPhase::Detached
-            && !self.composer.queue_paused
         {
             self.request_activation(cx);
         }

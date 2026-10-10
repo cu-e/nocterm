@@ -148,3 +148,46 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
     });
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
 }
+
+#[gpui_kit::test]
+fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    *f.commands.config.lock().unwrap() = models();
+    let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
+    saved
+        .entries
+        .push(nocterm_ai::thread::Entry::Agent("earlier answer".into()));
+    saved.queue.push(nocterm_ai::history::SavedPrompt {
+        id: 1,
+        text: "left over".into(),
+        images: Vec::new(),
+        attachments: Vec::new(),
+    });
+    cx.update(|cx| {
+        Runtime::global(cx).update(cx, |runtime, _| runtime.saved_chats = Some(vec![saved]))
+    });
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel
+            .update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        f.connector.connects.load(Ordering::SeqCst),
+        0,
+        "listed history stays asleep"
+    );
+    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
+    cx.run_until_parked();
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    cx.update(|cx| {
+        let thread = thread.read(cx);
+        assert!(thread.session().is_some());
+        assert!(thread.composer.queue_paused);
+        assert_eq!(thread.composer.queue.len(), 1);
+    });
+    assert_eq!(current_model(&thread, cx), "Sonnet", "its pickers work");
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
+}

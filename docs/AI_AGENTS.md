@@ -90,12 +90,14 @@ entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 
 After a restart, saved chats appear in the history without starting their
-agent. Opening history or a saved chat does not start an agent or MCP; the
-saved chat connects on its next message. A new chat connects as soon as it is
-shown, unless `warm_start` is off. Leaving a chat before the runtime
-admitted it withdraws its request unless it has messages to send.
-Sending a message saves its queue entry before starting the agent and reopens its session with
-`session/resume` (no replay) or `session/load`, whichever the agent advertises.
+agent. Browsing the history does not start an agent or MCP. A chat connects as
+soon as it is shown, whether new, saved or loaded from the history, unless
+`warm_start` is off; then it connects on its next message. A restored queue
+still waits for send-now. Leaving a chat before the runtime admitted it
+withdraws its request unless it has messages to send.
+Opening a saved chat, or sending a message, reopens its session with
+`session/resume` (no replay) or `session/load`, whichever the agent advertises;
+a message's queue entry is saved before the agent starts.
 Chats containing only a draft or queued messages start a new session even if an
 older saved record includes an empty provider session id.
 An agent without restoration, or whose saved session no longer exists, starts

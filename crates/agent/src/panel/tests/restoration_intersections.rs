@@ -57,6 +57,7 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    lazy_start(cx);
     let thread = adopt_json(&f, saved_chat(&f, false), cx);
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);

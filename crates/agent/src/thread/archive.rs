@@ -69,6 +69,8 @@ impl AgentThread {
                         for action in std::mem::take(&mut this.archive_actions) {
                             action(this, cx);
                         }
+                        // Opened from the history: connect like any shown chat.
+                        this.warm(cx);
                     }
                     Err(error) => {
                         this.archive_actions.clear();
