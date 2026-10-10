@@ -18,6 +18,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_ui::IconName;
 use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, TerminalEntry, TerminalStatus};
 
 use super::{
@@ -165,8 +166,8 @@ impl AgentPanel {
         .into_any_element()
     }
 
-    /// A saved server, indented under its folder. Open shows it in a tab, as
-    /// from the sidebar.
+    /// A saved server, indented under its folder. The arrow opens it in a
+    /// tab, as from the sidebar.
     fn server_row(
         &self,
         summary: &ConnectionSummary,
@@ -183,15 +184,15 @@ impl AgentPanel {
         let id = summary.id.to_string();
         let directory = directory.clone();
         let workspace = self.workspace.clone();
-        h_flex()
-            .w_full()
+        // Indented with padding, not margin: a margin beside a full width
+        // pushed the open button past the menu's edge.
+        let line = h_flex()
+            .flex_1()
+            .min_w_0()
             .gap_1()
             .when(nested, |row| {
                 // A guide down from the folder, as in the sidebar.
-                row.ml(px(14.))
-                    .pl_1()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
+                row.pl_1().border_l_1().border_color(cx.theme().border)
             })
             .child(
                 menu_row_with(
@@ -227,7 +228,9 @@ impl AgentPanel {
                 Button::new(SharedString::from(format!("open-connection-{id}")))
                     .custom(menu_variant(cx))
                     .small()
-                    .label("Open")
+                    .flex_shrink_0()
+                    .icon(IconName::ArrowUpRight)
+                    .accessibility_label(format!("Open {} in a new tab", summary.name))
                     .tooltip("Open in a new tab")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.menu = None;
@@ -241,7 +244,11 @@ impl AgentPanel {
                         });
                         cx.notify();
                     })),
-            )
+            );
+        h_flex()
+            .w_full()
+            .when(nested, |row| row.pl(px(14.)))
+            .child(line)
             .into_any_element()
     }
 }

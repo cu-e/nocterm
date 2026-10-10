@@ -205,8 +205,8 @@ composer has two parts:
 - **Saved servers**, laid out as in the sidebar: connections outside folders
   first, then each folder with its connections indented under it, all by name.
   Clicking a server attaches it; clicking a folder attaches every server in it.
-  A green dot marks servers with an open session. **Open** opens the server in
-  a new tab through the normal connection and sign-in flow.
+  A green dot marks servers with an open session. The arrow (↗) beside a server
+  opens it in a new tab through the normal connection and sign-in flow.
 
 An attached server (directly or through its folder) gives the agent every open
 session of that server, whether you opened it or an agent did. A server without

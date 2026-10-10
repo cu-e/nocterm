@@ -109,6 +109,10 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.try_find("Active sessions").is_some());
         assert!(window.try_find("Saved servers").is_some());
+        // A server inside a folder is indented, yet its button stays in the menu.
+        let menu = window.try_find("agent-picker").unwrap().bounds();
+        let open = window.try_find("open-connection-web").unwrap().bounds();
+        assert!(open.right() <= menu.right(), "{open:?} overflows {menu:?}");
         window.click("open-connection-web", cx);
     })
     .unwrap();
