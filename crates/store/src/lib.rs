@@ -9,6 +9,7 @@
 //! normal and final writes; durable state advances only after successful writes;
 //! ready-key capacity bounds dispatch tokens and never drops accepted dirty keys.
 
+mod append;
 mod captured;
 mod error;
 mod keyed;
@@ -17,6 +18,7 @@ mod settings;
 mod shutdown;
 mod worker;
 
+pub use append::{AppendHandle, AppendPersisted, AppendStatus, CapturedAppend, RecordingRegistry};
 pub use captured::{Captured, CapturedFeed, CapturedOutcome, CommitPhase, Committed};
 pub use error::StoreError;
 pub use persisted::{Persisted, Publication, Receipt, Revision, SnapshotWriter};

@@ -5,9 +5,7 @@ use gpui_kit::Context;
 impl Terminal {
     pub(super) fn advance_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         let bytes = self.codec.decode(bytes, false);
-        if let Some(recording) = &mut self.recording {
-            recording.output(&bytes);
-        }
+        self.recording.output(&bytes, cx);
         if self.integration.borrow_mut().advance(&bytes) {
             cx.emit(TerminalEvent::Changed);
         }

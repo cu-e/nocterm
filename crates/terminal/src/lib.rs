@@ -19,34 +19,26 @@ mod access;
 mod codec;
 mod credentials;
 mod recording;
+pub(crate) use recording::OutputRecording;
 pub use recording::RecordingStatus;
-struct RecordingDirectory {
-    path: std::path::PathBuf,
-    registry: std::sync::Arc<recording::Registry>,
+
+#[derive(Clone, Default)]
+struct ActiveTransport {
+    transport: Option<Arc<dyn Transport>>,
+    recording: Option<Arc<nocterm_store::RecordingRegistry>>,
 }
-impl gpui_kit::Global for RecordingDirectory {}
-/// Sets the default output-log directory at the composition root.
-pub fn init_recording(directory: std::path::PathBuf, cx: &mut gpui_kit::App) {
-    let registry = std::sync::Arc::new(recording::Registry::default());
-    cx.set_global(RecordingDirectory {
-        path: directory,
-        registry: registry.clone(),
-    });
-    cx.on_app_quit(move |cx| {
-        registry.stop_all();
-        let registry = registry.clone();
-        let executor = cx.background_executor().clone();
-        async move {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
-            while !registry.finished() && std::time::Instant::now() < deadline {
-                executor.timer(std::time::Duration::from_millis(10)).await;
-            }
-            if !registry.finished() {
-                tracing::warn!("timed out flushing session output logs");
-            }
-        }
-    })
-    .detach();
+impl Global for ActiveTransport {}
+
+pub fn init_recording(
+    registry: std::sync::Arc<nocterm_store::RecordingRegistry>,
+    cx: &mut gpui_kit::App,
+) {
+    let mut active = cx
+        .try_global::<ActiveTransport>()
+        .cloned()
+        .unwrap_or_default();
+    active.recording = Some(registry);
+    cx.set_global(active);
 }
 mod element;
 mod highlighting;
@@ -94,10 +86,6 @@ pub const KEY_CONTEXT: &str = "Terminal";
 
 /// The screen itself; authentication inputs keep normal form navigation.
 pub(crate) const SCREEN_KEY_CONTEXT: &str = "TerminalScreen";
-
-struct ActiveTransport(Arc<dyn Transport>);
-
-impl Global for ActiveTransport {}
 
 type LocalFactory = Arc<dyn Fn(ShellLaunch) -> Arc<dyn Transport> + Send + Sync>;
 struct LocalTransportFactory(LocalFactory);
@@ -176,7 +164,12 @@ pub fn init(transport: Arc<dyn Transport>, _: &nocterm_ui::UiReady, cx: &mut App
             Some(SCREEN_KEY_CONTEXT),
         ),
     ]);
-    cx.set_global(ActiveTransport(transport));
+    let mut active = cx
+        .try_global::<ActiveTransport>()
+        .cloned()
+        .unwrap_or_default();
+    active.transport = Some(transport);
+    cx.set_global(active);
 }
 
 /// Opens every kind of tab as a terminal; the workspace's session factory.

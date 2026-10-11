@@ -21,7 +21,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-files` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | Keymap settings page: search, rebind and reset key bindings. |
-| `nocterm-local` | adapter | `nocterm-session` | Portable local PTY session and program adapter. |
+| `nocterm-local` | adapter | `nocterm-core`, `nocterm-session` | Portable local PTY session and program adapter. |
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session` | Host resource monitoring: collection scripts, parsers, rates and history. |
 | `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
@@ -31,8 +31,8 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
 | `nocterm-snippets-ui` | feature | `nocterm-core`, `nocterm-session`, `nocterm-snippets`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-core`, `nocterm-session` | SSH and SFTP transport, implemented with russh. |
-| `nocterm-store` | service | `nocterm-core`, `nocterm-settings` | Ordered snapshot persistence and bounded application shutdown. |
-| `nocterm-terminal` | feature | `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
+| `nocterm-store` | service | `nocterm-core`, `nocterm-session`, `nocterm-settings` | Ordered snapshot persistence and bounded application shutdown. |
+| `nocterm-terminal` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-themes` | domain | `nocterm-design` | Zed theme import, catalogue, registry and safe extension installation. |
 | `nocterm-transfer-runtime` | adapter | `nocterm-session`, `nocterm-transfers` | Bounded streaming transfers over injected filesystem capabilities. |
 | `nocterm-transfers` | domain | `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
@@ -116,6 +116,7 @@ graph TD
     nocterm_keymap_ui --> nocterm_settings
     nocterm_keymap_ui --> nocterm_ui
     nocterm_keymap_ui --> nocterm_workspace
+    nocterm_local --> nocterm_core
     nocterm_local --> nocterm_session
     nocterm_localfs --> nocterm_session
     nocterm_monitor --> nocterm_session
@@ -141,10 +142,11 @@ graph TD
     nocterm_ssh --> nocterm_core
     nocterm_ssh --> nocterm_session
     nocterm_store --> nocterm_core
+    nocterm_store --> nocterm_session
     nocterm_store --> nocterm_settings
-    nocterm_terminal --> nocterm_core
     nocterm_terminal --> nocterm_session
     nocterm_terminal --> nocterm_settings
+    nocterm_terminal --> nocterm_store
     nocterm_terminal --> nocterm_ui
     nocterm_terminal --> nocterm_vt
     nocterm_terminal --> nocterm_workspace

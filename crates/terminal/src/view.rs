@@ -217,7 +217,9 @@ impl TerminalView {
                 .then(|| terminal.credential_message().map(str::to_owned))
                 .flatten(),
             terminal.text_error(),
-            terminal.recording_status().and_then(|status| status.error),
+            terminal
+                .recording_status()
+                .and_then(|status| status.error().map(str::to_owned)),
         ];
         for (index, message) in messages.into_iter().enumerate() {
             if self.notice_messages[index] == message {

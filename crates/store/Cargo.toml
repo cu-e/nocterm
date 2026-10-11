@@ -11,6 +11,7 @@ layer = "service"
 
 [dependencies]
 nocterm-core.workspace = true
+nocterm-session.workspace = true
 nocterm-settings.workspace = true
 gpui.workspace = true
 futures.workspace = true
@@ -18,6 +19,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

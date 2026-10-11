@@ -11,6 +11,8 @@ layer = "adapter"
 
 [dependencies]
 nocterm-session.workspace = true
+nocterm-core.workspace = true
+uuid.workspace = true
 portable-pty.workspace = true
 async-channel.workspace = true
 futures.workspace = true

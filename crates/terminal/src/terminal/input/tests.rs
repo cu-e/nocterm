@@ -261,7 +261,7 @@ fn reconnect_revokes_live_lease_and_clears_prompt_evidence(cx: &mut TestAppConte
         terminal.advance_output(b"\x1b]133;A\x07", cx);
         let lease = terminal.begin_live_command("sleep 10", cx).unwrap();
         assert_eq!(sent(&driver), b"sleep 10\r");
-        terminal.close();
+        terminal.close(cx);
         assert!(!lease.is_active());
         assert_eq!(terminal.agent_prompt_state().0, None);
         lease.cancel();

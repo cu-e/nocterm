@@ -76,7 +76,6 @@ nocterm-ui = 6
 "nocterm_snippets_ui::model::GlobalLibrary" = 1
 "nocterm_terminal::ActiveTransport" = 1
 "nocterm_terminal::LocalTransportFactory" = 1
-"nocterm_terminal::RecordingDirectory" = 1
 "nocterm_terminal::credentials::ActiveCredentials" = 1
 "nocterm_ui::design::Design" = 1
 "nocterm_ui::layout::LayoutMemory" = 1
@@ -139,7 +138,6 @@ nocterm-ui = 6
 "nocterm_terminal::element::text::Colors" = 4
 "nocterm_terminal::highlighting::rules::Token" = 3
 "nocterm_terminal::integration::ShellIntegration" = 4
-"nocterm_terminal::recording::RecordingStatus" = 4
 "nocterm_terminal::terminal::FindState" = 5
 "nocterm_terminal::terminal::Terminal" = 1
 "nocterm_terminal::view::host_key::ChangedKey" = 7
@@ -147,7 +145,6 @@ nocterm-ui = 6
 "nocterm_vault_ui::view::VaultView" = 14
 
 [quit_handlers]
-"nocterm_terminal::init_recording" = 1
 "nocterm_ui::layout::LayoutMemory::init" = 1
 
 [string_errors]
@@ -163,7 +160,7 @@ nocterm-session = 1
 nocterm-settings-ui = 12
 nocterm-snippets-ui = 1
 nocterm-ssh = 3
-nocterm-terminal = 20
+nocterm-terminal = 19
 nocterm-vault-broker = 3
 nocterm-workspace = 13
 
@@ -177,5 +174,5 @@ nocterm-workspace = 13
 "nocterm_design::tokens::Layout" = 18
 "nocterm_design::tokens::TerminalColors" = 20
 "nocterm_snippets_ui::editor::SnippetEditor" = 16
-"nocterm_terminal::terminal::Terminal" = 29
+"nocterm_terminal::terminal::Terminal" = 27
 "nocterm_terminal::view::TerminalView" = 19

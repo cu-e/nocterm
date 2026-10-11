@@ -45,7 +45,7 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
         terminal.update(cx, |terminal, cx| {
             assert_eq!(terminal.spec.title, "Auth Hermes");
             assert_eq!(terminal.spec.launch.as_ref().unwrap().args, vec!["--setup"]);
-            assert!(!terminal.recording_options.auto_start);
+            assert!(!terminal.recording.options().auto_start);
             terminal.handle_event(Event::Connected, cx);
             terminal.start_recording(cx);
             assert!(!terminal.is_recording());

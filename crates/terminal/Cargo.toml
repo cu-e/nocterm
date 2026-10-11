@@ -10,12 +10,11 @@ publish = false
 layer = "feature"
 
 [dependencies]
-uuid.workspace = true
-nocterm-core.workspace = true
 encoding_rs.workspace = true
 regex.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
+nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-vt.workspace = true
 nocterm-workspace.workspace = true
@@ -31,3 +30,4 @@ workspace = true
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 futures.workspace = true
+nocterm-session = { workspace = true, features = ["test-support"] }

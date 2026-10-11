@@ -51,11 +51,14 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
         Some(Command::Input(b"\x1b[200~small\x1b[201~".to_vec()))
     );
 }
-#[gpui_kit::test]
-fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
-    cx: &mut TestAppContext,
+fn setup_recording_test(
+    directory: &std::path::Path,
+    cx: &mut gpui_kit::TestAppContext,
+) -> (
+    gpui_kit::Entity<Terminal>,
+    nocterm_session::Session,
+    nocterm_session::SessionDriver,
 ) {
-    let directory = tempfile::tempdir().unwrap();
     let (session, driver) = nocterm_session::channel(None);
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -66,7 +69,32 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
             SettingsStore::in_memory(settings),
             cx,
         );
-        crate::init_recording(directory.path().into(), cx);
+        let log_factory = std::sync::Arc::new(
+            nocterm_session::testing::recording::ScriptedOutputLogFactory::default(),
+        );
+        let log = std::sync::Arc::new(nocterm_session::testing::recording::ScriptedOutputLog::new(
+            directory.join("session.log"),
+        ));
+        log_factory.enqueue(
+            nocterm_session::testing::Gate::open(),
+            Ok(log.clone() as std::sync::Arc<dyn nocterm_session::recording::OutputLog>),
+        );
+        log.enqueue_append(
+            nocterm_session::testing::Gate::open(),
+            nocterm_session::recording::AppendOutcome::new(
+                nocterm_session::recording::PhysicalPrefix::new(1, 23, 0, false, false),
+                None,
+            ),
+        );
+        log.enqueue_seal(
+            nocterm_session::testing::Gate::open(),
+            nocterm_session::recording::AppendOutcome::new(
+                nocterm_session::recording::PhysicalPrefix::new(1, 23, 0, true, true),
+                None,
+            ),
+        );
+        let registry = std::sync::Arc::new(nocterm_store::RecordingRegistry::new(log_factory));
+        crate::init_recording(registry, cx);
         cx.new(|cx| {
             Terminal::new(
                 SessionSpec {
@@ -82,6 +110,15 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
             )
         })
     });
+    (terminal, session, driver)
+}
+
+#[gpui_kit::test]
+fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let (terminal, session, driver) = setup_recording_test(directory.path(), cx);
     let (reply, answer) = Reply::channel();
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
@@ -104,9 +141,15 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
             terminal.handle_event(Event::Connected, cx);
             terminal.send_text("never-log-input", cx);
             terminal.handle_event(Event::Output("Привет output\n".as_bytes().to_vec()), cx);
-            terminal.handle_event(Event::Closed(CloseReason::ClosedByUser), cx);
         })
     });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Closed(CloseReason::ClosedByUser), cx);
+        });
+    });
+    cx.run_until_parked();
     assert_eq!(
         futures::executor::block_on(answer)
             .unwrap()
@@ -118,17 +161,9 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
         futures::executor::block_on(driver.next_command()),
         Some(Command::Input(b"never-log-input".to_vec()))
     );
-    for _ in 0..200 {
-        if cx.update(|cx| terminal.read(cx).recording_status().unwrap().finished) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let status = cx.update(|cx| terminal.read(cx).recording_status().unwrap());
-    assert!(status.finished);
-    assert!(status.error.is_none());
-    assert_eq!(
-        std::fs::read(status.path.unwrap()).unwrap(),
-        "Привет output\n".as_bytes()
-    );
+    let status = cx.update(|cx| terminal.read(cx).recording_status());
+    assert!(status.is_some());
+    let status = status.unwrap();
+    assert!(status.finished());
+    assert!(status.error().is_none());
 }

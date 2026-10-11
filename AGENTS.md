@@ -52,9 +52,9 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
 - Shutdown, link-safe filesystem traversal and test fakes: inspect existing
   implementations before adding one; propose shared extraction for missing reuse.
 
-Layout, settings, snippets, connection state and Runtime chat/favorites use the
-shared persistence service; keyed documents share its driver. Recording remains
-a migration owner. Native filesystem capabilities are
+Layout, settings, snippets, connection state, Runtime chat/favorites and output
+recording use the shared persistence service; keyed documents and append streams
+share its driver. Native filesystem capabilities are
 `nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented by the injected
 `nocterm-localfs` adapter. Session `test-support` supplies shared in-memory port
 fakes for dev-dependencies. `ProgramOpener` requests external local programs; the

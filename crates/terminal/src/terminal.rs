@@ -15,7 +15,7 @@ use nocterm_session::{
     CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
     SessionError, Transport,
 };
-use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
+use nocterm_session::{LocalShellSettings, SshSettings};
 use nocterm_ui::{CursorShape, TerminalSettings};
 use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
@@ -64,9 +64,7 @@ pub struct Terminal {
     codec: crate::codec::TextCodec,
     text_error: Option<String>,
     input_error: RefCell<Option<String>>,
-    recording: Option<crate::recording::Recorder>,
-    recording_options: nocterm_session::LoggingOptions,
-    recording_watch: Option<Task<()>>,
+    recording: crate::OutputRecording,
     pub(crate) credentials: crate::credentials::CredentialState,
     spec: SessionSpec,
     local: bool,
@@ -150,12 +148,10 @@ impl Terminal {
             codec: crate::codec::TextCodec::new(
                 cx.setting::<nocterm_ui::TerminalSettings>().charset,
             ),
-            input_error: RefCell::default(),
             text_error: None,
-            recording: None,
-            recording_options: Default::default(),
-            recording_watch: None,
-            credentials: Default::default(),
+            input_error: RefCell::new(None),
+            recording: crate::OutputRecording::default(),
+            credentials: crate::credentials::CredentialState::default(),
             spec,
             local,
             local_transport,
@@ -238,7 +234,7 @@ impl Terminal {
     /// Opens a new session, replacing the current one.
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(&mut self, cx: &mut Context<Self>) {
-        self.close();
+        self.close(cx);
         if let Err(error) = self.spec.options.validate() {
             self.set_status(
                 Status::Closed(CloseReason::Failed(SessionError::InvalidOptions(error))),
@@ -252,15 +248,16 @@ impl Terminal {
                 .charset
                 .unwrap_or(cx.setting::<TerminalSettings>().charset),
         );
-        self.recording_options = self
+        let mut recording_options = self
             .spec
             .options
             .logging
             .clone()
-            .unwrap_or_else(|| cx.setting::<LoggingOptions>().clone());
-        if self.local_transport.is_some() {
-            self.recording_options.auto_start = false;
+            .unwrap_or_else(|| cx.setting::<nocterm_session::LoggingOptions>().clone());
+        if self.local {
+            recording_options.auto_start = false;
         }
+        self.recording.set_options(recording_options);
         self.text_error = None;
         *self.input_error.borrow_mut() = None;
         let launch = if self.local {
@@ -289,7 +286,9 @@ impl Terminal {
             None if self.local => cx
                 .try_global::<LocalTransportFactory>()
                 .map(|factory| (factory.0)(launch.clone())),
-            None => cx.try_global::<ActiveTransport>().map(|t| t.0.clone()),
+            None => cx
+                .try_global::<ActiveTransport>()
+                .and_then(|t| t.transport.clone()),
         };
         let Some(transport) = transport else {
             self.set_status(
@@ -344,13 +343,7 @@ impl Terminal {
         self.refresh_find(cx);
     }
 
-    /// Ends the session.
-    pub fn close(&mut self) {
-        self.agent_input.borrow_mut().revoke();
-        *self.integration.borrow_mut() = ShellIntegration::default();
-        self.connection_epoch = self.connection_epoch.wrapping_add(1);
-        self._pump = None;
-        self.sync_timer = None;
+    fn close_session(&mut self) {
         if let Some(session) = self.session.take() {
             session.close();
         }
@@ -358,12 +351,22 @@ impl Terminal {
         self.prompt = None;
         self.prompt_epoch = self.prompt_epoch.wrapping_add(1);
         self.clear_credentials();
-        self.stop_recording();
+    }
+
+    /// Ends the session.
+    pub fn close(&mut self, cx: &mut Context<Self>) {
+        self.agent_input.borrow_mut().revoke();
+        *self.integration.borrow_mut() = ShellIntegration::default();
+        self.connection_epoch = self.connection_epoch.wrapping_add(1);
+        self._pump = None;
+        self.sync_timer = None;
+        self.close_session();
+        self.stop_recording(cx);
     }
 
     /// Immediately publishes disconnection, including a cancelled handshake.
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
-        self.close();
+        self.close(cx);
         self.set_status(Status::Closed(CloseReason::ClosedByUser), cx);
         cx.emit(TerminalEvent::Changed);
     }
@@ -374,7 +377,7 @@ impl Terminal {
             Event::Connected => {
                 self.set_status(Status::Connected, cx);
                 self.save_authenticated_credential(cx);
-                if self.recording_options.auto_start {
+                if self.recording.options().auto_start {
                     self.start_recording(cx);
                 }
             }
@@ -389,10 +392,8 @@ impl Terminal {
             }
             Event::Closed(reason) => {
                 let tail = self.codec.decode(&[], true);
-                if let Some(recording) = &mut self.recording {
-                    recording.output(&tail);
-                    recording.stop();
-                }
+                self.recording.output(&tail, cx);
+                self.recording.stop(cx);
                 if !tail.is_empty() {
                     let effects = self.emulator.advance(&tail);
                     self.apply(effects, cx);
@@ -487,22 +488,18 @@ impl Terminal {
             .or_else(|| self.input_error.borrow().clone())
     }
     pub fn recording_status(&self) -> Option<crate::RecordingStatus> {
-        self.recording.as_ref().map(|recording| recording.status())
+        self.recording.status()
     }
     pub fn is_recording(&self) -> bool {
-        self.recording
-            .as_ref()
-            .is_some_and(|recording| recording.active())
+        self.recording.is_active()
     }
-    pub fn stop_recording(&mut self) {
-        if let Some(recording) = &mut self.recording {
-            recording.stop();
-        }
+    pub fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.recording.stop(cx);
+        cx.emit(TerminalEvent::Changed);
     }
     pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
         if self.is_recording() {
-            self.stop_recording();
-            cx.emit(TerminalEvent::Changed);
+            self.stop_recording(cx);
         } else {
             self.start_recording(cx);
         }
@@ -514,54 +511,18 @@ impl Terminal {
         if !self.is_connected() {
             return;
         }
-        let directory = self.recording_options.directory.clone().or_else(|| {
-            cx.try_global::<crate::RecordingDirectory>()
-                .map(|directory| directory.path.clone())
-        });
-        let Some(directory) = directory else {
-            self.text_error =
-                Some("Recording is unavailable: no log directory is configured.".into());
-            cx.emit(TerminalEvent::Changed);
-            return;
-        };
-        match crate::recording::Recorder::start(directory, self.recording_options.max_file_mib) {
-            Ok(recording) => {
-                if let Some(directory) = cx.try_global::<crate::RecordingDirectory>() {
-                    directory.registry.track(&recording);
-                }
-                let mut previous = recording.status();
-                self.recording = Some(recording);
-                self.recording_watch = Some(cx.spawn(async move |this, cx| {
-                    loop {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(250))
-                            .await;
-                        let Ok(active) = this.update(cx, |this, cx| {
-                            let Some(recording) = &this.recording else {
-                                return false;
-                            };
-                            let status = recording.status();
-                            if previous.error != status.error
-                                || previous.path != status.path
-                                || previous.finished != status.finished
-                            {
-                                cx.emit(TerminalEvent::Changed);
-                            }
-                            let active = !status.finished;
-                            previous = status;
-                            active
-                        }) else {
-                            break;
-                        };
-                        if !active {
-                            break;
-                        }
-                    }
-                }));
-            }
-            Err(error) => self.text_error = Some(format!("Could not start recording: {error}")),
+        if let Some(registry) = cx
+            .try_global::<ActiveTransport>()
+            .and_then(|active| active.recording.clone())
+        {
+            self.recording.set_registry(registry);
         }
-        cx.emit(TerminalEvent::Changed);
+        if let Err(error) = self.recording.start(cx) {
+            self.text_error = Some(format!("Could not start recording: {error}"));
+            cx.emit(TerminalEvent::Changed);
+        } else {
+            cx.emit(TerminalEvent::Changed);
+        }
     }
 
     /// Lays the grid out anew, and tells the remote program.
@@ -583,7 +544,7 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        self.close();
+        self.close_session();
     }
 }
 

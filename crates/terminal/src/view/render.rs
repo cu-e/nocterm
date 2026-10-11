@@ -400,7 +400,7 @@ impl Render for TerminalView {
         let command = terminal.is_command();
         let connected = terminal.is_connected();
         let path = recording
-            .and_then(|recording| recording.path)
+            .and_then(|recording| recording.path())
             .map(|path| path.to_string_lossy().into_owned());
         self.on_commands(v_flex(), cx)
             .size_full()

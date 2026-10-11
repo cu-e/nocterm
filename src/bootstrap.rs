@@ -87,7 +87,12 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     );
     nocterm_terminal::init(transport, &ui, cx);
     if persist {
-        nocterm_terminal::init_recording(paths.state_dir().join("logs"), cx);
+        let log_factory = Arc::new(nocterm_local::LocalOutputLogFactory::new(
+            paths.state_dir().join("logs"),
+        ));
+        let registry = Arc::new(nocterm_store::RecordingRegistry::new(log_factory));
+        report_store_registration("recording", registry.register(&shutdown));
+        nocterm_terminal::init_recording(registry, cx);
     }
     if local {
         nocterm_terminal::init_local(

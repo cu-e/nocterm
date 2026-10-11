@@ -5181,11 +5181,13 @@ dependencies = [
  "async-channel",
  "futures",
  "nix 0.28.0",
+ "nocterm-core",
  "nocterm-session",
  "portable-pty",
  "process-wrap",
  "tempfile",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5323,7 +5325,9 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-core",
+ "nocterm-session",
  "nocterm-settings",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
@@ -5334,9 +5338,9 @@ dependencies = [
  "encoding_rs",
  "futures",
  "gpui-kit",
- "nocterm-core",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-vt",
  "nocterm-workspace",
@@ -5344,7 +5348,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
- "uuid",
 ]
 
 [[package]]

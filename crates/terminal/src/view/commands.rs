@@ -125,8 +125,7 @@ impl TerminalView {
 
     fn stop_recording(&mut self, _: &StopRecording, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |t, cx| {
-            t.stop_recording();
-            cx.emit(TerminalEvent::Changed);
+            t.stop_recording(cx);
         });
     }
 
