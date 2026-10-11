@@ -306,7 +306,9 @@ async fn verify_host(
             Err(rejected())
         }
         HostKeyDecision::AcceptOnce => {
-            host_keys.revalidate().map_err(SessionError::Other)?;
+            host_keys
+                .revalidate()
+                .map_err(|e| SessionError::Other(e.to_string()))?;
             Ok(())
         }
         HostKeyDecision::AcceptAndRemember if changed => {
@@ -318,7 +320,7 @@ async fn verify_host(
                 .map_err(|error| {
                     SessionError::Other(format!("Could not save the new host key: {error}"))
                 })?
-                .map_err(SessionError::Other)
+                .map_err(|error| SessionError::Other(error.to_string()))
         }
         HostKeyDecision::AcceptAndRemember => {
             match host_keys.remember(host, target.port, &key) {
