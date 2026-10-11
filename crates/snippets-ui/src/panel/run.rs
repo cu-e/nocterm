@@ -8,25 +8,39 @@ pub(super) struct RunTarget {
     id: EntityId,
     access: Rc<dyn TerminalAccess>,
 }
+#[derive(Debug, thiserror::Error)]
+pub(super) enum TargetError {
+    #[error("Workspace was closed.")]
+    WorkspaceClosed,
+    #[error("Open and focus a terminal to run this snippet.")]
+    NoActiveTerminal,
+    #[error("The selected terminal is unavailable.")]
+    Unavailable,
+    #[error("Show the selected local terminal before running snippets.")]
+    LocalTerminalHidden,
+    #[error("The selected terminal was closed.")]
+    TerminalClosed,
+}
+
 impl SnippetsPanel {
-    pub(super) fn target(&self, cx: &App) -> Result<RunTarget, String> {
-        let workspace = self.workspace.upgrade().ok_or("Workspace was closed.")?;
+    pub(super) fn target(&self, cx: &App) -> Result<RunTarget, TargetError> {
+        let workspace = self
+            .workspace
+            .upgrade()
+            .ok_or(TargetError::WorkspaceClosed)?;
         let workspace = workspace.read(cx);
         let id = workspace
             .active_terminal(cx)
-            .ok_or("Open and focus a terminal to run this snippet.")?;
+            .ok_or(TargetError::NoActiveTerminal)?;
         let entry = workspace
             .terminals(cx)
             .into_iter()
             .find(|entry| entry.item == id && !entry.background)
-            .ok_or("The selected terminal is unavailable.")?;
+            .ok_or(TargetError::Unavailable)?;
         if entry.bottom && !workspace.local_terminal_is_visible(cx) {
-            return Err("Show the selected local terminal before running snippets.".into());
+            return Err(TargetError::LocalTerminalHidden);
         }
-        let info = entry
-            .access
-            .info(cx)
-            .ok_or("The selected terminal was closed.")?;
+        let info = entry.access.info(cx).ok_or(TargetError::TerminalClosed)?;
         Ok(RunTarget {
             id: entry.item,
             access: entry.access,
@@ -37,7 +51,10 @@ impl SnippetsPanel {
         info.status == TerminalStatus::Connected && info.sign_in.is_none() && !info.alt_screen
     }
     pub(super) fn run(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let result = self.target(cx).and_then(|target| {
+        let result = self
+            .target(cx)
+            .map_err(|e| e.to_string())
+            .and_then(|target| {
             if !Self::ready(&target.info) {
                 return Err(
                     "The selected terminal is disconnected, waiting for authentication, or in an alternate screen."
