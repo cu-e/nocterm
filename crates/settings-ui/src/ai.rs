@@ -179,7 +179,7 @@ fn edit_agent(
 ) -> Result<(), String> {
     let mut agent = settings.agents.get(id).cloned().unwrap_or_default();
     edit(&mut agent)?;
-    validate_agent(id, &agent)?;
+    validate_agent(id, &agent).map_err(|e| e.to_string())?;
     if BUILTIN.contains(&id) && agent == AgentServerSettings::default() {
         settings.agents.remove(id);
     } else {
@@ -188,23 +188,40 @@ fn edit_agent(
     Ok(())
 }
 
-pub(crate) fn validate_agent(id: &str, setting: &AgentServerSettings) -> Result<(), String> {
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AgentValidationError {
+    #[error("Agent ids use letters, numbers, underscore or dash, up to 64 characters.")]
+    InvalidId,
+    #[error("{0}: enter an executable.")]
+    MissingCommand(String),
+    #[error(
+        "{0}: inherit credential variables from your environment instead of storing them in settings."
+    )]
+    CredentialOverride(String),
+    #[error(
+        "{0}: environment names must be identifiers; SSH, Nocterm and process injection variables are forbidden."
+    )]
+    InvalidEnv(String),
+    #[error("{0}: values cannot contain NUL.")]
+    ContainsNul(String),
+}
+
+pub(crate) fn validate_agent(
+    id: &str,
+    setting: &AgentServerSettings,
+) -> Result<(), AgentValidationError> {
     if !nocterm_ai::registry::valid_id(id) {
-        return Err(
-            "Agent ids use letters, numbers, underscore or dash, up to 64 characters.".into(),
-        );
+        return Err(AgentValidationError::InvalidId);
     }
     if setting.enabled && setting.command.is_none() && !BUILTIN.contains(&id) {
-        return Err(format!("{id}: enter an executable."));
+        return Err(AgentValidationError::MissingCommand(id.to_owned()));
     }
     if setting
         .env
         .keys()
         .any(|key| nocterm_ai::env::credential_override(key))
     {
-        return Err(format!(
-            "{id}: inherit credential variables from your environment instead of storing them in settings."
-        ));
+        return Err(AgentValidationError::CredentialOverride(id.to_owned()));
     }
     if setting
         .env
@@ -212,9 +229,7 @@ pub(crate) fn validate_agent(id: &str, setting: &AgentServerSettings) -> Result<
         .chain(setting.inherit_env.iter())
         .any(|key| !nocterm_ai::env::valid_name(key) || nocterm_ai::env::blocked(key))
     {
-        return Err(format!(
-            "{id}: environment names must be identifiers; SSH, Nocterm and process injection variables are forbidden."
-        ));
+        return Err(AgentValidationError::InvalidEnv(id.to_owned()));
     }
     if setting
         .command
@@ -224,7 +239,7 @@ pub(crate) fn validate_agent(id: &str, setting: &AgentServerSettings) -> Result<
         .chain(setting.env.values())
         .any(|v| v.contains('\0'))
     {
-        return Err(format!("{id}: values cannot contain NUL."));
+        return Err(AgentValidationError::ContainsNul(id.to_owned()));
     }
     Ok(())
 }
@@ -617,7 +632,7 @@ fn add(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsVi
     let result = if view.ai.agents.contains(&id) {
         Err(format!("An agent named `{id}` already exists."))
     } else {
-        validate_agent(&id, &agent)
+        validate_agent(&id, &agent).map_err(|e| e.to_string())
     };
     match result {
         Ok(()) => {
