@@ -89,12 +89,12 @@ impl OutputRecording {
     pub(crate) fn start(
         &mut self,
         cx: &mut Context<crate::terminal::Terminal>,
-    ) -> Result<(), String> {
+    ) -> Result<(), nocterm_session::recording::RecordingError> {
         if self.is_active() {
             return Ok(());
         }
         let Some(registry) = &self.registry else {
-            return Err("Recording registry is unavailable".into());
+            return Err(nocterm_session::recording::RecordingError::Unavailable);
         };
 
         let rec_options = RecordingOptions {

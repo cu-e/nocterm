@@ -134,7 +134,7 @@ nocterm-session = 1
 nocterm-settings-ui = 12
 nocterm-snippets-ui = 1
 nocterm-ssh = 3
-nocterm-terminal = 19
+nocterm-terminal = 18
 nocterm-workspace = 13
 
 [struct_fields]
