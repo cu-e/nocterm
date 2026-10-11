@@ -122,9 +122,19 @@ impl Key {
                 .unwrap_or_default(),
         }
     }
+}
 
+#[derive(Debug, thiserror::Error)]
+enum SettingWriteError {
+    #[error("Enter a whole number from {start} to {end}.")]
+    InvalidRange { start: u32, end: u32 },
+    #[error("This file type was removed.")]
+    RuleRemoved,
+}
+
+impl Key {
     /// Applies typed text, or explains why it cannot be saved.
-    fn write(self, explorer: &mut ExplorerSettings, value: &str) -> Result<(), String> {
+    fn write(self, explorer: &mut ExplorerSettings, value: &str) -> Result<(), SettingWriteError> {
         let number = |value: &str| {
             let (start, end) = (
                 *INDEXING_ENTRIES_RANGE.start(),
@@ -136,7 +146,7 @@ impl Key {
                 .parse::<u32>()
                 .ok()
                 .filter(|value| INDEXING_ENTRIES_RANGE.contains(value))
-                .ok_or_else(|| format!("Enter a whole number from {start} to {end}."))
+                .ok_or(SettingWriteError::InvalidRange { start, end })
         };
         match self {
             Key::Excluded => explorer.indexing.excluded = text::split_list(value),
@@ -147,7 +157,7 @@ impl Key {
                     .open
                     .rules
                     .get_mut(ix)
-                    .ok_or("This file type was removed.")?;
+                    .ok_or(SettingWriteError::RuleRemoved)?;
                 rule.extensions = text::split_list(value)
                     .into_iter()
                     .map(|extension| extension.trim_start_matches('.').to_owned())
@@ -155,12 +165,12 @@ impl Key {
             }
             Key::Program(_) | Key::RuleProgram(..) => {
                 self.opener_mut(explorer)
-                    .ok_or("This file type was removed.")?
+                    .ok_or(SettingWriteError::RuleRemoved)?
                     .program = value.trim().to_owned();
             }
             Key::Args(_) | Key::RuleArgs(..) => {
                 self.opener_mut(explorer)
-                    .ok_or("This file type was removed.")?
+                    .ok_or(SettingWriteError::RuleRemoved)?
                     .args = text::split_args(value);
             }
         }
@@ -305,7 +315,7 @@ impl ExplorerPage {
                     .detach();
                 }
             }
-            Err(error) => field.error = Some(error.into()),
+            Err(error) => field.error = Some(error.to_string().into()),
         }
         cx.notify();
     }
