@@ -21,8 +21,8 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_ui::SettingsPage;
 use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, form};
-use nocterm_workspace::SettingsPage;
 
 /// How long typing must pause before a field saves.
 const DEBOUNCE: Duration = Duration::from_millis(600);

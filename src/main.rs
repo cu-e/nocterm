@@ -112,7 +112,7 @@ fn register_settings(
     fn open_on<A: gpui_kit::Action>(
         workspace: &mut Workspace,
         id: &'static str,
-        pages: &[nocterm_workspace::SettingsPageSpec],
+        pages: &[nocterm_ui::SettingsPageSpec],
         themes: nocterm_ui::ThemeUi,
     ) {
         let pages = pages.to_vec();

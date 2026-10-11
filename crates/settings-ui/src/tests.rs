@@ -7,8 +7,8 @@ use gpui_kit::{
 use nocterm_ai::AiSettings;
 use nocterm_session::LocalShellSettings;
 use nocterm_settings::SettingsDocument;
+use nocterm_ui::SettingsPage;
 use nocterm_ui::TerminalSettings;
-use nocterm_workspace::SettingsPage;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,

@@ -32,7 +32,6 @@ mod item;
 mod local_terminal;
 mod panel;
 mod right_panel;
-mod settings_page;
 mod tab_groups;
 mod terminal_access;
 mod workspace;
@@ -45,7 +44,6 @@ pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::{LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
-pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
 pub use terminal_access::{
     LiveCommandLease, SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus,
     TerminalText, TextRequest,

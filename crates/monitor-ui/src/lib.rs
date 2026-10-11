@@ -19,7 +19,8 @@ mod settings;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
-use nocterm_workspace::{SettingsPageSpec, Workspace};
+use nocterm_ui::SettingsPageSpec;
+use nocterm_workspace::Workspace;
 
 pub use page::MonitorPage;
 pub use settings::{

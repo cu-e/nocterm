@@ -5,9 +5,9 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_session::Secret;
+use nocterm_ui::SettingsPage;
 use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vault::{CredentialInfo, DeviceCapability, VaultAccess, VaultFuture};
-use nocterm_workspace::SettingsPage;
 use std::sync::Arc;
 
 /// The page's tabs, in order.

@@ -2,11 +2,11 @@ use crate::VaultView;
 use futures::executor::block_on;
 use gpui_kit::{AppContext as _, Entity, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_session::{Secret, Target};
+use nocterm_ui::SettingsPage;
 use nocterm_vault::{
     CredentialBinding, DeviceAvailability, DeviceCapability, DeviceUnlockError, VaultAccess,
     VaultError, testing::ScriptedVaultAccess,
 };
-use nocterm_workspace::SettingsPage;
 use std::sync::Arc;
 fn setup(
     cx: &mut TestAppContext,

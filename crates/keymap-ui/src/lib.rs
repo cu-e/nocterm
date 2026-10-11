@@ -15,7 +15,7 @@ mod rows;
 mod view;
 
 use gpui_kit::AppContext as _;
-use nocterm_workspace::SettingsPageSpec;
+use nocterm_ui::SettingsPageSpec;
 
 pub use view::KeymapView;
 

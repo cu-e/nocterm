@@ -1,4 +1,4 @@
-//! Feature-owned pages embedded in the Settings Item, without feature dependencies.
+//! Feature-owned pages embedded in the Settings view, without feature dependencies.
 use gpui_kit::{
     AnyView, App, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window,
 };
@@ -11,13 +11,15 @@ pub trait SettingsPage: Render + Focusable {
         self.on_deactivate(window, cx);
     }
 }
-/// Type-erased page owned by its host Settings Item.
+
+/// Type-erased page owned by its host Settings view.
 pub trait SettingsPageHandle: 'static {
     fn view(&self) -> AnyView;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn deactivate(&self, window: &mut Window, cx: &mut App);
     fn close(&self, window: &mut Window, cx: &mut App);
 }
+
 impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
     fn view(&self) -> AnyView {
         self.clone().into()
@@ -32,16 +34,19 @@ impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
         self.update(cx, |page, cx| page.on_close(window, cx));
     }
 }
+
 type PageFactory = dyn Fn(&mut Window, &mut App) -> Box<dyn SettingsPageHandle>;
+
 /// A lazy page factory supplied by the composition root.
 #[derive(Clone)]
 pub struct SettingsPageSpec {
     pub id: &'static str,
     pub title: SharedString,
     /// Shown beside the title in the page list.
-    pub icon: nocterm_ui::IconName,
+    pub icon: crate::IconName,
     factory: Rc<PageFactory>,
 }
+
 impl SettingsPageSpec {
     pub fn new<T: SettingsPage>(
         id: &'static str,
@@ -51,14 +56,16 @@ impl SettingsPageSpec {
         Self {
             id,
             title: title.into(),
-            icon: nocterm_ui::IconName::Wrench,
+            icon: crate::IconName::Wrench,
             factory: Rc::new(move |window, cx| Box::new(factory(window, cx))),
         }
     }
-    pub fn with_icon(mut self, icon: nocterm_ui::IconName) -> Self {
+
+    pub fn with_icon(mut self, icon: crate::IconName) -> Self {
         self.icon = icon;
         self
     }
+
     pub fn create(&self, window: &mut Window, cx: &mut App) -> Box<dyn SettingsPageHandle> {
         (self.factory)(window, cx)
     }

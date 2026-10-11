@@ -84,8 +84,8 @@ impl Deps {
     }
 }
 /// Supplies the lazy Explorer page to the application Settings host.
-pub fn settings_page() -> nocterm_workspace::SettingsPageSpec {
-    nocterm_workspace::SettingsPageSpec::new("explorer", "Explorer", |window, cx| {
+pub fn settings_page() -> nocterm_ui::SettingsPageSpec {
+    nocterm_ui::SettingsPageSpec::new("explorer", "Explorer", |window, cx| {
         cx.new(|cx| ExplorerPage::new(window, cx))
     })
     .with_icon(IconName::FolderTree)

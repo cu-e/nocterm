@@ -19,8 +19,8 @@ use gpui_kit::{
     rems,
 };
 use nocterm_monitor::MonitorMetric;
+use nocterm_ui::SettingsPage;
 use nocterm_ui::{SettingsExt as _, SettingsStore, form};
-use nocterm_workspace::SettingsPage;
 
 /// How long typing must pause before a number saves.
 const DEBOUNCE: Duration = Duration::from_millis(600);

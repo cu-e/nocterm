@@ -21,9 +21,8 @@ use gpui_kit::{
 };
 use nocterm_settings::{SettingsDocument, SettingsSection};
 use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, edit_settings, form};
-use nocterm_workspace::{
-    Item, ItemEvent, OpenSettings, SettingsPageHandle, SettingsPageSpec, Workspace,
-};
+use nocterm_ui::{SettingsPageHandle, SettingsPageSpec};
+use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
 
 /// The pages every build has, in navigation order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -104,7 +104,7 @@ background queues; profile drafts carry the original snapshot, so another window
 cannot silently lose its saved changes. Pages share `nocterm_ui::form` sections and rows
 on the terminal's background. Recent snapshots
 coalesce separately from connection opening. Native quit draining is bounded
-best effort within GPUI's shutdown deadline. Workspace's `SettingsPage`/`SettingsPageSpec` contract lets the composition
+best effort within GPUI's shutdown deadline. UI's `SettingsPage`/`SettingsPageSpec` contract lets the composition
 root inject the lazy Vault page without feature-to-feature dependencies; the
 Vault page has Overview, Credentials, Security and Options tabs, and switching
 tabs, deactivation and closure clear typed master passwords. `nocterm-files`

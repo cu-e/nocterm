@@ -5,7 +5,7 @@ use gpui_kit::{
     component::input::{InputEvent, InputState},
 };
 use nocterm_keymap::{Keymap, KeymapError, humanize};
-use nocterm_workspace::SettingsPage;
+use nocterm_ui::SettingsPage;
 
 use crate::rows::default_context;
 
