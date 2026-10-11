@@ -64,7 +64,7 @@ fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Sess
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
             block_on(
                 driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                    error,
+                    error.to_string(),
                 )))),
             );
         }
@@ -81,6 +81,18 @@ fn size(s: PtySize) -> NativeSize {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum LaunchError {
+    #[error("native PTY error: {0}")]
+    Pty(String),
+    #[error("native PTY has no file descriptor")]
+    MissingFd,
+    #[error("file descriptor control error: {0}")]
+    Fcntl(String),
+    #[error("I/O error: {0}")]
+    Io(String),
+}
+
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn start(
     launch: ShellLaunch,
@@ -88,17 +100,17 @@ fn start(
     term: String,
     pty: PtySize,
     driver: nocterm_session::SessionDriver,
-) -> Result<(), String> {
+) -> Result<(), LaunchError> {
     let pair = native_pty_system()
         .openpty(size(pty))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     let program = launch.program.clone().unwrap_or_else(default_shell);
     let mut command = CommandBuilder::new(&program);
     if isolated {
         command.env_clear();
     }
     let integration = if launch.integration && launch.args.is_empty() {
-        prepare_integration(&program, &mut command)?
+        prepare_integration(&program, &mut command).map_err(LaunchError::Io)?
     } else {
         None
     };
@@ -114,12 +126,18 @@ fn start(
     }
     #[cfg(unix)]
     nonblocking(pair.master.as_ref())?;
-    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-    let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     let mut child = pair
         .slave
         .spawn_command(command)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     #[cfg(unix)]
     let child_pid = child.process_id();
     drop(pair.slave);
@@ -203,7 +221,11 @@ fn start(
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 // The owned shell can also exit normally while a background
                 // job retains the slave; stop after its buffered output drains.
-                if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                if child
+                    .try_wait()
+                    .map_err(|e| LaunchError::Io(e.to_string()))?
+                    .is_some()
+                {
                     done_tx.close();
                     break;
                 }
@@ -229,7 +251,7 @@ fn start(
             }
         }
     }
-    let exit = child.wait().map_err(|e| e.to_string())?;
+    let exit = child.wait().map_err(|e| LaunchError::Io(e.to_string()))?;
     done_tx.close();
     // Keep ephemeral scripts alive until the shell has exited.
     drop(integration);
@@ -244,17 +266,15 @@ fn start(
 }
 
 #[cfg(unix)]
-fn nonblocking(master: &dyn portable_pty::MasterPty) -> Result<(), String> {
+fn nonblocking(master: &dyn portable_pty::MasterPty) -> Result<(), LaunchError> {
     use nix::fcntl::{FcntlArg, OFlag, fcntl};
-    let fd = master
-        .as_raw_fd()
-        .ok_or("native PTY has no file descriptor")?;
-    let flags = fcntl(fd, FcntlArg::F_GETFL).map_err(|e| e.to_string())?;
+    let fd = master.as_raw_fd().ok_or(LaunchError::MissingFd)?;
+    let flags = fcntl(fd, FcntlArg::F_GETFL).map_err(|e| LaunchError::Fcntl(e.to_string()))?;
     fcntl(
         fd,
         FcntlArg::F_SETFL(OFlag::from_bits_retain(flags) | OFlag::O_NONBLOCK),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| LaunchError::Fcntl(e.to_string()))?;
     Ok(())
 }
 
