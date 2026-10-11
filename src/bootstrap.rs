@@ -31,9 +31,9 @@ pub(crate) struct Services {
 }
 
 pub(crate) struct Themes {
-    pub(crate) dirs: nocterm_themes::ThemeDirs,
+    pub(crate) library: Arc<dyn nocterm_themes::ThemeLibrary>,
     pub(crate) catalog: nocterm_themes::ThemeCatalog,
-    pub(crate) registry: Arc<nocterm_themes::ZedRegistry>,
+    pub(crate) registry: Arc<dyn nocterm_themes::ThemeRegistry>,
 }
 
 pub(crate) struct VaultSetup {
@@ -47,6 +47,7 @@ pub(crate) struct VaultSetup {
 pub(crate) struct Booted {
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
+    pub(crate) themes: nocterm_ui::ThemeUi,
     /// The vault, when it opened; credentials and its settings depend on it.
     pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
@@ -73,13 +74,16 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     } = services;
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
+    let base = tokens.clone();
     let ui = nocterm_ui::init(tokens, settings, cx);
     let shutdown = nocterm_store::ShutdownCoordinator::default();
     report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
-    if let Some(themes) = themes {
-        nocterm_ui::init_themes(themes.dirs, themes.catalog, cx);
-        nocterm_settings_ui::init_theme_registry(themes.registry, cx);
-    }
+    let (library, registry, catalog) = match themes {
+        Some(themes) => (Some(themes.library), Some(themes.registry), themes.catalog),
+        None => (None, None, nocterm_themes::ThemeCatalog::default()),
+    };
+    let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
+    let themes = nocterm_ui::ThemeUi::install(ui.settings().clone(), themes, base, cx);
     let layout = nocterm_ui::LayoutMemory::init(
         stored.map(|paths| paths.state_dir().join("layout.json")),
         &shutdown,
@@ -119,6 +123,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
+        themes,
     };
     crate::application::register(paths, booted.clone(), cx);
     booted
@@ -200,7 +205,7 @@ pub(crate) fn build_workspace(
     let vault = booted.vault.as_deref();
     workspace.set_session_factory(nocterm_terminal::Factory);
     nocterm_connections::register(workspace, window, cx);
-    crate::register_settings(workspace, vault);
+    crate::register_settings(workspace, vault, booted.themes.clone());
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     nocterm_snippets_ui::register(workspace, window, cx);
@@ -214,7 +219,14 @@ pub(crate) fn build_workspace(
             .prompt_on_startup
     {
         let pages = vec![nocterm_vault_ui::settings_page(vault)];
-        nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+        nocterm_settings_ui::open_page(
+            workspace,
+            "vault",
+            &pages,
+            booted.themes.clone(),
+            window,
+            cx,
+        );
     }
 }
 

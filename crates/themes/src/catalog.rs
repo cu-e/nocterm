@@ -1,9 +1,10 @@
 //! Deterministic, non-fatal discovery of user files and managed extensions.
-use crate::{Appearance, ExtensionInfo, FILE_LIMIT, ThemeError, ZedTheme, parse_family, valid_id};
+use crate::{
+    Appearance, ExtensionInfo, FILE_LIMIT, ThemeDiagnostic, ThemeError, ThemeOperationError,
+    ZedTheme, parse_family, valid_id,
+};
 use std::{
     collections::BTreeSet,
-    fs,
-    io::{self, Read},
     path::{Path, PathBuf},
 };
 
@@ -29,7 +30,7 @@ pub struct ThemeEntry {
 #[derive(Debug, Clone)]
 pub struct ThemeProblem {
     pub file: PathBuf,
-    pub error: String,
+    pub error: ThemeDiagnostic,
 }
 #[derive(Debug, Clone, Default)]
 pub struct ThemeCatalog {
@@ -52,83 +53,59 @@ impl ThemeCatalog {
             .iter()
             .find(|e| e.name == name && e.appearance == appearance)
     }
-    pub fn load(dirs: &ThemeDirs) -> Self {
-        let mut catalog = Self::default();
-        let mut names = BTreeSet::from(["Nocterm Default".to_owned()]);
-        for path in catalog.paths(&dirs.user) {
-            if is_plain_file(&path) && path.extension().is_some_and(|x| x == "json") {
-                catalog.file(&path, ThemeSource::User(path.clone()), &mut names);
-            }
+}
+/// Parses supplied documents in caller-defined precedence, without opening paths.
+pub struct CatalogBuilder {
+    entries: Vec<ThemeEntry>,
+    packs: Vec<ExtensionInfo>,
+    problems: Vec<ThemeProblem>,
+    names: BTreeSet<String>,
+}
+impl CatalogBuilder {
+    pub fn new() -> Self {
+        Self {
+            names: BTreeSet::from(["Nocterm Default".into()]),
+            entries: Vec::new(),
+            packs: Vec::new(),
+            problems: Vec::new(),
         }
-        for directory in catalog.paths(&dirs.installed) {
-            let Some(id) = directory
-                .file_name()
-                .and_then(|x| x.to_str())
-                .filter(|x| valid_id(x))
-            else {
-                continue;
-            };
-            if !fs::symlink_metadata(&directory)
-                .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
-            {
-                continue;
-            }
-            let manifest_path = directory.join("extension.toml");
-            let manifest = read_bounded(&manifest_path).and_then(|b| {
-                let text =
-                    std::str::from_utf8(&b).map_err(|e| ThemeError::Invalid(e.to_string()))?;
-                toml::from_str::<ExtensionInfo>(text)
-                    .map_err(|e| ThemeError::Invalid(e.to_string()))
-            });
-            match manifest {
-                Ok(pack) if pack.id == id => {
-                    let source = ThemeSource::Installed {
-                        id: pack.id.clone(),
-                        version: pack.version.clone(),
-                    };
-                    for path in catalog.paths(&directory.join("themes")) {
-                        if is_plain_file(&path) && path.extension().is_some_and(|x| x == "json") {
-                            catalog.file(&path, source.clone(), &mut names);
-                        }
-                    }
-                    catalog.packs.push(pack);
-                }
-                Ok(_) => catalog.problem(&manifest_path, "manifest id does not match directory"),
-                Err(e) => catalog.problem(&manifest_path, e.to_string()),
-            }
-        }
-        catalog.entries.sort_by(|a, b| a.name.cmp(&b.name));
-        catalog
     }
-    fn paths(&mut self, directory: &Path) -> Vec<PathBuf> {
-        match fs::read_dir(directory) {
-            Ok(entries) => {
-                let mut paths = Vec::new();
-                for entry in entries {
-                    match entry {
-                        Ok(e) => paths.push(e.path()),
-                        Err(e) => self.problem(directory, e.to_string()),
-                    }
-                }
-                paths.sort();
-                paths
+    pub fn manifest(&mut self, path: &Path, id: &str, bytes: &[u8]) -> Option<ThemeSource> {
+        let result = self.parse_manifest(id, bytes);
+        match result {
+            Ok(pack) => {
+                let source = ThemeSource::Installed {
+                    id: pack.id.clone(),
+                    version: pack.version.clone(),
+                };
+                self.packs.push(pack);
+                Some(source)
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => {
-                self.problem(directory, e.to_string());
-                Vec::new()
+            Err(error) => {
+                self.problem(path, error.into());
+                None
             }
         }
     }
-    fn file(&mut self, file: &Path, source: ThemeSource, names: &mut BTreeSet<String>) {
-        match read_bounded(file).and_then(|b| parse_family(&b)) {
+    fn parse_manifest(&self, id: &str, bytes: &[u8]) -> Result<ExtensionInfo, ThemeError> {
+        if bytes.len() > FILE_LIMIT {
+            return Err(ThemeError::FileLimit);
+        }
+        if !valid_id(id) {
+            return Err(ThemeError::Identity);
+        }
+        let pack: ExtensionInfo = toml::from_str(std::str::from_utf8(bytes)?)?;
+        if pack.id != id {
+            return Err(ThemeError::ManifestIdentity);
+        }
+        Ok(pack)
+    }
+    pub fn document(&mut self, path: &Path, source: ThemeSource, bytes: &[u8]) {
+        match parse_family(bytes) {
             Ok(family) => {
                 for theme in family.themes {
-                    if !names.insert(theme.name.clone()) {
-                        self.problem(
-                            file,
-                            format!("duplicate or reserved theme name: {}", theme.name),
-                        );
+                    if !self.names.insert(theme.name.clone()) {
+                        self.problem(path, ThemeError::Duplicate(theme.name).into());
                         continue;
                     }
                     self.entries.push(ThemeEntry {
@@ -141,31 +118,29 @@ impl ThemeCatalog {
                     });
                 }
             }
-            Err(e) => self.problem(file, e.to_string()),
+            Err(error) => self.problem(path, error.into()),
         }
     }
-    fn problem(&mut self, file: &Path, error: impl Into<String>) {
+    pub fn problem(&mut self, path: &Path, error: ThemeOperationError) {
         self.problems.push(ThemeProblem {
-            file: file.into(),
-            error: error.into(),
+            file: path.into(),
+            error: ThemeDiagnostic::new(error),
         });
     }
-}
-fn is_plain_file(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
-}
-fn read_bounded(path: &Path) -> Result<Vec<u8>, ThemeError> {
-    if !is_plain_file(path) {
-        return Err(ThemeError::Invalid("expected a regular file".into()));
+    pub fn finish(mut self) -> ThemeCatalog {
+        self.entries.sort_by(|a, b| a.name.cmp(&b.name));
+        ThemeCatalog {
+            entries: self.entries,
+            packs: self.packs,
+            problems: self.problems,
+        }
     }
-    let mut bytes = Vec::new();
-    fs::File::open(path)?
-        .take(FILE_LIMIT as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > FILE_LIMIT {
-        return Err(ThemeError::Invalid("file exceeds 8 MiB".into()));
-    }
-    Ok(bytes)
 }
 #[cfg(test)]
 mod tests;
+
+impl Default for CatalogBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -75,6 +75,31 @@ fn fixture_with_vault(
         // The vault worker is a real thread; let its completions wake the test scheduler.
         cx.executor().allow_parking();
     }
+    fixture_with_theme_option(cx, vault_ready, None)
+}
+
+fn fixture_with_themes(
+    cx: &mut TestAppContext,
+    themes: Arc<nocterm_themes::test_support::InMemoryThemes>,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<TerminalView>,
+    Arc<MockTransport>,
+) {
+    fixture_with_theme_option(cx, false, Some(themes))
+}
+
+fn fixture_with_theme_option(
+    cx: &mut TestAppContext,
+    vault_ready: bool,
+    themes: Option<Arc<nocterm_themes::test_support::InMemoryThemes>>,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<TerminalView>,
+    Arc<MockTransport>,
+) {
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
@@ -82,7 +107,23 @@ fn fixture_with_vault(
         settings.update::<nocterm_session::LocalShellSettings>(|section| {
             section.cwd = Some(directory.path().to_string_lossy().into_owned())
         });
-        let booted = boot(directory, settings, transport.clone(), vault_ready, cx);
+        let themes = themes.map(|themes| {
+            use nocterm_themes::ThemeLibrary as _;
+            crate::bootstrap::Themes {
+                catalog: themes.scan(),
+                library: themes.clone(),
+                registry: themes,
+            }
+        });
+        let booted = boot_with_ports(
+            directory,
+            settings,
+            transport.clone(),
+            vault_ready,
+            None,
+            themes,
+            cx,
+        );
         if let Some(installed) = booted.vault.as_ref() {
             let service = installed.service();
             // Creates the vault with a master password and leaves it locked.
@@ -143,6 +184,17 @@ fn boot_with_files(
     files: Option<nocterm_files::Deps>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    boot_with_ports(directory, settings, transport, vault, files, None, cx)
+}
+fn boot_with_ports(
+    directory: tempfile::TempDir,
+    settings: nocterm_settings::SettingsDocument,
+    transport: Arc<MockTransport>,
+    vault: bool,
+    files: Option<nocterm_files::Deps>,
+    themes: Option<crate::bootstrap::Themes>,
+    cx: &mut gpui_kit::App,
+) -> crate::bootstrap::Booted {
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
         file: directory.path().join("vault.bin"),
@@ -160,11 +212,8 @@ fn boot_with_files(
             transport,
             local: false,
             files,
-            themes: None,
+            themes,
             agent: nocterm_agent::AgentServices {
-                terminal_auth: None,
-                private_dirs: Vec::new(),
-                shared_dirs: Vec::new(),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
                     paths.clone(),
@@ -173,17 +222,19 @@ fn boot_with_files(
                         args: vec![crate::AGENT_BRIDGE.into()],
                     },
                 )),
-                storage: {
-                    let repository =
-                        Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
-                    nocterm_agent_runtime::AgentStorage::prepared(
-                        repository.clone(),
-                        repository,
-                        Ok(Default::default()),
-                    )
-                },
+                storage: futures::executor::block_on(nocterm_agent_runtime::AgentStorage::prepare(
+                    Arc::new(nocterm_agent_storage::FileAgentStateRepository::new(
+                        paths.state_dir().join("agents.toml"),
+                    )),
+                    Arc::new(nocterm_agent_storage::FileChatRepository::new(
+                        paths.state_dir().join("agent-chats"),
+                    )),
+                )),
                 codex_home: None,
                 workdir: paths.state_dir().join("agent-workspace"),
+                terminal_auth: None,
+                private_dirs: Vec::new(),
+                shared_dirs: Vec::new(),
             },
             paths,
             vault,

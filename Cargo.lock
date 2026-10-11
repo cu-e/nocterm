@@ -4935,7 +4935,9 @@ dependencies = [
  "nocterm-ssh",
  "nocterm-store",
  "nocterm-terminal",
+ "nocterm-theme-service",
  "nocterm-themes",
+ "nocterm-themes-registry",
  "nocterm-transfer-runtime",
  "nocterm-transfers",
  "nocterm-ui",
@@ -5283,17 +5285,16 @@ dependencies = [
 name = "nocterm-settings-ui"
 version = "0.0.0"
 dependencies = [
- "flate2",
  "gpui-kit",
  "nocterm-ai",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-theme-service",
  "nocterm-themes",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",
  "serde_json",
- "tar",
  "tempfile",
 ]
 
@@ -5374,18 +5375,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-theme-service"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-themes",
+ "serde_json",
+]
+
+[[package]]
 name = "nocterm-themes"
 version = "0.0.0"
 dependencies = [
- "flate2",
- "gpui-pre-reqwest",
  "nocterm-design",
  "serde",
  "serde_json",
  "serde_json_lenient",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-themes-registry"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "gpui-pre-reqwest",
+ "nocterm-core",
+ "nocterm-themes",
+ "serde",
+ "serde_json",
  "tar",
  "tempfile",
- "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -5423,6 +5446,7 @@ dependencies = [
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
+ "nocterm-theme-service",
  "nocterm-themes",
  "schemars 1.2.2",
  "serde",

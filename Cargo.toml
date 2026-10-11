@@ -37,6 +37,8 @@ nocterm-terminal.workspace = true
 nocterm-transfers.workspace = true
 nocterm-transfer-runtime.workspace = true
 nocterm-themes.workspace = true
+nocterm-themes-registry.workspace = true
+nocterm-theme-service.workspace = true
 nocterm-vault-ui.workspace = true
 nocterm-vault.workspace = true
 nocterm-vault-store.workspace = true
@@ -118,6 +120,7 @@ nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
+nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -174,6 +177,8 @@ nocterm-terminal = { path = "crates/terminal" }
 nocterm-transfers = { path = "crates/transfers" }
 nocterm-transfer-runtime = { path = "crates/transfer-runtime" }
 nocterm-themes = { path = "crates/themes" }
+nocterm-themes-registry = { path = "crates/themes-registry" }
+nocterm-theme-service = { path = "crates/theme-service" }
 nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
 nocterm-workspace = { path = "crates/workspace" }

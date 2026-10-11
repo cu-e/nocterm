@@ -1,21 +1,17 @@
 //! Light/dark pickers and theme management in the native Appearance form.
 use crate::{SettingsView, pages};
 use gpui_kit::{
-    AnyElement, App, BorrowAppContext as _, Context, Entity, Global, SharedString, Subscription,
-    Window,
+    AnyElement, App, Context, Entity, SharedString, Subscription, Window,
     component::{
         IndexPath, Sizable as _,
         select::{SearchableVec, Select, SelectEvent, SelectState},
     },
     prelude::*,
 };
-use nocterm_themes::{Appearance, ThemeRegistry};
-use nocterm_ui::{ActiveThemes as _, SettingsExt as _, Themes, form};
+use nocterm_themes::Appearance;
 use nocterm_ui::{AppearanceMode, UiLayout};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use nocterm_ui::{SettingsExt as _, ThemeUi, form};
+use std::collections::BTreeMap;
 mod browser;
 pub(crate) mod commands;
 mod installed;
@@ -23,33 +19,9 @@ mod installed;
 mod tests;
 use browser::ThemeBrowser;
 
-#[derive(Default)]
-struct Operations(BTreeSet<String>);
-impl Global for Operations {}
-fn busy(id: &str, cx: &App) -> bool {
-    cx.try_global::<Operations>()
-        .is_some_and(|o| o.0.contains(id))
-}
-fn begin(id: String, cx: &mut App) {
-    cx.update_global::<Operations, _>(|o, _| {
-        o.0.insert(id);
-    });
-}
-fn end(id: &str, cx: &mut App) {
-    cx.update_global::<Operations, _>(|o, _| {
-        o.0.remove(id);
-    });
-}
-
 type Picker = Entity<SelectState<SearchableVec<String>>>;
-/// The app provides its client without changing Settings registration APIs.
-struct Registry(Arc<dyn ThemeRegistry>);
-impl Global for Registry {}
-pub fn init_theme_registry(registry: Arc<dyn ThemeRegistry>, cx: &mut App) {
-    cx.set_global(Registry(registry));
-}
-
 pub(crate) struct AppearancePage {
+    themes: ThemeUi,
     light: Picker,
     dark: Picker,
     browser: Entity<ThemeBrowser>,
@@ -58,13 +30,14 @@ pub(crate) struct AppearancePage {
     _subscriptions: Vec<Subscription>,
 }
 impl AppearancePage {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<SettingsView>) -> Self {
-        if !cx.has_global::<Operations>() {
-            cx.set_global(Operations::default());
-        }
+    pub(crate) fn new(
+        themes: ThemeUi,
+        window: &mut Window,
+        cx: &mut Context<SettingsView>,
+    ) -> Self {
         let picker = |appearance, window: &mut Window, cx: &mut Context<SettingsView>| {
-            let items = choices(appearance, cx);
-            let selected = selection(appearance, cx);
+            let items = choices(&themes, appearance, cx);
+            let selected = selection(&themes, appearance, cx);
             let index = items.iter().position(|name| name == &selected).unwrap_or(0);
             cx.new(|cx| {
                 SelectState::new(
@@ -96,17 +69,13 @@ impl AppearancePage {
             );
             subscriptions.push(subscription);
         }
-        if cx.has_global::<Themes>() {
-            let subscription = cx.observe_global_in::<Themes>(window, |this, window, cx| {
-                this.appearance.sync(window, cx);
-                cx.notify();
-            });
-            subscriptions.push(subscription);
-        }
-        subscriptions.push(cx.observe_global::<Operations>(|_, cx| cx.notify()));
-        let registry = cx.try_global::<Registry>().map(|r| r.0.clone());
-        let browser = cx.new(|cx| ThemeBrowser::new(registry, window, cx));
+        subscriptions.push(themes.themes().observe_in(window, cx, |this, window, cx| {
+            this.appearance.sync(window, cx);
+            cx.notify();
+        }));
+        let browser = cx.new(|cx| ThemeBrowser::new(themes.clone(), window, cx));
         Self {
+            themes,
             light,
             dark,
             browser,
@@ -120,8 +89,8 @@ impl AppearancePage {
             (&self.light, Appearance::Light),
             (&self.dark, Appearance::Dark),
         ] {
-            let items = choices(appearance, cx);
-            let selected = selection(appearance, cx);
+            let items = choices(&self.themes, appearance, cx);
+            let selected = selection(&self.themes, appearance, cx);
             picker.update(cx, |state, cx| {
                 state.set_items(SearchableVec::new(items), window, cx);
                 state.set_selected_value(&selected, window, cx);
@@ -129,25 +98,34 @@ impl AppearancePage {
         }
     }
 }
-fn selection(appearance: Appearance, cx: &App) -> String {
+fn selection(themes: &ThemeUi, appearance: Appearance, cx: &App) -> String {
     let name = match appearance {
-        Appearance::Light => &cx.setting::<nocterm_ui::AppearanceSettings>().light_theme,
-        Appearance::Dark => &cx.setting::<nocterm_ui::AppearanceSettings>().dark_theme,
+        Appearance::Light => {
+            &themes
+                .settings()
+                .setting::<nocterm_ui::AppearanceSettings>(cx)
+                .light_theme
+        }
+        Appearance::Dark => {
+            &themes
+                .settings()
+                .setting::<nocterm_ui::AppearanceSettings>(cx)
+                .dark_theme
+        }
     };
     name.as_ref()
-        .filter(|name| {
-            cx.themes()
-                .is_some_and(|t| t.catalog.find(name, appearance).is_some())
-        })
+        .filter(|name| themes.themes().catalog(cx).find(name, appearance).is_some())
         .cloned()
         .unwrap_or("Nocterm Default".into())
 }
-fn choices(appearance: Appearance, cx: &App) -> Vec<String> {
+fn choices(themes: &ThemeUi, appearance: Appearance, cx: &App) -> Vec<String> {
     std::iter::once("Nocterm Default".into())
         .chain(
-            cx.themes()
-                .into_iter()
-                .flat_map(|t| t.catalog.entries())
+            themes
+                .themes()
+                .catalog(cx)
+                .entries()
+                .iter()
                 .filter(|e| e.appearance == appearance)
                 .map(|e| e.name.clone()),
         )

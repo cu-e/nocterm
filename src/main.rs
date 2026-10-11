@@ -94,7 +94,11 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
     Ok(())
 }
 
-fn register_settings(workspace: &mut Workspace, vault: Option<&nocterm_vault_ui::Installed>) {
+fn register_settings(
+    workspace: &mut Workspace,
+    vault: Option<&nocterm_vault_ui::Installed>,
+    themes: nocterm_ui::ThemeUi,
+) {
     let mut pages = vec![
         nocterm_keymap_ui::settings_page(),
         nocterm_monitor_ui::settings_page(),
@@ -103,32 +107,39 @@ fn register_settings(workspace: &mut Workspace, vault: Option<&nocterm_vault_ui:
     if let Some(vault) = vault {
         pages.push(nocterm_vault_ui::settings_page(vault));
     }
-    nocterm_settings_ui::register_with_pages(workspace, pages.clone());
+    nocterm_settings_ui::register_with_pages(workspace, pages.clone(), themes.clone());
     /// Opens Settings at page `id` when `A` runs.
     fn open_on<A: gpui_kit::Action>(
         workspace: &mut Workspace,
         id: &'static str,
         pages: &[nocterm_workspace::SettingsPageSpec],
+        themes: nocterm_ui::ThemeUi,
     ) {
         let pages = pages.to_vec();
         workspace.register_action(move |_, _: &A, window, cx| {
             let workspace = cx.entity().downgrade();
             let pages = pages.clone();
+            let themes = themes.clone();
             window.defer(cx, move |window, cx| {
                 let _ = workspace.update(cx, |workspace, cx| {
-                    nocterm_settings_ui::open_page(workspace, id, &pages, window, cx);
+                    nocterm_settings_ui::open_page(workspace, id, &pages, themes, window, cx);
                 });
             });
         });
     }
-    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages);
-    open_on::<OpenAiSettings>(workspace, "ai", &pages);
-    open_on::<OpenSSHSettings>(workspace, "ssh", &pages);
-    open_on::<OpenKeymap>(workspace, "keymap", &pages);
-    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages);
-    open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages);
+    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages, themes.clone());
+    open_on::<OpenAiSettings>(workspace, "ai", &pages, themes.clone());
+    open_on::<OpenSSHSettings>(workspace, "ssh", &pages, themes.clone());
+    open_on::<OpenKeymap>(workspace, "keymap", &pages, themes.clone());
+    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(
+        workspace,
+        "monitor",
+        &pages,
+        themes.clone(),
+    );
+    open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages, themes.clone());
     if vault.is_some() {
-        open_on::<OpenVault>(workspace, "vault", &pages);
+        open_on::<OpenVault>(workspace, "vault", &pages, themes.clone());
     }
 }
 

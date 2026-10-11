@@ -5,7 +5,6 @@
 
 mod ai;
 mod appearance;
-pub use appearance::init_theme_registry;
 mod field;
 mod pages;
 
@@ -74,20 +73,25 @@ impl Page {
 }
 
 /// Installs Settings with its built-in pages.
-pub fn register(workspace: &mut Workspace) {
-    register_with_pages(workspace, Vec::new());
+pub fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi) {
+    register_with_pages(workspace, Vec::new(), themes);
 }
 /// Installs Settings and feature-owned pages supplied by the application.
-pub fn register_with_pages(workspace: &mut Workspace, pages: Vec<SettingsPageSpec>) {
-    appearance::commands::register(workspace);
+pub fn register_with_pages(
+    workspace: &mut Workspace,
+    pages: Vec<SettingsPageSpec>,
+    themes: nocterm_ui::ThemeUi,
+) {
+    appearance::commands::register(workspace, themes.clone());
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
+        let themes = themes.clone();
         // Popup dismissal restores its old action context first. Opening the
         // Item afterwards lets its own field keep keyboard focus.
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                open_page(workspace, "", &pages, window, cx);
+                open_page(workspace, "", &pages, themes, window, cx);
             });
         });
     });
@@ -97,11 +101,12 @@ pub fn open_page(
     workspace: &mut Workspace,
     id: &str,
     pages: &[SettingsPageSpec],
+    themes: nocterm_ui::ThemeUi,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
-        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), window, cx));
+        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), themes, window, cx));
         workspace.add_item(item.clone(), window, cx);
         item
     });
@@ -135,10 +140,11 @@ pub struct SettingsView {
 impl SettingsView {
     #[cfg(test)]
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_pages(Vec::new(), window, cx)
+        Self::with_pages(Vec::new(), crate::tests::theme_ui(cx), window, cx)
     }
     fn with_pages(
         pages: Vec<SettingsPageSpec>,
+        themes: nocterm_ui::ThemeUi,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -149,7 +155,7 @@ impl SettingsView {
         let options = cx.observe_in(&session_options, window, |this, _, window, cx| {
             this.schedule_session_options(window, cx);
         });
-        let appearance = appearance::AppearancePage::new(window, cx);
+        let appearance = appearance::AppearancePage::new(themes, window, cx);
         let mut this = Self {
             selected_page: 0,
             pages: pages.into_iter().map(|spec| (spec, None)).collect(),

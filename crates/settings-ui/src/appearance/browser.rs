@@ -10,12 +10,12 @@ use gpui_kit::{
     },
     prelude::*,
 };
-use nocterm_themes::{ExtensionInfo, ThemeRegistry, install_archive};
-use nocterm_ui::{ActiveThemes as _, Themes, form, reload_themes};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use nocterm_themes::ExtensionInfo;
+use nocterm_ui::{ThemeUi, form};
+use std::time::Duration;
 
 pub(super) struct ThemeBrowser {
-    registry: Option<Arc<dyn ThemeRegistry>>,
+    themes: ThemeUi,
     input: Entity<InputState>,
     results: Vec<ExtensionInfo>,
     searched: bool,
@@ -23,30 +23,23 @@ pub(super) struct ThemeBrowser {
     error: Option<SharedString>,
     search: Option<Task<()>>,
     generation: u64,
-    pub(super) errors: BTreeMap<String, SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 impl ThemeBrowser {
-    pub(super) fn new(
-        registry: Option<Arc<dyn ThemeRegistry>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(super) fn new(themes: ThemeUi, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Zed themes"));
         let changed = cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
             InputEvent::Change => this.search(true, false, cx),
             InputEvent::PressEnter { .. } => this.search(false, false, cx),
             _ => {}
         });
-        let mut subscriptions = vec![
-            changed,
-            cx.observe_global::<super::Operations>(|_, cx| cx.notify()),
-        ];
-        if cx.has_global::<Themes>() {
-            subscriptions.push(cx.observe_global::<Themes>(|_, cx| cx.notify()));
-        }
+        let view = cx.entity().downgrade();
+        let observed = themes.themes().observe(cx, move |cx| {
+            let _ = view.update(cx, |_, cx| cx.notify());
+        });
+        let subscriptions = vec![changed, observed];
         Self {
-            registry,
+            themes,
             input,
             results: Vec::new(),
             searched: false,
@@ -54,7 +47,6 @@ impl ThemeBrowser {
             error: None,
             search: None,
             generation: 0,
-            errors: BTreeMap::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -62,7 +54,7 @@ impl ThemeBrowser {
         self.generation += 1;
         let generation = self.generation;
         self.search = None;
-        let Some(registry) = self.registry.clone() else {
+        let Some(registry) = self.themes.themes().registry(cx) else {
             self.error =
                 Some("Theme registry is unavailable. Add JSON files to the themes folder.".into());
             cx.notify();
@@ -106,49 +98,14 @@ impl ThemeBrowser {
         cx.notify();
     }
     pub(super) fn install(&mut self, extension: ExtensionInfo, cx: &mut Context<Self>) {
-        if super::busy(&extension.id, cx) {
-            return;
-        }
-        let Some(registry) = self.registry.clone() else {
-            return;
-        };
-        let Some(themes) = cx.themes() else {
-            return;
-        };
-        let directory = themes.dirs.installed.clone();
-        let id = extension.id.clone();
-        self.errors.remove(&id);
-        super::begin(id.clone(), cx);
-        let work = cx.background_executor().spawn(async move {
-            let bytes = registry.download(&extension)?;
-            install_archive(&directory, &extension, &bytes)
-        });
-        cx.spawn(async move |this, cx| {
-            match work.await {
-                Ok(()) => cx.update(reload_themes).await,
-                Err(error) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.errors.insert(
-                            id.clone(),
-                            format!("Could not install: {error}. Try again.").into(),
-                        );
-                        cx.notify();
-                    });
-                }
-            }
-            cx.update(|cx| super::end(&id, cx));
-        })
-        .detach();
-        cx.notify();
+        self.themes.themes().install_pack(extension, cx).detach();
     }
     pub(super) fn status(&self, extension: &ExtensionInfo, cx: &App) -> (&'static str, bool) {
-        if super::busy(&extension.id, cx) {
+        if self.themes.themes().busy(&extension.id, cx) {
             return ("Working…", true);
         }
-        match cx
-            .themes()
-            .and_then(|t| t.catalog.packs().iter().find(|p| p.id == extension.id))
-        {
+        let catalog = self.themes.themes().catalog(cx);
+        match catalog.packs().iter().find(|p| p.id == extension.id) {
             Some(pack) if pack.version == extension.version => ("Installed", true),
             Some(_) => ("Update", false),
             None => ("Install", false),
@@ -160,7 +117,7 @@ impl Render for ThemeBrowser {
         let mut content=v_flex().w_full().gap_2().py_3()
             .child(form::note("Search sends your query to zed.dev. Browse and Install connect only when you choose them.",cx))
             .child(h_flex().gap_2().child(gpui_kit::div().flex_1().min_w_0().child(Input::new(&self.input).small()))
-                .child(Button::new("browse-zed-themes").small().ghost().label("Browse").disabled(self.registry.is_none()).on_click(cx.listener(|this,_,_,cx|this.search(false,true,cx)))))
+                .child(Button::new("browse-zed-themes").small().ghost().label("Browse").disabled(self.themes.themes().registry(cx).is_none()).on_click(cx.listener(|this,_,_,cx|this.search(false,true,cx)))))
             .when(self.busy,|el|el.child(form::note("Searching Zed…",cx)))
             .when_some(self.error.clone(),|el,error|el.child(form::error_text(error,cx)));
         if !self.searched {
@@ -198,9 +155,12 @@ impl Render for ThemeBrowser {
                         ),
                         cx,
                     ))
-                    .when_some(self.errors.get(&extension.id).cloned(), |el, error| {
-                        el.child(form::error_text(error, cx))
-                    }),
+                    .when_some(
+                        self.themes.themes().errors(cx).get(&extension.id).map(|e| {
+                            SharedString::from(format!("Could not install: {e}. Try again."))
+                        }),
+                        |el, error| el.child(form::error_text(error, cx)),
+                    ),
             );
         }
         if self.results.len() == 50 {

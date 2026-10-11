@@ -28,4 +28,5 @@ acceptance; a later record supersedes an earlier one.
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |
 | [0026](0026-workspace-state-owners.md) | Workspace transitions belong to private state owners with explicit shared layout |
 | [0027](0027-connection-observation-ports.md) | Pure connection observation contracts and network I/O adapter |
+| [0028](0028-theme-library-boundary.md) | Pure theme domain model, adapter registry and theme service |
 | [0029](0029-output-recording-shared-driver.md) | Bounded append persistence and output recording |

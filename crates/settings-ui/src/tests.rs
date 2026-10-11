@@ -23,6 +23,21 @@ pub(super) fn init(cx: &mut App) {
     );
 }
 
+pub(super) fn theme_ui(cx: &mut App) -> nocterm_ui::ThemeUi {
+    let ready = nocterm_ui::UiReady::installed(cx).unwrap();
+    let themes = nocterm_theme_service::ThemesHandle::install(
+        None,
+        None,
+        nocterm_themes::ThemeCatalog::default(),
+        cx,
+    );
+    nocterm_ui::ThemeUi::install(
+        ready.settings().clone(),
+        themes,
+        nocterm_ui::DesignTokens::builtin(),
+        cx,
+    )
+}
 pub(super) fn open(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
     cx.update(|cx| {
         init(cx);
@@ -275,11 +290,11 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
     });
     let (handle, workspace) = cx.update(|cx| {
         init(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
                 let mut workspace = Workspace::new(deps, window, cx);
-                register_with_pages(&mut workspace, vec![descriptor.clone()]);
+                register_with_pages(&mut workspace, vec![descriptor.clone()], theme_ui(cx));
                 workspace
             })
         })
@@ -298,7 +313,14 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
     };
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            open_page(workspace, "", std::slice::from_ref(&descriptor), window, cx);
+            open_page(
+                workspace,
+                "",
+                std::slice::from_ref(&descriptor),
+                theme_ui(cx),
+                window,
+                cx,
+            );
         });
         window.render_frame(cx);
         assert_eq!(creations.get(), 0, "guest must be lazy");
@@ -310,6 +332,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 workspace,
                 "vault",
                 std::slice::from_ref(&descriptor),
+                theme_ui(cx),
                 window,
                 cx,
             )
@@ -329,6 +352,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 workspace,
                 "vault",
                 std::slice::from_ref(&descriptor),
+                theme_ui(cx),
                 window,
                 cx,
             )
@@ -347,11 +371,11 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
 fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
     let (handle, workspace) = cx.update(|cx| {
         init(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
-                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
                 let mut workspace = Workspace::new(deps, window, cx);
-                register(&mut workspace);
+                register(&mut workspace, theme_ui(cx));
                 workspace
             });
             window.focus(&workspace.read(cx).focus_handle(cx), cx);

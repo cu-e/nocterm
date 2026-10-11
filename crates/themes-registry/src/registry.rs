@@ -1,28 +1,10 @@
 //! Explicit, bounded requests to Zed's public extension registry.
-use crate::{ARCHIVE_LIMIT, ThemeError, valid_id};
-use serde::{Deserialize, Serialize};
+use nocterm_themes::{
+    ARCHIVE_LIMIT, ExtensionInfo, ThemeOperationError as ThemeError, ThemeRegistry, valid_id,
+};
+use serde::Deserialize;
 use std::{io::Read, time::Duration};
 
-/// Public registry metadata, also retained as our installation manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExtensionInfo {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub authors: Vec<String>,
-    #[serde(default)]
-    pub repository: Option<String>,
-    #[serde(default)]
-    pub download_count: u64,
-}
-/// Injectable so the settings browser never needs network access in tests.
-pub trait ThemeRegistry: Send + Sync {
-    fn search(&self, query: &str) -> Result<Vec<ExtensionInfo>, ThemeError>;
-    fn download(&self, extension: &ExtensionInfo) -> Result<Vec<u8>, ThemeError>;
-}
 /// Blocking client; run requests on the background executor.
 pub struct ZedRegistry {
     client: reqwest::blocking::Client,
@@ -40,6 +22,10 @@ impl ZedRegistry {
             base: reqwest::Url::parse("https://api.zed.dev/").expect("constant URL"),
         })
     }
+    pub(crate) fn download(&self, extension: &ExtensionInfo) -> Result<Vec<u8>, ThemeError> {
+        self.get(self.download_url(extension)?, ARCHIVE_LIMIT)
+    }
+
     fn search_url(&self, query: &str) -> reqwest::Url {
         let mut url = self.base.join("extensions").expect("constant relative URL");
         url.query_pairs_mut()
@@ -50,7 +36,7 @@ impl ZedRegistry {
     }
     fn download_url(&self, extension: &ExtensionInfo) -> Result<reqwest::Url, ThemeError> {
         if !valid_id(&extension.id) || extension.version.is_empty() {
-            return Err(ThemeError::Invalid("invalid extension identity".into()));
+            return Err(ThemeError::Identity);
         }
         let mut url = self.base.clone();
         url.path_segments_mut().expect("HTTP base URL").extend([
@@ -69,22 +55,18 @@ impl ZedRegistry {
             .and_then(|r| r.error_for_status())
             .map_err(http_error)?;
         if response.content_length().is_some_and(|n| n > limit as u64) {
-            return Err(ThemeError::Invalid(
-                "registry response exceeds size limit".into(),
-            ));
+            return Err(ThemeError::BodyLimit { limit });
         }
         let mut bytes = Vec::new();
         response.take(limit as u64 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > limit {
-            return Err(ThemeError::Invalid(
-                "registry response exceeds size limit".into(),
-            ));
+            return Err(ThemeError::BodyLimit { limit });
         }
         Ok(bytes)
     }
 }
 fn http_error(error: reqwest::Error) -> ThemeError {
-    ThemeError::Invalid(format!("Zed registry: {}", error.without_url()))
+    ThemeError::Transport(Box::new(error.without_url()))
 }
 impl ThemeRegistry for ZedRegistry {
     fn search(&self, query: &str) -> Result<Vec<ExtensionInfo>, ThemeError> {
@@ -99,9 +81,6 @@ impl ThemeRegistry for ZedRegistry {
             .into_iter()
             .filter(|e| valid_id(&e.id))
             .collect())
-    }
-    fn download(&self, extension: &ExtensionInfo) -> Result<Vec<u8>, ThemeError> {
-        self.get(self.download_url(extension)?, ARCHIVE_LIMIT)
     }
 }
 #[cfg(test)]
@@ -137,8 +116,8 @@ mod tests {
             .expect("Dracula in registry");
         let bytes = registry.download(&extension).unwrap();
         let root = tempfile::tempdir().unwrap();
-        crate::install_archive(root.path(), &extension, &bytes).unwrap();
-        let catalogue = crate::ThemeCatalog::load(&crate::ThemeDirs {
+        crate::archive::install_archive(root.path(), &extension, &bytes).unwrap();
+        let catalogue = crate::discovery::scan(&nocterm_themes::ThemeDirs {
             user: root.path().join("user"),
             installed: root.path().into(),
         });

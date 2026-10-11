@@ -1,45 +1,58 @@
-//! Catalogue publication and selection resolution, independent of Settings UI.
-use crate::{Design, SettingsExt, SettingsStore};
-use gpui_kit::{App, BorrowAppContext as _, Global, Task, component::ThemeColor};
+//! Explicit shared theme projection, independent of Settings UI.
+use crate::Design;
+use gpui_kit::{App, Subscription, component::ThemeColor};
 use nocterm_design::DesignTokens;
-use nocterm_themes::{Appearance, ThemeCatalog, ThemeDirs};
-use std::sync::Arc;
-
-pub struct Themes {
-    pub dirs: ThemeDirs,
-    pub catalog: Arc<ThemeCatalog>,
-    generation: u64,
+use nocterm_store::SettingsHandle;
+use nocterm_theme_service::ThemesHandle;
+use nocterm_themes::Appearance;
+use std::rc::Rc;
+#[derive(Clone)]
+pub struct ThemeUi(Rc<Installed>);
+struct Installed {
+    themes: ThemesHandle,
+    settings: SettingsHandle,
+    _subscriptions: Vec<Subscription>,
 }
-impl Global for Themes {}
-pub trait ActiveThemes {
-    fn themes(&self) -> Option<&Themes>;
-}
-impl ActiveThemes for App {
-    fn themes(&self) -> Option<&Themes> {
-        self.try_global::<Themes>()
+impl ThemeUi {
+    pub fn install(
+        settings: SettingsHandle,
+        themes: ThemesHandle,
+        base: DesignTokens,
+        cx: &mut App,
+    ) -> Self {
+        resolve(&themes, &settings, &base, cx);
+        crate::apply_theme(cx);
+        let theme_projection = themes.clone();
+        let settings_projection = settings.clone();
+        let theme_base = base.clone();
+        let theme_observer = themes.observe(cx, move |cx| {
+            resolve(&theme_projection, &settings_projection, &theme_base, cx)
+        });
+        let theme_projection = themes.clone();
+        let settings_projection = settings.clone();
+        let setting_observer = settings.observe(cx, move |cx| {
+            resolve(&theme_projection, &settings_projection, &base, cx)
+        });
+        Self(Rc::new(Installed {
+            themes,
+            settings,
+            _subscriptions: vec![theme_observer, setting_observer],
+        }))
+    }
+    pub fn themes(&self) -> &ThemesHandle {
+        &self.0.themes
+    }
+    pub fn settings(&self) -> &SettingsHandle {
+        &self.0.settings
     }
 }
-/// Install a preloaded catalogue; performs no network requests.
-pub fn init_themes(dirs: ThemeDirs, catalog: ThemeCatalog, cx: &mut App) {
-    cx.set_global(Themes {
-        dirs,
-        catalog: Arc::new(catalog),
-        generation: 0,
-    });
-    resolve(cx);
-    crate::apply_theme(cx);
-    cx.observe_global::<SettingsStore>(resolve).detach();
-    cx.observe_global::<Themes>(resolve).detach();
-}
-fn resolve(cx: &mut App) {
-    let Some(themes) = cx.try_global::<Themes>() else {
-        return;
-    };
+fn resolve(themes: &ThemesHandle, settings: &SettingsHandle, base: &DesignTokens, cx: &mut App) {
+    let catalog = themes.catalog(cx);
     let design = cx.global::<Design>();
-    let mut tokens = design.base.clone();
+    let mut tokens = base.clone();
     let mut imported = [false; 2];
     let builtin = DesignTokens::builtin();
-    let appearance = cx.setting::<crate::AppearanceSettings>();
+    let appearance = settings.setting::<crate::AppearanceSettings>(cx);
     for (appearance, name) in [
         (Appearance::Light, &appearance.light_theme),
         (Appearance::Dark, &appearance.dark_theme),
@@ -48,7 +61,7 @@ fn resolve(cx: &mut App) {
             continue;
         };
         let dark = appearance.is_dark();
-        if let Some(entry) = themes.catalog.find(name, appearance) {
+        if let Some(entry) = catalog.find(name, appearance) {
             let mut fallback = builtin.palette(dark).clone();
             // Imported component colours refine from ThemeColor, not from the
             // built-in terminal background or the user's theme.toml overrides.
@@ -71,31 +84,11 @@ fn resolve(cx: &mut App) {
     }
     if design.tokens != tokens || design.imported != imported {
         cx.set_global(Design {
-            base: design.base.clone(),
+            base: base.clone(),
             tokens,
             imported,
         });
     }
-}
-/// Background rescan with a generation guard: an older scan cannot overwrite a newer one.
-pub fn reload_themes(cx: &mut App) -> Task<()> {
-    let Some(themes) = cx.try_global::<Themes>() else {
-        return Task::ready(());
-    };
-    let dirs = themes.dirs.clone();
-    let generation = themes.generation + 1;
-    cx.update_global::<Themes, _>(|themes, _| themes.generation = generation);
-    let scan = cx
-        .background_executor()
-        .spawn(async move { ThemeCatalog::load(&dirs) });
-    cx.spawn(async move |cx| {
-        let catalog = scan.await;
-        cx.update(|cx| {
-            if cx.global::<Themes>().generation == generation {
-                cx.update_global::<Themes, _>(|themes, _| themes.catalog = Arc::new(catalog));
-            }
-        });
-    })
 }
 #[cfg(test)]
 mod tests;

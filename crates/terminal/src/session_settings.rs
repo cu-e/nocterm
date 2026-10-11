@@ -107,17 +107,13 @@ impl SessionSettings {
         if self.closed {
             return;
         }
-        let result = self
-            .options
-            .read(cx)
-            .options(cx)
-            .map_err(ApplyOptionsError::from)
-            .and_then(|options| {
-                self.terminal
-                    .update(cx, |terminal, cx| terminal.set_session_options(options, cx))
-                    .map_err(|_| ApplyOptionsError::Unavailable)?
-                    .map_err(ApplyOptionsError::from)
-            });
+        let result: Result<(), ApplyOptionsError> = (|| {
+            let options = self.options.read(cx).options(cx)?;
+            self.terminal
+                .update(cx, |terminal, cx| terminal.set_session_options(options, cx))
+                .map_err(|_| ApplyOptionsError::Unavailable)??;
+            Ok(())
+        })();
         match result {
             Ok(()) => {
                 self.closed = true;

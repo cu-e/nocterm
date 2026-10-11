@@ -47,30 +47,12 @@ fn choose(handle: AnyWindowHandle, text: &str, cx: &mut TestAppContext) {
     enter(handle, cx);
 }
 
-fn install_catalog(cx: &mut TestAppContext) -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
-    let dirs = nocterm_themes::ThemeDirs {
-        user: root.path().join("user"),
-        installed: root.path().join("installed"),
-    };
-    std::fs::create_dir(&dirs.user).unwrap();
-    std::fs::write(
-        dirs.user.join("test.json"),
-        r##"{"themes":[{"name":"GUI Dark","appearance":"dark","style":{"background":"#123456","text":"#eeeeee","terminal.ansi.red":"#ff0000"}},{"name":"GUI Light","appearance":"light","style":{"background":"#f1e2d3","text":"#112233"}}]}"##,
-    )
-    .unwrap();
-    let catalog = nocterm_themes::ThemeCatalog::load(&dirs);
-    cx.update(|cx| nocterm_ui::init_themes(dirs, catalog, cx));
-    root
-}
-
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_terminal(
     cx: &mut TestAppContext,
 ) {
-    let (handle, workspace, _, _) = fixture(cx);
-    let _directory = install_catalog(cx);
+    let (handle, workspace, _, _) = theme_fixture(cx);
     cx.update(|cx| {
         cx.update_setting::<AppearanceSettings>(|s| {
             s.mode = AppearanceMode::Dark;
@@ -192,8 +174,7 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
 async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
     cx: &mut TestAppContext,
 ) {
-    let (handle, _, _, _) = fixture(cx);
-    let _directory = install_catalog(cx);
+    let (handle, _, _, _) = theme_fixture(cx);
     cx.update(|cx| {
         cx.update_setting::<AppearanceSettings>(|s| {
             s.dark_theme = Some("GUI Dark".into());
@@ -300,6 +281,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     palette(handle, "color scheme", cx);
     enter(handle, cx);
     choose(handle, "Dark", cx);
+    frames(handle, cx);
     cx.update(|cx| {
         assert_eq!(
             cx.global::<nocterm_ui::SettingsStore>().document(cx),
@@ -310,4 +292,17 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
         assert!(nocterm_ui::notice::count(window, cx) > notices)
     })
     .unwrap();
+}
+
+fn theme_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    AnyWindowHandle,
+    gpui_kit::Entity<nocterm_workspace::Workspace>,
+    gpui_kit::Entity<nocterm_terminal::TerminalView>,
+    std::sync::Arc<super::super::MockTransport>,
+) {
+    let backend = std::sync::Arc::new(nocterm_themes::test_support::InMemoryThemes::default());
+    backend.user_document("test.json".into(),br##"{"themes":[{"name":"GUI Dark","appearance":"dark","style":{"background":"#123456","text":"#eeeeee","terminal.ansi.red":"#ff0000"}},{"name":"GUI Light","appearance":"light","style":{"background":"#f1e2d3","text":"#112233"}}]}"##.to_vec());
+    super::super::fixture_with_themes(cx, backend)
 }

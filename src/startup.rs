@@ -36,10 +36,14 @@ impl PreparedApp {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
         };
-        let catalog = nocterm_themes::ThemeCatalog::load(&dirs);
         let registry = Arc::new(
-            nocterm_themes::ZedRegistry::new().context("creating the theme registry client")?,
+            nocterm_themes_registry::ZedRegistry::new()
+                .context("creating the theme registry client")?,
         );
+        let library: Arc<dyn nocterm_themes::ThemeLibrary> = Arc::new(
+            nocterm_themes_registry::LocalThemeLibrary::new(dirs, Some(registry.clone())),
+        );
+        let catalog = library.scan();
         let transport =
             SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
         Ok(Self {
@@ -48,7 +52,7 @@ impl PreparedApp {
             tokens,
             settings,
             themes: bootstrap::Themes {
-                dirs,
+                library,
                 catalog,
                 registry,
             },

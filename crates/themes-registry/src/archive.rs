@@ -1,6 +1,9 @@
 //! Extract only validated, direct theme JSON files, then replace the pack.
-use crate::{ARCHIVE_LIMIT, ExtensionInfo, FILE_LIMIT, ThemeError, parse_family};
 use flate2::read::MultiGzDecoder;
+use nocterm_themes::{
+    ARCHIVE_LIMIT, ExtensionInfo, FILE_LIMIT, ThemeOperationError as ThemeError, parse_family,
+    valid_id,
+};
 use std::{
     fs,
     io::{self, Read},
@@ -8,64 +11,58 @@ use std::{
 };
 
 const DECOMPRESSED_LIMIT: u64 = 64 * 1024 * 1024;
-/// Registry identities are a single bounded lowercase path component.
-pub fn valid_id(id: &str) -> bool {
-    (1..=64).contains(&id.len())
-        && (id.as_bytes()[0].is_ascii_lowercase() || id.as_bytes()[0].is_ascii_digit())
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
-}
 fn check_id(id: &str) -> Result<(), ThemeError> {
     if valid_id(id) {
         Ok(())
     } else {
-        Err(ThemeError::Invalid("invalid extension id".into()))
+        Err(ThemeError::Identity)
     }
 }
-fn plain_directory(path: &Path) -> Result<(), ThemeError> {
+pub(crate) fn plain_directory(path: &Path) -> Result<(), ThemeError> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && !m.file_type().is_symlink() => Ok(()),
-        Ok(_) => Err(ThemeError::Invalid(format!(
-            "{} is not a plain directory",
-            path.display()
-        ))),
+        Ok(_) => Err(ThemeError::NotPlain(path.into())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            fs::create_dir_all(path)?;
+            fs::create_dir_all(path)
+                .map_err(|e| ThemeError::filesystem(path, "create directory", e))?;
             Ok(())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(ThemeError::filesystem(path, "inspect directory", e)),
     }
 }
 /// Refuse to follow links at managed pack destinations.
-fn check_destination(path: &Path) -> Result<bool, ThemeError> {
+pub(crate) fn check_destination(path: &Path) -> Result<bool, ThemeError> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && !m.file_type().is_symlink() => Ok(true),
-        Ok(_) => Err(ThemeError::Invalid(
-            "extension destination is not a plain directory".into(),
-        )),
+        Ok(_) => Err(ThemeError::NotPlain(path.into())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e.into()),
+        Err(e) => Err(ThemeError::filesystem(path, "inspect directory", e)),
     }
 }
 /// Installs validated originals. Every failure before publication leaves the old pack intact.
-pub fn install_archive(
+pub(crate) fn install_archive(
     dir: &Path,
     extension: &ExtensionInfo,
     bytes: &[u8],
 ) -> Result<(), ThemeError> {
     check_id(&extension.id)?;
     if bytes.len() > ARCHIVE_LIMIT {
-        return Err(ThemeError::Invalid("archive exceeds 16 MiB".into()));
+        return Err(ThemeError::BodyLimit {
+            limit: ARCHIVE_LIMIT,
+        });
     }
-    plain_directory(dir)?;
-    let destination = dir.join(&extension.id);
-    check_destination(&destination)?;
-    let stage = tempfile::Builder::new()
-        .prefix(".install-")
-        .tempdir_in(dir)?;
-    let themes = stage.path().join("themes");
-    fs::create_dir(&themes)?;
+    let publication = crate::publication::PackPublication::prepare(dir, &extension.id)?;
+    let themes = publication.stage().join("themes");
+    fs::create_dir(&themes).map_err(|e| ThemeError::filesystem(&themes, "create staging", e))?;
+    extract(&themes, bytes).map_err(classify_expansion)?;
+    let manifest = toml::to_string(extension).map_err(ThemeError::ManifestEncode)?;
+    let manifest_path = publication.stage().join("extension.toml");
+    nocterm_core::fs::write_private_atomic(&manifest_path, manifest.as_bytes())
+        .map_err(|e| ThemeError::filesystem(manifest_path, "write manifest", e.into_io_error()))?;
+    publication.publish()
+}
+
+fn extract(themes: &Path, bytes: &[u8]) -> Result<(), ThemeError> {
     let reader = Limited {
         inner: MultiGzDecoder::new(bytes),
         remaining: DECOMPRESSED_LIMIT,
@@ -74,7 +71,7 @@ pub fn install_archive(
     let mut files = 0usize;
     for (index, entry) in archive.entries()?.enumerate() {
         if index >= 10_000 {
-            return Err(ThemeError::Invalid("archive exceeds 10000 entries".into()));
+            return Err(ThemeError::ArchiveEntries);
         }
         let entry = entry?;
         if !entry.header().entry_type().is_file() {
@@ -85,51 +82,28 @@ pub fn install_archive(
             continue;
         };
         if entry.size() > FILE_LIMIT as u64 {
-            return Err(ThemeError::Invalid("theme file exceeds 8 MiB".into()));
+            return Err(ThemeError::FileLimit);
         }
         files += 1;
         if files > 256 {
-            return Err(ThemeError::Invalid(
-                "archive exceeds 256 theme files".into(),
-            ));
+            return Err(ThemeError::ArchiveFiles);
         }
         let mut data = Vec::new();
         entry.take(FILE_LIMIT as u64 + 1).read_to_end(&mut data)?;
         parse_family(&data)?;
-        fs::write(themes.join(name), data)?;
+        let path = themes.join(name);
+        nocterm_core::fs::write_private_atomic(&path, &data)
+            .map_err(|e| ThemeError::filesystem(path, "write original", e.into_io_error()))?;
     }
     // Tar ends at its zero blocks. Still consume the entire gzip stream so
     // trailing data cannot hide a decompression bomb or a broken checksum.
     io::copy(&mut archive.into_inner(), &mut io::sink())?;
     if files == 0 {
-        return Err(ThemeError::Invalid(
-            "archive contains no valid theme files".into(),
-        ));
-    }
-    let manifest = toml::to_string(extension).map_err(|e| ThemeError::Invalid(e.to_string()))?;
-    fs::write(stage.path().join("extension.toml"), manifest)?;
-    let backup = tempfile::Builder::new()
-        .prefix(".backup-")
-        .tempdir_in(dir)?;
-    let old = backup.path().join("previous");
-    let existed = check_destination(&destination)?;
-    if existed {
-        fs::rename(&destination, &old)?;
-    }
-    if let Err(error) = fs::rename(stage.path(), &destination) {
-        if existed && let Err(restore) = fs::rename(&old, &destination) {
-            // Preserve the previous pack even when a concurrent filesystem
-            // change prevents rollback; never let TempDir delete the only copy.
-            let saved = backup.keep().join("previous");
-            return Err(ThemeError::Invalid(format!(
-                "could not publish extension: {error}; rollback failed: {restore}; previous pack preserved at {}",
-                saved.display()
-            )));
-        }
-        return Err(error.into());
+        return Err(ThemeError::EmptyArchive);
     }
     Ok(())
 }
+
 fn theme_filename(path: &Path) -> Option<&std::ffi::OsStr> {
     let raw = path.to_str()?;
     let raw = raw.strip_prefix("./").unwrap_or(raw);
@@ -138,7 +112,12 @@ fn theme_filename(path: &Path) -> Option<&std::ffi::OsStr> {
         return None;
     }
     let filename = pieces.next()?;
-    if filename.is_empty() || filename == "." || filename == ".." || pieces.next().is_some() {
+    if filename.is_empty()
+        || filename == "."
+        || filename == ".."
+        || filename.contains(['\\', ':'])
+        || pieces.next().is_some()
+    {
         return None;
     }
     let mut components = path.components();
@@ -160,21 +139,19 @@ fn theme_filename(path: &Path) -> Option<&std::ffi::OsStr> {
     Some(name)
 }
 /// Remove only one validated extension directory; links are refused.
-pub fn uninstall(dir: &Path, id: &str) -> Result<(), ThemeError> {
+pub(crate) fn uninstall(dir: &Path, id: &str) -> Result<(), ThemeError> {
     check_id(id)?;
     match fs::symlink_metadata(dir) {
         Ok(m) if m.is_dir() && !m.file_type().is_symlink() => {}
         Ok(_) => {
-            return Err(ThemeError::Invalid(
-                "installed root is not a plain directory".into(),
-            ));
+            return Err(ThemeError::NotPlain(dir.into()));
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(ThemeError::filesystem(dir, "inspect installed root", e)),
     }
     let path = dir.join(id);
     if check_destination(&path)? {
-        fs::remove_dir_all(path)?;
+        fs::remove_dir_all(&path).map_err(|e| ThemeError::filesystem(path, "remove pack", e))?;
     }
     Ok(())
 }
@@ -192,7 +169,7 @@ impl<R: Read> Read for Limited<R> {
             return if self.inner.read(&mut probe)? == 0 {
                 Ok(0)
             } else {
-                Err(io::Error::other("archive exceeds 64 MiB decompressed"))
+                Err(io::Error::other(ExpansionLimit))
             };
         }
         let len = buffer.len().min(self.remaining as usize);
@@ -203,3 +180,22 @@ impl<R: Read> Read for Limited<R> {
 }
 #[cfg(test)]
 mod tests;
+
+#[derive(Debug)]
+struct ExpansionLimit;
+impl std::fmt::Display for ExpansionLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("archive exceeds 64 MiB decompressed")
+    }
+}
+impl std::error::Error for ExpansionLimit {}
+fn classify_expansion(error: ThemeError) -> ThemeError {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(source) = cause {
+        if source.is::<ExpansionLimit>() {
+            return ThemeError::ArchiveDecompressed;
+        }
+        cause = source.source();
+    }
+    error
+}

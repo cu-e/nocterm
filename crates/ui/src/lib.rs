@@ -10,7 +10,8 @@
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers.
 //! Settings sections: appearance, terminal; init also registers ai.
-//! Globals: Design, Themes, SettingsStore, LayoutMemory, Notices.
+//! Globals: Design, SettingsStore, LayoutMemory, Notices.
+//! Imported themes use an explicit ThemeUi projection over ThemesHandle.
 //! Compatibility settings access: `ActiveAi`.
 //! Invariants: layout edits remain visible on persistence failure; theme uses typed settings.
 
@@ -43,7 +44,7 @@ pub use sections::{
 pub use settings::{SettingsExt, SettingsStore, edit_settings, register_setting};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::{apply_theme, unknown_color_names};
-pub use themes::{ActiveThemes, Themes, init_themes, reload_themes};
+pub use themes::ThemeUi;
 
 pub use nocterm_design::{Color, DesignTokens};
 

@@ -65,6 +65,8 @@ fn irrelevant_and_nested_files_are_ignored_and_empty_is_error() {
         "themes/a/b.json",
         "icons/x.json",
         "themes/a.txt",
+        "themes/C:escape.json",
+        "themes/back\\slash.json",
     ] {
         assert!(theme_filename(Path::new(path)).is_none());
     }
@@ -222,6 +224,8 @@ fn hostile_entries_are_skipped_while_valid_pack_installs() {
         "themes//slash.json",
         "icons/a.json",
         "themes/a.txt",
+        "themes/C:escape.json",
+        "themes/back\\slash.json",
     ] {
         let data = theme("Hostile");
         let mut h = tar::Header::new_gnu();
