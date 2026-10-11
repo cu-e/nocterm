@@ -1,0 +1,67 @@
+//! Explicitly scripted, no-I/O observation ports for dev-dependency consumers.
+use crate::observation::{
+    CountryCode, CountryLocator, FlagRepository, ObservationError, PublicAddress,
+    PublicAddressResolver,
+};
+use std::{collections::VecDeque, sync::Mutex};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ObservationCall {
+    Resolve(String),
+    Country(PublicAddress),
+    Flag(CountryCode),
+}
+
+#[derive(Default)]
+pub struct ScriptedObservations {
+    resolutions: Mutex<VecDeque<Result<Option<PublicAddress>, ObservationError>>>,
+    countries: Mutex<VecDeque<Result<Option<CountryCode>, ObservationError>>>,
+    flags: Mutex<VecDeque<Result<Option<Vec<u8>>, ObservationError>>>,
+    calls: Mutex<Vec<ObservationCall>>,
+}
+impl ScriptedObservations {
+    pub fn resolve_next(&self, result: Result<Option<PublicAddress>, ObservationError>) {
+        self.resolutions.lock().unwrap().push_back(result);
+    }
+    pub fn country_next(&self, result: Result<Option<CountryCode>, ObservationError>) {
+        self.countries.lock().unwrap().push_back(result);
+    }
+    pub fn flag_next(&self, result: Result<Option<Vec<u8>>, ObservationError>) {
+        self.flags.lock().unwrap().push_back(result);
+    }
+    pub fn calls(&self) -> Vec<ObservationCall> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+impl PublicAddressResolver for ScriptedObservations {
+    fn resolve(&self, host: &str) -> Result<Option<PublicAddress>, ObservationError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(ObservationCall::Resolve(host.into()));
+        self.resolutions
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(None))
+    }
+}
+impl CountryLocator for ScriptedObservations {
+    fn country(&self, ip: PublicAddress) -> Result<Option<CountryCode>, ObservationError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(ObservationCall::Country(ip));
+        self.countries
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(None))
+    }
+}
+impl FlagRepository for ScriptedObservations {
+    fn load(&self, code: CountryCode) -> Result<Option<Vec<u8>>, ObservationError> {
+        self.calls.lock().unwrap().push(ObservationCall::Flag(code));
+        self.flags.lock().unwrap().pop_front().unwrap_or(Ok(None))
+    }
+}

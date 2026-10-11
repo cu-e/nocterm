@@ -69,7 +69,10 @@ them. Platform-key combinations remain application shortcuts.
 the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
 global keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
-`connections.toml`. Flags are cached in memory and under `flags/`. Icons and flags
+`connections.toml`. `ObservationDeps` injects the pure country/resolution/flag
+ports; the app chooses native adapters or inert memory-only dependencies. The
+feature retains the image cache and embedded fallback flags; bounded disk/HTTP
+flag acquisition belongs to `nocterm-connections-io`. Icons and flags
 reach other features only as images in `ConnectionSummary`. The empty workspace
 projects its six most recent saved profiles through
 `ConnectionDirectory`, using current names and the same icon and country policy as

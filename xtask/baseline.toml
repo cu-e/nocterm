@@ -153,7 +153,6 @@ nocterm-acp = 10
 nocterm-agent = 10
 nocterm-agent-runtime = 1
 nocterm-ai = 9
-nocterm-connections = 5
 nocterm-files = 1
 nocterm-local = 3
 nocterm-session = 1

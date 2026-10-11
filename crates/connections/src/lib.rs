@@ -10,9 +10,11 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: connection formats, views, backend codecs and detected-server cache.
-//! Does not own: session transport, credentials or persistence worker lifecycle.
-//! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator.
+//! Owns: connection formats, views, backend codecs and detected-server state.
+//! Does not own: session transport, credentials, DNS, HTTP, flag files or
+//! persistence worker lifecycle.
+//! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator,
+//! PublicAddressResolver, CountryLocator, FlagRepository.
 //! Ports provided: ConnectionDirectory. Settings section: none.
 //! Globals: existing connection, facts and menu compatibility handles.
 //! Invariants: profiles publish after physical success; independent recents survive
@@ -24,6 +26,7 @@ mod facts;
 mod geo;
 mod menu;
 mod model;
+mod observation;
 pub mod os;
 mod panel;
 pub mod store;
@@ -39,6 +42,7 @@ pub use editor::{ConnectionEditor, open_editor};
 pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
 pub use model::{Connections, ConnectionsError, connect, spec_for_profile};
+pub use observation::ObservationDeps;
 pub use panel::ConnectionsPanel;
 
 gpui_kit::actions!(
@@ -56,6 +60,7 @@ gpui_kit::actions!(
 pub fn init(
     paths: Option<&Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
+    observations: ObservationDeps,
     cx: &mut App,
 ) -> Result<(), nocterm_store::StoreError> {
     menu::init(cx);
@@ -65,8 +70,8 @@ pub fn init(
     }
     .install(shutdown, cx)?;
     match paths {
-        Some(paths) => ServerFacts::load(paths),
-        None => ServerFacts::in_memory(),
+        Some(paths) => ServerFacts::load(paths, observations),
+        None => ServerFacts::in_memory(observations),
     }
     .install(shutdown, cx)
 }

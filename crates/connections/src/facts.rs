@@ -12,11 +12,12 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::PathBuf,
     sync::{Arc, Weak},
 };
 
+use crate::{ObservationDeps, observation::LocationRequest};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Image, ImageFormat};
+use nocterm_connections_model::observation::CountryCode;
 use nocterm_core::{Paths, persist};
 use nocterm_session::RemoteFs;
 use nocterm_store::{ShutdownCoordinator, StoreError};
@@ -81,10 +82,7 @@ struct Known {
 
 /// Detected systems and countries of saved connections, and flag images.
 pub struct ServerFacts {
-    flags_dir: Option<PathBuf>,
-    /// Whether GeoIP and flag requests may go over the network. Without a
-    /// state directory (tests, `--no-config`) nothing is fetched.
-    online: bool,
+    observations: ObservationDeps,
     known: FactsStore,
     /// Absent: never asked for; `None`: loading, or no image exists.
     flags: HashMap<String, Option<Arc<Image>>>,
@@ -97,7 +95,7 @@ struct GlobalServerFacts(Entity<ServerFacts>);
 impl Global for GlobalServerFacts {}
 
 impl ServerFacts {
-    pub fn load(paths: &Paths) -> Self {
+    pub fn load(paths: &Paths, observations: ObservationDeps) -> Self {
         let file = paths.state_dir().join("servers.toml");
         let known = persist::load(&file)
             .unwrap_or_else(|error| {
@@ -107,17 +105,14 @@ impl ServerFacts {
             })
             .unwrap_or_default();
         Self {
-            flags_dir: Some(paths.state_dir().join("flags")),
-            online: true,
             known: FactsStore::new(known, Some(file)),
-            ..Self::in_memory()
+            ..Self::in_memory(observations)
         }
     }
 
-    pub fn in_memory() -> Self {
+    pub fn in_memory(observations: ObservationDeps) -> Self {
         Self {
-            flags_dir: None,
-            online: false,
+            observations,
             known: FactsStore::new(Known::default(), None),
             flags: HashMap::new(),
             probed: Vec::new(),
@@ -255,16 +250,18 @@ impl ServerFacts {
             .servers
             .get(&id)
             .is_some_and(|detected| detected.located.as_deref() == Some(host));
-        if self.online
+        if self.observations.network_enabled()
             && profile.country.is_none()
             && country_detection_enabled(cx)
             && !located
             && self.locating.insert(id)
         {
-            let host = host.to_owned();
-            let cached = self.known.read(cx).geoip.clone();
-            let lookup = cx
-                .background_spawn(async move { locate(&host, &cached).map(|found| (host, found)) });
+            let request = LocationRequest::new(
+                host,
+                self.known.read(cx).geoip.clone(),
+                self.observations.clone(),
+            );
+            let lookup = cx.background_spawn(async move { request.locate() });
             cx.spawn(async move |this, cx| {
                 let result = lookup.await;
                 let _ = this.update(cx, |this, cx| {
@@ -336,14 +333,10 @@ impl ServerFacts {
         }
         self.flags.insert(code.to_owned(), None);
         let code = code.to_owned();
-        let path = self
-            .flags_dir
-            .as_ref()
-            .map(|dir| dir.join(format!("{code}.svg")));
-        let online = self.online;
+        let observations = self.observations.clone();
         let load = cx.background_spawn({
             let code = code.clone();
-            async move { load_flag(&code, path, online) }
+            async move { load_flag(&code, &observations) }
         });
         cx.spawn(async move |this, cx| {
             let Some(bytes) = load.await else {
@@ -454,61 +447,19 @@ async fn read_small(fs: &dyn RemoteFs, path: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// The public address of `host` and its country. `Ok(None)` when the host is
-/// private or the service does not know it; `Err` when asking failed.
-fn locate(
-    host: &str,
-    cached: &BTreeMap<String, String>,
-) -> Result<Option<(String, String)>, String> {
-    let Some(ip) = geo::public_address(host) else {
-        return Ok(None);
-    };
-    let key = ip.to_string();
-    if let Some(code) = cached.get(&key) {
-        return Ok(Some((key, code.clone())));
-    }
-    let code = geo::country_of(&geo::client()?, ip)?;
-    Ok(code.map(|code| (key, code)))
+fn load_flag(code: &str, observations: &ObservationDeps) -> Option<Vec<u8>> {
+    let checked = CountryCode::new(code).ok()?;
+    observations
+        .flags()
+        .load(checked)
+        .inspect_err(|error| tracing::debug!(%error, code, "could not load flag"))
+        .ok()
+        .flatten()
+        .or_else(|| geo::builtin_flag(code))
 }
 
-fn load_flag(code: &str, path: Option<PathBuf>, online: bool) -> Option<Vec<u8>> {
-    if let Some(path) = &path
-        && let Ok(bytes) = std::fs::read(path)
-        && geo::is_svg(&bytes)
-    {
-        return Some(bytes);
-    }
-    let downloaded = if online {
-        geo::client()
-            .and_then(|client| geo::download_flag(&client, code))
-            .inspect_err(|error| tracing::debug!(%error, code, "could not download flag"))
-            .ok()
-    } else {
-        None
-    };
-    match (downloaded, path) {
-        (Some(bytes), Some(path)) => {
-            let saved = path
-                .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| persist_bytes(&path, &bytes));
-            if let Err(error) = saved {
-                tracing::warn!(%error, "could not cache flag");
-            }
-            Some(bytes)
-        }
-        (Some(bytes), None) => Some(bytes),
-        (None, _) => geo::builtin_flag(code),
-    }
-}
-
-/// Writes through a temporary file, so a cut-off write is never read back as
-/// a flag.
-fn persist_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let temporary = path.with_extension("svg.tmp");
-    std::fs::write(&temporary, bytes)?;
-    std::fs::rename(&temporary, path)
-}
+#[cfg(test)]
+mod observation_tests;
 
 #[cfg(test)]
 mod tests {
@@ -541,46 +492,11 @@ mod tests {
         assert_eq!(toml::from_str::<Known>("").unwrap(), Known::default());
     }
 
-    #[test]
-    fn private_hosts_are_located_without_asking() {
-        let cached = BTreeMap::new();
-        assert_eq!(locate("192.168.1.5", &cached), Ok(None));
-        assert_eq!(locate("pi.local", &cached), Ok(None));
-    }
-
-    #[test]
-    fn cached_addresses_are_not_looked_up_again() {
-        let cached = BTreeMap::from([("8.8.8.8".to_owned(), "us".to_owned())]);
-        assert_eq!(
-            locate("8.8.8.8", &cached),
-            Ok(Some(("8.8.8.8".into(), "us".into())))
-        );
-    }
-
-    #[test]
-    fn flags_come_from_disk_before_the_network_and_fall_back_to_drawn_ones() {
-        let dir = tempfile::tempdir().unwrap();
-        let cached = dir.path().join("xx.svg");
-        std::fs::write(&cached, b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>").unwrap();
-        assert_eq!(
-            load_flag("xx", Some(cached), false).as_deref(),
-            Some(&b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"[..])
-        );
-
-        let broken = dir.path().join("de.svg");
-        std::fs::write(&broken, b"<html>").unwrap();
-        assert_eq!(
-            load_flag("de", Some(broken), false),
-            geo::builtin_flag("de")
-        );
-        assert_eq!(load_flag("us", None, false), None);
-    }
-
     #[gpui_kit::test]
     async fn sessions_are_probed_once_and_chosen_icons_skip_detection(
         cx: &mut gpui_kit::TestAppContext,
     ) {
-        let facts = cx.new(|_| ServerFacts::in_memory());
+        let facts = cx.new(|_| ServerFacts::in_memory(ObservationDeps::offline()));
         let profile = Profile {
             description: String::new(),
             options: Default::default(),
@@ -643,7 +559,9 @@ mod tests {
         persist::save(&paths.connections_file(), &profiles).unwrap();
         std::fs::write(paths.state_dir(), "blocks informational writes").unwrap();
         let shutdown = ShutdownCoordinator::default();
-        cx.update(|cx| crate::init(Some(&paths), &shutdown, cx).unwrap());
+        cx.update(|cx| {
+            crate::init(Some(&paths), &shutdown, ObservationDeps::offline(), cx).unwrap()
+        });
         let facts = cx.read(ServerFacts::global);
         let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=debian\n", Default::default(), &[]));
         facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs, cx));

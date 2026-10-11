@@ -16,7 +16,13 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(None, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap();
+        crate::init(
+            None,
+            &nocterm_store::ShutdownCoordinator::default(),
+            crate::ObservationDeps::offline(),
+            cx,
+        )
+        .unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));

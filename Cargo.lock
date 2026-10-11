@@ -4917,6 +4917,7 @@ dependencies = [
  "nocterm-agent-storage",
  "nocterm-ai",
  "nocterm-connections",
+ "nocterm-connections-io",
  "nocterm-containers-ui",
  "nocterm-core",
  "nocterm-design",
@@ -5048,7 +5049,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
- "gpui-pre-reqwest",
+ "nocterm-connections-model",
  "nocterm-core",
  "nocterm-session",
  "nocterm-store",
@@ -5061,6 +5062,28 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "nocterm-connections-io"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre-reqwest",
+ "nocterm-connections-model",
+ "nocterm-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-connections-model"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

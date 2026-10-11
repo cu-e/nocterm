@@ -1,0 +1,91 @@
+//! Explicit collaborators for observations; concrete I/O is composed by the app.
+use nocterm_connections_model::observation::{
+    CountryCode, CountryLocator, FlagRepository, ObservationError, OfflineObservations,
+    PublicAddressResolver,
+};
+use std::{collections::BTreeMap, sync::Arc};
+
+#[derive(Clone)]
+pub struct ObservationDeps {
+    resolver: Arc<dyn PublicAddressResolver>,
+    locator: Arc<dyn CountryLocator>,
+    flags: Arc<dyn FlagRepository>,
+    network_enabled: bool,
+}
+impl ObservationDeps {
+    pub fn new(
+        resolver: Arc<dyn PublicAddressResolver>,
+        locator: Arc<dyn CountryLocator>,
+        flags: Arc<dyn FlagRepository>,
+        network_enabled: bool,
+    ) -> Self {
+        Self {
+            resolver,
+            locator,
+            flags,
+            network_enabled,
+        }
+    }
+    pub fn offline() -> Self {
+        Self::new(
+            Arc::new(OfflineObservations),
+            Arc::new(OfflineObservations),
+            Arc::new(OfflineObservations),
+            false,
+        )
+    }
+    pub(crate) fn resolver(&self) -> &dyn PublicAddressResolver {
+        self.resolver.as_ref()
+    }
+    pub(crate) fn locator(&self) -> &dyn CountryLocator {
+        self.locator.as_ref()
+    }
+    pub(crate) fn flags(&self) -> &dyn FlagRepository {
+        self.flags.as_ref()
+    }
+    pub(crate) fn network_enabled(&self) -> bool {
+        self.network_enabled
+    }
+}
+
+/// Immutable observation request; its background work captures no view or App.
+pub(crate) struct LocationRequest {
+    host: String,
+    cached: BTreeMap<String, String>,
+    observations: ObservationDeps,
+}
+impl LocationRequest {
+    pub(crate) fn new(
+        host: &str,
+        cached: BTreeMap<String, String>,
+        observations: ObservationDeps,
+    ) -> Self {
+        Self {
+            host: host.to_owned(),
+            cached,
+            observations,
+        }
+    }
+    pub(crate) fn locate(self) -> Result<(String, Option<(String, String)>), ObservationError> {
+        let found = self.country()?;
+        Ok((self.host, found))
+    }
+    fn country(&self) -> Result<Option<(String, String)>, ObservationError> {
+        if !self.observations.network_enabled() {
+            return Ok(None);
+        }
+        let Some(ip) = self.observations.resolver().resolve(&self.host)? else {
+            return Ok(None);
+        };
+        let key = ip.as_ip().to_string();
+        if let Some(code) = self
+            .cached
+            .get(&key)
+            .and_then(|code| CountryCode::new(code).ok())
+        {
+            return Ok(Some((key, code.as_str().to_owned())));
+        }
+        let code = self.observations.locator().country(ip)?;
+        Ok(code.map(|code| (key, code.as_str().to_owned())))
+    }
+}

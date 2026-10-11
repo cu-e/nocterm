@@ -148,22 +148,29 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
             connections.record_use(&spec_for_profile(server), Some(server.id), cx)
         });
     }
-    // Supply persisted observations and a cached flag, so no network lookup is needed.
+    // Supply persisted observations and an injected flag, without native flag I/O.
     let directory = tempfile::tempdir().unwrap();
     let paths = nocterm_core::Paths::rooted_at(directory.path());
-    std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
+    std::fs::create_dir_all(paths.state_dir()).unwrap();
     std::fs::write(
         paths.state_dir().join("servers.toml"),
         format!("[server.\"{}\"]\ncountry = \"de\"\n", detected.id),
     )
     .unwrap();
-    std::fs::write(
-        paths.state_dir().join("flags/de.svg"),
-        b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
-    )
-    .unwrap();
+    let observations = std::sync::Arc::new(
+        nocterm_connections_model::test_support::ScriptedObservations::default(),
+    );
+    observations.flag_next(Ok(Some(
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
+    )));
+    let observations = crate::ObservationDeps::new(
+        observations.clone(),
+        observations.clone(),
+        observations,
+        false,
+    );
     cx.update(|cx| {
-        ServerFacts::load(&paths)
+        ServerFacts::load(&paths, observations)
             .install(&nocterm_store::ShutdownCoordinator::default(), cx)
             .unwrap()
     });

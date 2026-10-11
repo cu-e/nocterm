@@ -101,9 +101,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         );
         nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
     }
+    let observations = connection_observations(stored);
     report_store_registration(
         "connections",
-        nocterm_connections::init(stored, &shutdown, cx),
+        nocterm_connections::init(stored, &shutdown, observations, cx),
     );
     report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
     report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
@@ -214,5 +215,80 @@ pub(crate) fn build_workspace(
     {
         let pages = vec![nocterm_vault_ui::settings_page(vault)];
         nocterm_settings_ui::open_page(workspace, "vault", &pages, window, cx);
+    }
+}
+
+/// Native observation ports are created only for configured persistence.
+fn connection_observations(paths: Option<&Paths>) -> nocterm_connections::ObservationDeps {
+    let Some(paths) = paths else {
+        return nocterm_connections::ObservationDeps::offline();
+    };
+    let native = nocterm_connections_io::NativeObservations::new(paths.state_dir().join("flags"));
+    nocterm_connections::ObservationDeps::new(
+        native.resolver(),
+        native.locator(),
+        native.flags(),
+        true,
+    )
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[gpui_kit::test]
+    fn configured_observations_use_supplied_disk_cache(cx: &mut gpui_kit::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted_at(directory.path());
+        let id = nocterm_connections::store::ProfileId::generate();
+        std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
+        std::fs::write(
+            paths.state_dir().join("servers.toml"),
+            format!("[server.\"{id}\"]\ncountry = \"xx\"\n"),
+        )
+        .unwrap();
+        std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            nocterm_connections::init(
+                Some(&paths),
+                &nocterm_store::ShutdownCoordinator::default(),
+                connection_observations(Some(&paths)),
+                cx,
+            )
+            .unwrap();
+        });
+        cx.run_until_parked();
+        let facts = cx.read(nocterm_connections::ServerFacts::global);
+        assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_some()));
+    }
+
+    #[gpui_kit::test]
+    fn memory_observations_ignore_even_an_existing_native_cache(cx: &mut gpui_kit::TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let paths = Paths::rooted_at(directory.path());
+        let id = nocterm_connections::store::ProfileId::generate();
+        std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
+        std::fs::write(
+            paths.state_dir().join("servers.toml"),
+            format!("[server.\"{id}\"]\ncountry = \"xx\"\n"),
+        )
+        .unwrap();
+        std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            // The observations are deliberately composed with no configured
+            // paths, although old observations are present in the fixture.
+            nocterm_connections::init(
+                Some(&paths),
+                &nocterm_store::ShutdownCoordinator::default(),
+                connection_observations(None),
+                cx,
+            )
+            .unwrap();
+        });
+        cx.run_until_parked();
+        let facts = cx.read(nocterm_connections::ServerFacts::global);
+        assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_none()));
     }
 }
