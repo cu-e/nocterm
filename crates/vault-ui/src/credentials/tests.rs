@@ -34,6 +34,7 @@ fn a_saved_answer_returns_for_the_same_question_only() {
     assert_eq!(secret.expose(), "stored account password");
     let other = password(&Target::new("other", "other-host", 22), false);
     let error = block_on(store.get(id, &other)).unwrap_err();
+    let error = error.to_string();
     assert!(error.contains("does not match"), "{error}");
 }
 

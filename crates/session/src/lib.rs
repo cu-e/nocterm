@@ -38,7 +38,7 @@ mod session;
 mod settings;
 mod target;
 
-pub use credentials::{CredentialFuture, CredentialStore};
+pub use credentials::{CredentialFuture, CredentialStore, CredentialStoreError};
 pub use exec::{
     Collected, ErrorTail, ExecError, ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink,
     HostExec,

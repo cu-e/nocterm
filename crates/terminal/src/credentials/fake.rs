@@ -1,6 +1,8 @@
 //! An in-memory [`CredentialStore`] for terminal tests.
 use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
-use nocterm_session::{CredentialFuture, CredentialId, CredentialStore, Secret, SecretRequest};
+use nocterm_session::{
+    CredentialFuture, CredentialId, CredentialStore, CredentialStoreError, Secret, SecretRequest,
+};
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -86,9 +88,13 @@ impl CredentialStore for FakeStore {
                 .find(|(saved, _, _)| *saved == id)
                 .filter(|(_, saved, _)| same_question(saved, request))
                 .map(|(_, _, secret)| secret.clone())
-                .ok_or_else(|| "The credential does not match this authentication request.".into())
+                .ok_or_else(|| {
+                    CredentialStoreError::Failed(
+                        "The credential does not match this authentication request.".into(),
+                    )
+                })
         } else {
-            Err("The vault is locked.".into())
+            Err(CredentialStoreError::Locked)
         };
         futures::future::ready(result).boxed()
     }
@@ -105,7 +111,9 @@ impl CredentialStore for FakeStore {
             inner.records.push((id, request.clone(), secret));
             Ok(id)
         } else {
-            Err("The vault cannot save this answer.".into())
+            Err(CredentialStoreError::Failed(
+                "The vault cannot save this answer.".into(),
+            ))
         };
         futures::future::ready(result).boxed()
     }

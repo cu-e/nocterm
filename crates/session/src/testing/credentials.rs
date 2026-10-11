@@ -1,5 +1,7 @@
 use super::{Gate, lock};
-use crate::{CredentialFuture, CredentialId, CredentialStore, Secret, SecretRequest};
+use crate::{
+    CredentialFuture, CredentialId, CredentialStore, CredentialStoreError, Secret, SecretRequest,
+};
 use futures::future::BoxFuture;
 use std::{
     collections::HashMap,
@@ -193,7 +195,7 @@ impl CredentialStore for FakeCredentialStore {
             }
             store
                 .lookup(id, &request)
-                .map_err(|error| error.to_string())
+                .map_err(|error| CredentialStoreError::Failed(error.to_string()))
         })
     }
 
@@ -212,7 +214,7 @@ impl CredentialStore for FakeCredentialStore {
             }
             store
                 .insert(label, &request, secret)
-                .map_err(|error| error.to_string())
+                .map_err(|error| CredentialStoreError::Failed(error.to_string()))
         })
     }
 }
