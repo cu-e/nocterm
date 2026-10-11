@@ -17,3 +17,6 @@ pub use client::AcpConnector;
 #[cfg(target_os = "linux")]
 pub use process::run_agent_host;
 pub use relay::{run_relay, run_relay_from_environment};
+
+#[cfg(test)]
+mod mapping;

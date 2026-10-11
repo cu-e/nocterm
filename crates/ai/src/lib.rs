@@ -42,3 +42,5 @@ pub use tools::*;
 mod tests;
 
 pub mod storage;
+
+pub mod model;

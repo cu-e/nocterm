@@ -4958,6 +4958,7 @@ name = "nocterm-acp"
 version = "0.0.0"
 dependencies = [
  "agent-client-protocol",
+ "agent-client-protocol-schema",
  "async-channel",
  "async-io",
  "async-process",
