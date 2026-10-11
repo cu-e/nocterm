@@ -135,7 +135,6 @@ nocterm-settings-ui = 12
 nocterm-snippets-ui = 1
 nocterm-ssh = 3
 nocterm-terminal = 19
-nocterm-vault-broker = 3
 nocterm-workspace = 13
 
 [struct_fields]

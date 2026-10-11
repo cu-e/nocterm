@@ -73,3 +73,10 @@ Tests cover wrong passwords, header/ciphertext tampering, hostile lengths/KDFs,
 private Unix permissions, failed/cancelled writes, concurrent writers, rotation,
 auto-lock and authentication/MFA boundaries. Cross-platform file ACL handling and
 an external security audit remain additional verification work.
+
+The optional Linux fingerprint broker classifies invalid bindings/registrations,
+unavailable keys, capacity limits and native entropy failures with typed internal
+errors. Its D-Bus boundary retains the existing access-denied wire messages without
+including registration tokens, vault bindings or key material. Re-registration
+cancels/removes the previous matching UID/binding before obtaining new randomness;
+a randomness failure does not reactivate that previous registration.
