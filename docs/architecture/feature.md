@@ -238,6 +238,15 @@ A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
 from the conversation and the session ([ADR 0009](../adr/0009-thread-composer.md)).
 
+Archived chat hydration belongs to a private feature `Archive` owner
+([ADR0031](../adr/0031-archive-hydration-owner.md)). It queues typed open, fork,
+rename and pin intentions and accepts a result only for its local load generation
+and the coordinator's current session/document ownership. Literal draft edits
+replace the saved draft and timestamp together. The runtime loading permit remains
+held through hydration and resident trimming; the panel releases it through a
+named command. Untouched archives yield no quit snapshot, while edited archives
+yield a draft-only patch through the shared storage service.
+
 Provider permissions and terminal bridge approvals belong to a chat's private
 `ApprovalInbox`. Its provider queue owns each responder until one valid choice
 or cancellation; automatic provider policy selects only an unambiguous `AllowOnce`

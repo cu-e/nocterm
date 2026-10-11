@@ -1,123 +1,229 @@
-//! Archived rows hold metadata only until an action needs the document.
-use super::AgentThread;
-use crate::runtime::Runtime;
-use gpui_kit::Context;
-use nocterm_ai::history::ChatSummary;
-use nocterm_ui::ActiveAi as _;
+//! Owns hydration generations, queued intentions, draft overlays and delivery permits.
+use crate::panel::AgentPanel;
+use gpui_kit::{AnyWindowHandle, EntityId, WeakEntity};
+use nocterm_ai::{
+    history::{ChatSummary, HistoryPermit, SavedChat},
+    session::Ticket,
+    storage::AgentStorageError,
+};
 
-pub(super) type Loaded = Box<dyn FnOnce(&mut AgentThread, &mut Context<AgentThread>)>;
-impl AgentThread {
-    pub(crate) fn archived(
+pub(crate) enum ArchiveIntent {
+    Open {
+        panel: WeakEntity<AgentPanel>,
+        source: EntityId,
+        revision: u64,
+    },
+    Fork {
+        panel: WeakEntity<AgentPanel>,
+        source: EntityId,
+        window: AnyWindowHandle,
+        last: Option<usize>,
+    },
+    Rename {
+        name: Option<String>,
+    },
+    Pin {
+        pinned: bool,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LoadId(u64);
+enum ArchivePhase {
+    Resident,
+    Archived {
         summary: ChatSummary,
-        workspace: gpui_kit::WeakEntity<nocterm_workspace::Workspace>,
-        cx: &mut Context<Self>,
+        loading: Option<LoadId>,
+    },
+}
+pub(super) struct DraftOverlay {
+    text: String,
+    updated: u64,
+}
+impl DraftOverlay {
+    pub(super) fn new(text: String, updated: u64) -> Self {
+        Self { text, updated }
+    }
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+    pub(super) fn updated(&self) -> u64 {
+        self.updated
+    }
+}
+pub(super) enum RequestOutcome {
+    RunNow(ArchiveIntent),
+    AlreadyLoading,
+    Start {
+        load_id: LoadId,
+        chat_id: String,
+        ticket: Ticket,
+    },
+}
+pub(super) enum LoadOutcome {
+    Stale,
+    Failed(AgentStorageError),
+    Hydrate {
+        chat: Box<SavedChat>,
+        overlay: Option<DraftOverlay>,
+        intents: Vec<ArchiveIntent>,
+    },
+}
+pub(super) struct EvictionGate {
+    detached: bool,
+    idle: bool,
+    durable: bool,
+    clean_draft: bool,
+    no_error: bool,
+    saved: bool,
+}
+impl EvictionGate {
+    pub(super) fn new(
+        detached: bool,
+        idle: bool,
+        durable: bool,
+        clean_draft: bool,
+        no_error: bool,
+        saved: bool,
     ) -> Self {
-        let mut thread = Self::new(summary.agent_id.clone(), workspace, cx);
-        thread.chat_id = summary.id.clone();
-        thread.name = summary.name.clone();
-        thread.pinned = summary.pinned;
-        thread.updated = summary.updated;
-        thread.last_model = summary.model.clone();
-        thread.status = "Saved chat".into();
-        thread.archive = Some(summary);
-        thread
+        Self {
+            detached,
+            idle,
+            durable,
+            clean_draft,
+            no_error,
+            saved,
+        }
     }
-    pub(crate) fn load_archive(
-        &mut self,
-        cx: &mut Context<Self>,
-        loaded: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
-    ) {
-        if self.archive.is_none() {
-            loaded(self, cx);
-            return;
+    pub(super) fn is_permitted(&self) -> bool {
+        self.detached
+            && self.idle
+            && self.durable
+            && self.clean_draft
+            && self.no_error
+            && self.saved
+    }
+}
+pub(super) struct Archive {
+    phase: ArchivePhase,
+    pending: Vec<ArchiveIntent>,
+    draft_overlay: Option<DraftOverlay>,
+    resident_bytes: usize,
+    permit: Option<HistoryPermit>,
+    next_load: u64,
+}
+impl Default for Archive {
+    fn default() -> Self {
+        Self {
+            phase: ArchivePhase::Resident,
+            pending: Vec::new(),
+            draft_overlay: None,
+            resident_bytes: 0,
+            permit: None,
+            next_load: 0,
         }
-        self.archive_actions.push(Box::new(loaded));
-        if self.loading_archive {
-            return;
+    }
+}
+impl Archive {
+    pub(super) fn archived(summary: ChatSummary) -> Self {
+        Self {
+            phase: ArchivePhase::Archived {
+                summary,
+                loading: None,
+            },
+            ..Self::default()
         }
-        self.loading_archive = true;
-        self.status = "Loading saved chat…".into();
-        let id = self.chat_id.clone();
-        let ticket = self.lifecycle.ticket();
-        let reader = Runtime::global(cx).read(cx).history_reader();
-        let loading = cx
-            .background_executor()
-            .spawn(async move { reader.load(id).await });
-        cx.spawn(async move |this, cx| {
-            let (result, permit) = loading.await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket)
-                    || !cx.ai_enabled()
-                    || this.archive.is_none()
-                    || !Runtime::global(cx)
-                        .read(cx)
-                        .document_is_current(&this.chat_id, cx.entity_id())
-                {
-                    return;
-                }
-                this.loading_archive = false;
-                this.archive_permit = Some(permit);
-                match result {
-                    Ok(chat) => {
-                        this.restore_content(chat);
-                        this.preview_config(cx);
-                        if this.draft_changed {
-                            this.save(cx);
-                        }
-                        for action in std::mem::take(&mut this.archive_actions) {
-                            action(this, cx);
-                        }
-                        // Opened from the history: connect like any shown chat.
-                        this.warm(cx);
-                    }
-                    Err(error) => {
-                        this.archive_actions.clear();
-                        this.status = format!("Could not load saved chat: {error}");
-                        this.status_error = true;
-                    }
-                }
-                cx.notify();
-            });
+    }
+    pub(super) fn summary(&self) -> Option<&ChatSummary> {
+        match &self.phase {
+            ArchivePhase::Resident => None,
+            ArchivePhase::Archived { summary, .. } => Some(summary),
+        }
+    }
+    pub(super) fn is_archived(&self) -> bool {
+        self.summary().is_some()
+    }
+    pub(super) fn request(&mut self, intent: ArchiveIntent, ticket: Ticket) -> RequestOutcome {
+        let ArchivePhase::Archived { summary, loading } = &mut self.phase else {
+            return RequestOutcome::RunNow(intent);
+        };
+        self.pending.push(intent);
+        if loading.is_some() {
+            return RequestOutcome::AlreadyLoading;
+        }
+        self.next_load += 1;
+        let load_id = LoadId(self.next_load);
+        *loading = Some(load_id);
+        RequestOutcome::Start {
+            load_id,
+            chat_id: summary.id.clone(),
+            ticket,
+        }
+    }
+    pub(super) fn edit_draft(&mut self, text: String, updated: u64) {
+        self.draft_overlay = Some(DraftOverlay::new(text, updated));
+    }
+    pub(super) fn draft_patch(&self, id: &str, agent: &str) -> Option<SavedChat> {
+        self.is_archived().then_some(())?;
+        self.draft_overlay.as_ref().map(|overlay| {
+            SavedChat::archive_draft(
+                id.to_owned(),
+                agent.to_owned(),
+                overlay.text.clone(),
+                overlay.updated,
+            )
         })
-        .detach();
-        cx.notify();
     }
-    pub(crate) fn resident_history_bytes(&self) -> usize {
-        if self.archive.is_some() {
-            return 0;
+    pub(super) fn accept(
+        &mut self,
+        load_id: LoadId,
+        current: bool,
+        result: Result<SavedChat, AgentStorageError>,
+        permit: HistoryPermit,
+    ) -> LoadOutcome {
+        let ArchivePhase::Archived { loading, .. } = &mut self.phase else {
+            return LoadOutcome::Stale;
+        };
+        if !current || *loading != Some(load_id) {
+            return LoadOutcome::Stale;
         }
-        self.resident_archive_bytes
-            .max(self.storage_budget.resident_bytes())
-            + self
-                .composer
-                .queue
-                .iter()
-                .map(|prompt| prompt.memory_len)
-                .sum::<usize>()
-            + self.composer.draft.as_ref().map_or(0, String::len)
+        *loading = None;
+        match result {
+            Ok(chat) => {
+                self.permit = Some(permit);
+                LoadOutcome::Hydrate {
+                    chat: Box::new(chat),
+                    overlay: self.draft_overlay.take(),
+                    intents: std::mem::take(&mut self.pending),
+                }
+            }
+            Err(error) => {
+                self.pending.clear();
+                LoadOutcome::Failed(error)
+            }
+        }
     }
-    pub(crate) fn evict_history(&mut self, cx: &Context<Self>) -> bool {
-        if self.archive.is_some()
-            || self.lease.is_some()
-            || self.session_busy()
-            || self.document_revision != self.persisted_revision
-            || self.draft_changed
-            || self.persistence_error.is_some()
-            || !self.history_queued
-        {
+    pub(super) fn hydration_committed(&mut self, resident_bytes: usize) {
+        self.phase = ArchivePhase::Resident;
+        self.resident_bytes = resident_bytes;
+    }
+    pub(super) fn release_delivery_permit(&mut self) {
+        self.permit = None;
+    }
+    pub(super) fn resident_bytes(&self) -> usize {
+        self.resident_bytes
+    }
+    pub(super) fn request_evict(&mut self, gate: EvictionGate, summary: ChatSummary) -> bool {
+        if self.is_archived() || !gate.is_permitted() {
             return false;
         }
-        let mut summary = ChatSummary::from_chat(&self.history_metadata(cx));
-        summary.title = Some(self.title());
-        summary.has_content = !self.state.entries.is_empty() || !self.composer.is_empty();
-        self.archive = Some(summary);
-        self.state = Default::default();
-        self.composer = Default::default();
-        self.storage_budget = Default::default();
-        self.resident_archive_bytes = 0;
-        self.dirty_rows.clear();
-        self.storage_dirty.clear();
-        self.tool_displays = Default::default();
+        self.phase = ArchivePhase::Archived {
+            summary,
+            loading: None,
+        };
+        self.resident_bytes = 0;
+        self.draft_overlay = None;
         true
     }
 }
+#[cfg(test)]
+mod tests;

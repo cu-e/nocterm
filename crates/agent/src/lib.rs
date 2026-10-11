@@ -2,6 +2,7 @@
 //!
 //! Owns: panel views, Composer, AgentThread coordination and the session-scoped
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
+//! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! Does not own: ACP transport, runtime connection admission or filesystem storage adapters.
 //! Ports used: AgentConnector, ToolBridge, TerminalAccess and ConnectionDirectory.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
@@ -9,6 +10,8 @@
 //! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
 //! Invariants: approval cards retain their original chat and stable token; every
 //! choice revalidates current session, registration and attachment authority.
+//! Archive delivery also validates document ownership and its local load generation;
+//! a literal pending draft supersedes the saved draft and its timestamp together.
 mod panel;
 use nocterm_agent_runtime as runtime;
 mod thread;

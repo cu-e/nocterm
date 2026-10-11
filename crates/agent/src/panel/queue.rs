@@ -45,7 +45,7 @@ impl AgentPanel {
     pub(super) fn original_composer_text(&self, cx: &gpui_kit::App) -> String {
         self.composer.edit.as_ref().map_or_else(
             || {
-                let value = self.input.read(cx).value().to_string();
+                let value = self.composer_text(cx).to_string();
                 if self
                     .composer
                     .loading
@@ -53,7 +53,7 @@ impl AgentPanel {
                     .is_some_and(|(_, previous)| previous == &value)
                 {
                     self.current()
-                        .and_then(|thread| thread.read(cx).composer.draft.clone())
+                        .and_then(|thread| thread.read(cx).draft_text().map(str::to_owned))
                         .unwrap_or_default()
                 } else {
                     value
@@ -118,7 +118,7 @@ impl AgentPanel {
                         if panel.composer.revision != revision {
                             return;
                         }
-                        if panel.current().unwrap().read(cx).archive.is_some() {
+                        if panel.current().unwrap().read(cx).is_archived() {
                             panel.composer.loading = Some((id, String::new()));
                             panel
                                 .input
@@ -270,7 +270,7 @@ impl AgentPanel {
         if thread.read(cx).composer.queue.is_empty() {
             return None;
         }
-        let count = thread.read(cx).composer.queue.len();
+        let count = thread.read(cx).queued_prompt_ids().count();
         let first = thread.read(cx).composer.queue[0].saved.id;
         let measured = self
             .queue_heights

@@ -271,10 +271,22 @@ impl AgentPanel {
             history_tick: None,
         }
     }
-    fn current(&self) -> Option<Entity<AgentThread>> {
+    pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
         self.active
             .and_then(|index| self.threads.get(index))
             .cloned()
+    }
+    pub(crate) fn chat_documents(&self) -> impl ExactSizeIterator<Item = &Entity<AgentThread>> {
+        self.threads.iter()
+    }
+    pub(crate) fn composer_text(&self, cx: &App) -> SharedString {
+        self.input.read(cx).value()
+    }
+    pub(crate) fn composer_focus(&self, cx: &App) -> FocusHandle {
+        self.input.read(cx).focus_handle(cx)
+    }
+    pub(crate) fn focus_composer(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.composer_focus(cx), cx);
     }
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.

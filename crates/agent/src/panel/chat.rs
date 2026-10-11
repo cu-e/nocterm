@@ -41,8 +41,11 @@ impl AgentPanel {
         }
         let dirty = thread.update(cx, |thread, _| std::mem::take(&mut thread.dirty_rows));
         let dirty = dirty.into_iter().collect::<Vec<_>>();
-        self.navigation
-            .observe(thread.entity_id(), &thread.read(cx).state.entries, &dirty);
+        self.navigation.observe(
+            thread.entity_id(),
+            thread.read(cx).history_entries(),
+            &dirty,
+        );
         self.sync_stream(&dirty, cx);
         body = body.child(
             div()
@@ -107,7 +110,7 @@ impl AgentPanel {
                     || thread.read(cx).session().is_none()
                     || thread.read(cx).lifecycle.sign_in_required()
                     || thread.read(cx).fallback_history
-                    || thread.read(cx).status_error
+                    || thread.read(cx).has_status_error()
                     || !thread.read(cx).lifecycle.accepts_updates(),
                 |body| {
                     body.child(

@@ -13,7 +13,7 @@ use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-mod archive;
+pub(crate) mod archive;
 mod attachments;
 mod client;
 mod composer;
@@ -93,13 +93,7 @@ pub(crate) struct AgentThread {
     pub chat_id: String,
     /// When the chat last changed, in seconds since the Unix epoch.
     pub updated: u64,
-    /// Restored from history and not yet connected.
-    pub archive: Option<nocterm_ai::history::ChatSummary>,
-    pub loading_archive: bool,
-    archive_actions: Vec<archive::Loaded>,
-    pending_archive_draft: Option<String>,
-    resident_archive_bytes: usize,
-    pub archive_permit: Option<nocterm_ai::history::HistoryPermit>,
+    archive: archive::Archive,
     execution_watch: Option<Task<()>>,
     pub restore: Option<Restore>,
     /// The name the user gave the chat.
@@ -209,12 +203,7 @@ impl AgentThread {
             agent_id,
             chat_id: chat.id,
             updated: chat.updated,
-            archive: None,
-            loading_archive: false,
-            archive_actions: Vec::new(),
-            archive_permit: None,
-            resident_archive_bytes: 0,
-            pending_archive_draft: None,
+            archive: archive::Archive::default(),
             execution_watch: None,
             restore: None,
             name: None,
@@ -254,6 +243,171 @@ impl AgentThread {
             _workspace_authority: authority,
         }
     }
+    pub(crate) fn archived(
+        summary: nocterm_ai::history::ChatSummary,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut thread = Self::new(summary.agent_id.clone(), workspace, cx);
+        thread.chat_id = summary.id.clone();
+        thread.name = summary.name.clone();
+        thread.pinned = summary.pinned;
+        thread.updated = summary.updated;
+        thread.last_model = summary.model.clone();
+        thread.status = "Saved chat".into();
+        thread.archive = archive::Archive::archived(summary);
+        thread
+    }
+    pub(crate) fn is_archived(&self) -> bool {
+        self.archive.is_archived()
+    }
+    pub(crate) fn archive_summary(&self) -> Option<&nocterm_ai::history::ChatSummary> {
+        self.archive.summary()
+    }
+    pub(crate) fn chat_id(&self) -> &str {
+        &self.chat_id
+    }
+    pub(crate) fn history_entries(&self) -> &[nocterm_ai::thread::Entry] {
+        &self.state.entries
+    }
+    pub(crate) fn draft_text(&self) -> Option<&str> {
+        self.composer.draft.as_deref()
+    }
+    pub(crate) fn queued_prompt_ids(&self) -> impl ExactSizeIterator<Item = u64> + '_ {
+        self.composer.queue.iter().map(|prompt| prompt.saved.id)
+    }
+    pub(crate) fn queue_dispatchable(&self) -> bool {
+        self.composer.dispatchable()
+    }
+    pub(crate) fn session_phase(&self) -> SessionPhase {
+        self.lifecycle.phase()
+    }
+    pub(crate) fn updated_at(&self) -> u64 {
+        self.updated
+    }
+    pub(crate) fn has_status_error(&self) -> bool {
+        self.status_error
+    }
+    pub(crate) fn release_history_delivery(&mut self) {
+        self.archive.release_delivery_permit();
+    }
+    pub(crate) fn load_archive(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
+        let request = self.archive.request(intent, self.lifecycle.ticket());
+        let archive::RequestOutcome::Start {
+            load_id,
+            chat_id,
+            ticket,
+        } = request
+        else {
+            if let archive::RequestOutcome::RunNow(intent) = request {
+                self.apply_archive_intent(intent, cx);
+            }
+            return;
+        };
+        self.status = "Loading saved chat…".into();
+        let reader = Runtime::global(cx).read(cx).history_reader();
+        let loading = cx
+            .background_executor()
+            .spawn(async move { reader.load(chat_id).await });
+        cx.spawn(async move |this, cx| {
+            let (result, permit) = loading.await;
+            let _ = this.update(cx, |this, cx| {
+                let current = this.lifecycle.session_current(ticket)
+                    && cx.ai_enabled()
+                    && Runtime::global(cx)
+                        .read(cx)
+                        .document_is_current(&this.chat_id, cx.entity_id());
+                match this.archive.accept(load_id, current, result, permit) {
+                    archive::LoadOutcome::Stale => return,
+                    archive::LoadOutcome::Failed(error) => {
+                        this.status = format!("Could not load saved chat: {error}");
+                        this.status_error = true;
+                    }
+                    archive::LoadOutcome::Hydrate {
+                        chat,
+                        overlay,
+                        intents,
+                    } => {
+                        this.restore_content_with_overlay(*chat, overlay);
+                        this.preview_config(cx);
+                        if this.draft_changed {
+                            this.save(cx);
+                        }
+                        for intent in intents {
+                            this.apply_archive_intent(intent, cx);
+                        }
+                        this.warm(cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn apply_archive_intent(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
+        match intent {
+            archive::ArchiveIntent::Rename { name } => self.rename(name, cx),
+            archive::ArchiveIntent::Pin { pinned } => self.set_pinned(pinned, cx),
+            archive::ArchiveIntent::Open {
+                panel,
+                source,
+                revision,
+            } => cx.defer(move |cx| {
+                let _ = panel.update(cx, |panel, cx| panel.archive_opened(source, revision, cx));
+            }),
+            archive::ArchiveIntent::Fork {
+                panel,
+                source,
+                window,
+                last,
+            } => cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.fork_loaded_archive(source, last, window, cx)
+                    });
+                });
+            }),
+        }
+    }
+    pub(crate) fn resident_history_bytes(&self) -> usize {
+        if self.is_archived() {
+            return 0;
+        }
+        self.archive
+            .resident_bytes()
+            .max(self.storage_budget.resident_bytes())
+            + self
+                .composer
+                .queue
+                .iter()
+                .map(|prompt| prompt.memory_len)
+                .sum::<usize>()
+            + self.composer.draft.as_ref().map_or(0, String::len)
+    }
+    pub(crate) fn evict_history(&mut self, cx: &Context<Self>) -> bool {
+        let gate = archive::EvictionGate::new(
+            self.lease.is_none(),
+            !self.session_busy(),
+            self.document_revision == self.persisted_revision,
+            !self.draft_changed,
+            self.persistence_error.is_none(),
+            self.history_queued,
+        );
+        let mut summary = nocterm_ai::history::ChatSummary::from_chat(&self.history_metadata(cx));
+        summary.title = Some(self.title());
+        summary.has_content = !self.state.entries.is_empty() || !self.composer.is_empty();
+        if !self.archive.request_evict(gate, summary) {
+            return false;
+        }
+        self.state = Default::default();
+        self.composer = Default::default();
+        self.storage_budget = Default::default();
+        self.dirty_rows.clear();
+        self.storage_dirty.clear();
+        self.tool_displays = Default::default();
+        true
+    }
     /// The session ended with an error; the next message reconnects.
     pub(crate) fn ended(&self) -> bool {
         self.lifecycle.failed()
@@ -264,7 +418,7 @@ impl AgentThread {
     }
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
-        self.archive.is_none()
+        !self.is_archived()
             && !self.pinned
             && self.state.entries.is_empty()
             && self.composer.is_empty()
@@ -306,7 +460,7 @@ impl AgentThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() || self.lifecycle.phase() != SessionPhase::SignInRequired {
+        if !cx.ai_enabled() || self.session_phase() != SessionPhase::SignInRequired {
             return;
         }
         let Some(commands) = self.commands().clone() else {

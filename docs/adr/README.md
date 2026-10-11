@@ -30,3 +30,4 @@ acceptance; a later record supersedes an earlier one.
 | [0027](0027-connection-observation-ports.md) | Pure connection observation contracts and network I/O adapter |
 | [0028](0028-theme-library-boundary.md) | Pure theme domain model, adapter registry and theme service |
 | [0029](0029-output-recording-shared-driver.md) | Bounded append persistence and output recording |
+| [0031](0031-archive-hydration-owner.md) | Hydrated archive and history permit state belong to a single owner |

@@ -13,7 +13,7 @@ impl AgentPanel {
         let ids = self
             .threads
             .iter()
-            .filter(|thread| thread.read(cx).archive.is_some())
+            .filter(|thread| thread.read(cx).is_archived())
             .map(|thread| thread.read(cx).chat_id.clone())
             .collect::<Vec<_>>();
         let reader = Runtime::global(cx).read(cx).history_reader();

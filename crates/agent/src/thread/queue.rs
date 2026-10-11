@@ -97,7 +97,7 @@ impl AgentThread {
         replace: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<bool, String> {
-        if self.archive.is_some() {
+        if self.is_archived() {
             return Err("Wait for the saved chat to finish loading.".into());
         }
         if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
@@ -173,7 +173,7 @@ impl AgentThread {
     }
 
     pub(crate) fn dispatch_next(&mut self, cx: &mut Context<Self>) {
-        if !self.composer.dispatchable()
+        if !self.queue_dispatchable()
             || self.lifecycle.generating()
             || self.lifecycle.sign_in_required()
         {

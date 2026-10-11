@@ -50,7 +50,7 @@ impl AgentThread {
     }
     /// Asks the runtime for a connection. A failed chat recovers this way.
     pub(crate) fn request_activation(&mut self, cx: &mut Context<Self>) {
-        if self.archive.is_some() || self.lease.is_some() || !self.lifecycle.queue() {
+        if self.is_archived() || self.lease.is_some() || !self.lifecycle.queue() {
             return;
         }
         self.status_error = false;
@@ -80,7 +80,7 @@ impl AgentThread {
     /// chat that cannot save waits until it can.
     pub(crate) fn warm(&mut self, cx: &mut Context<Self>) {
         if self.shown
-            && self.archive.is_none()
+            && !self.is_archived()
             && self.persistence_error.is_none()
             && cx.ai_enabled()
             && cx.setting::<AiSettings>().sessions.warm_start

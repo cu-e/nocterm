@@ -4,7 +4,7 @@ use crate::{
     runtime::Runtime,
     thread::{AgentThread, Attachment},
 };
-use gpui_kit::{AppContext as _, Context, Entity, Focusable as _, Window};
+use gpui_kit::{AppContext as _, Context, Entity, Window};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::time::Duration;
 impl AgentPanel {
@@ -33,35 +33,44 @@ impl AgentPanel {
         self.reset_chat_view(cx);
         if let Some(thread) = self
             .current()
-            .filter(|thread| thread.read(cx).archive.is_some())
+            .filter(|thread| thread.read(cx).is_archived())
         {
             let panel = cx.weak_entity();
             let revision = self.composer.revision;
             thread.update(cx, |thread, cx| {
-                thread.load_archive(cx, move |_, cx| {
-                    cx.defer(move |cx| {
-                        let _ = panel.update(cx, |panel, cx| {
-                            if panel
-                                .current()
-                                .is_some_and(|thread| thread.entity_id() == id)
-                            {
-                                if panel.composer.revision == revision {
-                                    panel.load_composer(cx);
-                                } else {
-                                    let text = panel.input.read(cx).value().to_string();
-                                    if let Some(thread) = panel.current() {
-                                        thread.update(cx, |thread, cx| thread.set_draft(text, cx));
-                                    }
-                                }
-                            }
-                            panel.trim_resident_history(cx);
-                            cx.notify();
-                        });
-                    });
-                })
+                thread.load_archive(
+                    crate::thread::archive::ArchiveIntent::Open {
+                        panel,
+                        source: id,
+                        revision,
+                    },
+                    cx,
+                )
             });
         }
         self.load_composer(cx);
+        self.trim_resident_history(cx);
+        cx.notify();
+    }
+    pub(crate) fn archive_opened(
+        &mut self,
+        source: gpui_kit::EntityId,
+        revision: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == source)
+        {
+            if self.composer.revision == revision {
+                self.load_composer(cx);
+            } else {
+                let text = self.input.read(cx).value().to_string();
+                if let Some(thread) = self.current() {
+                    thread.update(cx, |thread, cx| thread.set_draft(text, cx));
+                }
+            }
+        }
         self.trim_resident_history(cx);
         cx.notify();
     }
@@ -131,7 +140,7 @@ impl AgentPanel {
         self.threads.push(thread);
         let id = self.threads.last().unwrap().entity_id();
         self.select_thread(id, cx);
-        window.focus(&self.input.read(cx).focus_handle(cx), cx);
+        self.focus_composer(window, cx);
         cx.notify();
     }
     /// Replaces the open chat, whose session ended, with the same chat in a
@@ -212,8 +221,7 @@ impl AgentPanel {
         const BUDGET: usize = 64 * 1024 * 1024;
         let active = self.current().map(|thread| thread.entity_id());
         let mut resident: usize = self
-            .threads
-            .iter()
+            .chat_documents()
             .map(|thread| thread.read(cx).resident_history_bytes())
             .sum();
         let mut candidates = self.threads.clone();
@@ -261,7 +269,7 @@ impl AgentPanel {
             .push(cx.observe_in(thread, window, |this, loaded, window, cx| {
                 this.trim_resident_history(cx);
                 loaded.update(cx, |thread, _| {
-                    thread.archive_permit = None;
+                    thread.release_history_delivery();
                 });
                 this.refresh_commands(window, cx);
                 let panel = cx.weak_entity();

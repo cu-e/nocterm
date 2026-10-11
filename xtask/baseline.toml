@@ -62,7 +62,7 @@ nocterm-ui = 5
 
 [impl_spread]
 "nocterm_agent::panel::AgentPanel" = 18
-"nocterm_agent::thread::AgentThread" = 18
+"nocterm_agent::thread::AgentThread" = 17
 "nocterm_terminal::terminal::Terminal" = 9
 "nocterm_terminal::view::TerminalView" = 10
 "nocterm_vt::emulator::Emulator" = 5
@@ -78,7 +78,7 @@ nocterm-ui = 5
 "nocterm_agent::panel::history::Renaming" = 1
 "nocterm_agent::panel::queue::ComposerState" = 3
 "nocterm_agent::panel::queue::QueueEdit" = 2
-"nocterm_agent::thread::AgentThread" = 36
+"nocterm_agent::thread::AgentThread" = 33
 "nocterm_agent::thread::PromptMetadata" = 1
 "nocterm_agent::thread::Restore" = 3
 "nocterm_agent::thread::SignInWait" = 5
@@ -140,7 +140,7 @@ nocterm-workspace = 13
 
 [struct_fields]
 "nocterm_agent::panel::AgentPanel" = 34
-"nocterm_agent::thread::AgentThread" = 53
+"nocterm_agent::thread::AgentThread" = 48
 "nocterm_ai::history::SavedChat" = 20
 "nocterm_ai::history::wire::Wire" = 18
 "nocterm_connections::editor::ConnectionEditor" = 27

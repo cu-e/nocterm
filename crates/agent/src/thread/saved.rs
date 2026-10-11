@@ -7,7 +7,7 @@ use super::{AgentThread, Composer, Fork, Restore};
 use crate::runtime::Runtime;
 
 impl AgentThread {
-    /// A thread showing `chat` from history, connected only when work is submitted.
+    /// A restored document connects when shown with warm start enabled.
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
         workspace: WeakEntity<Workspace>,
@@ -19,9 +19,14 @@ impl AgentThread {
         thread
     }
     pub(crate) fn restore_content(&mut self, chat: nocterm_ai::history::SavedChat) {
-        self.resident_archive_bytes = chat.resident_bytes();
-        self.archive = None;
-        self.loading_archive = false;
+        self.restore_content_with_overlay(chat, None);
+    }
+    pub(super) fn restore_content_with_overlay(
+        &mut self,
+        chat: nocterm_ai::history::SavedChat,
+        overlay: Option<super::archive::DraftOverlay>,
+    ) {
+        self.archive.hydration_committed(chat.resident_bytes());
         let pending_history =
             chat.pending_history || (chat.session_id.is_none() && !chat.entries.is_empty());
         let prepared_sizes = chat
@@ -31,9 +36,9 @@ impl AgentThread {
         self.storage_budget = nocterm_ai::history::HistoryBudget::restored(chat.prepared_budget());
         self.chat_id = chat.id;
         self.history_queued = true;
-        if self.pending_archive_draft.is_none() {
-            self.updated = chat.updated;
-        }
+        self.updated = overlay
+            .as_ref()
+            .map_or(chat.updated, |overlay| overlay.updated());
         self.status = "Saved chat".into();
         self.state.entries = chat.entries;
         self.state.times = chat.times;
@@ -58,8 +63,8 @@ impl AgentThread {
             super::queue::restore_attachments(&chat.attachments),
             queue,
         );
-        if let Some(text) = self.pending_archive_draft.take() {
-            self.composer.set_draft(text);
+        if let Some(overlay) = overlay {
+            self.composer.set_draft(overlay.text().to_owned());
             self.draft_changed = true;
         }
         self.fallback_history = pending_history;
@@ -130,7 +135,7 @@ impl AgentThread {
     /// The chat's name: the user's, else the agent's title, else the start of
     /// the first message.
     pub(crate) fn title(&self) -> String {
-        self.archive.as_ref().map_or_else(
+        self.archive.summary().map_or_else(
             || chat_title(self.name.as_deref(), &self.state),
             |summary| summary.title().to_owned(),
         )
@@ -143,8 +148,8 @@ impl AgentThread {
             .or_else(|| self.last_model.clone())
     }
     pub(crate) fn rename(&mut self, name: Option<String>, cx: &mut Context<Self>) {
-        if self.archive.is_some() {
-            self.load_archive(cx, move |thread, cx| thread.rename(name, cx));
+        if self.is_archived() {
+            self.load_archive(super::archive::ArchiveIntent::Rename { name }, cx);
             return;
         }
         self.name = name
@@ -154,8 +159,8 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
-        if self.archive.is_some() {
-            self.load_archive(cx, move |thread, cx| thread.set_pinned(pinned, cx));
+        if self.is_archived() {
+            self.load_archive(super::archive::ArchiveIntent::Pin { pinned }, cx);
             return;
         }
         self.pinned = pinned;
@@ -203,7 +208,7 @@ impl AgentThread {
         &self,
         cx: &gpui_kit::App,
     ) -> Option<std::sync::Arc<nocterm_ai::history::SharedChat>> {
-        if self.archive.is_some() {
+        if self.is_archived() {
             return None;
         }
         if !self.pinned

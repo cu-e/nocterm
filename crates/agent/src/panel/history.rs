@@ -109,7 +109,7 @@ impl AgentPanel {
     ) {
         if let Some(index) = self.index_of(id) {
             let thread = self.threads[index].clone();
-            let chat = thread.read(cx).chat_id.clone();
+            let chat = thread.read(cx).chat_id().to_owned();
             thread.update(cx, |thread, cx| thread.release_resources(cx));
             Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
@@ -144,18 +144,19 @@ impl AgentPanel {
         let Some(source) = self.index_of(id).map(|index| self.threads[index].clone()) else {
             return;
         };
-        if source.read(cx).archive.is_some() {
+        if source.read(cx).is_archived() {
             let panel = cx.weak_entity();
             let handle = window.window_handle();
             source.update(cx, |thread, cx| {
-                thread.load_archive(cx, move |_, cx| {
-                    cx.defer(move |cx| {
-                        let _ = handle.update(cx, |_, window, cx| {
-                            let _ = panel
-                                .update(cx, |panel, cx| panel.fork_thread_at(id, last, window, cx));
-                        });
-                    });
-                })
+                thread.load_archive(
+                    crate::thread::archive::ArchiveIntent::Fork {
+                        panel,
+                        source: id,
+                        window: handle,
+                        last,
+                    },
+                    cx,
+                )
             });
             return;
         }
@@ -170,6 +171,18 @@ impl AgentPanel {
         let id = thread.entity_id();
         self.threads.push(thread);
         self.open_thread(id, cx);
+    }
+
+    pub(crate) fn fork_loaded_archive(
+        &mut self,
+        source: EntityId,
+        last: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.index_of(source).is_some() {
+            self.fork_thread_at(source, last, window, cx);
+        }
     }
 
     pub(super) fn set_pinned(&mut self, id: EntityId, pinned: bool, cx: &mut Context<Self>) {
@@ -308,14 +321,14 @@ impl AgentPanel {
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
-        let when = if chat.archive.as_ref().is_none_or(|row| !row.has_content)
-            && chat.state.entries.is_empty()
-            && chat.composer.draft.is_none()
+        let when = if chat.archive_summary().is_none_or(|row| !row.has_content)
+            && chat.history_entries().is_empty()
+            && chat.draft_text().is_none()
         {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
-                nocterm_ai::time::now().saturating_sub(chat.updated),
+                nocterm_ai::time::now().saturating_sub(chat.updated_at()),
             )))
         };
         let model = chat.model().unwrap_or_default();
