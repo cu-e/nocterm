@@ -13,7 +13,10 @@ mod closing;
 mod preferences;
 struct UnusedBridge;
 impl nocterm_ai::ToolBridge for UnusedBridge {
-    fn register(&self) -> Result<nocterm_ai::BridgeRegistration, String> {
+    fn register(
+        &self,
+    ) -> Result<nocterm_ai::BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError>
+    {
         Ok(nocterm_ai::BridgeRegistration::new(
             1,
             nocterm_ai::BridgeLaunch {

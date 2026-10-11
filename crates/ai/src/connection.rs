@@ -188,8 +188,16 @@ pub enum AgentError {
     Io(String),
 }
 pub type ConnectError = AgentError;
+#[derive(Debug, thiserror::Error)]
+pub enum BridgeRegistrationError {
+    #[error("AI is disabled.")]
+    AiDisabled,
+    #[error("Bridge error: {0}")]
+    Failed(String),
+}
+
 pub trait ToolBridge: Send + Sync + 'static {
-    fn register(&self) -> Result<BridgeRegistration, String>;
+    fn register(&self) -> Result<BridgeRegistration, BridgeRegistrationError>;
     fn calls(&self) -> async_channel::Receiver<BridgeCall>;
     fn rejections(&self) -> async_channel::Receiver<BridgeRejection> {
         let (sender, receiver) = async_channel::bounded(1);

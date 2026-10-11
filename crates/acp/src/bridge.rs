@@ -95,18 +95,24 @@ impl BridgeServer {
     }
 }
 impl ToolBridge for BridgeServer {
-    fn register(&self) -> Result<BridgeRegistration, String> {
+    fn register(
+        &self,
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         let relay = &self.inner.relay;
         if !relay.program.is_file() {
             // The agent would start without terminal tools and only say so in chat.
-            return Err(format!(
-                "Terminal tools need {}, which no longer exists. Restart nocterm.",
-                relay.program.display()
+            return Err(nocterm_ai::connection::BridgeRegistrationError::Failed(
+                format!(
+                    "Terminal tools need {}, which no longer exists. Restart nocterm.",
+                    relay.program.display()
+                ),
             ));
         }
-        let token = random_token()?;
+        let token =
+            random_token().map_err(nocterm_ai::connection::BridgeRegistrationError::Failed)?;
         let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-        let endpoint = start_listening(&self.inner, &mut state)?;
+        let endpoint = start_listening(&self.inner, &mut state)
+            .map_err(nocterm_ai::connection::BridgeRegistrationError::Failed)?;
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (cancel, cancelled) = async_channel::bounded(1);
         state.registrations.insert(

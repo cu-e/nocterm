@@ -244,7 +244,9 @@ struct Bridge {
     rejections: async_channel::Receiver<nocterm_ai::BridgeRejection>,
 }
 impl ToolBridge for Bridge {
-    fn register(&self) -> Result<BridgeRegistration, String> {
+    fn register(
+        &self,
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let revoked = self.revoked.clone();
         Ok(BridgeRegistration::new(

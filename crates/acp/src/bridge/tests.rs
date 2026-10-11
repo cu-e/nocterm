@@ -59,6 +59,7 @@ fn refuses_a_registration_whose_relay_program_is_gone() {
         },
     );
     let error = server.register().err().unwrap();
+    let error = error.to_string();
     assert!(error.contains("nocterm (deleted)"), "{error}");
     assert!(error.contains("Restart nocterm"), "{error}");
 }

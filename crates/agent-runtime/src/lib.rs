@@ -287,9 +287,9 @@ impl Runtime {
         &mut self,
         client: &Client,
         cx: &mut Context<Self>,
-    ) -> Result<BridgeRegistration, String> {
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         if !self.ai_enabled(cx) {
-            return Err("AI is disabled.".into());
+            return Err(nocterm_ai::connection::BridgeRegistrationError::AiDisabled);
         }
         let registration = self.services.bridge.register()?;
         self.bridge.insert(registration.id, client.clone());
@@ -359,7 +359,7 @@ impl Runtime {
         let registration = match self.register_bridge(&client, cx) {
             Ok(registration) => registration,
             Err(error) => {
-                client.emit(SessionEvent::Failed(error), cx);
+                client.emit(SessionEvent::Failed(error.to_string()), cx);
                 return;
             }
         };
