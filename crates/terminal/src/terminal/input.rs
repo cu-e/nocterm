@@ -60,7 +60,10 @@ impl Terminal {
             ));
         }
         drop(integration);
-        let bytes = self.codec.encode(&format!("{command}\r"))?;
+        let bytes = self
+            .codec
+            .encode(&format!("{command}\r"))
+            .map_err(|e| e.to_string())?;
         if !self.send(bytes) {
             return Err(
                 "Directory change was not sent because the terminal input queue is full.".into(),
@@ -123,7 +126,7 @@ impl Terminal {
         } else {
             text.to_owned()
         };
-        let bytes = self.codec.encode(&text)?;
+        let bytes = self.codec.encode(&text).map_err(|e| e.to_string())?;
         self.agent_input.borrow_mut().submitting = true;
         let accepted = self.send(bytes);
         self.agent_input.borrow_mut().submitting = false;
@@ -191,7 +194,7 @@ impl Terminal {
                 self.send(bytes)
             }
             Err(error) => {
-                self.text_error = Some(error);
+                self.text_error = Some(error.to_string());
                 false
             }
         };
@@ -256,7 +259,7 @@ impl Terminal {
         }
         let text =
             std::str::from_utf8(&paste).map_err(|_| "Paste could not be encoded as text.")?;
-        let bytes = self.codec.encode(text)?;
+        let bytes = self.codec.encode(text).map_err(|e| e.to_string())?;
         if !self.send(bytes) {
             return Err("Terminal input queue rejected the paste. Wait and retry.".into());
         }

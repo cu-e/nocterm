@@ -130,7 +130,7 @@ nocterm-ai = 8
 nocterm-local = 3
 nocterm-session = 1
 nocterm-settings-ui = 12
-nocterm-terminal = 18
+nocterm-terminal = 17
 nocterm-workspace = 13
 
 [struct_fields]

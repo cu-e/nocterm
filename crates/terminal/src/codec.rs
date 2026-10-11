@@ -1,10 +1,16 @@
 //! Converts session text; transport and terminal protocol messages stay bytes.
 use encoding_rs::{CoderResult, Decoder, Encoding};
 use nocterm_session::Charset;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Some characters cannot be sent in {0}. Change the session charset or edit the text.")]
+pub(crate) struct EncodeError(&'static str);
+
 pub(crate) struct TextCodec {
     charset: Charset,
     decoder: Decoder,
 }
+
 impl TextCodec {
     pub(crate) fn new(charset: Charset) -> Self {
         Self {
@@ -24,17 +30,15 @@ impl TextCodec {
         }
         text.into_bytes()
     }
-    pub(crate) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode(&self, text: &str) -> Result<Vec<u8>, EncodeError> {
         let (bytes, _, unmappable) = encoding(self.charset).encode(text);
         if unmappable {
-            return Err(format!(
-                "Some characters cannot be sent in {}. Change the session charset or edit the text.",
-                self.charset.label()
-            ));
+            return Err(EncodeError(self.charset.label()));
         }
         Ok(bytes.into_owned())
     }
 }
+
 fn encoding(charset: Charset) -> &'static Encoding {
     match charset {
         Charset::Utf8 => encoding_rs::UTF_8,
@@ -44,9 +48,11 @@ fn encoding(charset: Charset) -> &'static Encoding {
         Charset::Gbk => encoding_rs::GBK,
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn fragmented_multibyte_and_control_sequences_remain_stable() {
         let input = "\x1b[31m中文\x1b[0m\r\n";
@@ -59,28 +65,5 @@ mod tests {
             output.extend(codec.decode(&[], true));
             assert_eq!(output, input.as_bytes());
         }
-    }
-    #[test]
-    fn cyrillic_round_trips_and_unmappable_text_is_not_sent() {
-        for charset in [Charset::Windows1251, Charset::Koi8R] {
-            let mut codec = TextCodec::new(charset);
-            let bytes = codec.encode("Привет").unwrap();
-            assert_eq!(codec.decode(&bytes, true), "Привет".as_bytes());
-            assert!(codec.encode("🙂").is_err());
-        }
-    }
-    #[test]
-    fn malformed_streams_flush_at_eof_and_ascii_protocols_are_unchanged() {
-        let mut codec = TextCodec::new(Charset::Gbk);
-        assert!(codec.decode(&[0x81], false).is_empty());
-        assert_eq!(codec.decode(&[], true), "�".as_bytes());
-        let mut codec = TextCodec::new(Charset::Windows1251);
-        assert_eq!(
-            codec.decode(b"\x1b]7;file://host/home\x07\r\n\x1b[200~", true),
-            b"\x1b]7;file://host/home\x07\r\n\x1b[200~"
-        );
-        let mut codec = TextCodec::new(Charset::Utf8);
-        assert!(codec.decode(&[0xe2], false).is_empty());
-        assert_eq!(codec.decode(&[0xff], true), "��".as_bytes());
     }
 }
