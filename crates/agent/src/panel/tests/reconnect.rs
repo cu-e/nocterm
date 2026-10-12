@@ -3,7 +3,10 @@
 use super::*;
 use std::time::Duration;
 
-fn read(f: &Fixture, cx: &mut TestAppContext) -> Result<serde_json::Value, String> {
+fn read(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> Result<serde_json::Value, nocterm_ai::ToolFailure> {
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -63,7 +66,7 @@ fn an_unreachable_server_is_reported_and_its_tab_stays(cx: &mut TestAppContext) 
     f.access.link.closed.set(true);
     f.access.link.unreachable.set(true);
     let error = read(&f, cx).unwrap_err();
-    assert!(error.contains("Could not connect"), "{error}");
+    assert!(error.message().contains("Could not connect"), "{error}");
     assert_eq!(f.access.link.reconnects.get(), 1);
     cx.update(|cx| {
         assert!(

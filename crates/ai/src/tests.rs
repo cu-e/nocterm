@@ -442,3 +442,109 @@ fn structured_execution_bounds_program_arguments_stdin_and_lifetime() {
         assert!(TerminalCall::ExecCommand(invalid).validate().is_err());
     }
 }
+fn assert_rejected(call: TerminalCall, expected: TerminalCallError, message: &str) {
+    let error = call.validate().unwrap_err();
+    assert_eq!(error, expected);
+    assert_eq!(error.to_string(), message);
+    assert_eq!(ToolFailure::from(error).message(), message);
+}
+fn exec_with(change: fn(&mut ExecCommand)) -> TerminalCall {
+    let mut exec = ExecCommand {
+        terminal_id: "t1".into(),
+        program: "sh".into(),
+        args: Vec::new(),
+        stdin: None,
+        timeout_ms: None,
+        yield_ms: None,
+    };
+    change(&mut exec);
+    TerminalCall::ExecCommand(exec)
+}
+fn run_with(command: &str, timeout_ms: Option<u64>) -> TerminalCall {
+    TerminalCall::RunCommand(RunCommand {
+        terminal_id: "t1".into(),
+        command: command.into(),
+        timeout_ms,
+        idle_ms: None,
+    })
+}
+#[test]
+fn rejected_terminal_input_reports_typed_errors_with_the_agent_facing_messages() {
+    assert_rejected(
+        TerminalCall::OpenTerminal(OpenTerminal {
+            server_id: String::new(),
+        }),
+        TerminalCallError::InvalidTarget,
+        "Invalid terminal or server id",
+    );
+    assert_rejected(
+        TerminalCall::ReadTerminal(ReadTerminal {
+            terminal_id: "t1".into(),
+            lines: Some(2001),
+            since: None,
+        }),
+        TerminalCallError::ReadLimit,
+        "Read limit must be 1–2000 lines",
+    );
+    assert_rejected(
+        TerminalCall::SendInput(SendInput {
+            terminal_id: "t1".into(),
+            text: "a\0".into(),
+            press_enter: false,
+        }),
+        TerminalCallError::InputRejected,
+        "Input too large or contains NUL",
+    );
+    assert_rejected(
+        run_with("a\nb", None),
+        TerminalCallError::CommandRejected,
+        "Command must be a single nonempty line, at most 16 KiB",
+    );
+    assert_rejected(
+        run_with("ls", Some(0)),
+        TerminalCallError::RunTiming,
+        "Invalid timeout or idle interval",
+    );
+}
+#[test]
+fn rejected_command_requests_report_typed_errors_with_the_agent_facing_messages() {
+    assert_rejected(
+        exec_with(|exec| exec.program = " ".into()),
+        TerminalCallError::ProgramRejected,
+        "Invalid program, arguments or stdin size",
+    );
+    assert_rejected(
+        exec_with(|exec| exec.yield_ms = Some(10_001)),
+        TerminalCallError::ExecTiming,
+        "Invalid execution timeout or yield interval",
+    );
+    assert_rejected(
+        TerminalCall::ReadCommand(ReadCommand {
+            terminal_id: "t1".into(),
+            command_id: "c1".into(),
+            yield_ms: Some(10_001),
+        }),
+        TerminalCallError::ReadCommandRejected,
+        "Invalid command id or yield interval",
+    );
+    assert_rejected(
+        TerminalCall::CancelCommand(CancelCommand {
+            terminal_id: "t1".into(),
+            command_id: String::new(),
+        }),
+        TerminalCallError::InvalidCommandId,
+        "Invalid command id",
+    );
+}
+#[test]
+fn tool_failures_carry_text_and_are_redacted_in_the_result_payload() {
+    let failure = ToolFailure::from("password=marker-secret");
+    assert_eq!(failure.message(), "password=marker-secret");
+    assert_eq!(
+        failure,
+        ToolFailure::from(String::from("password=marker-secret"))
+    );
+    let wire = tool_result(json!(1), Err(failure));
+    assert_eq!(wire["result"]["isError"], json!(true));
+    assert!(!wire.to_string().contains("marker-secret"));
+}

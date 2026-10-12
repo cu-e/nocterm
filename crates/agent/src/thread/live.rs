@@ -28,14 +28,14 @@ impl AgentThread {
         let since = match before {
             Ok(before) => before.next_line,
             Err(error) => {
-                self.finish(call, Err(error));
+                self.finish(call, Err(error.into()));
                 return;
             }
         };
         let lease = match entry.access.begin_live_command(&request.command, cx) {
             Ok(lease) => Arc::new(lease),
             Err(error) => {
-                self.finish(call, Err(error));
+                self.finish(call, Err(error.into()));
                 return;
             }
         };
@@ -121,7 +121,7 @@ impl AgentThread {
             });
             drop(lease);
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result);
+                this.finish(call, result.map_err(Into::into));
                 cx.notify();
             });
         })

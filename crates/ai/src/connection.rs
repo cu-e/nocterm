@@ -267,7 +267,7 @@ pub struct BridgeCall {
     pub arguments: Option<serde_json::Value>,
     /// Assigned at chat intake; identifies a particular request within its turn.
     pub display_token: Option<(u64, u64)>,
-    pub respond: oneshot::Sender<Result<serde_json::Value, String>>,
+    pub respond: oneshot::Sender<Result<serde_json::Value, crate::tools::ToolFailure>>,
 }
 
 #[cfg(test)]

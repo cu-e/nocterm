@@ -124,8 +124,7 @@ nocterm-ui = 5
 
 [string_errors]
 nocterm-acp = 9
-nocterm-agent = 8
-nocterm-ai = 4
+nocterm-agent = 6
 nocterm-local = 1
 nocterm-settings-ui = 11
 nocterm-terminal = 17

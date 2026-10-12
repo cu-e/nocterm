@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{TerminalCall, acp};
+use crate::{TerminalCall, ToolFailure, acp};
 
 pub const META_KEY: &str = "nocterm/tool-display";
 
@@ -52,10 +52,10 @@ impl ToolDisplay {
         }
     }
 
-    pub fn finish(&mut self, result: Result<Value, String>) {
+    pub fn finish(&mut self, result: Result<Value, ToolFailure>) {
         let outcome = match result {
             Ok(value) => ToolOutcome::Ok(value),
-            Err(error) => ToolOutcome::Err(crate::redact::redact(&error)),
+            Err(error) => ToolOutcome::Err(crate::redact::redact(error.message())),
         };
         self.outcome = serde_json::to_vec(&outcome)
             .ok()

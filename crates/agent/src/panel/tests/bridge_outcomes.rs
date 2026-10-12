@@ -18,7 +18,7 @@ fn send(
     request: TerminalCall,
     arguments: Value,
     cx: &mut TestAppContext,
-) -> oneshot::Receiver<Result<Value, String>> {
+) -> oneshot::Receiver<Result<Value, nocterm_ai::ToolFailure>> {
     let (respond, receive) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {

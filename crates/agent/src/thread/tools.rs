@@ -35,7 +35,7 @@ impl AgentThread {
         }
         self.record_tool_display(&mut call, None, cx);
         if let Err(error) = call.call.validate() {
-            self.finish(call, Err(error));
+            self.finish(call, Err(error.into()));
             return;
         }
         let gate = self.tool_gate(&call.call, cx);
@@ -104,7 +104,7 @@ impl AgentThread {
                         unreachable("Terminal was detached or chat is unavailable.")
                     }
                 };
-                self.finish(call, Err(error));
+                self.finish(call, Err(error.into()));
             }
             ToolDecision::Execute(call) => self.execute_tool(call, cx),
             ToolDecision::Queue => {}
@@ -147,9 +147,10 @@ impl AgentThread {
             .into_iter()
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
         else {
-            self.finish(call, Err(unreachable(
+            self.finish_unreachable(
+                call,
                 "Terminal is not attached or was closed. Call list_terminals for the current ones.",
-            )));
+            );
             return;
         };
         if reconnect && self.needs_reconnect(&call.call, &entry, cx) {
@@ -170,7 +171,7 @@ impl AgentThread {
                         cx,
                     )
                     .map(|tail| self.text_payload(tail, cx));
-                self.finish(call, result);
+                self.finish(call, result.map_err(Into::into));
             }
             TerminalCall::SendInput(request) => {
                 let text = format!(
@@ -182,7 +183,7 @@ impl AgentThread {
                     .access
                     .send_text(&text, cx)
                     .map(|()| serde_json::json!({"accepted":true}));
-                self.finish(call, result);
+                self.finish(call, result.map_err(Into::into));
             }
             TerminalCall::RunCommand(request) => {
                 let request = request.clone();
@@ -210,15 +211,15 @@ impl AgentThread {
                     self.server_ids.resolve(&server) == Some(connection.id.as_str())
                 })
             });
-            self.finish(
-                call,
-                match open {
-                    Some((_, _, descriptor)) => Ok(serde_json::json!({"terminal": descriptor})),
-                    None => Err(unreachable(
-                        "Unknown server. Call list_terminals for the attached ones.",
-                    )),
-                },
-            );
+            match open {
+                Some((_, _, descriptor)) => {
+                    self.finish(call, Ok(serde_json::json!({"terminal": descriptor})));
+                }
+                None => self.finish_unreachable(
+                    call,
+                    "Unknown server. Call list_terminals for the attached ones.",
+                ),
+            }
             return;
         };
         // A session the chat opened before and lost is connected again
@@ -228,7 +229,7 @@ impl AgentThread {
             cx.spawn(async move |this, cx| {
                 let result = connected.await;
                 let _ = this.update(cx, |this, cx| {
-                    this.finish(call, result);
+                    this.finish(call, result.map_err(Into::into));
                     cx.notify();
                 });
             })
@@ -241,7 +242,7 @@ impl AgentThread {
                 .upgrade()
                 .and_then(|workspace| workspace.read(cx).connection_directory()),
         ) else {
-            self.finish(call, Err(unreachable("The workspace is unavailable.")));
+            self.finish_unreachable(call, "The workspace is unavailable.");
             return;
         };
         let workspace = self.workspace.clone();
@@ -258,10 +259,7 @@ impl AgentThread {
                 .flatten();
             let Some(item) = opened else {
                 let _ = this.update(cx, |this, cx| {
-                    this.finish(
-                        call,
-                        Err(unreachable("Could not open a session for this server.")),
-                    );
+                    this.finish_unreachable(call, "Could not open a session for this server.");
                     cx.notify();
                 });
                 return;
@@ -273,11 +271,15 @@ impl AgentThread {
                 let _ = this.update(cx, |this, _| this.background.retain(|id| *id != item));
             }
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result);
+                this.finish(call, result.map_err(Into::into));
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn finish_unreachable(&mut self, call: BridgeCall, reason: &str) {
+        self.finish(call, Err(unreachable(reason).into()));
     }
 
     /// Whether `call` acts on a server terminal that closed, or that is
@@ -312,7 +314,7 @@ impl AgentThread {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => this.execute_tool_with(call, false, cx),
-                    Err(error) => this.finish(call, Err(error)),
+                    Err(error) => this.finish(call, Err(error.into())),
                 }
                 cx.notify();
             });

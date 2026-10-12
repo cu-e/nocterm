@@ -1,4 +1,7 @@
 pub mod catalog;
+mod failure;
+
+pub use failure::{TerminalCallError, ToolFailure};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -122,32 +125,32 @@ impl TerminalCall {
             }
         }
     }
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), TerminalCallError> {
         if self
             .target()
             .is_some_and(|id| id.is_empty() || id.len() > 128)
         {
-            return Err("Invalid terminal or server id".into());
+            return Err(TerminalCallError::InvalidTarget);
         }
         match self {
             Self::ReadTerminal(v) if v.lines.is_some_and(|n| n == 0 || n > MAX_READ_LINES) => {
-                Err("Read limit must be 1–2000 lines".into())
+                Err(TerminalCallError::ReadLimit)
             }
             Self::SendInput(v) if v.text.len() > MAX_INPUT_BYTES || v.text.contains('\0') => {
-                Err("Input too large or contains NUL".into())
+                Err(TerminalCallError::InputRejected)
             }
             Self::RunCommand(v)
                 if v.command.trim().is_empty()
                     || v.command.len() > MAX_INPUT_BYTES
                     || v.command.contains(['\0', '\n', '\r']) =>
             {
-                Err("Command must be a single nonempty line, at most 16 KiB".into())
+                Err(TerminalCallError::CommandRejected)
             }
             Self::RunCommand(v)
                 if v.timeout_ms.is_some_and(|n| n == 0 || n > 300_000)
                     || v.idle_ms.is_some_and(|n| !(100..=30_000).contains(&n)) =>
             {
-                Err("Invalid timeout or idle interval".into())
+                Err(TerminalCallError::RunTiming)
             }
             Self::ExecCommand(v) => {
                 let bytes = v.program.len() + v.args.iter().map(String::len).sum::<usize>();
@@ -160,12 +163,12 @@ impl TerminalCall {
                         .as_ref()
                         .is_some_and(|input| input.len() > MAX_READ_BYTES || input.contains('\0'))
                 {
-                    return Err("Invalid program, arguments or stdin size".into());
+                    return Err(TerminalCallError::ProgramRejected);
                 }
                 if v.timeout_ms.is_some_and(|n| n == 0 || n > 300_000)
                     || v.yield_ms.is_some_and(|n| n > 10_000)
                 {
-                    return Err("Invalid execution timeout or yield interval".into());
+                    return Err(TerminalCallError::ExecTiming);
                 }
                 Ok(())
             }
@@ -174,10 +177,10 @@ impl TerminalCall {
                     || v.command_id.is_empty()
                     || v.command_id.len() > 128 =>
             {
-                Err("Invalid command id or yield interval".into())
+                Err(TerminalCallError::ReadCommandRejected)
             }
             Self::CancelCommand(v) if v.command_id.is_empty() || v.command_id.len() > 128 => {
-                Err("Invalid command id".into())
+                Err(TerminalCallError::InvalidCommandId)
             }
             _ => Ok(()),
         }

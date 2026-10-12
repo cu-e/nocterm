@@ -218,6 +218,7 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
         futures::executor::block_on(responses.next().unwrap())
             .unwrap()
             .unwrap_err()
+            .message()
             .contains("denied")
     );
     assert!(
@@ -403,7 +404,7 @@ fn input_request(
     owner: &Entity<crate::thread::AgentThread>,
     text: &str,
     cx: &mut TestAppContext,
-) -> oneshot::Receiver<Result<serde_json::Value, String>> {
+) -> oneshot::Receiver<Result<serde_json::Value, nocterm_ai::ToolFailure>> {
     let (registration_id, terminal_id) = cx.update(|cx| {
         owner.update(cx, |thread, cx| {
             (
@@ -468,6 +469,7 @@ fn obsolete_tool_card_cannot_approve_the_next_queued_request(cx: &mut TestAppCon
             .unwrap()
             .unwrap()
             .unwrap_err()
+            .message()
             .contains("denied")
     );
 }

@@ -25,7 +25,7 @@ impl AgentThread {
         let executor = match entry.access.executor(cx) {
             Ok(executor) => executor,
             Err(error) => {
-                self.finish(call, Err(error));
+                self.finish(call, Err(error.into()));
                 return;
             }
         };
@@ -35,7 +35,7 @@ impl AgentThread {
         {
             Ok(job) => job,
             Err(error) => {
-                self.finish(call, Err(error));
+                self.finish(call, Err(error.into()));
                 return;
             }
         };
@@ -79,7 +79,7 @@ impl AgentThread {
                 job.cancel(jobs::State::Cancelled);
                 self.command_payload(&request.command_id, job.snapshot(), cx)
             });
-        self.finish(call, result);
+        self.finish(call, result.map_err(Into::into));
     }
 
     fn wait_command(
@@ -126,7 +126,7 @@ impl AgentThread {
                     }
                     Ok(Err(error)) => {
                         let _ = this.update(cx, |this, cx| {
-                            this.finish(call, Err(error));
+                            this.finish(call, Err(error.into()));
                             cx.notify();
                         });
                         break;

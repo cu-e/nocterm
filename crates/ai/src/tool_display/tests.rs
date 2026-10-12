@@ -250,7 +250,7 @@ fn outcome_budget_counts_serialized_escaping_for_success_and_error() {
         panic!("error outcome");
     };
     assert!(!error.contains("secret"));
-    display.finish(Err("\n".repeat(140_000)));
+    display.finish(Err("\n".repeat(140_000).into()));
     assert!(display.outcome.is_none());
 }
 
@@ -267,7 +267,11 @@ fn outcome_budget_accepts_the_exact_boundary_and_rejects_one_more_byte() {
         let mut display = ToolDisplay::requested("list_terminals".into(), json!({}));
         for extra in [0, 1] {
             let text = "x".repeat(limit - overhead + extra);
-            let result = if success { Ok(json!(text)) } else { Err(text) };
+            let result = if success {
+                Ok(json!(text))
+            } else {
+                Err(text.into())
+            };
             display.finish(result);
             assert_eq!(display.outcome.is_some(), extra == 0);
             if let Some(outcome) = &display.outcome {

@@ -2,7 +2,7 @@
 //! Neither provider titles nor today's attachment list establishes a destination.
 use gpui_kit::{App, Context};
 use nocterm_ai::{
-    BridgeCall, BridgeRejection, TerminalCall, acp,
+    BridgeCall, BridgeRejection, TerminalCall, ToolFailure, acp,
     thread::{Entry, ThreadChange},
     tool_display::{self, ToolDisplay},
 };
@@ -170,7 +170,11 @@ impl ToolDisplays {
         self.record_raw(server, (tool.into(), arguments), display);
     }
 
-    fn finish(&mut self, token: Option<(u64, u64)>, result: Result<serde_json::Value, String>) {
+    fn finish(
+        &mut self,
+        token: Option<(u64, u64)>,
+        result: Result<serde_json::Value, ToolFailure>,
+    ) {
         let Some((turn, id)) = token else {
             return;
         };
@@ -254,7 +258,7 @@ impl AgentThread {
         }
         let server = tool_display::bridge_server_name(rejected.registration_id);
         let mut display = ToolDisplay::requested(rejected.tool.clone(), rejected.arguments.clone());
-        display.finish(Err(rejected.error));
+        display.finish(Err(rejected.error.into()));
         if cx
             .setting::<nocterm_ai::AiSettings>()
             .approval
@@ -271,7 +275,11 @@ impl AgentThread {
     }
 
     /// Every response while the chat exists passes through its recorded result.
-    pub(super) fn finish(&mut self, call: BridgeCall, result: Result<serde_json::Value, String>) {
+    pub(super) fn finish(
+        &mut self,
+        call: BridgeCall,
+        result: Result<serde_json::Value, ToolFailure>,
+    ) {
         self.tool_displays
             .finish(call.display_token, result.clone());
         self.normalize_tool_displays();

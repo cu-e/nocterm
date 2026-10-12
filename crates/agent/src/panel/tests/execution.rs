@@ -39,7 +39,7 @@ impl Programs {
     }
 }
 
-type Reply = oneshot::Receiver<Result<Value, String>>;
+type Reply = oneshot::Receiver<Result<Value, nocterm_ai::ToolFailure>>;
 
 fn current(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
     cx.update(|cx| f.panel.read(cx).current().unwrap())
@@ -82,7 +82,7 @@ fn submit(
     response
 }
 
-fn result(reply: Reply) -> Result<Value, String> {
+fn result(reply: Reply) -> Result<Value, nocterm_ai::ToolFailure> {
     reply
         .now_or_never()
         .expect("tool responded")
@@ -142,7 +142,7 @@ fn read(
     terminal: &str,
     id: &str,
     cx: &mut TestAppContext,
-) -> Result<Value, String> {
+) -> Result<Value, nocterm_ai::ToolFailure> {
     result(submit(
         f,
         thread,
@@ -249,7 +249,12 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         })
     });
     cx.run_until_parked();
-    assert!(result(pending).unwrap_err().contains("authentication"));
+    assert!(
+        result(pending)
+            .unwrap_err()
+            .message()
+            .contains("authentication")
+    );
     assert!(programs.requests.lock().unwrap().is_empty());
     f.access.sign_in.asks.set(false);
     f.access.executor.borrow_mut().take();
@@ -260,7 +265,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         true,
         cx,
     ));
-    assert!(unsupported.unwrap_err().contains("unsupported"));
+    assert!(unsupported.unwrap_err().message().contains("unsupported"));
     assert!(programs.requests.lock().unwrap().is_empty());
     assert!(f.access.sent.borrow().is_empty());
 }
@@ -276,6 +281,7 @@ fn command_handles_are_owned_by_the_chat_that_started_them(cx: &mut TestAppConte
     assert!(
         read(&f, &second, &second_terminal, &id, cx)
             .unwrap_err()
+            .message()
             .contains("Unknown command")
     );
     assert!(!programs.closed(0));
@@ -299,7 +305,7 @@ fn active_command_limit_and_cancelled_slot_apply_through_bridge_calls(cx: &mut T
         true,
         cx,
     ));
-    assert!(fifth.unwrap_err().contains("four active"));
+    assert!(fifth.unwrap_err().message().contains("four active"));
     assert_eq!(programs.requests.lock().unwrap().len(), 4);
     result(submit(
         &f,

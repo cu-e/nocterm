@@ -29,7 +29,7 @@ fn run(
     terminal: &str,
 ) -> (
     BridgeCall,
-    oneshot::Receiver<Result<serde_json::Value, String>>,
+    oneshot::Receiver<Result<serde_json::Value, nocterm_ai::ToolFailure>>,
 ) {
     let (respond, response) = oneshot::channel();
     (
@@ -187,7 +187,13 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
         })
     });
     let error = response.now_or_never().unwrap().unwrap().unwrap_err();
-    assert!(error.starts_with("Terminal was detached"), "{error}");
-    assert!(error.contains("Tell the user right away"), "{error}");
+    assert!(
+        error.message().starts_with("Terminal was detached"),
+        "{error}"
+    );
+    assert!(
+        error.message().contains("Tell the user right away"),
+        "{error}"
+    );
     assert!(f.access.sent.borrow().is_empty());
 }
