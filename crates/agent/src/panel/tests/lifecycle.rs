@@ -428,8 +428,24 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
 }
 
+/// Asserts that terminal sign-in failed with `status` and remains retryable, then retries it.
+fn retry_failed_terminal_sign_in(f: &Fixture, status: &str, cx: &mut TestAppContext) {
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let thread = f.panel.read(cx).current().unwrap();
+        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(!thread.read(cx).lifecycle.signing_in());
+        assert_eq!(thread.read(cx).status, status);
+        window.click("authenticate-setup", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
 #[gpui_kit::test]
-fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut TestAppContext) {
+fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failure(
+    cx: &mut TestAppContext,
+) {
     let mut f = fixture(cx);
     f.commands.auth_required.store(true, Ordering::SeqCst);
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -439,9 +455,13 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
         let mut requests = captured.lock().unwrap();
         requests.push(request);
         let (send, receive) = oneshot::channel();
-        if requests.len() > 1 {
-            commands.auth_required.store(false, Ordering::SeqCst);
-            send.send(Ok(())).unwrap();
+        match requests.len() {
+            1 => {}
+            2 => send.send(Err(crate::TerminalAuthError::Failed)).unwrap(),
+            _ => {
+                commands.auth_required.store(false, Ordering::SeqCst);
+                send.send(Ok(())).unwrap();
+            }
         }
         receive
     });
@@ -475,16 +495,12 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).lifecycle.sign_in_required());
-        assert!(!thread.read(cx).lifecycle.signing_in());
-        assert_eq!(thread.read(cx).status, "Sign-in cancelled");
-        window.click("authenticate-setup", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+    retry_failed_terminal_sign_in(&f, "Sign-in cancelled", cx);
+    retry_failed_terminal_sign_in(
+        &f,
+        "Authentication command did not complete successfully.",
+        cx,
+    );
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
@@ -499,7 +515,7 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel(cx: &mut 
         "terminal methods must not use the agent authenticate RPC"
     );
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].program, "npx");
     assert!(
         requests[0]

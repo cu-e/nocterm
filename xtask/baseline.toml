@@ -123,9 +123,8 @@ nocterm-ui = 5
 "nocterm_ui::layout::LayoutMemory::init" = 1
 
 [string_errors]
-nocterm = 1
 nocterm-acp = 9
-nocterm-agent = 10
+nocterm-agent = 9
 nocterm-ai = 8
 nocterm-local = 1
 nocterm-settings-ui = 11

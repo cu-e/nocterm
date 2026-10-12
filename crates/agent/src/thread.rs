@@ -496,7 +496,7 @@ impl AgentThread {
                     completion
                         .await
                         .map_err(|_| nocterm_ai::AgentError::Io("Sign-in cancelled".into()))?
-                        .map_err(nocterm_ai::AgentError::Io)
+                        .map_err(|e| nocterm_ai::AgentError::Io(e.to_string()))
                 }
                 .boxed()
             }

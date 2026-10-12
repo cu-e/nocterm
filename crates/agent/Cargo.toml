@@ -25,6 +25,7 @@ base64.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 tracing.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+thiserror.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

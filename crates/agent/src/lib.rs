@@ -21,6 +21,20 @@ use gpui_kit::{App, Global, WeakEntity, Window, prelude::*};
 use nocterm_ai::{AgentConnector, ToolBridge};
 use std::{path::PathBuf, sync::Arc};
 
+/// Why a terminal sign-in reported through [`TerminalAuthOpener`] did not succeed.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum TerminalAuthError {
+    /// The user closed the sign-in terminal.
+    #[error("Authentication canceled.")]
+    Canceled,
+    /// The sign-in command exited unsuccessfully or its terminal closed otherwise.
+    #[error("Authentication command did not complete successfully.")]
+    Failed,
+    /// The agent's sign-in command cannot be launched safely.
+    #[error(transparent)]
+    InvalidLaunch(#[from] nocterm_session::LaunchValidationError),
+}
+
 /// Runs an agent's sign-in command in a terminal of `workspace`, and reports
 /// whether it succeeded.
 pub type TerminalAuthOpener = Arc<
@@ -29,7 +43,7 @@ pub type TerminalAuthOpener = Arc<
             TerminalAuthRequest,
             &mut Window,
             &mut App,
-        ) -> futures::channel::oneshot::Receiver<Result<(), String>>
+        ) -> futures::channel::oneshot::Receiver<Result<(), TerminalAuthError>>
         + Send
         + Sync,
 >;
