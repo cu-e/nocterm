@@ -10,7 +10,7 @@ mod pages;
 
 use std::collections::BTreeMap;
 
-use field::Field;
+use field::{Field, FieldError};
 use gpui_kit::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
     TestSupportExt as _, Window,
@@ -225,7 +225,7 @@ impl SettingsView {
         &mut self,
         key: impl Into<SharedString>,
         read: impl Fn(&S) -> String + 'static,
-        write: impl Fn(&mut S, &str) -> Result<(), String> + 'static,
+        write: impl Fn(&mut S, &str) -> Result<(), FieldError> + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

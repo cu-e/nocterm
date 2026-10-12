@@ -23,7 +23,7 @@ use nocterm_ui::{IconName, SettingsExt as _, form};
 
 use crate::{
     SettingsView,
-    field::{environment, json, optional, string_list},
+    field::{FieldError, environment, json, optional, string_list},
     pages::{text_row, toggle},
 };
 
@@ -68,9 +68,7 @@ pub(crate) fn add_fields(
             if path.as_deref().is_some_and(|path| {
                 !std::path::Path::new(path).is_absolute() || path.contains('\0')
             }) {
-                return Err(
-                    "Enter an absolute path, or leave empty for the private workspace.".into(),
-                );
+                return Err(FieldError::InvalidWorkingDirectory);
             }
             s.working_directory = path;
             Ok(())
@@ -110,7 +108,7 @@ fn agent_fields(
     cx: &mut Context<SettingsView>,
 ) {
     type Get = fn(&AgentServerSettings) -> String;
-    type Set = fn(&mut AgentServerSettings, &str) -> Result<(), String>;
+    type Set = fn(&mut AgentServerSettings, &str) -> Result<(), FieldError>;
     let fields: [(&str, Get, Set); 5] = [
         (
             "name",
@@ -152,8 +150,8 @@ fn agent_fields(
             "inherit",
             |a| json(&a.inherit_env),
             |a, text| {
-                a.inherit_env = serde_json::from_str(text)
-                    .map_err(|_| "Inherited variables: enter a JSON array of names.".to_owned())?;
+                a.inherit_env =
+                    serde_json::from_str(text).map_err(|_| FieldError::InheritedNotNames)?;
                 Ok(())
             },
         ),
@@ -175,11 +173,11 @@ fn agent_fields(
 fn edit_agent(
     settings: &mut AiSettings,
     id: &str,
-    edit: impl FnOnce(&mut AgentServerSettings) -> Result<(), String>,
-) -> Result<(), String> {
+    edit: impl FnOnce(&mut AgentServerSettings) -> Result<(), FieldError>,
+) -> Result<(), FieldError> {
     let mut agent = settings.agents.get(id).cloned().unwrap_or_default();
     edit(&mut agent)?;
-    validate_agent(id, &agent).map_err(|e| e.to_string())?;
+    validate_agent(id, &agent)?;
     if BUILTIN.contains(&id) && agent == AgentServerSettings::default() {
         settings.agents.remove(id);
     } else {
@@ -188,7 +186,7 @@ fn edit_agent(
     Ok(())
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum AgentValidationError {
     #[error("Agent ids use letters, numbers, underscore or dash, up to 64 characters.")]
     InvalidId,
@@ -247,7 +245,7 @@ pub(crate) fn validate_agent(
 /// Saves `edit` unless it would make the AI settings invalid.
 fn save_checked(
     view: &mut SettingsView,
-    edit: impl Fn(&mut AiSettings) -> Result<(), String> + 'static,
+    edit: impl Fn(&mut AiSettings) -> Result<(), FieldError> + 'static,
     cx: &mut Context<SettingsView>,
 ) {
     let mut probe = cx.setting::<AiSettings>().clone();
@@ -262,7 +260,7 @@ fn save_checked(
             );
         }
         Err(error) => {
-            view.ai.error = Some(error.into());
+            view.ai.error = Some(error.to_string().into());
             cx.notify();
         }
     }
@@ -630,9 +628,9 @@ fn add(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsVi
         ..AgentServerSettings::default()
     };
     let result = if view.ai.agents.contains(&id) {
-        Err(format!("An agent named `{id}` already exists."))
+        Err(FieldError::DuplicateAgent(id.clone()))
     } else {
-        validate_agent(&id, &agent).map_err(|e| e.to_string())
+        validate_agent(&id, &agent).map_err(FieldError::from)
     };
     match result {
         Ok(()) => {
@@ -647,7 +645,7 @@ fn add(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsVi
             id_input.update(cx, |input, cx| input.set_value("", window, cx));
             command_input.update(cx, |input, cx| input.set_value("", window, cx));
         }
-        Err(error) => view.ai.add_error = Some(error.into()),
+        Err(error) => view.ai.add_error = Some(error.to_string().into()),
     }
     cx.notify();
 }

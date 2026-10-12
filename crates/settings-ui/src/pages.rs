@@ -25,7 +25,7 @@ use nocterm_ui::{SessionOptionsEditor, SettingsExt as _, form};
 
 use crate::{
     Page, SettingsView,
-    field::{environment, json, number, optional, optional_number, string_list},
+    field::{FieldError, environment, json, number, optional, optional_number, string_list},
 };
 
 pub(crate) fn new_session_options(
@@ -169,7 +169,7 @@ fn shell_fields<S: SettingsSection>(
         move |s, text| {
             let program = optional(text);
             if program.as_deref().is_some_and(|p| p.contains('\0')) {
-                return Err("Executable cannot contain NUL.".into());
+                return Err(FieldError::ExecutableContainsNul);
             }
             shell(s).program = program;
             Ok(())
@@ -193,7 +193,7 @@ fn shell_fields<S: SettingsSection>(
         move |s, text| {
             let cwd = optional(text);
             if cwd.as_deref().is_some_and(|p| p.contains('\0')) {
-                return Err("Directory cannot contain NUL.".into());
+                return Err(FieldError::DirectoryContainsNul);
             }
             shell(s).cwd = cwd;
             Ok(())

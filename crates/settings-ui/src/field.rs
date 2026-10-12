@@ -15,7 +15,41 @@ use nocterm_settings::{SettingsDocument, SettingsSection};
 use nocterm_ui::{SettingsStore, edit_settings};
 
 type Read = Rc<dyn Fn(&SettingsDocument) -> String>;
-type Write = Rc<dyn Fn(&mut SettingsDocument, &str) -> Result<(), String>>;
+type Write = Rc<dyn Fn(&mut SettingsDocument, &str) -> Result<(), FieldError>>;
+
+/// Why text typed into a field cannot be saved; `Display` is the message
+/// shown beside the field.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum FieldError {
+    #[error("{name}: enter a number.")]
+    NotANumber { name: String },
+    #[error("{name}: enter a value from {start} to {end}.")]
+    OutOfRange {
+        name: String,
+        start: String,
+        end: String,
+    },
+    #[error("{name}: enter a JSON array of strings, e.g. [\"-l\"].")]
+    NotStringList { name: String },
+    #[error("{name}: enter a JSON object of string values.")]
+    NotStringMap { name: String },
+    #[error("{name}: names must be shell identifiers.")]
+    InvalidEnvironmentName { name: String },
+    #[error("{name}: values cannot contain NUL.")]
+    ContainsNul { name: String },
+    #[error("Executable cannot contain NUL.")]
+    ExecutableContainsNul,
+    #[error("Directory cannot contain NUL.")]
+    DirectoryContainsNul,
+    #[error("Enter an absolute path, or leave empty for the private workspace.")]
+    InvalidWorkingDirectory,
+    #[error("Inherited variables: enter a JSON array of names.")]
+    InheritedNotNames,
+    #[error("An agent named `{0}` already exists.")]
+    DuplicateAgent(String),
+    #[error(transparent)]
+    Agent(#[from] crate::ai::AgentValidationError),
+}
 
 pub(crate) struct Field {
     pub input: Entity<InputState>,
@@ -33,7 +67,7 @@ impl Field {
     /// A field showing `read` of section `S` and saving through `write`.
     pub(crate) fn new<S: SettingsSection, V: 'static>(
         read: impl Fn(&S) -> String + 'static,
-        write: impl Fn(&mut S, &str) -> Result<(), String> + 'static,
+        write: impl Fn(&mut S, &str) -> Result<(), FieldError> + 'static,
         window: &mut Window,
         cx: &mut Context<V>,
         on_event: impl Fn(&mut V, &InputEvent, &mut Window, &mut Context<V>) + 'static,
@@ -70,7 +104,7 @@ impl Field {
         }
         let mut probe = document(cx).clone();
         if let Err(error) = (self.write)(&mut probe, &text) {
-            self.error = Some(error.into());
+            self.error = Some(error.to_string().into());
             return;
         }
         self.error = None;
@@ -114,20 +148,22 @@ pub(crate) fn number<T>(
     text: &str,
     name: &str,
     range: std::ops::RangeInclusive<T>,
-) -> Result<T, String>
+) -> Result<T, FieldError>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
     let value = text
         .trim()
         .parse::<T>()
-        .map_err(|_| format!("{name}: enter a number."))?;
+        .map_err(|_| FieldError::NotANumber {
+            name: name.to_owned(),
+        })?;
     if !range.contains(&value) {
-        return Err(format!(
-            "{name}: enter a value from {} to {}.",
-            range.start(),
-            range.end()
-        ));
+        return Err(FieldError::OutOfRange {
+            name: name.to_owned(),
+            start: range.start().to_string(),
+            end: range.end().to_string(),
+        });
     }
     Ok(value)
 }
@@ -137,7 +173,7 @@ pub(crate) fn optional_number<T>(
     text: &str,
     name: &str,
     range: std::ops::RangeInclusive<T>,
-) -> Result<Option<T>, String>
+) -> Result<Option<T>, FieldError>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
@@ -149,11 +185,14 @@ where
 }
 
 /// A JSON array of strings, such as program arguments.
-pub(crate) fn string_list(text: &str, name: &str) -> Result<Vec<String>, String> {
-    let list: Vec<String> = serde_json::from_str(text)
-        .map_err(|_| format!("{name}: enter a JSON array of strings, e.g. [\"-l\"]."))?;
+pub(crate) fn string_list(text: &str, name: &str) -> Result<Vec<String>, FieldError> {
+    let list: Vec<String> = serde_json::from_str(text).map_err(|_| FieldError::NotStringList {
+        name: name.to_owned(),
+    })?;
     if list.iter().any(|value| value.contains('\0')) {
-        return Err(format!("{name}: values cannot contain NUL."));
+        return Err(FieldError::ContainsNul {
+            name: name.to_owned(),
+        });
     }
     Ok(list)
 }
@@ -162,14 +201,20 @@ pub(crate) fn string_list(text: &str, name: &str) -> Result<Vec<String>, String>
 pub(crate) fn environment(
     text: &str,
     name: &str,
-) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let env: std::collections::BTreeMap<String, String> = serde_json::from_str(text)
-        .map_err(|_| format!("{name}: enter a JSON object of string values."))?;
+) -> Result<std::collections::BTreeMap<String, String>, FieldError> {
+    let env: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(text).map_err(|_| FieldError::NotStringMap {
+            name: name.to_owned(),
+        })?;
     if env.keys().any(|key| !is_identifier(key)) {
-        return Err(format!("{name}: names must be shell identifiers."));
+        return Err(FieldError::InvalidEnvironmentName {
+            name: name.to_owned(),
+        });
     }
     if env.values().any(|value| value.contains('\0')) {
-        return Err(format!("{name}: values cannot contain NUL."));
+        return Err(FieldError::ContainsNul {
+            name: name.to_owned(),
+        });
     }
     Ok(env)
 }
@@ -193,7 +238,14 @@ mod tests {
     #[test]
     fn numbers_are_checked_against_their_range_without_clamping() {
         assert_eq!(number("  12 ", "Size", 6..=72), Ok(12));
-        assert!(number("73", "Size", 6..=72).is_err());
+        assert_eq!(
+            number("73", "Size", 6..=72).unwrap_err().to_string(),
+            "Size: enter a value from 6 to 72."
+        );
+        assert_eq!(
+            number::<u8>("x", "Size", 6..=72).unwrap_err().to_string(),
+            "Size: enter a number."
+        );
         assert!(number("NaN", "Size", 6.0..=72.0).is_err());
         assert_eq!(optional_number::<f32>(" ", "Size", 6.0..=72.0), Ok(None));
     }
@@ -204,9 +256,23 @@ mod tests {
             string_list(r#"["-c","printf '%s' \"a b\""]"#, "Arguments").unwrap(),
             vec!["-c", "printf '%s' \"a b\""]
         );
-        assert!(string_list("-l", "Arguments").is_err());
+        assert_eq!(
+            string_list("-l", "Arguments").unwrap_err().to_string(),
+            "Arguments: enter a JSON array of strings, e.g. [\"-l\"]."
+        );
+        assert_eq!(
+            string_list(r#"["a\u0000"]"#, "Arguments")
+                .unwrap_err()
+                .to_string(),
+            "Arguments: values cannot contain NUL."
+        );
         assert!(environment(r#"{"PATH":"/bin"}"#, "Environment").is_ok());
-        assert!(environment(r#"{"BAD;NAME":"x"}"#, "Environment").is_err());
+        assert_eq!(
+            environment(r#"{"BAD;NAME":"x"}"#, "Environment")
+                .unwrap_err()
+                .to_string(),
+            "Environment: names must be shell identifiers."
+        );
         assert!(environment(r#"{"1X":"x"}"#, "Environment").is_err());
     }
 }
