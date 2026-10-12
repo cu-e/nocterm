@@ -110,7 +110,7 @@ fn start(
         command.env_clear();
     }
     let integration = if launch.integration && launch.args.is_empty() {
-        prepare_integration(&program, &mut command).map_err(LaunchError::Io)?
+        prepare_integration(&program, &mut command).map_err(|e| LaunchError::Io(e.to_string()))?
     } else {
         None
     };
@@ -364,7 +364,7 @@ pub fn default_shell() -> String {
 fn prepare_integration(
     program: &str,
     command: &mut CommandBuilder,
-) -> Result<Option<tempfile::TempDir>, String> {
+) -> Result<Option<tempfile::TempDir>, std::io::Error> {
     let stem = Path::new(program)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -388,17 +388,18 @@ fn prepare_integration(
         ),
         _ => return Ok(None),
     };
-    let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let directory = tempfile::tempdir()?;
     let path = directory.path().join(name);
-    std::fs::write(&path, script).map_err(|e| e.to_string())?;
+    std::fs::write(&path, script)?;
     match stem {
         "bash" => {
             command.args(["--rcfile", &path.to_string_lossy(), "-i"]);
         }
         "zsh" => {
-            std::fs::write(directory.path().join(".zshenv"),
-                "__nocterm_temp_zdotdir=$ZDOTDIR\nif [[ -n $NOCTERM_ORIGINAL_ZDOTDIR ]]; then ZDOTDIR=$NOCTERM_ORIGINAL_ZDOTDIR; else unset ZDOTDIR; fi\n[[ -f ${ZDOTDIR:-$HOME}/.zshenv ]] && source \"${ZDOTDIR:-$HOME}/.zshenv\"\nNOCTERM_ORIGINAL_ZDOTDIR=${ZDOTDIR:-}\nZDOTDIR=$__nocterm_temp_zdotdir\n")
-                .map_err(|e|e.to_string())?;
+            std::fs::write(
+                directory.path().join(".zshenv"),
+                "__nocterm_temp_zdotdir=$ZDOTDIR\nif [[ -n $NOCTERM_ORIGINAL_ZDOTDIR ]]; then ZDOTDIR=$NOCTERM_ORIGINAL_ZDOTDIR; else unset ZDOTDIR; fi\n[[ -f ${ZDOTDIR:-$HOME}/.zshenv ]] && source \"${ZDOTDIR:-$HOME}/.zshenv\"\nNOCTERM_ORIGINAL_ZDOTDIR=${ZDOTDIR:-}\nZDOTDIR=$__nocterm_temp_zdotdir\n",
+            )?;
             command.env(
                 "NOCTERM_ORIGINAL_ZDOTDIR",
                 std::env::var("ZDOTDIR").unwrap_or_default(),
