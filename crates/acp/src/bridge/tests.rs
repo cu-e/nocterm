@@ -49,6 +49,16 @@ fn launches_the_relay_under_the_chat_server_name() {
     assert_eq!(names, [ENDPOINT_VARIABLE, TOKEN_VARIABLE]);
 }
 #[test]
+#[cfg(unix)]
+fn reports_why_the_listener_could_not_open() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("run"), b"not a directory").unwrap();
+    let paths = Paths::rooted_at(dir.path());
+    let expected = format!("Bridge error: {}", paths.ensure_runtime_dir().unwrap_err());
+    let error = bridge(&dir).register().err().expect("registration fails");
+    assert_eq!(error.to_string(), expected);
+}
+#[test]
 fn refuses_a_registration_whose_relay_program_is_gone() {
     let dir = tempfile::tempdir().unwrap();
     let server = BridgeServer::new(
