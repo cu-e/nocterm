@@ -66,7 +66,10 @@ fn an_unreachable_server_is_reported_and_its_tab_stays(cx: &mut TestAppContext) 
     f.access.link.closed.set(true);
     f.access.link.unreachable.set(true);
     let error = read(&f, cx).unwrap_err();
-    assert!(error.message().contains("Could not connect"), "{error}");
+    assert_eq!(
+        error.message(),
+        "Could not connect to the server. Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
+    );
     assert_eq!(f.access.link.reconnects.get(), 1);
     cx.update(|cx| {
         assert!(

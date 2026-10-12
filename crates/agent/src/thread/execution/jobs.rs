@@ -11,6 +11,20 @@ pub(super) const MAX_ACTIVE: usize = 4;
 const MAX_RETAINED: usize = 16;
 const MAX_STDOUT: usize = 64 * 1024;
 
+/// Why a command was not started or found; the agent sees the text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub(super) enum JobError {
+    #[error("This chat already has four active commands. Read or cancel one first.")]
+    Busy,
+    #[error("Unknown command for this chat and terminal.")]
+    Unknown,
+}
+impl From<JobError> for nocterm_ai::ToolFailure {
+    fn from(error: JobError) -> Self {
+        error.to_string().into()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum State {
     Starting,
@@ -106,7 +120,7 @@ impl Jobs {
         &mut self,
         terminal_id: String,
         executor: Arc<dyn HostExec>,
-    ) -> Result<(String, Arc<Mutex<Snapshot>>, async_channel::Receiver<()>), String> {
+    ) -> Result<(String, Arc<Mutex<Snapshot>>, async_channel::Receiver<()>), JobError> {
         if self
             .jobs
             .values()
@@ -114,9 +128,7 @@ impl Jobs {
             .count()
             >= MAX_ACTIVE
         {
-            return Err(
-                "This chat already has four active commands. Read or cancel one first.".into(),
-            );
+            return Err(JobError::Busy);
         }
         while self.jobs.len() >= MAX_RETAINED {
             let oldest = self
@@ -144,12 +156,12 @@ impl Jobs {
         );
         Ok((format!("c{}", self.next), snapshot, receiver))
     }
-    pub(super) fn get(&self, id: &str, terminal: &str) -> Result<&Job, String> {
+    pub(super) fn get(&self, id: &str, terminal: &str) -> Result<&Job, JobError> {
         id.strip_prefix('c')
             .and_then(|id| id.parse::<u64>().ok())
             .and_then(|id| self.jobs.get(&id))
             .filter(|job| job.terminal_id == terminal)
-            .ok_or_else(|| "Unknown command for this chat and terminal.".into())
+            .ok_or(JobError::Unknown)
     }
     pub(super) fn cancel_terminal(&self, terminal: &str) {
         for job in self.jobs.values().filter(|job| job.terminal_id == terminal) {

@@ -1,7 +1,7 @@
 //! Structured execution uses the executor of the exact attached session.
 use super::AgentThread;
 use gpui_kit::Context;
-use nocterm_ai::{BridgeCall, TerminalCall};
+use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 use nocterm_session::ExecRequest;
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::TerminalEntry;
@@ -101,7 +101,7 @@ impl AgentThread {
                         || !this.lifecycle.accepts_updates()
                         || !cx.ai_enabled()
                     {
-                        return Err("Chat is unavailable.".to_owned());
+                        return Err(ToolFailure::from("Chat is unavailable."));
                     }
                     this.revoke_executions(cx);
                     let job = this.executions.get(&id, &terminal)?;
@@ -126,7 +126,7 @@ impl AgentThread {
                     }
                     Ok(Err(error)) => {
                         let _ = this.update(cx, |this, cx| {
-                            this.finish(call, Err(error.into()));
+                            this.finish(call, Err(error));
                             cx.notify();
                         });
                         break;

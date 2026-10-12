@@ -19,6 +19,28 @@ fn executor(output: Option<ExecOutput>) -> Arc<Executor> {
     })
 }
 #[test]
+fn rejects_a_fifth_active_command_and_foreign_command_ids() {
+    let mut registry = Jobs::default();
+    let mut first = String::new();
+    for index in 0..MAX_ACTIVE {
+        let (id, _, _) = registry.insert("t1".into(), executor(None)).unwrap();
+        if index == 0 {
+            first = id;
+        }
+    }
+    assert_eq!(
+        registry.insert("t1".into(), executor(None)).err(),
+        Some(JobError::Busy)
+    );
+    for (id, terminal) in [("c99", "t1"), (first.as_str(), "t2"), ("x", "t1")] {
+        assert_eq!(registry.get(id, terminal).err(), Some(JobError::Unknown));
+    }
+    assert_eq!(
+        nocterm_ai::ToolFailure::from(JobError::Busy).message(),
+        "This chat already has four active commands. Read or cancel one first."
+    );
+}
+#[test]
 fn cancelled_or_expired_before_first_poll_never_starts_a_program() {
     futures::executor::block_on(async {
         for cancelled in [true, false] {

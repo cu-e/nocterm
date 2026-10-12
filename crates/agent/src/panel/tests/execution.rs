@@ -278,11 +278,11 @@ fn command_handles_are_owned_by_the_chat_that_started_them(cx: &mut TestAppConte
     new_chat(&f, cx);
     let second = current(&f, cx);
     let second_terminal = terminal_id(&second, cx);
-    assert!(
+    assert_eq!(
         read(&f, &second, &second_terminal, &id, cx)
             .unwrap_err()
-            .message()
-            .contains("Unknown command")
+            .message(),
+        "Unknown command for this chat and terminal."
     );
     assert!(!programs.closed(0));
     assert_eq!(
@@ -305,7 +305,10 @@ fn active_command_limit_and_cancelled_slot_apply_through_bridge_calls(cx: &mut T
         true,
         cx,
     ));
-    assert!(fifth.unwrap_err().message().contains("four active"));
+    assert_eq!(
+        fifth.unwrap_err().message(),
+        "This chat already has four active commands. Read or cancel one first."
+    );
     assert_eq!(programs.requests.lock().unwrap().len(), 4);
     result(submit(
         &f,

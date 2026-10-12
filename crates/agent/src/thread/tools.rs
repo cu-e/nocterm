@@ -10,7 +10,7 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, Task, WeakEntity};
-use nocterm_ai::{BridgeCall, TerminalCall};
+use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
 
@@ -98,13 +98,13 @@ impl AgentThread {
         match decision {
             ToolDecision::Respond(call, reason) => {
                 let error = match reason {
-                    ToolRejection::Unavailable => "Chat is unavailable.".into(),
-                    ToolRejection::Denied => "User denied this request.".into(),
+                    ToolRejection::Unavailable => ToolFailure::from("Chat is unavailable."),
+                    ToolRejection::Denied => ToolFailure::from("User denied this request."),
                     ToolRejection::Detached => {
                         unreachable("Terminal was detached or chat is unavailable.")
                     }
                 };
-                self.finish(call, Err(error.into()));
+                self.finish(call, Err(error));
             }
             ToolDecision::Execute(call) => self.execute_tool(call, cx),
             ToolDecision::Queue => {}
@@ -229,7 +229,7 @@ impl AgentThread {
             cx.spawn(async move |this, cx| {
                 let result = connected.await;
                 let _ = this.update(cx, |this, cx| {
-                    this.finish(call, result.map_err(Into::into));
+                    this.finish(call, result);
                     cx.notify();
                 });
             })
@@ -271,7 +271,7 @@ impl AgentThread {
                 let _ = this.update(cx, |this, _| this.background.retain(|id| *id != item));
             }
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result.map_err(Into::into));
+                this.finish(call, result);
                 cx.notify();
             });
         })
@@ -279,7 +279,7 @@ impl AgentThread {
     }
 
     fn finish_unreachable(&mut self, call: BridgeCall, reason: &str) {
-        self.finish(call, Err(unreachable(reason).into()));
+        self.finish(call, Err(unreachable(reason)));
     }
 
     /// Whether `call` acts on a server terminal that closed, or that is
@@ -314,7 +314,7 @@ impl AgentThread {
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => this.execute_tool_with(call, false, cx),
-                    Err(error) => this.finish(call, Err(error.into())),
+                    Err(error) => this.finish(call, Err(error)),
                 }
                 cx.notify();
             });
@@ -328,7 +328,7 @@ impl AgentThread {
         &mut self,
         entry: &TerminalEntry,
         cx: &mut Context<Self>,
-    ) -> Task<Result<serde_json::Value, String>> {
+    ) -> Task<Result<serde_json::Value, ToolFailure>> {
         let item = entry.item;
         let Some(window) = self.window else {
             return Task::ready(Err(unreachable("The workspace is unavailable.")));
@@ -424,7 +424,7 @@ async fn wait_until_connected(
     item: EntityId,
     ticket: nocterm_ai::session::Ticket,
     cx: &mut AsyncApp,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ToolFailure> {
     let started = Instant::now();
     let mut shown = false;
     let mut waiting = false;
@@ -438,7 +438,9 @@ async fn wait_until_connected(
                     || !this.lifecycle.accepts_updates()
                     || !cx.ai_enabled()
                 {
-                    return Err("The chat stopped before the server connected.".to_owned());
+                    return Err(ToolFailure::from(
+                        "The chat stopped before the server connected.",
+                    ));
                 }
                 let entry = this
                     .resolved(cx)
@@ -483,7 +485,7 @@ async fn wait_until_connected(
                 }
                 Ok((status, asking, descriptor))
             })
-            .map_err(|_| "The chat was closed.".to_owned());
+            .map_err(|_| ToolFailure::from("The chat was closed."));
         let step = match step {
             Ok(Ok(step)) => step,
             Ok(Err(error)) | Err(error) => break Err(error),
@@ -532,10 +534,11 @@ async fn wait_until_connected(
 
 /// A failure to reach a terminal or server, with what the agent should do
 /// about it: tell the user rather than look for another way in.
-pub(super) fn unreachable(reason: &str) -> String {
+pub(super) fn unreachable(reason: &str) -> ToolFailure {
     format!(
         "{reason} Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
     )
+    .into()
 }
 
 fn close_background(

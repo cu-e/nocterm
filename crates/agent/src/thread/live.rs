@@ -121,7 +121,7 @@ impl AgentThread {
             });
             drop(lease);
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result.map_err(Into::into));
+                this.finish(call, result);
                 cx.notify();
             });
         })
