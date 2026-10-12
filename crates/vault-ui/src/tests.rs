@@ -17,6 +17,9 @@ fn setup(
 ) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        // The unlock dialog slides in on wall-clock time; a click whose press and release
+        // land on different frames of that motion misses its button under load.
+        cx.set_reduce_motion(true);
         let ready = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             nocterm_ui::SettingsStore::in_memory(Default::default()),
