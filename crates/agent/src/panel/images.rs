@@ -1,14 +1,31 @@
 //! Image preparation runs outside the UI and belongs to one composer revision.
 use super::AgentPanel;
 use gpui_kit::{Context, PathPromptOptions};
-use nocterm_ai::images::{MAX_IMAGE_BYTES, PromptImage, validate_collection};
+use nocterm_ai::images::{
+    ImageCollectionError, MAX_IMAGE_BYTES, PromptImage, PromptImageError, validate_collection,
+};
 use nocterm_ui::ActiveAi as _;
 use std::{io::Read as _, path::PathBuf};
+
+/// Why attaching images to the composer failed.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum ImageAttachError {
+    #[error(transparent)]
+    Read(#[from] std::io::Error),
+    #[error(transparent)]
+    Decode(#[from] base64::DecodeError),
+    #[error(transparent)]
+    Invalid(#[from] PromptImageError),
+    #[error(transparent)]
+    Collection(#[from] ImageCollectionError),
+}
 
 impl AgentPanel {
     pub(super) fn prepare_images(
         &mut self,
-        prepare: impl std::future::Future<Output = Result<Vec<PromptImage>, String>> + Send + 'static,
+        prepare: impl std::future::Future<Output = Result<Vec<PromptImage>, ImageAttachError>>
+        + Send
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.current() else {
@@ -52,10 +69,10 @@ impl AgentPanel {
                             collection.extend(images);
                             match validate_collection(&collection) {
                                 Ok(()) => thread.composer.images = collection,
-                                Err(error) => panel.error = Some(error),
+                                Err(error) => panel.error = Some(error.to_string()),
                             }
                         }
-                        Err(error) => panel.error = Some(error),
+                        Err(error) => panel.error = Some(error.to_string()),
                     }
                     cx.notify();
                 });
@@ -65,10 +82,7 @@ impl AgentPanel {
         .detach();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        self.prepare_images(
-            async move { PromptImage::validate(bytes).map(|image| vec![image]) },
-            cx,
-        );
+        self.prepare_images(async move { Ok(vec![PromptImage::validate(bytes)?]) }, cx);
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         self.prepare_images(
@@ -76,13 +90,11 @@ impl AgentPanel {
                 paths
                     .into_iter()
                     .map(|path| {
-                        let mut file =
-                            std::fs::File::open(path).map_err(|error| error.to_string())?;
+                        let mut file = std::fs::File::open(path)?;
                         let mut bytes = Vec::new();
                         std::io::Read::take(&mut file, (MAX_IMAGE_BYTES + 1) as u64)
-                            .read_to_end(&mut bytes)
-                            .map_err(|error| error.to_string())?;
-                        PromptImage::validate(bytes)
+                            .read_to_end(&mut bytes)?;
+                        Ok(PromptImage::validate(bytes)?)
                     })
                     .collect()
             },

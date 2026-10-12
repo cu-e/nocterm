@@ -223,11 +223,30 @@ fn images_reject_bombs_bad_headers_and_decode_valid_png() {
     let valid = PromptImage::validate(bytes.clone()).unwrap();
     assert_eq!(valid.mime_type(), "image/png");
     assert!(matches!(valid.content(), acp::ContentBlock::Image(_)));
+    let mut empty = bytes.clone();
+    empty[16..20].copy_from_slice(&0u32.to_be_bytes());
+    let error = PromptImage::validate(empty).unwrap_err();
+    assert!(matches!(error, PromptImageError::Dimensions));
+    assert_eq!(
+        error.to_string(),
+        "Image dimensions exceed 16 million pixels"
+    );
     bytes[16..20].copy_from_slice(&100_000u32.to_be_bytes());
-    assert!(PromptImage::validate(bytes).is_err());
-    assert!(PromptImage::validate(b"\x89PNG\r\n\x1a\n".to_vec()).is_err());
-    assert!(PromptImage::validate(vec![0; MAX_IMAGE_BYTES + 1]).is_err());
-    assert!(validate_collection(&vec![valid; 9]).is_err());
+    let error = PromptImage::validate(bytes).unwrap_err();
+    assert!(matches!(error, PromptImageError::Decode));
+    assert_eq!(
+        error.to_string(),
+        "Invalid image data or decoding limit exceeded"
+    );
+    let error = PromptImage::validate(b"\x89PNG\r\n\x1a\n".to_vec()).unwrap_err();
+    assert!(matches!(error, PromptImageError::Unsupported));
+    assert_eq!(error.to_string(), "Invalid or unsupported image");
+    let error = PromptImage::validate(vec![0; MAX_IMAGE_BYTES + 1]).unwrap_err();
+    assert!(matches!(error, PromptImageError::TooLarge));
+    assert_eq!(error.to_string(), "Images must be at most 5 MiB");
+    let error = validate_collection(&vec![valid; 9]).unwrap_err();
+    assert_eq!(error, ImageCollectionError);
+    assert_eq!(error.to_string(), "At most 8 images and 20 MiB total");
 }
 #[test]
 fn command_guards_reject_multiline_and_bad_timeout() {
@@ -334,7 +353,10 @@ fn all_supported_image_formats_validate_and_aggregate_bytes_are_bounded() {
     }
     let synthetic = PromptImage::test_only_bytes(MAX_IMAGE_BYTES);
     assert!(validate_collection(&vec![synthetic.clone(); 4]).is_ok());
-    assert!(validate_collection(&vec![synthetic; 5]).is_err());
+    assert_eq!(
+        validate_collection(&vec![synthetic; 5]),
+        Err(ImageCollectionError)
+    );
 }
 
 #[test]

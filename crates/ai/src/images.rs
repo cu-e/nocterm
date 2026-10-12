@@ -4,6 +4,26 @@ pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_IMAGES: usize = 8;
 pub const MAX_TOTAL_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub const MAX_IMAGE_PIXELS: u64 = 16_777_216;
+/// Why a candidate prompt image was rejected.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PromptImageError {
+    #[error("Images must be at most 5 MiB")]
+    TooLarge,
+    #[error("Invalid or unsupported image")]
+    Unsupported,
+    #[error("Image dimensions exceed 16 million pixels")]
+    Dimensions,
+    #[error("Invalid image header")]
+    Header,
+    #[error("Invalid image data or decoding limit exceeded")]
+    Decode,
+    #[error(transparent)]
+    Encoding(#[from] crate::history::HistoryCodecError),
+}
+/// A prompt image collection above the count or total-size limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("At most 8 images and 20 MiB total")]
+pub struct ImageCollectionError;
 #[derive(Clone, Debug)]
 pub struct PromptImage {
     mime_type: String,
@@ -14,29 +34,26 @@ pub struct PromptImage {
     encoded_len: usize,
 }
 impl PromptImage {
-    pub fn validate(data: Vec<u8>) -> Result<Self, String> {
+    pub fn validate(data: Vec<u8>) -> Result<Self, PromptImageError> {
         if data.is_empty() || data.len() > MAX_IMAGE_BYTES {
-            return Err("Images must be at most 5 MiB".into());
+            return Err(PromptImageError::TooLarge);
         }
-        let (mime, w, h) = dimensions(&data).ok_or("Invalid or unsupported image")?;
+        let (mime, w, h) = dimensions(&data).ok_or(PromptImageError::Unsupported)?;
         if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
-            return Err("Image dimensions exceed 16 million pixels".into());
+            return Err(PromptImageError::Dimensions);
         }
         let mut reader = image::ImageReader::new(std::io::Cursor::new(&data))
             .with_guessed_format()
-            .map_err(|_| "Invalid image header")?;
+            .map_err(|_| PromptImageError::Header)?;
         let mut limits = image::Limits::default();
         limits.max_image_width = Some(4096);
         limits.max_image_height = Some(4096);
         limits.max_alloc = Some(64 * 1024 * 1024);
         reader.limits(limits);
-        reader
-            .decode()
-            .map_err(|_| "Invalid image data or decoding limit exceeded")?;
+        reader.decode().map_err(|_| PromptImageError::Decode)?;
         let content =
             acp::ContentBlock::Image(acp::ImageContent::new(STANDARD.encode(&data), mime));
-        let encoded_len =
-            crate::history::content_size(&content).map_err(|error| error.to_string())?;
+        let encoded_len = crate::history::content_size(&content)?;
         Ok(Self {
             mime_type: mime.into(),
             data: data.into(),
@@ -73,11 +90,11 @@ impl PromptImage {
         }
     }
 }
-pub fn validate_collection(images: &[PromptImage]) -> Result<(), String> {
+pub fn validate_collection(images: &[PromptImage]) -> Result<(), ImageCollectionError> {
     if images.len() > MAX_IMAGES
         || images.iter().map(|v| v.data.len()).sum::<usize>() > MAX_TOTAL_IMAGE_BYTES
     {
-        Err("At most 8 images and 20 MiB total".into())
+        Err(ImageCollectionError)
     } else {
         Ok(())
     }

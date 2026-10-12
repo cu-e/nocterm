@@ -66,7 +66,8 @@ impl AgentPanel {
                 } else {
                     bytes
                 };
-                let image = nocterm_ai::images::PromptImage::validate(bytes)?;
+                let image = nocterm_ai::images::PromptImage::validate(bytes)
+                    .map_err(|error| error.to_string())?;
                 let thumbnail = image::load_from_memory(image.bytes())
                     .map_err(|error| error.to_string())?
                     .thumbnail(640, 640);

@@ -566,7 +566,7 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
             panel.prepare_images(
                 async move {
                     wait.await.unwrap();
-                    nocterm_ai::images::PromptImage::validate(bytes).map(|image| vec![image])
+                    Ok(vec![nocterm_ai::images::PromptImage::validate(bytes)?])
                 },
                 cx,
             );
@@ -626,7 +626,9 @@ fn late_image_preparation_cannot_attach_to_a_different_chat(cx: &mut TestAppCont
         panel.prepare_images(
             async move {
                 wait.await.unwrap();
-                Err("late invalid image".into())
+                Err(super::super::images::ImageAttachError::Read(
+                    std::io::Error::other("late invalid image"),
+                ))
             },
             cx,
         )

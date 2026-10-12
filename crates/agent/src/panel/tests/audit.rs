@@ -476,7 +476,9 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
                 image::RgbaImage::new(2, 2)
                     .write_to(&mut png, image::ImageFormat::Png)
                     .unwrap();
-                nocterm_ai::images::PromptImage::validate(png.into_inner()).map(|image| vec![image])
+                Ok(vec![nocterm_ai::images::PromptImage::validate(
+                    png.into_inner(),
+                )?])
             },
             cx,
         )

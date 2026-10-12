@@ -1,5 +1,5 @@
 //! The queue peeks from behind the composer and unfolds above it.
-use super::AgentPanel;
+use super::{AgentPanel, images::ImageAttachError};
 use crate::thread::AgentThread;
 use base64::Engine as _;
 use gpui_kit::{
@@ -190,8 +190,10 @@ impl AgentPanel {
                         acp::ContentBlock::Image(image) => Some(
                             base64::engine::general_purpose::STANDARD
                                 .decode(&image.data)
-                                .map_err(|error| error.to_string())
-                                .and_then(PromptImage::validate),
+                                .map_err(ImageAttachError::from)
+                                .and_then(|bytes| {
+                                    PromptImage::validate(bytes).map_err(ImageAttachError::from)
+                                }),
                         ),
                         _ => None,
                     })
@@ -221,7 +223,7 @@ impl AgentPanel {
                                     edit.ready = true;
                                 }
                             }
-                            Err(error) => panel.error = Some(error),
+                            Err(error) => panel.error = Some(error.to_string()),
                         }
                         cx.notify();
                     });
