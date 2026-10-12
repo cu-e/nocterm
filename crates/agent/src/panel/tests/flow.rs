@@ -36,6 +36,10 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
         assert_eq!(thread.composer.queue.len(), 2);
         assert_eq!(thread.composer.queue[0].saved.id, id);
         assert_eq!(thread.composer.queue[1].saved.text, "third");
+        let error = thread
+            .submit("edited again".into(), Some(u64::MAX), cx)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "This message was already sent.");
     });
     cx.run_until_parked();
     assert_eq!(texts(&f), ["first"]);

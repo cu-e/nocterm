@@ -8,7 +8,7 @@ impl AgentThread {
     #[cfg(test)]
     pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
         if let Err(error) = self.submit(text, None, cx) {
-            self.status = error;
+            self.status = error.to_string();
             self.status_error = true;
             cx.notify();
         }

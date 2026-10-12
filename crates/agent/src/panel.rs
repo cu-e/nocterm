@@ -334,7 +334,7 @@ impl AgentPanel {
             }
             Ok(false) => return,
             Err(error) => {
-                self.error = Some(error);
+                self.error = Some(error.to_string());
                 cx.notify();
                 return;
             }

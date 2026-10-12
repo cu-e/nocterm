@@ -9,6 +9,19 @@ use std::sync::{
 
 use super::{AgentThread, Attachment};
 
+/// Why a message was not queued; shown in the composer.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SubmitError {
+    #[error("Wait for the saved chat to finish loading.")]
+    Loading,
+    #[error("This message was already sent.")]
+    AlreadySent,
+    #[error("Too many queued messages, images or attachments in this chat.")]
+    TooMany,
+    #[error(transparent)]
+    Storage(#[from] nocterm_ai::history::HistoryCodecError),
+}
+
 #[derive(Clone)]
 pub(crate) struct QueuedPrompt {
     pub saved: Arc<SavedPrompt>,
@@ -96,9 +109,9 @@ impl AgentThread {
         text: String,
         replace: Option<u64>,
         cx: &mut Context<Self>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SubmitError> {
         if self.is_archived() {
-            return Err("Wait for the saved chat to finish loading.".into());
+            return Err(SubmitError::Loading);
         }
         if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
             return Ok(false);
@@ -114,8 +127,7 @@ impl AgentThread {
             attachments: self.stable_attachments(&self.composer.attachments, cx),
         };
         let mut saved = saved;
-        let encoded_len = nocterm_ai::history::prompt_size(&saved)
-            .map_err(|error| error.to_string())?
+        let encoded_len = nocterm_ai::history::prompt_size(&saved)?
             + self
                 .composer
                 .images
@@ -134,7 +146,7 @@ impl AgentThread {
         let mut queue = self.composer.queue.clone();
         if let Some(id) = replace {
             let Some(slot) = queue.iter_mut().find(|prompt| prompt.saved.id == id) else {
-                return Err("This message was already sent.".into());
+                return Err(SubmitError::AlreadySent);
             };
             *slot = prompt;
         } else {
@@ -144,7 +156,7 @@ impl AgentThread {
             || self.composer.images.len() > 128
             || saved_attachment_count(&queue) > 1024
         {
-            return Err("Too many queued messages, images or attachments in this chat.".into());
+            return Err(SubmitError::TooMany);
         }
         self.refresh_storage_budget()?;
         let mut metadata = self.history_metadata(cx);
@@ -153,11 +165,9 @@ impl AgentThread {
             metadata.draft = None;
         }
         self.storage_budget
-            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))
-            .map_err(|error| error.to_string())?;
+            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
         self.storage_budget
-            .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))
-            .map_err(|error| error.to_string())?;
+            .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
         self.composer.accept(queue, replace.is_some());
         if replace.is_none() {
             self.draft_save = None;

@@ -257,7 +257,7 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
             .lifecycle
             .force_phase(nocterm_ai::session::SessionPhase::Prompting);
         thread.set_draft(text.clone(), cx);
-        assert_eq!(thread.submit(text, None, cx), Ok(true));
+        assert!(matches!(thread.submit(text, None, cx), Ok(true)));
         assert!(thread.composer.draft.is_none());
         assert_eq!(thread.composer.queue.len(), 1);
         // The accepted queued payload already uses over half of the budget.

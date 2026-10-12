@@ -546,11 +546,11 @@ impl AgentThread {
         self.dirty_rows.insert(index);
         self.storage_dirty.insert(index);
     }
-    pub(super) fn refresh_storage_budget(&mut self) -> Result<(), String> {
+    pub(super) fn refresh_storage_budget(
+        &mut self,
+    ) -> Result<(), nocterm_ai::history::HistoryCodecError> {
         let dirty = self.storage_dirty.drain().collect::<Vec<_>>();
-        self.storage_budget
-            .refresh(&self.state.entries, &dirty)
-            .map_err(|error| error.to_string())
+        self.storage_budget.refresh(&self.state.entries, &dirty)
     }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();
