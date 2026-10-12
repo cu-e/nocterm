@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
         .is_some_and(|arg| arg == "agent-host")
     {
         return nocterm_acp::run_agent_host(std::env::args_os().skip(2))
-            .map_err(anyhow::Error::msg);
+            .map_err(anyhow::Error::from);
     }
     if std::env::args_os()
         .nth(1)

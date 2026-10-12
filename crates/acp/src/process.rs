@@ -14,7 +14,7 @@ mod host;
 #[cfg(target_os = "linux")]
 mod systemd;
 #[cfg(target_os = "linux")]
-pub use host::run_agent_host;
+pub use host::{AgentHostError, run_agent_host};
 
 pub(crate) struct Spawned {
     pub child: async_process::Child,

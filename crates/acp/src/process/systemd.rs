@@ -1,14 +1,25 @@
-use super::host;
+use super::{host, lifecycle::CleanupError};
 use nocterm_ai::{AgentError, ConnectRequest};
 use std::{
     collections::BTreeMap,
     ffi::OsString,
-    fs,
+    fs, io,
     os::unix::fs::DirBuilderExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+
+/// Why a `systemctl --user` invocation did not complete.
+#[derive(Debug, thiserror::Error)]
+enum SystemctlError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("systemd user manager rejected operation")]
+    Rejected,
+    #[error("systemd user manager operation timed out")]
+    TimedOut,
+}
 
 pub(super) struct Container {
     pub unit: String,
@@ -21,7 +32,7 @@ impl Container {
         command.args(&self.args);
         command
     }
-    pub(super) fn stop(&self, force: bool) -> Result<(), String> {
+    pub(super) fn stop(&self, force: bool) -> Result<(), CleanupError> {
         self.revoke();
         let deadline = Instant::now() + Duration::from_secs(6);
         // Cancellation also reaches a helper whose StartTransientUnit call
@@ -38,7 +49,7 @@ impl Container {
             }
             if Instant::now() >= deadline {
                 let _ = control(&["kill", "--signal=KILL", "--kill-whom=all", &self.unit]);
-                return Err("Agent process container did not stop within six seconds".into());
+                return Err(CleanupError::ContainerTimeout);
             }
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -123,7 +134,7 @@ pub(super) fn prepare(
     Ok(container)
 }
 
-fn control(args: &[&str]) -> Result<String, String> {
+fn control(args: &[&str]) -> Result<String, SystemctlError> {
     async_io::block_on(async {
         use futures::{
             AsyncReadExt as _,
@@ -136,20 +147,16 @@ fn control(args: &[&str]) -> Result<String, String> {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
-            .spawn()
-            .map_err(|error| error.to_string())?;
+            .spawn()?;
         let mut stdout = child.stdout.take().expect("piped stdout");
         let operation = async {
             let mut output = String::new();
-            stdout
-                .read_to_string(&mut output)
-                .await
-                .map_err(|error| error.to_string())?;
-            let status = child.status().await.map_err(|error| error.to_string())?;
+            stdout.read_to_string(&mut output).await?;
+            let status = child.status().await?;
             if status.success() {
                 Ok(output.trim().to_owned())
             } else {
-                Err("systemd user manager rejected operation".into())
+                Err(SystemctlError::Rejected)
             }
         };
         match select(
@@ -159,7 +166,7 @@ fn control(args: &[&str]) -> Result<String, String> {
         .await
         {
             Either::Left((result, _)) => result,
-            Either::Right(_) => Err("systemd user manager operation timed out".into()),
+            Either::Right(_) => Err(SystemctlError::TimedOut),
         }
     })
 }
