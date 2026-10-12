@@ -12,6 +12,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// The requested workspace lies inside a protected credential store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("The agent workspace cannot be inside a protected credential store.")]
+pub struct ProtectedWorkdirError;
+
 /// Credential stores no agent needs, relative to the home directory.
 const HIDDEN_IN_HOME: &[&str] = &[
     ".ssh",
@@ -92,15 +97,13 @@ impl SandboxPolicy {
     }
 
     /// Refuses direct and symlinked credential workspaces before mounting them.
-    pub fn validate_workdir(&self, workdir: &Path) -> Result<(), String> {
+    pub fn validate_workdir(&self, workdir: &Path) -> Result<(), ProtectedWorkdirError> {
         let canonical = std::fs::canonicalize(workdir).unwrap_or_else(|_| workdir.to_owned());
         if self.credentials.iter().any(|root| {
             let resolved = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
             workdir.starts_with(root) || canonical.starts_with(&resolved)
         }) {
-            return Err(
-                "The agent workspace cannot be inside a protected credential store.".into(),
-            );
+            return Err(ProtectedWorkdirError);
         }
         Ok(())
     }
@@ -305,7 +308,10 @@ mod tests {
             args.find("--bind /home/me /home/me").unwrap()
                 < args.find("--tmpfs /home/me/.ssh").unwrap()
         );
-        assert!(policy.validate_workdir(&home.join(".aws/project")).is_err());
+        assert_eq!(
+            policy.validate_workdir(&home.join(".aws/project")),
+            Err(ProtectedWorkdirError)
+        );
         assert!(policy.validate_workdir(&home.join("project")).is_ok());
     }
 

@@ -59,7 +59,7 @@ pub(crate) fn spawn(
         Some(policy) => {
             policy
                 .validate_workdir(&request.working_directory)
-                .map_err(AgentError::Io)?;
+                .map_err(|error| AgentError::Io(error.to_string()))?;
             // Fail closed: an agent the user asked to isolate never runs
             // without isolation.
             let bwrap = match nocterm_ai::sandbox::availability(&env) {

@@ -27,7 +27,9 @@ pub(super) fn workspace(
         )
     });
     if let Some(policy) = &policy {
-        policy.validate_workdir(&root).map_err(AgentError::Io)?;
+        policy
+            .validate_workdir(&root)
+            .map_err(|error| AgentError::Io(error.to_string()))?;
     }
     Ok((root, policy))
 }

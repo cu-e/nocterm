@@ -63,6 +63,10 @@ impl Default for AgentResourceSettings {
         }
     }
 }
+/// Resource limits that are out of range or inconsistent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("Invalid agent resource limits.")]
+pub struct InvalidResourceLimits;
 impl AgentResourceSettings {
     pub(crate) fn sanitize(&mut self) {
         self.memory_max_mb = self.memory_max_mb.clamp(64, 1048576);
@@ -70,13 +74,13 @@ impl AgentResourceSettings {
         self.memory_swap_max_mb = self.memory_swap_max_mb.min(1048576);
         self.tasks_max = self.tasks_max.clamp(16, 65536);
     }
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), InvalidResourceLimits> {
         let mut sanitized = self.clone();
         sanitized.sanitize();
         if sanitized == *self {
             Ok(())
         } else {
-            Err("Invalid agent resource limits.".into())
+            Err(InvalidResourceLimits)
         }
     }
 }
@@ -131,6 +135,10 @@ mod tests {
             memory_max_mb: 1024,
             ..Default::default()
         };
-        assert!(resources.validate().is_err());
+        assert_eq!(resources.validate(), Err(InvalidResourceLimits));
+        assert_eq!(
+            InvalidResourceLimits.to_string(),
+            "Invalid agent resource limits."
+        );
     }
 }

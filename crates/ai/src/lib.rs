@@ -33,7 +33,7 @@ pub mod tools;
 pub mod usage;
 pub use connection::*;
 pub use registry::{AgentLaunch, AgentRegistry};
-pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings};
+pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings, InvalidResourceLimits};
 pub use settings::{
     AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode,
 };

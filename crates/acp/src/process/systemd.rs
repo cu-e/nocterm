@@ -60,7 +60,10 @@ pub(super) fn prepare(
     args: &[String],
     env: &BTreeMap<String, String>,
 ) -> Result<Container, AgentError> {
-    request.resources.validate().map_err(AgentError::Io)?;
+    request
+        .resources
+        .validate()
+        .map_err(|error| AgentError::Io(error.to_string()))?;
     control(&["show", "--property=Version", "--value"]).map_err(|_| AgentError::Io("Agent process containment requires a running systemd user manager and systemd-run. Start the user manager before sending a message.".into()))?;
     let mut random = [0u8; 16];
     getrandom::fill(&mut random).map_err(|error| AgentError::Io(error.to_string()))?;

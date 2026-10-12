@@ -186,10 +186,15 @@ fn credential_workspaces_are_rejected_through_direct_and_symlink_paths() {
         &secret_project,
         &alias,
     ] {
-        assert!(
-            policy.validate_workdir(workdir).is_err(),
+        assert_eq!(
+            policy.validate_workdir(workdir),
+            Err(nocterm_ai::sandbox::ProtectedWorkdirError),
             "{} was accepted",
             workdir.display()
+        );
+        assert_eq!(
+            nocterm_ai::sandbox::ProtectedWorkdirError.to_string(),
+            "The agent workspace cannot be inside a protected credential store."
         );
     }
     assert!(policy.validate_workdir(&home).is_ok());
