@@ -53,8 +53,7 @@ impl TerminalView {
         element
             .on_action(cx.listener(|this, _: &native_input::SelectAll, _, cx| {
                 cx.stop_propagation();
-                this.terminal
-                    .update(cx, |t, cx| t.update_emulator(cx, |e| e.select_all()));
+                this.terminal.update(cx, |t, cx| t.select_all(cx));
             }))
             .when(selected, |el| {
                 el.on_action(cx.listener(|this, _: &native_input::Copy, _, cx| {
@@ -106,8 +105,7 @@ impl TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminal
-            .update(cx, |t, cx| t.update_emulator(cx, |e| e.clear_selection()));
+        self.terminal.update(cx, |t, cx| t.clear_selection(cx));
     }
 
     pub(super) fn disconnect(

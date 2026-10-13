@@ -1,6 +1,6 @@
 //! Carries a session's events into the terminal.
 
-use gpui_kit::Context;
+use gpui_kit::{Context, Task};
 use nocterm_session::{CloseReason, Event, Session, SessionError};
 use std::{future::poll_fn, task::Poll};
 
@@ -12,48 +12,37 @@ const OUTPUT_BATCH_BYTES: usize = 256 * 1024;
 /// Control-only bursts and empty outputs must also yield to input/painting.
 const BATCH_EVENTS: usize = 64;
 
-impl Terminal {
-    /// Hands `session`'s events to this terminal until it ends or is replaced.
-    pub(super) fn spawn_pump(&mut self, session: Session, cx: &mut Context<Self>) {
-        let epoch = self.connection_epoch;
-        self._pump = Some(cx.spawn(async move |this, cx| {
-            let mut pending = None;
-            loop {
-                let first = match pending.take() {
-                    Some(event) => event,
-                    None => match session.next_event().await {
-                        Some(event) => Pending::new(event),
-                        None => break,
-                    },
-                };
-                let (batch, remainder) = drain(first, || session.try_next_event());
-                pending = remainder;
-                let alive = this.update(cx, |this, cx| {
-                    if this.connection_epoch != epoch {
-                        return false;
-                    }
-                    for event in batch {
-                        this.handle_event(event, cx);
-                    }
-                    true
-                });
-                if !matches!(alive, Ok(true)) {
-                    return;
-                }
-                // Receiving queued events and entity updates can both complete
-                // synchronously. A bounded batch alone would not yield this
-                // foreground task while a producer keeps the queue nonempty.
-                yield_once().await;
+/// Hands `session`'s events to this terminal until it ends or is replaced.
+pub(super) fn spawn(session: Session, epoch: u64, cx: &mut Context<Terminal>) -> Task<()> {
+    cx.spawn(async move |this, cx| {
+        let mut pending = None;
+        loop {
+            let first = match pending.take() {
+                Some(event) => event,
+                None => match session.next_event().await {
+                    Some(event) => Pending::new(event),
+                    None => break,
+                },
+            };
+            let (batch, remainder) = drain(first, || session.try_next_event());
+            pending = remainder;
+            let alive = this.update(cx, |this, cx| this.apply_session_batch(epoch, batch, cx));
+            if !matches!(alive, Ok(true)) {
+                return;
             }
-            // The transport went away without saying why.
-            let _ = this.update(cx, |this, cx| {
-                if this.connection_epoch == epoch && !matches!(this.status, Status::Closed(_)) {
-                    let lost = SessionError::ConnectionLost("the transport stopped".into());
-                    this.handle_event(Event::Closed(CloseReason::Failed(lost)), cx);
-                }
-            });
-        }));
-    }
+            // Receiving queued events and entity updates can both complete
+            // synchronously. A bounded batch alone would not yield this
+            // foreground task while a producer keeps the queue nonempty.
+            yield_once().await;
+        }
+        // The transport went away without saying why.
+        let _ = this.update(cx, |this, cx| {
+            if this.connection_epoch() == epoch && !matches!(this.status(), Status::Closed(_)) {
+                let lost = SessionError::ConnectionLost("the transport stopped".into());
+                this.handle_event(Event::Closed(CloseReason::Failed(lost)), cx);
+            }
+        });
+    })
 }
 
 /// A partial output retains its allocation and advances an offset: repeatedly

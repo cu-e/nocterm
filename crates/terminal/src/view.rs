@@ -1,7 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
     ops::Range,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -43,14 +41,11 @@ const MAX_WHEEL_REPORTS: i32 = 10;
 
 mod commands;
 mod cursor;
-mod host_key;
 mod input;
 mod keyboard;
 mod paste;
 mod pointer;
 mod render;
-#[path = "view_secret.rs"]
-mod secret;
 #[cfg(test)]
 #[path = "view_tests.rs"]
 mod tests;
@@ -58,22 +53,10 @@ mod tests;
 /// A terminal tab.
 pub struct TerminalView {
     terminal: Entity<Terminal>,
-    keyboard: keyboard::KeyboardInput,
+    input: input::ViewInput,
     focus_handle: FocusHandle,
-    focused: bool,
-    /// Shared with the element, which fills them in while painting.
-    frame: Rc<RefCell<Frame>>,
-    frame_dirty: Rc<Cell<bool>>,
-    frame_version: Rc<Cell<Option<(u64, u64)>>>,
-    highlights: Rc<RefCell<crate::highlighting::Highlights>>,
-    geometry: Rc<Cell<Option<Geometry>>>,
-    /// The palette last handed to the emulator.
-    palette: Option<Palette>,
-    cursor_lit: bool,
-    next_blink: Instant,
-    _blink: Task<()>,
-    /// Text an input method is composing.
-    marked_text: Option<String>,
+    cache: crate::element::FrameCache,
+    cursor: cursor::CursorClock,
     pointer: pointer::PointerState,
     secret: Option<SecretField>,
     find: Option<FindField>,
@@ -134,7 +117,7 @@ impl TerminalView {
                     .setting::<nocterm_ui::TerminalSettings>()
                     .semantic_highlighting
                 {
-                    this.highlights.borrow_mut().clear();
+                    this.cache.clear_highlights();
                 }
                 cx.notify();
             }),
@@ -148,19 +131,10 @@ impl TerminalView {
 
         Self {
             terminal,
-            keyboard: Default::default(),
+            input: Default::default(),
             focus_handle,
-            focused: false,
-            frame: Rc::default(),
-            frame_dirty: Rc::new(Cell::new(true)),
-            frame_version: Rc::default(),
-            highlights: Rc::default(),
-            geometry: Rc::default(),
-            palette: None,
-            cursor_lit: true,
-            next_blink: cx.background_executor().now() + CURSOR_BLINK_INTERVAL,
-            _blink: Self::blink(cx),
-            marked_text: None,
+            cache: Default::default(),
+            cursor: cursor::CursorClock::new(cx),
             pointer: Default::default(),
             secret: None,
             find: None,
@@ -171,6 +145,39 @@ impl TerminalView {
 
     pub fn terminal(&self) -> &Entity<Terminal> {
         &self.terminal
+    }
+
+    pub(crate) fn painted_frame(&self) -> std::cell::Ref<'_, Frame> {
+        self.cache.frame()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn painted_highlights(&self) -> std::cell::Ref<'_, crate::highlighting::Highlights> {
+        self.cache.highlights()
+    }
+
+    pub(crate) fn painted_geometry(&self) -> Option<Geometry> {
+        self.cache.geometry()
+    }
+
+    pub(crate) fn paint_element(
+        &self,
+        view: Entity<Self>,
+        style: TerminalStyle,
+        focused: bool,
+    ) -> TerminalElement {
+        TerminalElement::new(
+            view,
+            self.terminal.clone(),
+            self.focus_handle.clone(),
+            style,
+            crate::element::PaintState::new(
+                focused,
+                self.cursor_visible(),
+                self.input.composition().map(SharedString::from),
+            ),
+            self.cache.clone(),
+        )
     }
 
     fn on_terminal_event(
@@ -184,14 +191,14 @@ impl TerminalView {
         self.sync_pointer(cx);
         match event {
             TerminalEvent::Changed => {
-                self.frame_dirty.set(true);
+                self.cache.invalidate();
                 self.sync_secret_field(window, cx);
                 self.sync_operational_notices(window, cx);
                 cx.emit(ItemEvent::Changed);
                 cx.notify();
             }
             TerminalEvent::Output => {
-                self.frame_dirty.set(true);
+                self.cache.invalidate();
                 self.sync_operational_notices(window, cx);
                 cx.notify();
             }
@@ -265,10 +272,9 @@ impl TerminalView {
     }
 
     fn focus_changed(&mut self, focused: bool, cx: &mut Context<Self>) {
-        self.focused = focused;
+        self.input.focus_changed(focused);
         if !focused {
-            self.pointer = Default::default();
-            self.keyboard.clear();
+            self.pointer.reset();
         }
         let terminal = self.terminal.read(cx);
         if let Some(report) = encode_focus(focused, terminal.emulator().modes()) {
@@ -287,12 +293,91 @@ impl TerminalView {
         self.wake_cursor(cx);
     }
 
+    pub(crate) fn cursor_visible(&self) -> bool {
+        self.cursor.lit()
+    }
+    fn tick_cursor(&mut self, cx: &mut Context<Self>) -> Duration {
+        let blinking = self
+            .painted_frame()
+            .cursor
+            .is_some_and(|cursor| cursor.blinking);
+        let (wait, redraw) = self.cursor.tick(
+            cx.background_executor().now(),
+            self.input.focused(),
+            blinking,
+        );
+        if redraw {
+            cx.notify();
+        }
+        wait
+    }
+    pub(super) fn wake_cursor(&mut self, cx: &mut Context<Self>) {
+        if self.cursor.wake(cx.background_executor().now()) {
+            cx.notify();
+        }
+    }
+
+    fn pointer_host(&self) -> pointer::PointerHost {
+        pointer::PointerHost::new(
+            self.terminal.clone(),
+            self.focus_handle.clone(),
+            self.painted_geometry(),
+            self.input.focused(),
+        )
+    }
+    pub(super) fn sync_pointer(&mut self, cx: &App) {
+        let geometry = self.painted_geometry();
+        self.pointer.sync(self.terminal.read(cx), geometry);
+    }
+    pub(crate) fn mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.pointer_host();
+        if self.pointer.mouse_down(event, &host, window, cx) {
+            self.paste(&Paste, window, cx);
+        }
+    }
+    pub(crate) fn mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.pointer_host();
+        self.pointer.mouse_move(event, &host, hovered, cx);
+    }
+    pub(crate) fn mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
+        let host = self.pointer_host();
+        self.pointer.mouse_up(event, &host, cx);
+    }
+    pub(crate) fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let host = self.pointer_host();
+        self.pointer.scroll_wheel(event, &host, cx);
+    }
+    fn autoscroll_tick(&mut self, cx: &mut Context<Self>) -> bool {
+        self.sync_pointer(cx);
+        if !self.input.focused() || !self.pointer.dragging() {
+            return false;
+        }
+        let host = self.pointer_host();
+        let scrolled = self.pointer.extend_selection(&host, cx);
+        if !scrolled {
+            self.pointer.stop_autoscroll();
+        }
+        scrolled
+    }
     // ── Keyboard ─────────────────────────────────────────────────────────────
 
     fn type_text(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         let accepted = self.terminal.update(cx, |terminal, cx| {
-            terminal.prepare_input(cx);
-            terminal.send_text(text, cx)
+            let accepted = terminal.send_text(text, cx);
+            if accepted {
+                terminal.prepare_input(cx);
+            }
+            accepted
         });
         self.wake_cursor(cx);
         accepted
@@ -507,9 +592,7 @@ impl TerminalView {
             cursor: rgb(style.cursor),
             ansi: style.ansi.map(rgb),
         };
-        if self.palette != Some(palette) {
-            self.palette = Some(palette);
-            self.frame_dirty.set(true);
+        if self.cache.apply_palette(palette) {
             self.terminal
                 .update(cx, |terminal, _| terminal.set_palette(palette));
         }

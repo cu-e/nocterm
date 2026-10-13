@@ -24,20 +24,43 @@ struct PointerContext {
     geometry: Option<Geometry>,
 }
 
-impl TerminalView {
-    pub(super) fn sync_pointer(&mut self, cx: &App) {
-        let terminal = self.terminal.read(cx);
+pub(super) struct PointerHost {
+    terminal: Entity<Terminal>,
+    focus: FocusHandle,
+    geometry: Option<Geometry>,
+    focused: bool,
+}
+impl PointerHost {
+    pub(super) fn new(
+        terminal: Entity<Terminal>,
+        focus: FocusHandle,
+        geometry: Option<Geometry>,
+        focused: bool,
+    ) -> Self {
+        Self {
+            terminal,
+            focus,
+            geometry,
+            focused,
+        }
+    }
+}
+
+impl PointerState {
+    pub(super) fn reset(&mut self) {
+        *self = Self::default();
+    }
+    pub(super) fn sync(&mut self, terminal: &Terminal, geometry: Option<Geometry>) {
         let context = PointerContext {
             session_epoch: terminal.prompt_epoch(),
             connected: terminal.is_connected(),
             modes: terminal.emulator().modes(),
             size: terminal.emulator().size(),
-            geometry: self.geometry.get(),
+            geometry,
         };
-        let selection_cleared =
-            self.pointer.selection.is_some() && !terminal.emulator().has_selection();
-        if self.pointer.context != Some(context) {
-            self.pointer = PointerState {
+        let selection_cleared = self.selection.is_some() && !terminal.emulator().has_selection();
+        if self.context != Some(context) {
+            *self = PointerState {
                 context: Some(context),
                 ..Default::default()
             };
@@ -49,152 +72,162 @@ impl TerminalView {
     pub(crate) fn mouse_down(
         &mut self,
         event: &MouseDownEvent,
+        host: &PointerHost,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.focus(&self.focus_handle, cx);
-        self.sync_pointer(cx);
-        let Some(geometry) = self.geometry.get() else {
-            return;
+        cx: &mut Context<TerminalView>,
+    ) -> bool {
+        window.focus(&host.focus, cx);
+        self.sync(host.terminal.read(cx), host.geometry);
+        let Some(geometry) = host.geometry else {
+            return false;
         };
         let (at, side) = geometry.cell_at(event.position);
-        let modes = self.terminal.read(cx).emulator().modes();
+        let modes = host.terminal.read(cx).emulator().modes();
 
         // Shift reaches past a program's mouse handling to the selection.
         if modes.reports_mouse() && !event.modifiers.shift {
             if let Some(button) = vt_button(event.button) {
-                self.pointer.reported_button = Some(button);
-                self.report_mouse(MouseEventKind::Press(button), at, &event.modifiers, cx);
+                self.reported_button = Some(button);
+                self.report_mouse(
+                    host,
+                    MouseEventKind::Press(button),
+                    at,
+                    &event.modifiers,
+                    cx,
+                );
             }
-            return;
+            return false;
         }
 
         match event.button {
             MouseButton::Left => {
                 let extend = event.modifiers.shift
                     && event.click_count <= 1
-                    && self.terminal.read(cx).emulator().selection_text().is_some();
+                    && host.terminal.read(cx).emulator().selection_text().is_some();
                 let kind = match event.click_count {
                     0 | 1 => SelectionKind::Cells,
                     2 => SelectionKind::Words,
                     _ => SelectionKind::Lines,
                 };
-                self.terminal.update(cx, |terminal, cx| {
-                    terminal.update_emulator(cx, |emulator| {
-                        if extend {
-                            emulator.update_selection(at, side);
-                        } else {
-                            emulator.start_selection(kind, at, side);
-                        }
-                    });
+                host.terminal.update(cx, |terminal, cx| {
+                    if extend {
+                        terminal.extend_selection(at, side, 0, cx);
+                    } else {
+                        terminal.begin_selection(kind, at, side, cx);
+                    }
                 });
-                self.pointer.reported_button = None;
-                self.pointer.selection = Some(event.position);
+                self.reported_button = None;
+                self.selection = Some(event.position);
             }
-            MouseButton::Middle => self.paste(&Paste, window, cx),
+            MouseButton::Middle => return true,
             _ => {}
         }
+        false
     }
 
     pub(crate) fn mouse_move(
         &mut self,
         event: &MouseMoveEvent,
+        host: &PointerHost,
         hovered: bool,
-        cx: &mut Context<Self>,
+        cx: &mut Context<TerminalView>,
     ) {
-        self.sync_pointer(cx);
-        let Some(geometry) = self.geometry.get() else {
+        self.sync(host.terminal.read(cx), host.geometry);
+        let Some(geometry) = host.geometry else {
             return;
         };
-        if self.pointer.selection.is_some() {
+        if self.selection.is_some() {
             if event.pressed_button != Some(MouseButton::Left) {
                 self.stop_selection();
                 return;
             }
-            self.pointer.selection = Some(event.position);
-            self.extend_selection(cx);
+            self.selection = Some(event.position);
+            self.extend_selection(host, cx);
             if edge_scroll(geometry, event.position) != 0 {
                 self.start_autoscroll(cx);
             } else {
-                self.pointer.auto_scroll = None;
+                self.auto_scroll = None;
             }
             return;
         }
 
-        if self.pointer.reported_button != event.pressed_button.and_then(vt_button) {
-            self.pointer.reported_button = None;
+        if self.reported_button != event.pressed_button.and_then(vt_button) {
+            self.reported_button = None;
         }
-        if !self.focused || event.modifiers.shift {
+        if !host.focused || event.modifiers.shift {
             return;
         }
         let (at, _) = geometry.cell_at(event.position);
-        let held = self.pointer.reported_button;
-        let modes = self.terminal.read(cx).emulator().modes();
+        let held = self.reported_button;
+        let modes = host.terminal.read(cx).emulator().modes();
         let wanted = held.is_some() || (hovered && modes.mouse_motion);
-        if wanted && self.pointer.last_reported_cell != Some(at) {
-            self.report_mouse(MouseEventKind::Move(held), at, &event.modifiers, cx);
+        if wanted && self.last_reported_cell != Some(at) {
+            self.report_mouse(host, MouseEventKind::Move(held), at, &event.modifiers, cx);
         }
     }
 
-    pub(crate) fn mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        self.sync_pointer(cx);
-        if self.pointer.selection.is_some() && event.button == MouseButton::Left {
+    pub(super) fn mouse_up(
+        &mut self,
+        event: &MouseUpEvent,
+        host: &PointerHost,
+        cx: &mut Context<TerminalView>,
+    ) {
+        self.sync(host.terminal.read(cx), host.geometry);
+        if self.selection.is_some() && event.button == MouseButton::Left {
             self.stop_selection();
-            if cx.setting::<nocterm_ui::TerminalSettings>().copy_on_select {
-                self.copy_selection(cx);
+            if cx.setting::<nocterm_ui::TerminalSettings>().copy_on_select
+                && let Some(text) = host.terminal.read(cx).emulator().selection_text()
+            {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             return;
         }
-        if let Some(button) = self.pointer.reported_button
+        if let Some(button) = self.reported_button
             && Some(button) == vt_button(event.button)
-            && let Some(geometry) = self.geometry.get()
+            && let Some(geometry) = host.geometry
         {
-            self.pointer.reported_button = None;
+            self.reported_button = None;
             let (at, _) = geometry.cell_at(event.position);
-            self.report_mouse(MouseEventKind::Release(button), at, &event.modifiers, cx);
+            self.report_mouse(
+                host,
+                MouseEventKind::Release(button),
+                at,
+                &event.modifiers,
+                cx,
+            );
         }
     }
 
     fn stop_selection(&mut self) {
-        self.pointer.selection = None;
-        self.pointer.auto_scroll = None;
+        self.selection = None;
+        self.auto_scroll = None;
     }
 
     /// Scroll and move the endpoint together; the emulator retains the anchor
     /// in absolute scrollback coordinates.
-    fn extend_selection(&mut self, cx: &mut Context<Self>) -> bool {
-        let (Some(position), Some(geometry)) = (self.pointer.selection, self.geometry.get()) else {
+    pub(super) fn extend_selection(
+        &mut self,
+        host: &PointerHost,
+        cx: &mut Context<TerminalView>,
+    ) -> bool {
+        let (Some(position), Some(geometry)) = (self.selection, host.geometry) else {
             return false;
         };
         let lines = edge_scroll(geometry, position);
         let (at, side) = geometry.cell_at(position);
-        self.terminal.update(cx, |terminal, cx| {
-            terminal.update_emulator(cx, |emulator| {
-                let scrolled = lines != 0 && emulator.scroll(Scroll::Lines(lines));
-                emulator.update_selection(at, side);
-                scrolled
-            })
+        host.terminal.update(cx, |terminal, cx| {
+            terminal.extend_selection(at, side, lines, cx)
         })
     }
 
-    fn start_autoscroll(&mut self, cx: &mut Context<Self>) {
-        if self.pointer.auto_scroll.is_some() {
+    fn start_autoscroll(&mut self, cx: &mut Context<TerminalView>) {
+        if self.auto_scroll.is_some() {
             return;
         }
-        self.pointer.auto_scroll = Some(cx.spawn(async move |this, cx| {
+        self.auto_scroll = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(AUTOSCROLL_INTERVAL).await;
-                let keep_scrolling = this.update(cx, |this, cx| {
-                    this.sync_pointer(cx);
-                    if !this.focused || this.pointer.selection.is_none() {
-                        return false;
-                    }
-                    let scrolled = this.extend_selection(cx);
-                    if !scrolled {
-                        this.pointer.auto_scroll = None;
-                    }
-                    scrolled
-                });
+                let keep_scrolling = this.update(cx, |this, cx| this.autoscroll_tick(cx));
                 if !matches!(keep_scrolling, Ok(true)) {
                     break;
                 }
@@ -202,14 +235,19 @@ impl TerminalView {
         }));
     }
 
-    pub(crate) fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        self.sync_pointer(cx);
-        let Some(geometry) = self.geometry.get() else {
+    pub(super) fn scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        host: &PointerHost,
+        cx: &mut Context<TerminalView>,
+    ) {
+        self.sync(host.terminal.read(cx), host.geometry);
+        let Some(geometry) = host.geometry else {
             return;
         };
-        if self.pointer.shifted_wheel != Some(event.modifiers.shift) {
-            self.pointer.scroll_remainder = 0.;
-            self.pointer.shifted_wheel = Some(event.modifiers.shift);
+        if self.shifted_wheel != Some(event.modifiers.shift) {
+            self.scroll_remainder = 0.;
+            self.shifted_wheel = Some(event.modifiers.shift);
         }
         let delta = match event.delta {
             gpui_kit::ScrollDelta::Lines(delta) => delta.y,
@@ -217,19 +255,18 @@ impl TerminalView {
                 f32::from(delta.y) / f32::from(geometry.line_height)
             }
         };
-        let accumulated = self.pointer.scroll_remainder + delta;
+        let accumulated = self.scroll_remainder + delta;
         let lines = accumulated.trunc() as i32;
-        self.pointer.scroll_remainder =
-            if accumulated.is_finite() && accumulated.abs() < i32::MAX as f32 {
-                accumulated - lines as f32
-            } else {
-                0.
-            };
+        self.scroll_remainder = if accumulated.is_finite() && accumulated.abs() < i32::MAX as f32 {
+            accumulated - lines as f32
+        } else {
+            0.
+        };
         if lines == 0 {
             return;
         }
         let reports = lines.unsigned_abs().min(MAX_WHEEL_REPORTS as u32);
-        let modes = self.terminal.read(cx).emulator().modes();
+        let modes = host.terminal.read(cx).emulator().modes();
         if modes.reports_mouse() && !event.modifiers.shift {
             let (at, _) = geometry.cell_at(event.position);
             let kind = if lines > 0 {
@@ -238,7 +275,7 @@ impl TerminalView {
                 MouseEventKind::WheelDown
             };
             for _ in 0..reports {
-                self.report_mouse(kind, at, &event.modifiers, cx);
+                self.report_mouse(host, kind, at, &event.modifiers, cx);
             }
         } else if modes.alt_screen && modes.alternate_scroll && !event.modifiers.shift {
             let key = if lines > 0 { "up" } else { "down" };
@@ -248,26 +285,27 @@ impl TerminalView {
                 text: None,
             };
             if let Some(bytes) = encode_key(&press, modes) {
-                let terminal = self.terminal.read(cx);
+                let terminal = host.terminal.read(cx);
                 for _ in 0..reports {
                     terminal.send(bytes.clone());
                 }
             }
         } else {
-            self.terminal
+            host.terminal
                 .update(cx, |terminal, cx| terminal.scroll(Scroll::Lines(lines), cx));
         }
     }
 
     fn report_mouse(
         &mut self,
+        host: &PointerHost,
         kind: MouseEventKind,
         at: CellPoint,
         modifiers: &gpui_kit::Modifiers,
-        cx: &mut Context<Self>,
+        cx: &mut Context<TerminalView>,
     ) {
-        self.pointer.last_reported_cell = Some(at);
-        let terminal = self.terminal.read(cx);
+        self.last_reported_cell = Some(at);
+        let terminal = host.terminal.read(cx);
         let event = MouseEvent {
             kind,
             at,
@@ -276,6 +314,12 @@ impl TerminalView {
         if let Some(report) = encode_mouse(&event, terminal.emulator().modes()) {
             terminal.send(report);
         }
+    }
+    pub(super) fn dragging(&self) -> bool {
+        self.selection.is_some()
+    }
+    pub(super) fn stop_autoscroll(&mut self) {
+        self.auto_scroll = None;
     }
 }
 

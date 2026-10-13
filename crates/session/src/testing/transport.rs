@@ -34,6 +34,11 @@ impl ScriptedTransport {
         driver
     }
 
+    /// Queue an already prepared channel, retaining its original driver identity.
+    pub fn enqueue_session(&self, session: Session) {
+        lock(&self.state).pending.push_back(session);
+    }
+
     /// The last 4096 open requests, oldest first.
     pub fn requests(&self) -> Vec<ConnectRequest> {
         lock(&self.state).requests.iter().cloned().collect()

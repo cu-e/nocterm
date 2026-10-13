@@ -16,7 +16,7 @@ nocterm-monitor-ui = 2
 nocterm-settings-ui = 5
 nocterm-snippets-ui = 5
 nocterm-ssh = 4
-nocterm-terminal = 11
+nocterm-terminal = 10
 nocterm-themes = 1
 nocterm-ui = 2
 nocterm-vault-broker = 1
@@ -56,8 +56,6 @@ nocterm-ui = 5
 [impl_spread]
 "nocterm_agent::panel::AgentPanel" = 18
 "nocterm_agent::thread::AgentThread" = 16
-"nocterm_terminal::terminal::Terminal" = 9
-"nocterm_terminal::view::TerminalView" = 10
 "nocterm_vt::emulator::Emulator" = 5
 
 [pub_fields]
@@ -96,15 +94,11 @@ nocterm-ui = 5
 "nocterm_monitor_ui::model::Plan" = 2
 "nocterm_settings_ui::field::Field" = 3
 "nocterm_snippets_ui::panel::run::RunTarget" = 1
-"nocterm_terminal::credentials::CredentialState" = 2
 "nocterm_terminal::element::Geometry" = 5
-"nocterm_terminal::element::TerminalElement" = 12
 "nocterm_terminal::element::text::Colors" = 4
 "nocterm_terminal::highlighting::rules::Token" = 3
 "nocterm_terminal::integration::ShellIntegration" = 4
 "nocterm_terminal::terminal::FindState" = 5
-"nocterm_terminal::terminal::Terminal" = 1
-"nocterm_terminal::view::host_key::ChangedKey" = 7
 "nocterm_vault_ui::unlock::UnlockPrompt" = 5
 "nocterm_vault_ui::view::VaultView" = 14
 
@@ -121,5 +115,3 @@ nocterm-ui = 5
 "nocterm_design::tokens::Layout" = 18
 "nocterm_design::tokens::TerminalColors" = 20
 "nocterm_snippets_ui::editor::SnippetEditor" = 16
-"nocterm_terminal::terminal::Terminal" = 27
-"nocterm_terminal::view::TerminalView" = 19

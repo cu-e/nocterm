@@ -9,11 +9,14 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
     let (session, driver) = nocterm_session::channel(None);
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(Default::default()),
             cx,
         );
+        let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+        transport.enqueue_session(session);
+        crate::init(transport, &ui, cx);
         cx.new(|cx| {
             let mut terminal = Terminal::new(
                 SessionSpec {
@@ -27,8 +30,7 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
                 },
                 cx,
             );
-            terminal.session = Some(session);
-            terminal.status = Status::Connected;
+            terminal.handle_event(Event::Connected, cx);
             terminal
         })
     });
@@ -64,11 +66,14 @@ fn setup_recording_test(
         gpui_kit::init(cx);
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
             cx,
         );
+        let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+        transport.enqueue_session(session.clone());
+        crate::init(transport, &ui, cx);
         let log_factory = std::sync::Arc::new(
             nocterm_session::testing::recording::ScriptedOutputLogFactory::default(),
         );
@@ -118,14 +123,14 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
     cx: &mut TestAppContext,
 ) {
     let directory = tempfile::tempdir().unwrap();
-    let (terminal, session, driver) = setup_recording_test(directory.path(), cx);
+    let (terminal, _session, driver) = setup_recording_test(directory.path(), cx);
     let (reply, answer) = Reply::channel();
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
             terminal.handle_event(
                 Event::Prompt(Prompt::Secret {
                     request: SecretRequest::Password {
-                        target: terminal.spec.target.clone(),
+                        target: terminal.spec().target.clone(),
                         retry: false,
                     },
                     reply,
@@ -137,7 +142,6 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
                 "do not open logs during authentication"
             );
             terminal.answer_secret(Some(Secret::new("never-log-auth-password")), cx);
-            terminal.session = Some(session);
             terminal.handle_event(Event::Connected, cx);
             terminal.send_text("never-log-input", cx);
             terminal.handle_event(Event::Output("Привет output\n".as_bytes().to_vec()), cx);

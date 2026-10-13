@@ -5,11 +5,6 @@
 //! runs with every glyph forced to the cell width, so the font's own spacing
 //! can never drift a column out of the grid.
 
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
-
 use gpui_kit::{
     App, BorderStyle, Bounds, CursorStyle, ElementInputHandler, Entity, FocusHandle, Font,
     FontStyle, FontWeight, Hitbox, HitboxBehavior, Hsla, MouseDownEvent, MouseMoveEvent,
@@ -28,7 +23,9 @@ use crate::{Terminal, TerminalView};
 const BAR_WIDTH: f32 = 0.12;
 /// Share of a cell's height an underline cursor takes.
 const UNDERLINE_HEIGHT: f32 = 0.1;
+mod cache;
 mod text;
+pub(crate) use cache::FrameCache;
 use text::{Colors, paint_text};
 
 /// Where the grid was last laid out, so the pointer can be mapped to cells.
@@ -83,20 +80,31 @@ impl Geometry {
 
 /// One frame of a terminal, as its view decided to draw it.
 pub(crate) struct TerminalElement {
-    pub(crate) view: Entity<TerminalView>,
-    pub(crate) terminal: Entity<Terminal>,
-    pub(crate) focus: FocusHandle,
-    pub(crate) style: TerminalStyle,
-    pub(crate) focused: bool,
+    view: Entity<TerminalView>,
+    terminal: Entity<Terminal>,
+    focus: FocusHandle,
+    style: TerminalStyle,
+    focused: bool,
     /// The blink phase: whether a blinking cursor is lit.
-    pub(crate) cursor_lit: bool,
+    cursor_lit: bool,
     /// Text an input method is composing, drawn at the cursor.
-    pub(crate) marked_text: Option<SharedString>,
-    pub(crate) frame: Rc<RefCell<Frame>>,
-    pub(crate) frame_dirty: Rc<Cell<bool>>,
-    pub(crate) frame_version: Rc<Cell<Option<(u64, u64)>>>,
-    pub(crate) highlights: Rc<RefCell<crate::highlighting::Highlights>>,
-    pub(crate) geometry: Rc<Cell<Option<Geometry>>>,
+    marked_text: Option<SharedString>,
+    cache: FrameCache,
+}
+
+pub(crate) struct PaintState {
+    focused: bool,
+    cursor_lit: bool,
+    marked_text: Option<SharedString>,
+}
+impl PaintState {
+    pub(crate) fn new(focused: bool, cursor_lit: bool, marked_text: Option<SharedString>) -> Self {
+        Self {
+            focused,
+            cursor_lit,
+            marked_text,
+        }
+    }
 }
 
 struct Layout {
@@ -110,6 +118,30 @@ struct Layout {
 }
 
 impl TerminalElement {
+    pub(crate) fn new(
+        view: Entity<TerminalView>,
+        terminal: Entity<Terminal>,
+        focus: FocusHandle,
+        style: TerminalStyle,
+        paint: PaintState,
+        cache: FrameCache,
+    ) -> Self {
+        Self {
+            view,
+            terminal,
+            focus,
+            style,
+            focused: paint.focused,
+            cursor_lit: paint.cursor_lit,
+            marked_text: paint.marked_text,
+            cache,
+        }
+    }
+
+    pub(crate) fn frame(&self) -> std::cell::Ref<'_, Frame> {
+        self.cache.frame()
+    }
+
     pub(crate) fn render(self) -> impl IntoElement {
         canvas(
             move |bounds, window, cx| self.prepaint(bounds, window, cx),
@@ -159,8 +191,7 @@ impl TerminalElement {
             .update(cx, |terminal, cx| terminal.resize(size, cx));
         self.refresh_frame(cx);
 
-        self.highlights.borrow_mut().update(
-            &self.frame.borrow(),
+        self.cache.update_highlights(
             self.terminal.read(cx).emulator().generation(),
             self.style.semantic_highlighting,
         );
@@ -172,7 +203,7 @@ impl TerminalElement {
             cols: size.cols,
             rows: size.rows,
         };
-        self.geometry.set(Some(geometry));
+        self.cache.publish_geometry(geometry);
 
         let layout = Layout {
             gutter_origin,
@@ -189,18 +220,8 @@ impl TerminalElement {
     /// Cursor and composition changes can paint the existing emulator snapshot.
     pub(crate) fn refresh_frame(&self, cx: &App) -> bool {
         let terminal = self.terminal.read(cx);
-        let emulator = terminal.emulator();
-        let version = (emulator.generation(), terminal.display_revision());
-        if !self.frame_dirty.get()
-            && self.frame_version.get() == Some(version)
-            && self.frame.borrow().size == emulator.size()
-        {
-            return false;
-        }
-        emulator.snapshot(&mut self.frame.borrow_mut());
-        self.frame_version.set(Some(version));
-        self.frame_dirty.set(false);
-        true
+        self.cache
+            .publish(terminal.emulator(), terminal.display_revision())
     }
 
     fn paint(self, bounds: Bounds<Pixels>, layout: Layout, window: &mut Window, cx: &mut App) {
@@ -208,7 +229,7 @@ impl TerminalElement {
         window.paint_quad(fill(bounds, colors.background));
 
         {
-            let frame = self.frame.borrow();
+            let frame = self.frame();
             for row in 0..frame.size.rows {
                 let cells = frame.row(row);
                 paint_runs(window, &layout.geometry, row, cells, |cell| {
@@ -232,7 +253,7 @@ impl TerminalElement {
                     &frame,
                     block_col,
                     &layout,
-                    &self.highlights.borrow(),
+                    &self.cache.highlights(),
                     self.style.font_size,
                     window,
                     cx,
@@ -409,7 +430,7 @@ impl TerminalElement {
         );
         window.set_cursor_style(CursorStyle::IBeam, &hitbox);
 
-        let grid_left = self.geometry.get().map(|geometry| geometry.origin.x);
+        let grid_left = self.cache.geometry().map(|geometry| geometry.origin.x);
         let view = self.view.clone();
         let down_hitbox = hitbox.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {

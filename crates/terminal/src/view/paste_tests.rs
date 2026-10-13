@@ -37,6 +37,16 @@ fn native_file_drop_inserts_literal_paths_once_without_enter(cx: &mut TestAppCon
     emit(cx, &transport, 0, Event::Output(b"\x1b[?2004h".to_vec()));
     let driver = scripted_driver(&transport, 0);
     drain(&driver);
+    let outputs = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = outputs.clone();
+    let _subscription = cx.update(|cx| {
+        let terminal = view.read(cx).terminal().clone();
+        cx.subscribe(&terminal, move |_, event, _| {
+            if *event == crate::TerminalEvent::Output {
+                count.set(count.get() + 1);
+            }
+        })
+    });
     cx.update_window(handle, |_, window, cx| {
         window.replace_root(cx, |_, _| DropHarness {
             view: view.clone(),
@@ -53,6 +63,11 @@ fn native_file_drop_inserts_literal_paths_once_without_enter(cx: &mut TestAppCon
                 .as_bytes()
                 .to_vec()
         ]
+    );
+    assert_eq!(
+        outputs.get(),
+        1,
+        "accepted drop publishes once even on an unchanged live viewport"
     );
 }
 

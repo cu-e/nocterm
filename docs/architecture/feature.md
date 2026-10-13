@@ -12,7 +12,11 @@ layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 ## Terminal
 
 `nocterm-terminal` owns the terminal model/view and observes session
-and settings changes. Its renderer decorates otherwise unstyled default-color
+and settings changes. Private model owners separate session/prompt lifecycle,
+transport input and live leases, screen/search presentation, credential candidates
+and output recording. The view keeps independent frame-cache, keyboard/composition,
+cursor-clock and pointer owners. Selection and scrolling use named model actions;
+consumers only receive immutable emulator and painted-frame projections. See [ADR 0038](../adr/0038-private-terminal-state-owners.md). Its renderer decorates otherwise unstyled default-color
 output with semantic roles for timestamps, validated IP addresses, versions,
 process/user identifiers and important messages. ANSI colors and program styles,
 selection, search results and block cursors take precedence. This presentation

@@ -128,15 +128,19 @@ fn cooperative_yield_requires_a_second_poll() {
     assert!(future.as_mut().poll(&mut cx).is_ready());
 }
 
-fn terminal(cx: &mut gpui_kit::TestAppContext) -> gpui_kit::Entity<Terminal> {
+fn terminal(
+    cx: &mut gpui_kit::TestAppContext,
+    transport: std::sync::Arc<nocterm_session::testing::ScriptedTransport>,
+) -> gpui_kit::Entity<Terminal> {
     use gpui_kit::AppContext as _;
     cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
+        crate::init(transport, &ui, cx);
         cx.new(|cx| {
             Terminal::new(
                 nocterm_workspace::SessionSpec {
@@ -159,8 +163,10 @@ fn pump_drains_partial_output_before_channel_loss_and_preserves_explicit_close(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     for explicit in [false, true] {
-        let terminal = terminal(cx);
+        let transport = std::sync::Arc::new(nocterm_session::testing::ScriptedTransport::default());
         let (session, driver) = nocterm_session::channel(None);
+        transport.enqueue_session(session);
+        let terminal = terminal(cx, transport);
         let mut output = vec![b'x'; OUTPUT_BATCH_BYTES * 2 - 1];
         output.extend_from_slice("🙂".as_bytes());
         output.extend_from_slice(b"\x1b]2;drained\x07");
@@ -175,30 +181,24 @@ fn pump_drains_partial_output_before_channel_loss_and_preserves_explicit_close(
             }
         });
         drop(driver);
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.status = Status::Connected;
-                terminal.spawn_pump(session, cx);
-            })
-        });
         cx.run_until_parked();
         cx.update(|cx| {
             let terminal = terminal.read(cx);
-            assert_eq!(terminal.program_title.as_deref(), Some("drained"));
+            assert_eq!(terminal.program_title(), Some("drained"));
             let mut frame = nocterm_vt::Frame::default();
-            terminal.emulator.snapshot(&mut frame);
+            terminal.emulator().snapshot(&mut frame);
             assert!(
                 frame.cells.iter().any(|cell| cell.ch == '🙂'),
                 "UTF-8 must survive a raw byte budget boundary"
             );
             if explicit {
                 assert_eq!(
-                    terminal.status,
-                    Status::Closed(CloseReason::Exited(Some(7)))
+                    terminal.status(),
+                    &Status::Closed(CloseReason::Exited(Some(7)))
                 );
             } else {
                 assert!(matches!(
-                    terminal.status,
+                    terminal.status(),
                     Status::Closed(CloseReason::Failed(SessionError::ConnectionLost(_)))
                 ));
             }
@@ -208,21 +208,18 @@ fn pump_drains_partial_output_before_channel_loss_and_preserves_explicit_close(
 
 #[gpui_kit::test]
 fn obsolete_epoch_ignores_queued_output_and_channel_close(cx: &mut gpui_kit::TestAppContext) {
-    let terminal = terminal(cx);
-    let (session, driver) = nocterm_session::channel(None);
-    futures::executor::block_on(driver.emit(Event::Output(b"\x1b]2;obsolete\x07".to_vec())));
-    drop(driver);
-    cx.update(|cx| {
-        terminal.update(cx, |terminal, cx| {
-            terminal.spawn_pump(session, cx);
-            terminal.connection_epoch += 1;
-            terminal.status = Status::Connected;
-        })
-    });
+    let transport = std::sync::Arc::new(nocterm_session::testing::ScriptedTransport::default());
+    let original = transport.queue(None, None);
+    let replacement = transport.queue(None, None);
+    let terminal = terminal(cx, transport);
+    futures::executor::block_on(original.emit(Event::Output(b"\x1b]2;obsolete\x07".to_vec())));
+    drop(original);
+    cx.update(|cx| terminal.update(cx, |terminal, cx| terminal.reconnect(cx)));
+    futures::executor::block_on(replacement.emit(Event::Connected));
     cx.run_until_parked();
     cx.update(|cx| {
         let terminal = terminal.read(cx);
-        assert!(terminal.program_title.is_none());
-        assert_eq!(terminal.status, Status::Connected);
+        assert!(terminal.program_title().is_none());
+        assert_eq!(terminal.status(), &Status::Connected);
     });
 }

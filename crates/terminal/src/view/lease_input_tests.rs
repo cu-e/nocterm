@@ -1,6 +1,7 @@
 //! GPUI input ownership must survive presentation optimizations.
 use super::*;
 use nocterm_workspace::LiveCommandLease;
+use std::{cell::Cell, rc::Rc};
 
 fn claim(
     cx: &mut TestAppContext,
@@ -54,7 +55,7 @@ fn accepted_key_revokes_live_ownership_without_echo_or_redraw(cx: &mut TestAppCo
     let lease = claim(cx, &view, &transport);
     let driver = scripted_driver(&transport, 0);
     let (notifications, outputs, _subscriptions) = watch(cx, &view);
-    assert!(view.read_with(cx, |view, _| view.cursor_lit));
+    assert!(view.read_with(cx, |view, _| view.cursor_visible()));
     cx.update_window(handle, |_, window, cx| window.press("backspace", cx))
         .unwrap();
     cx.run_until_parked();
@@ -145,8 +146,32 @@ fn rejected_key_keeps_live_ownership_until_an_explicit_stop(cx: &mut TestAppCont
     let (handle, view, transport) = fixture(cx);
     let lease = claim(cx, &view, &transport);
     let driver = scripted_driver(&transport, 0);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.terminal().update(cx, |terminal, cx| {
+                terminal.handle_event(Event::Output(b"line\r\n".repeat(100)), cx);
+                terminal.scroll(Scroll::Top, cx);
+                terminal.begin_selection(
+                    SelectionKind::Cells,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
+                terminal.extend_selection(
+                    CellPoint { row: 0, col: 2 },
+                    nocterm_vt::Side::Right,
+                    0,
+                    cx,
+                );
+            })
+        })
+    });
+    let presentation = view.read_with(cx, |view, cx| {
+        let emulator = view.terminal().read(cx).emulator();
+        (emulator.display_offset(), emulator.selection_text())
+    });
     let queued = cx.update(|cx| {
-        let terminal = view.read(cx).terminal.read(cx);
+        let terminal = view.read(cx).terminal().read(cx);
         let mut queued = 0;
         while terminal.send_protocol(b"queued".to_vec()) {
             queued += 1;
@@ -167,8 +192,16 @@ fn rejected_key_keeps_live_ownership_until_an_explicit_stop(cx: &mut TestAppCont
         "rejected input cannot revoke an owned command"
     );
     assert!(view.read_with(cx, |view, cx| {
-        view.terminal.read(cx).text_error().is_some()
+        view.terminal().read(cx).text_error().is_some()
     }));
+    assert_eq!(
+        view.read_with(cx, |view, cx| {
+            let emulator = view.terminal().read(cx).emulator();
+            (emulator.display_offset(), emulator.selection_text())
+        }),
+        presentation,
+        "refused input must preserve the visible edit state"
+    );
     assert_eq!(drain(&driver), vec![b"queued".to_vec(); queued]);
     lease.cancel();
     assert!(!lease.is_active());

@@ -2,7 +2,11 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{AnyWindowHandle, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_session::{ConnectRequest, Event, Session, SessionDriver, Transport};
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Default)]
 pub(super) struct Scripted {
@@ -178,14 +182,13 @@ fn selection_search_and_screen_native_actions_keep_independent_text(cx: &mut Tes
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
-                t.update_emulator(cx, |e| {
-                    e.start_selection(
-                        SelectionKind::Cells,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                    e.update_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right);
-                })
+                t.begin_selection(
+                    SelectionKind::Cells,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
+                t.extend_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right, 0, cx);
             });
             v.find_selection(&nocterm_workspace::FindNextSelection, window, cx);
         });
@@ -597,11 +600,25 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx: &mut TestAppContext,
 ) {
     let (handle, view, _) = fixture(cx);
+    let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
+    store.fail_next(nocterm_session::testing::FakeCredentialError::NotFound);
+    cx.update(|cx| crate::init_credentials(store, |_, _, _| Task::ready(Ok(())), cx));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.terminal.update(cx, |t, _| {
-                t.credentials.message =
-                    Some("Credential was not saved; unlock the vault and retry.".into())
+            v.terminal.update(cx, |t, cx| {
+                let (reply, _) = nocterm_session::Reply::channel();
+                t.handle_event(
+                    Event::Prompt(Prompt::Secret {
+                        request: SecretRequest::Password {
+                            target: t.spec().target.clone(),
+                            retry: false,
+                        },
+                        reply,
+                    }),
+                    cx,
+                );
+                t.answer_secret_and_remember(Secret::new("temporary test secret"), true, cx);
+                t.handle_event(Event::Connected, cx);
             });
         });
         window.render_frame(cx);
@@ -674,17 +691,17 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let view = view.read(cx);
-            let frame = view.frame.borrow();
+            let frame = view.painted_frame();
             assert_eq!(frame.row_text(0), "Failed password from 192.0.2.1");
             assert_eq!(
-                view.highlights.borrow().role_at(0, &frame.cells[0]),
+                view.painted_highlights().role_at(0, &frame.cells[0]),
                 expected
             );
         })
         .unwrap();
     };
     assert_role(Some(crate::highlighting::Role::Error), cx);
-    let scans = view.read_with(cx, |view, _| view.highlights.borrow().scan_count());
+    let scans = view.read_with(cx, |view, _| view.painted_highlights().scan_count());
     cx.update(|cx| {
         cx.update_setting::<nocterm_ui::AppearanceSettings>(|s| {
             s.mode = nocterm_ui::AppearanceMode::Light;
@@ -695,7 +712,7 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
     cx.run_until_parked();
     assert_role(Some(crate::highlighting::Role::Error), cx);
     assert_eq!(
-        view.read_with(cx, |view, _| view.highlights.borrow().scan_count()),
+        view.read_with(cx, |view, _| view.painted_highlights().scan_count()),
         scans
     );
 

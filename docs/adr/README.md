@@ -37,3 +37,4 @@ acceptance; a later record supersedes an earlier one.
 | [0035](0035-injected-image-codecs.md) | Inject bounded native image codecs and bind preview delivery to request generations |
 | [0036](0036-connection-profile-native-boundary.md) | Connection documents and native values use explicit domain ports |
 | [0037](0037-chat-document-semantic-revisions.md) | Durable chat revisions, pending candidates and capture have separate ownership |
+| [0038](0038-private-terminal-state-owners.md) | Private terminal state owners commit input and presentation after captured session admission |

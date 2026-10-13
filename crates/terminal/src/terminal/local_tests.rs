@@ -44,8 +44,11 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
     });
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
-            assert_eq!(terminal.spec.title, "Auth Hermes");
-            assert_eq!(terminal.spec.launch.as_ref().unwrap().args, vec!["--setup"]);
+            assert_eq!(terminal.spec().title, "Auth Hermes");
+            assert_eq!(
+                terminal.spec().launch.as_ref().unwrap().args,
+                vec!["--setup"]
+            );
             assert!(!terminal.recording.options().auto_start);
             terminal.handle_event(Event::Connected, cx);
             terminal.start_recording(cx);
@@ -359,4 +362,92 @@ fn directory_bridge_reports_full_input_queue_and_can_retry_after_drain(cx: &mut 
         driver.next_command().now_or_never().unwrap(),
         Some(Command::Input(b"cd -- '/tmp'\r".to_vec()))
     );
+}
+
+#[gpui_kit::test]
+fn command_completion_effect_observes_closed_state_and_retired_prompt_authority(
+    cx: &mut TestAppContext,
+) {
+    use std::{cell::RefCell, rc::Rc};
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            SettingsStore::in_memory(Default::default()),
+            cx,
+        );
+    });
+    for disconnect in [false, true] {
+        let weak: Rc<RefCell<Option<gpui_kit::WeakEntity<Terminal>>>> = Rc::default();
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let callback_owner = weak.clone();
+        let callback_observed = observed.clone();
+        let terminal = cx.update(|cx| {
+            cx.new(|cx| {
+                Terminal::new_local_command(
+                    nocterm_session::ShellLaunch::default(),
+                    "Completion state".into(),
+                    Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
+                    move |reason, cx| {
+                        let terminal = callback_owner.borrow().as_ref().unwrap().upgrade().unwrap();
+                        let observed = callback_observed.clone();
+                        // GPUI effects observe entities after the current model update
+                        // releases its borrow; the completion contract is synchronous.
+                        cx.defer(move |cx| {
+                            let terminal = terminal.read(cx);
+                            observed.borrow_mut().push((
+                                reason,
+                                terminal.status().clone(),
+                                terminal.connection_epoch(),
+                                terminal.prompt().is_none(),
+                            ));
+                        });
+                    },
+                    cx,
+                )
+            })
+        });
+        weak.replace(Some(terminal.downgrade()));
+        let epoch = cx.update(|cx| terminal.read(cx).connection_epoch());
+        let reason = if disconnect {
+            CloseReason::ClosedByUser
+        } else {
+            CloseReason::Exited(Some(0))
+        };
+        cx.update(|cx| {
+            terminal.update(cx, |terminal, cx| {
+                let (reply, _) = nocterm_session::Reply::channel();
+                terminal.handle_event(
+                    Event::Prompt(Prompt::Secret {
+                        request: nocterm_session::SecretRequest::Interactive {
+                            prompt: "Pending".into(),
+                            echo: false,
+                        },
+                        reply,
+                    }),
+                    cx,
+                );
+                if disconnect {
+                    terminal.disconnect(cx);
+                } else {
+                    terminal.handle_event(Event::Closed(reason.clone()), cx);
+                }
+            })
+        });
+        assert_eq!(
+            *observed.borrow(),
+            vec![(
+                reason.clone(),
+                Status::Closed(reason),
+                epoch + u64::from(disconnect),
+                true,
+            )]
+        );
+        cx.update(|cx| terminal.update(cx, |terminal, cx| terminal.disconnect(cx)));
+        assert_eq!(
+            observed.borrow().len(),
+            1,
+            "completion is taken exactly once"
+        );
+    }
 }

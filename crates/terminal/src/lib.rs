@@ -21,6 +21,15 @@
 //! Weak Item and model handles validate original connection and prompt tokens before
 //! input; replacement connections never inherit approval or sign-in authority.
 
+//! Owns: private session lifecycle, admitted input and live leases, screen/search
+//! transitions, credential candidates, output recording and per-view paint/input owners.
+//! Does not own: native transport, filesystem, vault or persistence execution.
+//! Ports: session transport and credential contracts; narrow workspace terminal capabilities.
+//! Settings: TerminalSettings plus SSH, local launch and recording defaults.
+//! Globals: existing transport, local factory and credential installation remain composition debt.
+//! Invariants: captured connection/prompt authority precedes effects; input is admitted
+//! exactly once before integration/lease changes; paint snapshots track presentation revisions.
+
 mod access;
 mod codec;
 mod credentials;

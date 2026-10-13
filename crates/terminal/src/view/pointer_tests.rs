@@ -9,7 +9,7 @@ fn geometry(
 ) -> Geometry {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        view.read(cx).geometry.get().unwrap()
+        view.read(cx).painted_geometry().unwrap()
     })
     .unwrap()
 }

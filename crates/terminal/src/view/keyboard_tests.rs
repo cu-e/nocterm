@@ -78,15 +78,14 @@ fn repeat_and_release_preserve_selection_and_scroll_and_drop_orphans(cx: &mut Te
         down(window, "up", true, false, cx);
         view.update(cx, |view, cx| {
             view.terminal.update(cx, |terminal, cx| {
-                terminal.update_emulator(cx, |e| {
-                    e.advance(&b"line\r\n".repeat(100));
-                    e.scroll(Scroll::Top);
-                    e.start_selection(
-                        SelectionKind::Words,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                })
+                terminal.handle_event(Event::Output(b"line\r\n".repeat(100)), cx);
+                terminal.scroll(Scroll::Top, cx);
+                terminal.begin_selection(
+                    SelectionKind::Words,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
             })
         });
         let selection = view.read(cx).terminal.read(cx).emulator().selection_text();
