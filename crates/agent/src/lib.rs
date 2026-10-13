@@ -5,7 +5,8 @@
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
 //! Does not own: ACP transport, runtime connection admission or filesystem storage adapters.
-//! Ports used: AgentConnector, ToolBridge, terminal ports and ConnectionDirectory.
+//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, terminal ports
+//! and ConnectionDirectory.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
@@ -58,6 +59,7 @@ pub struct AgentServices {
     pub storage: runtime::AgentStorage,
     /// The host's account usage capability, without native paths in the view.
     pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+    pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     pub terminal_auth: Option<TerminalAuthOpener>,
     /// nocterm's own directories (settings, vault, chats), hidden from
@@ -95,6 +97,7 @@ pub fn init(
         bridge: services.bridge,
         storage: services.storage,
         usage_source: services.usage_source,
+        workdir_resolver: services.workdir_resolver,
         workdir: services.workdir,
         terminal_auth: services.terminal_auth.is_some(),
         private_dirs: services.private_dirs,

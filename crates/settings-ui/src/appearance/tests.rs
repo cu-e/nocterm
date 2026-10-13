@@ -45,7 +45,17 @@ fn setup(
                 ..WindowOptions::default()
             },
             cx,
-            |window, cx| cx.new(|cx| SettingsView::with_pages(Vec::new(), supplied, window, cx)),
+            |window, cx| {
+                cx.new(|cx| {
+                    SettingsView::with_pages(
+                        Vec::new(),
+                        supplied,
+                        crate::tests::settings_deps(),
+                        window,
+                        cx,
+                    )
+                })
+            },
         )
         .unwrap();
         (handle, view, themes)

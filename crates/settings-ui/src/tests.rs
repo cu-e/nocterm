@@ -14,6 +14,14 @@ use std::{
     rc::Rc,
 };
 
+pub(super) fn settings_deps() -> Deps {
+    Deps::new(std::sync::Arc::new(
+        nocterm_ai::testing::ScriptedSandboxProbe::new(
+            nocterm_ai::sandbox::Availability::Unsupported,
+        ),
+    ))
+}
+
 pub(super) fn init(cx: &mut App) {
     gpui_kit::init(cx);
     nocterm_ui::init(
@@ -294,7 +302,12 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(deps, window, cx);
-                register_with_pages(&mut workspace, vec![descriptor.clone()], theme_ui(cx));
+                register_with_pages(
+                    &mut workspace,
+                    vec![descriptor.clone()],
+                    theme_ui(cx),
+                    settings_deps(),
+                );
                 workspace
             })
         })
@@ -318,6 +331,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 "",
                 std::slice::from_ref(&descriptor),
                 theme_ui(cx),
+                settings_deps(),
                 window,
                 cx,
             );
@@ -333,6 +347,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 "vault",
                 std::slice::from_ref(&descriptor),
                 theme_ui(cx),
+                settings_deps(),
                 window,
                 cx,
             )
@@ -353,6 +368,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 "vault",
                 std::slice::from_ref(&descriptor),
                 theme_ui(cx),
+                settings_deps(),
                 window,
                 cx,
             )
@@ -375,7 +391,7 @@ fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
                 let mut workspace = Workspace::new(deps, window, cx);
-                register(&mut workspace, theme_ui(cx));
+                register(&mut workspace, theme_ui(cx), settings_deps());
                 workspace
             });
             window.focus(&workspace.read(cx).focus_handle(cx), cx);
@@ -449,4 +465,52 @@ fn terminal_highlighting_switch_saves_and_can_be_reenabled(cx: &mut TestAppConte
         assert!(cx.setting::<TerminalSettings>().semantic_highlighting);
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppContext) {
+    use nocterm_ai::{sandbox::Availability, testing::ScriptedSandboxProbe};
+    for (availability, disabled) in [
+        (Availability::Available("/fake/bwrap".into()), false),
+        (Availability::Missing, true),
+        (Availability::Unsupported, true),
+    ] {
+        let probe = std::sync::Arc::new(ScriptedSandboxProbe::new(availability));
+        let (handle, workspace) = cx.update(|cx| {
+            init(cx);
+            let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                let workspace = cx.new(|cx| Workspace::new(layout, window, cx));
+                workspace.update(cx, |workspace, cx| {
+                    open_page(
+                        workspace,
+                        "ai",
+                        &[],
+                        theme_ui(cx),
+                        Deps::new(probe.clone()),
+                        window,
+                        cx,
+                    );
+                });
+                workspace
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(2400.)));
+            window.render_frame(cx);
+            window.click("ai-sandbox", cx);
+            assert_eq!(
+                cx.setting::<AiSettings>().sandbox,
+                if disabled {
+                    nocterm_ai::SandboxMode::Off
+                } else {
+                    nocterm_ai::SandboxMode::Workspace
+                }
+            );
+            assert_eq!(probe.calls(), 1);
+            assert_eq!(workspace.read(cx).items().count(), 1);
+        })
+        .unwrap();
+    }
 }

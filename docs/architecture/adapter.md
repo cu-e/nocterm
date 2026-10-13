@@ -131,3 +131,17 @@ Composition supplies its optional home directory; unsupported launches never tou
 that path. The reader selects the newest lexical date and log, scans at most the
 last 256 KiB and returns the last usable account report. Missing or malformed reports
 produce no replacement; physical failures preserve typed I/O causes.
+
+## Agent workspace and sandbox
+
+`nocterm-acp::NativeWorkdirResolver` creates the explicit private default workspace
+through the shared foundation helper and canonicalizes user-selected roots. One
+private path resolver supplies facts to AI's pure policy and revalidates them before
+launch. Existing credential aliases resolve to the same paths used for mounting;
+non-missing native failures refuse the operation with typed I/O causes.
+
+The native sandbox launcher checks bubblewrap against the current sanitized agent
+environment on each launch, regardless of settings probe evidence. It refuses a
+changed canonical cwd, protected roots, unsupported platforms and missing or
+unexecutable bubblewrap. It projects ordered policy mounts into native flags while
+process grouping and cleanup retain their existing owner.

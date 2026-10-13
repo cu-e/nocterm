@@ -134,12 +134,24 @@ fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext)
 }
 #[gpui_kit::test]
 fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let resolver = workspace_resolver();
+    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone());
     cx.run_until_parked();
     let a = f._directory.path().join("A");
     let b = f._directory.path().join("B");
-    std::fs::create_dir(&a).unwrap();
-    std::fs::create_dir(&b).unwrap();
+    let canonical = f._directory.path().join("resolved-A");
+    resolver.supply(
+        a.clone(),
+        Ok(nocterm_ai::workspace::PreparedWorkspace {
+            root: canonical.clone(),
+            sandbox: Some(nocterm_ai::sandbox::SandboxPolicy::new(
+                &canonical,
+                None,
+                &[],
+                &[],
+            )),
+        }),
+    );
     let global = b.to_string_lossy().into_owned();
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
@@ -166,16 +178,16 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
     cx.run_until_parked();
     assert_eq!(
         f.commands.restore_dirs.lock().unwrap().as_slice(),
-        std::slice::from_ref(&a)
+        std::slice::from_ref(&canonical)
     );
     assert_eq!(
         f.commands.new_dirs.lock().unwrap().as_slice(),
-        std::slice::from_ref(&a)
+        std::slice::from_ref(&canonical)
     );
     let roots = f.connector.roots.lock().unwrap();
-    assert_eq!(roots[0].0, a);
+    assert_eq!(roots[0].0, canonical);
     let policy = roots[0].1.as_ref().expect("workspace sandbox");
-    assert!(policy.writable.contains(&a));
+    assert!(policy.writable.contains(&canonical));
     assert!(!policy.writable.contains(&b));
 }
 #[gpui_kit::test]
@@ -350,11 +362,17 @@ fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut Te
 }
 #[gpui_kit::test]
 fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let resolver = workspace_resolver();
+    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone());
     cx.run_until_parked();
     let mut invalid = saved();
     invalid.session_id = Some("old-session".into());
-    invalid.workdir = Some(f._directory.path().join("removed-project"));
+    let removed = f._directory.path().join("removed-project");
+    resolver.supply(
+        removed.clone(),
+        Err(nocterm_ai::workspace::WorkdirError::InvalidDirectory),
+    );
+    invalid.workdir = Some(removed);
     let thread = archived(&f, &invalid, cx);
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));

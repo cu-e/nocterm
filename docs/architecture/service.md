@@ -34,7 +34,8 @@ budget. Collection limits and a structural preflight also bound allocation from
 small JSON elements, independently of the 32 MiB file limit.
 
 The client supplies a saved session's directory before connection startup.
-Background startup resolves and validates that directory once, and the resulting
+Background startup schedules the injected `WorkdirResolver`; its adapter prepares
+and validates that directory, and the resulting
 root is used for the process, sandbox and resumed or fresh ACP session. Dormant
 documents have no maintenance timer. Workspace events revoke execution access;
 an execution watchdog runs only while structured commands are active.
@@ -85,3 +86,9 @@ The runtime's private `UsageLimits` owner coalesces account refreshes per agent 
 schedules the injected `AccountUsageSource` on its existing background executor.
 Missing reports and failures retain the last accepted limits; stopping the runtime
 cancels pending delivery. Native account paths remain in the injected adapter.
+
+Runtime performs no native workspace filesystem or home lookup. Its startup task
+checks cancellation before and after preparation and passes one resulting canonical
+root to the process, session requests and connected event. Candidate connection
+keys/serials remain unchanged when the prepared root is accepted. A late successful
+connector still follows the existing retained orphan-cleanup completion.

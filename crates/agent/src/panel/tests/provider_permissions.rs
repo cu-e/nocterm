@@ -140,7 +140,7 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
 fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18., usage_source());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
     set_policy(cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());

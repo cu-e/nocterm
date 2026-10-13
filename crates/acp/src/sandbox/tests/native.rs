@@ -3,10 +3,11 @@
 
 use std::{fs, io::Write as _, os::unix::fs::symlink, path::Path, process::Command};
 
-use nocterm_ai::sandbox::{Availability, SandboxPolicy, current_availability, file_kind};
+use crate::sandbox::{NativeSandboxProbe, SandboxLauncher, resolution};
+use nocterm_ai::sandbox::{Availability, SandboxPolicy, SandboxProbe};
 
 fn bubblewrap() -> Option<std::path::PathBuf> {
-    let Availability::Available(binary) = current_availability() else {
+    let Availability::Available(binary) = NativeSandboxProbe.availability() else {
         let _ = writeln!(
             std::io::stderr(),
             "SKIP actual sandbox: bubblewrap is unavailable on this system"
@@ -41,7 +42,10 @@ fn bubblewrap() -> Option<std::path::PathBuf> {
 }
 
 fn run(binary: &Path, policy: &SandboxPolicy, workdir: &Path, script: &str, paths: &[&Path]) {
-    policy.validate_workdir(workdir).unwrap();
+    let workdir = fs::canonicalize(workdir).unwrap();
+    policy
+        .validate_workdir(&resolution::PathResolver::resolve(policy, &workdir).unwrap())
+        .unwrap();
     let mut arguments = vec![
         "-eu".into(),
         "-c".into(),
@@ -50,7 +54,9 @@ fn run(binary: &Path, policy: &SandboxPolicy, workdir: &Path, script: &str, path
     ];
     arguments.extend(paths.iter().map(|path| path.to_str().unwrap().to_owned()));
     let result = Command::new(binary)
-        .args(policy.bubblewrap_args(workdir, Path::new("/bin/sh"), &arguments, file_kind))
+        .args(
+            SandboxLauncher::arguments(policy, &workdir, Path::new("/bin/sh"), &arguments).unwrap(),
+        )
         .output()
         .expect("run bubblewrap");
     assert!(
@@ -187,7 +193,7 @@ fn credential_workspaces_are_rejected_through_direct_and_symlink_paths() {
         &alias,
     ] {
         assert_eq!(
-            policy.validate_workdir(workdir),
+            policy.validate_workdir(&resolution::PathResolver::resolve(&policy, workdir).unwrap()),
             Err(nocterm_ai::sandbox::ProtectedWorkdirError),
             "{} was accepted",
             workdir.display()
@@ -197,5 +203,9 @@ fn credential_workspaces_are_rejected_through_direct_and_symlink_paths() {
             "The agent workspace cannot be inside a protected credential store."
         );
     }
-    assert!(policy.validate_workdir(&home).is_ok());
+    assert!(
+        policy
+            .validate_workdir(&resolution::PathResolver::resolve(&policy, &home).unwrap())
+            .is_ok()
+    );
 }

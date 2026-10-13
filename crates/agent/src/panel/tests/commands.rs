@@ -56,7 +56,7 @@ fn clicked_unicode_command_keeps_focus_and_appends_at_end(cx: &mut TestAppContex
 
 #[gpui_kit::test]
 fn long_description_has_same_row_height_and_bounded_full_details(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     let long = "First paragraph\n\n## Instructions\n\n".to_string()
         + &"Extensive description with examples.\n".repeat(150);

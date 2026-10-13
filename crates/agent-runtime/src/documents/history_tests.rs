@@ -12,6 +12,7 @@ use std::{
 mod closing;
 mod preferences;
 mod usage;
+mod workspace;
 struct UnusedBridge;
 impl nocterm_ai::ToolBridge for UnusedBridge {
     fn register(
@@ -132,6 +133,7 @@ fn runtime_from_storage(
         storage,
         directory,
         Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
+        Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests()),
     )
 }
 fn runtime_with_usage_source(
@@ -140,6 +142,7 @@ fn runtime_with_usage_source(
     storage: AgentStorage,
     directory: &std::path::Path,
     usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+    workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
 ) -> Entity<Runtime> {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
@@ -152,6 +155,7 @@ fn runtime_with_usage_source(
                     bridge: Arc::new(UnusedBridge),
                     storage,
                     usage_source,
+                    workdir_resolver,
                     workdir: directory.join("work"),
                     terminal_auth: false,
                     private_dirs: Vec::new(),

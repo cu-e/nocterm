@@ -2,8 +2,15 @@
 //!
 //! Every control saves as soon as it changes; text saves when typing pauses,
 //! on Enter and when the field loses focus. There is no draft and no Apply.
+//! Owns: settings tab presentation, field editing and lazy guest page lifetimes.
+//! Does not own: native sandbox probing, settings persistence or guest feature rules.
+//! Ports used: injected SandboxProbe, ThemeUi, SettingsPageSpec and settings contracts.
+//! Ports provided: workspace settings Item. Settings section: none. Globals: none.
+//! Invariants: sandbox availability is display evidence; native launch validates freshly.
 
 mod ai;
+mod deps;
+pub use deps::Deps;
 mod appearance;
 mod field;
 mod pages;
@@ -72,25 +79,27 @@ impl Page {
 }
 
 /// Installs Settings with its built-in pages.
-pub fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi) {
-    register_with_pages(workspace, Vec::new(), themes);
+pub fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi, deps: Deps) {
+    register_with_pages(workspace, Vec::new(), themes, deps);
 }
 /// Installs Settings and feature-owned pages supplied by the application.
 pub fn register_with_pages(
     workspace: &mut Workspace,
     pages: Vec<SettingsPageSpec>,
     themes: nocterm_ui::ThemeUi,
+    deps: Deps,
 ) {
     appearance::commands::register(workspace, themes.clone());
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
         let themes = themes.clone();
+        let deps = deps.clone();
         // Popup dismissal restores its old action context first. Opening the
         // Item afterwards lets its own field keep keyboard focus.
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                open_page(workspace, "", &pages, themes, window, cx);
+                open_page(workspace, "", &pages, themes, deps, window, cx);
             });
         });
     });
@@ -101,11 +110,12 @@ pub fn open_page(
     id: &str,
     pages: &[SettingsPageSpec],
     themes: nocterm_ui::ThemeUi,
+    deps: Deps,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
-        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), themes, window, cx));
+        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), themes, deps, window, cx));
         workspace.add_item(item.clone(), window, cx);
         item
     });
@@ -139,11 +149,18 @@ pub struct SettingsView {
 impl SettingsView {
     #[cfg(test)]
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_pages(Vec::new(), crate::tests::theme_ui(cx), window, cx)
+        Self::with_pages(
+            Vec::new(),
+            crate::tests::theme_ui(cx),
+            crate::tests::settings_deps(),
+            window,
+            cx,
+        )
     }
     fn with_pages(
         pages: Vec<SettingsPageSpec>,
         themes: nocterm_ui::ThemeUi,
+        deps: Deps,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -160,7 +177,7 @@ impl SettingsView {
             pages: pages.into_iter().map(|spec| (spec, None)).collect(),
             focus: cx.focus_handle(),
             fields: BTreeMap::new(),
-            ai: ai::AiPage::default(),
+            ai: ai::AiPage::new(deps.sandbox_probe()),
             appearance,
             session_options,
             session_options_error: None,

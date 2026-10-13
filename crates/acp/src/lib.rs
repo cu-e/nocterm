@@ -1,8 +1,10 @@
 //! ACP subprocess transport and authenticated local terminal-tool relay.
 //!
-//! Owns: ACP subprocess drivers, process cleanup and the authenticated local relay.
+//! Owns: ACP subprocess drivers, process cleanup, native workspace preparation,
+//! sandbox launch/probing and the authenticated local relay.
 //! Does not own: chat presentation, history storage or terminal permission decisions.
-//! Ports used: AI connector and tool-bridge contracts; provided: `AgentConnector`, `ToolBridge`
+//! Ports used: AI connector, tool-bridge, workspace and sandbox contracts; provided:
+//! `AgentConnector`, `ToolBridge`, `NativeWorkdirResolver`, `NativeSandboxProbe`
 //! and, on Linux, the `run_agent_host` entry point with its `AgentHostError`.
 //! Settings section: none. Globals: none.
 //! Invariants: relay registrations authenticate callers; revocation closes owned sockets.
@@ -12,6 +14,10 @@ mod lines;
 mod models;
 mod process;
 mod relay;
+mod sandbox;
+mod workspace;
+pub use sandbox::NativeSandboxProbe;
+pub use workspace::NativeWorkdirResolver;
 
 pub use bridge::{BridgeServer, RelayCommand};
 pub use client::AcpConnector;

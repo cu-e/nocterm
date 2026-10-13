@@ -244,14 +244,18 @@ permissions, tool registrations, processes and panel visibility across windows.
 Chats are saved one file each in a private state directory and reopened through
 ACP session resume/load; fork uses `session/fork`. All three are sent only when
 advertised. Favorites have a separate state file. Usage limits come from Claude's
-`usage_update` metadata and Codex's own session logs, read through an injected
-directory. See
-[AI agents](../AI_AGENTS.md) for protocol, limits and privacy boundaries. On Linux,
-agent processes can run isolated under bubblewrap: `nocterm_ai::sandbox` derives
-the mount policy (read-only root, writable workspace and agent state, hidden
-credential stores and nocterm's own directories, separate PID namespace), the
-ACP adapter applies it and fails closed when bubblewrap is missing. A changed
-isolation setting restarts running agents.
+`usage_update` metadata and Codex's session logs through an injected
+`AccountUsageSource`. See [AI agents](../AI_AGENTS.md) for protocol, limits and
+privacy boundaries. On Linux, `nocterm_ai::sandbox` validates supplied path facts
+and derives the ordered mount policy; the ACP adapter resolves native paths and
+launches bubblewrap. Startup uses the injected `WorkdirResolver` to prepare the
+canonical directory shared by the process and session. Fresh launch validation
+rejects changed or protected directories and unavailable bubblewrap without an
+unisolated fallback. A changed isolation setting restarts running agents.
+
+The settings feature receives a `SandboxProbe` through its explicit dependencies.
+It reports availability while keeping the isolation controls visible; launch
+checks availability again rather than trusting the displayed result.
 
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart

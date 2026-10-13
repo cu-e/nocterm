@@ -56,35 +56,14 @@ pub(crate) fn spawn(
         })?;
     let (executable, process_args) = match &request.sandbox {
         None => (executable, request.launch.args.clone()),
-        Some(policy) => {
-            policy
-                .validate_workdir(&request.working_directory)
-                .map_err(|error| AgentError::Io(error.to_string()))?;
-            // Fail closed: an agent the user asked to isolate never runs
-            // without isolation.
-            let bwrap = match nocterm_ai::sandbox::availability(&env) {
-                nocterm_ai::sandbox::Availability::Available(bwrap) => bwrap,
-                nocterm_ai::sandbox::Availability::Missing => {
-                    return Err(AgentError::Io(
-                        "Agent isolation is on, but bubblewrap (bwrap) was not found in PATH. Install bubblewrap or turn isolation off in AI settings."
-                            .into(),
-                    ));
-                }
-                nocterm_ai::sandbox::Availability::Unsupported => {
-                    return Err(AgentError::Io(
-                        "Agent isolation is only available on Linux. Turn it off in AI settings."
-                            .into(),
-                    ));
-                }
-            };
-            let args = policy.bubblewrap_args(
-                &request.working_directory,
-                &executable,
-                &request.launch.args,
-                nocterm_ai::sandbox::file_kind,
-            );
-            (bwrap, args)
-        }
+        Some(policy) => crate::sandbox::SandboxLauncher::prepare(
+            policy,
+            &request.working_directory,
+            &executable,
+            &request.launch.args,
+            &env,
+        )?
+        .into_parts(),
     };
     #[cfg(target_os = "linux")]
     let managed = helper
@@ -123,7 +102,12 @@ pub(crate) fn spawn(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| AgentError::Io(format!("Cannot start agent: {e}")))?;
+        .map_err(|source| match &request.sandbox {
+            Some(_) => AgentError::Sandbox(nocterm_ai::sandbox::SandboxLaunchError::Spawn(
+                Arc::new(source),
+            )),
+            None => AgentError::Io(format!("Cannot start agent: {source}")),
+        })?;
     let group = Arc::new(ProcessGroup::new(
         child.id(),
         #[cfg(target_os = "linux")]
@@ -181,7 +165,7 @@ fn resolve(
     }
     None
 }
-fn executable(path: &Path) -> bool {
+pub(crate) fn executable(path: &Path) -> bool {
     let Ok(metadata) = path.metadata() else {
         return false;
     };
@@ -220,6 +204,42 @@ mod tests {
             },
             working_directory: directory.to_owned(),
         }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn isolated_launch_never_executes_the_plain_program_when_bubblewrap_disappears() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let marker = root.join("plain-agent-ran");
+        let mut input = request(
+            &root,
+            "/bin/sh",
+            vec![
+                "-c".into(),
+                format!("printf leaked > '{}'", marker.display()),
+            ],
+        );
+        input.sandbox = Some(nocterm_ai::sandbox::SandboxPolicy::new(
+            &root,
+            None,
+            &[],
+            &[],
+        ));
+        input
+            .launch
+            .env
+            .insert("PATH".into(), root.to_string_lossy().into_owned());
+        let result = spawn(&input, None);
+        match result {
+            Err(AgentError::Sandbox(nocterm_ai::sandbox::SandboxLaunchError::Missing)) => {}
+            Err(error) => panic!("unexpected refusal: {error}"),
+            Ok(mut process) => {
+                let _ = futures::executor::block_on(process.child.status());
+                process.group.finish();
+                panic!("an isolated agent was spawned without bubblewrap");
+            }
+        }
+        assert!(!marker.exists());
     }
     #[test]
     fn clears_environment_and_blocks_explicitly_requested_secrets() {
@@ -312,7 +332,7 @@ mod tests {
     fn workspace_sandbox_runs_inside_bwrap_if_available() {
         let env: BTreeMap<String, String> = std::env::vars().collect();
         if !matches!(
-            nocterm_ai::sandbox::availability(&env),
+            crate::sandbox::availability(&env, std::env::current_dir().ok().as_deref()),
             nocterm_ai::sandbox::Availability::Available(_)
         ) {
             return;

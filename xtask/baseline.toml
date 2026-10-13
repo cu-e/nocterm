@@ -29,8 +29,6 @@ nocterm-workspace = 4
 [domain_io]
 "nocterm_ai::images::image::ImageReader::new" = 1
 "nocterm_ai::images::image::Limits::default" = 1
-"nocterm_ai::sandbox::std::fs::canonicalize" = 3
-"nocterm_ai::sandbox::std::fs::metadata" = 1
 
 [global_reads]
 nocterm = 3

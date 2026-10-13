@@ -1,45 +1,15 @@
-//! Workspace filesystem work belongs to the background startup task.
-use nocterm_ai::{AgentError, sandbox::SandboxPolicy};
-use std::path::{Path, PathBuf};
-pub(super) fn workspace(
-    candidate: &Path,
-    private: bool,
-    isolated: bool,
-    private_dirs: &[PathBuf],
-    shared_dirs: &[PathBuf],
-) -> Result<(PathBuf, Option<SandboxPolicy>), AgentError> {
-    if private {
-        nocterm_core::paths::ensure_private_dir(candidate)
-            .map_err(|error| AgentError::Io(error.to_string()))?;
-    } else if !candidate.is_absolute() || !candidate.is_dir() {
-        return Err(AgentError::Io(
-            "Working directory must be an existing absolute directory.".into(),
-        ));
-    }
-    let root =
-        std::fs::canonicalize(candidate).map_err(|error| AgentError::Io(error.to_string()))?;
-    let policy = isolated.then(|| {
-        SandboxPolicy::new(
-            &root,
-            std::env::home_dir().as_deref(),
-            private_dirs,
-            shared_dirs,
-        )
-    });
-    if let Some(policy) = &policy {
-        policy
-            .validate_workdir(&root)
-            .map_err(|error| AgentError::Io(error.to_string()))?;
-    }
-    Ok((root, policy))
-}
-
+//! Background startup schedules an injected native workspace capability.
 use futures::{
     FutureExt as _,
     channel::oneshot,
     future::{BoxFuture, Shared},
 };
 use nocterm_ai::{AgentConnection, AgentConnector, ConnectRequest};
+use nocterm_ai::{
+    AgentError,
+    workspace::{IsolationPaths, WorkdirRequest, WorkdirResolver},
+};
+use std::path::PathBuf;
 use std::sync::Arc;
 #[derive(Clone, Debug, thiserror::Error)]
 pub(super) enum CleanupError {
@@ -51,10 +21,8 @@ pub(super) enum CleanupError {
 pub(super) type Completion = Shared<BoxFuture<'static, Result<(), CleanupError>>>;
 pub(super) struct StartupConfig {
     request: ConnectRequest,
-    private: bool,
-    isolated: bool,
-    private_dirs: Vec<PathBuf>,
-    shared_dirs: Vec<PathBuf>,
+    preparation: WorkdirRequest,
+    resolver: Arc<dyn WorkdirResolver>,
 }
 impl StartupConfig {
     pub(super) fn for_connection(
@@ -66,7 +34,15 @@ impl StartupConfig {
         cancellation: nocterm_ai::ConnectionCancellation,
     ) -> Self {
         Self {
-            private: workdir == services.workdir,
+            preparation: WorkdirRequest {
+                candidate: workdir.clone(),
+                create_private: workdir == services.workdir,
+                isolation: isolated.then(|| IsolationPaths {
+                    private_dirs: services.private_dirs.clone(),
+                    shared_dirs: services.shared_dirs.clone(),
+                }),
+            },
+            resolver: services.workdir_resolver.clone(),
             request: ConnectRequest {
                 launch,
                 working_directory: workdir,
@@ -75,9 +51,6 @@ impl StartupConfig {
                 resources,
                 cancellation,
             },
-            isolated,
-            private_dirs: services.private_dirs.clone(),
-            shared_dirs: services.shared_dirs.clone(),
         }
     }
 }
@@ -159,15 +132,9 @@ async fn launch(
     if config.request.cancellation.is_cancelled() {
         return Err(AgentError::Io("Agent startup cancelled.".into()));
     }
-    let (effective, sandbox) = workspace(
-        &config.request.working_directory,
-        config.private,
-        config.isolated,
-        &config.private_dirs,
-        &config.shared_dirs,
-    )?;
-    config.request.working_directory = effective;
-    config.request.sandbox = sandbox;
+    let prepared = config.resolver.prepare(config.preparation.clone()).await?;
+    config.request.working_directory = prepared.root;
+    config.request.sandbox = prepared.sandbox;
     if config.request.cancellation.is_cancelled() {
         return Err(AgentError::Io("Agent startup cancelled.".into()));
     }

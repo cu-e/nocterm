@@ -528,3 +528,9 @@ Unavailable local terminal references stay visible after reopening, including be
 working remote attachments. They grant no terminal access and can be removed explicitly.
 Editing queued attachments changes only that future message; the active turn and
 saved chat defaults keep their original attachment scope.
+
+Workspace preparation is provided by the injected `WorkdirResolver`. Native path
+resolution, home lookup and bubblewrap arguments are implemented by the ACP adapter;
+AI policy checks supplied path facts. A missing saved workspace or a credential
+descendant fails before starting an agent. The launch checks current environment and
+path identities independently of the availability shown in settings.

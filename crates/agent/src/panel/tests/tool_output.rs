@@ -47,7 +47,7 @@ pub(super) fn set_call(f: &Fixture, call: acp::ToolCall, cx: &mut TestAppContext
 }
 
 pub(super) fn expanded_fixture(call: acp::ToolCall, cx: &mut TestAppContext) -> Fixture {
-    let f = fixture_with_width(cx, 18., usage_source());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     set_call(&f, call, cx);

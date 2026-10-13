@@ -192,7 +192,7 @@ fn usage_trigger_toggle_and_outside_menu_action_do_not_reopen_card(cx: &mut Test
 
 #[gpui_kit::test]
 fn usage_stays_above_a_multiline_composer_in_a_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 14., usage_source());
+    let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         let input = f.panel.read(cx).input.clone();
@@ -278,7 +278,7 @@ fn assert_original_usage_bounds(window: &Window) {
 
 #[gpui_kit::test]
 fn usage_retains_original_full_chat_width_in_a_wide_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 40., usage_source());
+    let f = fixture_with_width(cx, 40., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     open_usage(&f, cx);
     cx.update_window(f.handle, |_, window, _| {
@@ -289,7 +289,7 @@ fn usage_retains_original_full_chat_width_in_a_wide_panel(cx: &mut TestAppContex
 
 #[gpui_kit::test]
 fn usage_retains_original_full_chat_width_in_a_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 14., usage_source());
+    let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     open_usage(&f, cx);
     cx.update_window(f.handle, |_, window, _| {

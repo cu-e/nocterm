@@ -88,6 +88,9 @@ impl PreparedApp {
             bootstrap::Services {
                 tokens: self.tokens,
                 settings: self.settings,
+                settings_ui: nocterm_settings_ui::Deps::new(Arc::new(
+                    nocterm_acp::NativeSandboxProbe,
+                )),
                 paths: self.paths,
                 persist: true,
                 transport: Arc::new(self.transport),
@@ -148,6 +151,7 @@ fn agent_services(
             },
         )),
         storage,
+        workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
         usage_source: Arc::new(nocterm_agent_storage::CodexUsageReader::new(codex_home())),
         workdir: paths.state_dir().join("agent-workspace"),
         private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],

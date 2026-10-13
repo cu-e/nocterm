@@ -14,6 +14,7 @@ fn with_source(cx: &mut TestAppContext, source: Arc<ScriptedUsageSource>) -> Ent
         storage,
         std::path::Path::new("/unused"),
         source,
+        Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests()),
     )
 }
 fn limit(used: f64) -> RateLimit {

@@ -293,7 +293,10 @@ struct Fixture {
     shutdown: nocterm_store::ShutdownCoordinator,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
-    fixture_with_width(cx, 26., usage_source())
+    fixture_with_width(cx, 26., usage_source(), workspace_resolver())
+}
+fn workspace_resolver() -> Arc<nocterm_ai::testing::ScriptedWorkdirResolver> {
+    Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests())
 }
 fn usage_source() -> Arc<nocterm_ai::testing::ScriptedUsageSource> {
     Arc::new(nocterm_ai::testing::ScriptedUsageSource::default())
@@ -303,6 +306,7 @@ fn fixture_with_width(
     cx: &mut TestAppContext,
     width: f32,
     usage_source: Arc<nocterm_ai::testing::ScriptedUsageSource>,
+    workdir_resolver: Arc<nocterm_ai::testing::ScriptedWorkdirResolver>,
 ) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let repository = Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
@@ -359,6 +363,7 @@ fn fixture_with_width(
                     Ok(Default::default()),
                 ),
                 usage_source,
+                workdir_resolver,
                 workdir: directory.path().join("work"),
             },
             &ui,
@@ -428,6 +433,7 @@ fn fixture_services(f: &Fixture) -> AgentServices {
             Ok(f.repository.state()),
         ),
         usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
+        workdir_resolver: workspace_resolver(),
         workdir: f._directory.path().join("work"),
         terminal_auth: None,
         private_dirs: Vec::new(),

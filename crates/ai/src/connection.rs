@@ -171,6 +171,10 @@ impl Drop for PermissionResponder {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
+    #[error("{0}")]
+    Workspace(#[from] crate::workspace::WorkdirError),
+    #[error("{0}")]
+    Sandbox(#[from] crate::sandbox::SandboxLaunchError),
     #[error("Agent process cleanup could not be confirmed: {0}")]
     CleanupUnconfirmed(String),
     #[error("Authentication required: {0}")]

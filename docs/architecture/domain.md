@@ -159,7 +159,7 @@ validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
 Existing SavedChat/SharedChat ACP payloads remain protocol migration debt, as do
-separate sandbox/image and clock/entropy responsibilities. New storage
+separate image and clock/entropy responsibilities. New storage
 contracts use the existing typed records without adding protocol-specific fields.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
@@ -167,3 +167,9 @@ Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAge
 contains launch identity without environment secrets; typed `UsageReadError` retains
 native causes as values. Domain `Limits` and transcript estimates remain pure;
 provider log discovery and parsing belong to the agent-storage adapter.
+
+AI workspace preparation is a pure `WorkdirResolver` contract with typed
+`WorkdirError` values. `SandboxPolicy` validates supplied lexical/canonical path
+facts and produces ordered semantic mounts without native lookup or argv.
+`SandboxProbe` returns availability for presentation; that fact does not authorize
+a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapter.

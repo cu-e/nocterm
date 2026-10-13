@@ -1,12 +1,14 @@
 //! Agent contracts, bounded context rules and legacy version-one history formats.
 //!
-//! Owns: configuration, session/tool rules, bounded history codecs and storage ports.
+//! Owns: configuration, session/tool rules, pure sandbox policy, bounded history codecs
+//! and capability/storage ports.
 //! Does not own: history/favorites files or persistence scheduling; repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: AgentConnector, ToolBridge,
-//! AgentStateRepository, ChatRepository and usage::AccountUsageSource.
+//! AgentStateRepository, ChatRepository, usage::AccountUsageSource,
+//! workspace::WorkdirResolver and sandbox::SandboxProbe.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
-//! Existing ACP-backed DTOs, sandbox/image I/O and clock/entropy are explicit
+//! Existing ACP-backed DTOs, image I/O and clock/entropy are explicit
 //! migration debt; storage ports add no new protocol-specific types.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
@@ -31,6 +33,7 @@ pub mod time;
 pub mod tool_display;
 pub mod tools;
 pub mod usage;
+pub mod workspace;
 pub use connection::*;
 pub use registry::{AgentLaunch, AgentRegistry};
 pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings, InvalidResourceLimits};

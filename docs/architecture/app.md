@@ -58,3 +58,8 @@ handle returned by layout initialization. Every window clones these dependencies
 so closing a window releases its views and subscriptions while surviving and new
 windows keep the same optimistic layout state and shutdown participant. Services
 remain the composition inputs; `Booted` owns the installed per-window dependencies.
+
+Composition also supplies the ACP native workspace resolver through AgentServices
+and retains settings `Deps` in Booted for every window and settings action. Native
+sandbox probe selection happens at startup composition; feature/service fixtures
+supply AI's shared scripted capabilities rather than reaching adapters or globals.

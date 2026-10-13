@@ -208,6 +208,11 @@ fn boot_with_ports(
         crate::bootstrap::Services {
             tokens: nocterm_ui::DesignTokens::builtin(),
             settings: nocterm_ui::SettingsStore::in_memory(settings),
+            settings_ui: nocterm_settings_ui::Deps::new(Arc::new(
+                nocterm_ai::testing::ScriptedSandboxProbe::new(
+                    nocterm_ai::sandbox::Availability::Unsupported,
+                ),
+            )),
             persist: false,
             transport,
             local: false,
@@ -230,6 +235,7 @@ fn boot_with_ports(
                         paths.state_dir().join("agent-chats"),
                     )),
                 )),
+                workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
                 usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 workdir: paths.state_dir().join("agent-workspace"),
                 terminal_auth: None,

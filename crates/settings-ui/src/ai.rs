@@ -17,7 +17,7 @@ use gpui_kit::{
 use nocterm_ai::{AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode};
 use nocterm_ai::{
     registry::AgentRegistry,
-    sandbox::{Availability, current_availability},
+    sandbox::{Availability, SandboxProbe},
 };
 use nocterm_ui::{IconName, SettingsExt as _, form};
 
@@ -29,7 +29,6 @@ use crate::{
 
 const BUILTIN: [&str; 3] = ["claude", "codex", "hermes"];
 
-#[derive(Default)]
 pub(crate) struct AiPage {
     /// Agents whose details are shown.
     expanded: BTreeSet<String>,
@@ -41,6 +40,22 @@ pub(crate) struct AiPage {
     /// Why the last switch could not be saved.
     error: Option<SharedString>,
     sandbox: Option<Availability>,
+    probe: std::sync::Arc<dyn SandboxProbe>,
+}
+
+impl AiPage {
+    pub(crate) fn new(probe: std::sync::Arc<dyn SandboxProbe>) -> Self {
+        Self {
+            probe,
+            expanded: BTreeSet::new(),
+            agents: Vec::new(),
+            new_id: None,
+            new_command: None,
+            add_error: None,
+            error: None,
+            sandbox: None,
+        }
+    }
 }
 
 fn agent_ids(settings: &AiSettings) -> Vec<String> {
@@ -80,7 +95,7 @@ pub(crate) fn add_fields(
     view.ai.new_command = Some(
         cx.new(|cx| InputState::new(window, cx).placeholder("Executable, e.g. /usr/bin/gemini")),
     );
-    view.ai.sandbox = Some(current_availability());
+    view.ai.sandbox = Some(view.ai.probe.availability());
     sync(view, window, cx);
 }
 

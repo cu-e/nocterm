@@ -4,7 +4,7 @@
 //! keyed write admission, lazy history hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
-//! AccountUsageSource, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! AccountUsageSource, WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
 //! at installation.
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
 //! Settings section: ai consumer. Globals: existing RuntimeGlobal compatibility shell.
@@ -52,6 +52,7 @@ pub struct RuntimeServices {
     pub storage: AgentStorage,
     /// Account usage is read through a host-injected native capability.
     pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+    pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     /// Whether the host can run an agent's sign-in command in a terminal.
     pub terminal_auth: bool,

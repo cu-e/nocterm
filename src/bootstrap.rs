@@ -17,6 +17,7 @@ use std::rc::Rc;
 pub(crate) struct Services {
     pub(crate) tokens: DesignTokens,
     pub(crate) settings: SettingsStore,
+    pub(crate) settings_ui: nocterm_settings_ui::Deps,
     pub(crate) paths: Paths,
     /// Whether connections, snippets, layout, recordings and the keymap are
     /// read from and written to `paths`; tests keep them in memory.
@@ -45,6 +46,7 @@ pub(crate) struct VaultSetup {
 /// What the installed globals leave for the windows.
 #[derive(Clone)]
 pub(crate) struct Booted {
+    settings_ui: nocterm_settings_ui::Deps,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
     pub(crate) themes: nocterm_ui::ThemeUi,
@@ -53,6 +55,9 @@ pub(crate) struct Booted {
 }
 
 impl Booted {
+    pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Deps {
+        self.settings_ui.clone()
+    }
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
         self.workspace.clone()
     }
@@ -63,6 +68,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let Services {
         tokens,
         settings,
+        settings_ui,
         paths,
         persist,
         transport,
@@ -120,6 +126,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         cx,
     );
     let booted = Booted {
+        settings_ui,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -205,7 +212,12 @@ pub(crate) fn build_workspace(
     let vault = booted.vault.as_deref();
     workspace.set_session_factory(nocterm_terminal::Factory);
     nocterm_connections::register(workspace, window, cx);
-    crate::register_settings(workspace, vault, booted.themes.clone());
+    crate::register_settings(
+        workspace,
+        vault,
+        booted.themes.clone(),
+        booted.settings_deps(),
+    );
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     nocterm_snippets_ui::register(workspace, window, cx);
@@ -224,6 +236,7 @@ pub(crate) fn build_workspace(
             "vault",
             &pages,
             booted.themes.clone(),
+            booted.settings_deps(),
             window,
             cx,
         );

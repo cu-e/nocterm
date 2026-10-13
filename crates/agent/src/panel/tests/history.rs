@@ -248,7 +248,7 @@ fn history_relative_time_boundaries() {
 
 #[gpui_kit::test]
 fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
     new_chat(&f, cx);
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
