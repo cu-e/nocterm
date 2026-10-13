@@ -69,11 +69,11 @@ impl AgentPanel {
     ) -> Option<AnyElement> {
         let permissions = thread.read(cx).permission_cards();
         let tools = thread.read(cx).tool_cards();
-        let pending = permissions.len() + tools.len() + thread.read(cx).sign_ins.len();
+        let pending = permissions.len() + tools.len() + thread.read(cx).sign_in_waits().len();
         let asking: Vec<EntityId> = self
             .threads
             .iter()
-            .flat_map(|thread| thread.read(cx).sign_ins.iter().map(|wait| wait.item))
+            .flat_map(|thread| thread.read(cx).sign_in_waits().iter().map(|wait| wait.item))
             .collect();
         self.sign_in_inputs.retain(|item, _| asking.contains(item));
         if pending == 0 {
@@ -88,7 +88,7 @@ impl AgentPanel {
             .max_h(window.viewport_size().height * 0.35)
             .overflow_y_scroll()
             .gap_2();
-        for index in 0..thread.read(cx).sign_ins.len() {
+        for index in 0..thread.read(cx).sign_in_waits().len() {
             list = list.child(self.sign_in_card(thread, index, window, cx));
         }
         for (index, permission) in permissions.into_iter().enumerate() {
@@ -127,7 +127,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let wait = thread.read(cx).sign_ins[index].clone();
+        let wait = thread.read(cx).sign_in_waits()[index].clone();
         let item = wait.item;
         let input = self.sign_in_input(thread, &wait, window, cx);
         let (heading, detail) = sign_in_text(&wait);
@@ -262,7 +262,7 @@ impl AgentPanel {
             .update(cx, |input, cx| input.set_value("", window, cx));
         let current =
             submission.thread.upgrade().is_some_and(|thread| {
-                thread.read(cx).sign_ins.iter().any(|wait| {
+                thread.read(cx).sign_in_waits().iter().any(|wait| {
                     wait.item == submission.item && wait.prompt.token == submission.token
                 })
             });

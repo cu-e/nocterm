@@ -3,7 +3,7 @@
 [complexity_expects]
 nocterm = 4
 nocterm-acp = 7
-nocterm-agent = 26
+nocterm-agent = 23
 nocterm-ai = 2
 nocterm-connections = 5
 nocterm-design = 1
@@ -63,7 +63,6 @@ nocterm-ui = 5
 "nocterm_agent::panel::history::Renaming" = 1
 "nocterm_agent::panel::queue::ComposerState" = 3
 "nocterm_agent::panel::queue::QueueEdit" = 2
-"nocterm_agent::thread::AgentThread" = 14
 "nocterm_agent::thread::Restore" = 3
 "nocterm_agent::thread::SignInWait" = 4
 "nocterm_agent::thread::execution::jobs::Job" = 3
@@ -103,7 +102,6 @@ nocterm-ui = 5
 
 [struct_fields]
 "nocterm_agent::panel::AgentPanel" = 34
-"nocterm_agent::thread::AgentThread" = 29
 "nocterm_ai::history::SavedChat" = 20
 "nocterm_ai::history::wire::Wire" = 18
 "nocterm_design::tokens::Layout" = 18

@@ -64,8 +64,8 @@ fn a_fork_the_agent_cannot_copy_starts_fresh_and_sends(cx: &mut TestAppContext) 
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), sessions + 1);
     cx.update(|cx| {
         let fork = fork.read(cx);
-        assert!(!fork.ended(), "{}", fork.status);
-        assert!(fork.lifecycle.generating());
+        assert!(!fork.ended(), "{}", fork.status());
+        assert!(fork.session_generating());
     });
     let text = last_prompt_text(&f);
     let history = text
@@ -129,7 +129,7 @@ fn a_session_that_keeps_failing_to_resume_is_replaced(cx: &mut TestAppContext) {
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), sessions + 1);
     cx.update(|cx| {
         assert!(!thread.read(cx).ended());
-        assert!(thread.read(cx).lifecycle.generating());
+        assert!(thread.read(cx).session_generating());
     });
     let text = last_prompt_text(&f);
     assert!(text.iter().any(|text| text.contains("check the disk")));
@@ -155,5 +155,5 @@ fn after_an_agent_crash_one_failed_resume_is_enough(cx: &mut TestAppContext) {
     cx.update(|cx| assert!(thread.read(cx).ended()));
     send(&thread, "second try", cx);
     assert_eq!(f.commands.restores.lock().unwrap().len(), 2);
-    cx.update(|cx| assert!(thread.read(cx).lifecycle.generating()));
+    cx.update(|cx| assert!(thread.read(cx).session_generating()));
 }

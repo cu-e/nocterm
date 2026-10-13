@@ -7,13 +7,13 @@ use std::{
     time::Duration,
 };
 
-pub(super) const MAX_ACTIVE: usize = 4;
+pub(in crate::thread) const MAX_ACTIVE: usize = 4;
 const MAX_RETAINED: usize = 16;
 const MAX_STDOUT: usize = 64 * 1024;
 
 /// Why a command was not started or found; the agent sees the text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub(super) enum JobError {
+pub(in crate::thread) enum JobError {
     #[error("This chat already has four active commands. Read or cancel one first.")]
     Busy,
     #[error("Unknown command for this chat and terminal.")]
@@ -26,7 +26,7 @@ impl From<JobError> for nocterm_ai::ToolFailure {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum State {
+pub(in crate::thread) enum State {
     Starting,
     Running,
     Exited,
@@ -35,7 +35,7 @@ pub(super) enum State {
     Failed,
 }
 impl State {
-    pub(super) fn as_str(self) -> &'static str {
+    pub(in crate::thread) fn as_str(self) -> &'static str {
         match self {
             Self::Starting => "starting",
             Self::Running => "running",
@@ -51,7 +51,7 @@ impl State {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Snapshot {
+pub(in crate::thread) struct Snapshot {
     pub state: State,
     pub stdout: Vec<u8>,
     pub total_bytes: u64,
@@ -70,7 +70,7 @@ impl Default for Snapshot {
     }
 }
 impl Snapshot {
-    pub(super) fn active(&self) -> bool {
+    pub(in crate::thread) fn active(&self) -> bool {
         self.state.active()
     }
     fn append(&mut self, bytes: &[u8]) {
@@ -81,20 +81,20 @@ impl Snapshot {
         self.stdout.extend_from_slice(&bytes[..keep]);
     }
 }
-pub(super) struct Job {
+pub(in crate::thread) struct Job {
     pub terminal_id: String,
     pub executor: Arc<dyn HostExec>,
     pub snapshot: Arc<Mutex<Snapshot>>,
     cancel: async_channel::Sender<()>,
 }
 impl Job {
-    pub(super) fn snapshot(&self) -> Snapshot {
+    pub(in crate::thread) fn snapshot(&self) -> Snapshot {
         self.snapshot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
-    pub(super) fn cancel(&self, state: State) {
+    pub(in crate::thread) fn cancel(&self, state: State) {
         let mut snapshot = self
             .snapshot
             .lock()
@@ -116,7 +116,7 @@ pub(in crate::thread) struct Jobs {
     next: u64,
 }
 impl Jobs {
-    pub(super) fn insert(
+    pub(in crate::thread) fn insert(
         &mut self,
         terminal_id: String,
         executor: Arc<dyn HostExec>,
@@ -156,19 +156,19 @@ impl Jobs {
         );
         Ok((format!("c{}", self.next), snapshot, receiver))
     }
-    pub(super) fn get(&self, id: &str, terminal: &str) -> Result<&Job, JobError> {
+    pub(in crate::thread) fn get(&self, id: &str, terminal: &str) -> Result<&Job, JobError> {
         id.strip_prefix('c')
             .and_then(|id| id.parse::<u64>().ok())
             .and_then(|id| self.jobs.get(&id))
             .filter(|job| job.terminal_id == terminal)
             .ok_or(JobError::Unknown)
     }
-    pub(super) fn cancel_terminal(&self, terminal: &str) {
+    pub(in crate::thread) fn cancel_terminal(&self, terminal: &str) {
         for job in self.jobs.values().filter(|job| job.terminal_id == terminal) {
             job.cancel(State::Cancelled);
         }
     }
-    pub(super) fn cancel_all(&self) {
+    pub(in crate::thread) fn cancel_all(&self) {
         for job in self.jobs.values() {
             job.cancel(State::Cancelled);
         }
@@ -182,7 +182,7 @@ impl Jobs {
 }
 
 /// Startup, stdin and continuous output draining all share one absolute deadline.
-pub(super) async fn run(
+pub(in crate::thread) async fn run(
     executor: Arc<dyn HostExec>,
     request: ExecRequest,
     snapshot: Arc<Mutex<Snapshot>>,
@@ -260,7 +260,7 @@ pub(super) async fn run(
         }
     }
 }
-pub(super) fn timeout(value: Option<u64>) -> Duration {
+pub(in crate::thread) fn timeout(value: Option<u64>) -> Duration {
     Duration::from_millis(value.unwrap_or(30_000))
 }
 

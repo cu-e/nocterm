@@ -30,7 +30,7 @@ impl AgentThread {
         let mut thread = Self::from_document(state, host, cx);
         thread.config.hydrate_restart(data.config);
         thread.composer = data.composer;
-        thread.restore = data.restore;
+        thread.session.import_restore(data.restore);
         thread
     }
 }

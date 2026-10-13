@@ -113,7 +113,7 @@ impl AgentPanel {
         changed.extend(self.stream.observe(
             &thread.read(cx).transcript().entries,
             dirty,
-            thread.read(cx).lifecycle.generating(),
+            thread.read(cx).session_generating(),
             cx.reduce_motion(),
         ));
         self.remeasure_rows(changed, cx);

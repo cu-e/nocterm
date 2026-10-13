@@ -13,7 +13,6 @@ impl AgentThread {
             cx.notify();
         }
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn start_prompt(
         &mut self,
         text: String,
@@ -25,7 +24,7 @@ impl AgentThread {
             return;
         };
         // A new turn: updates count again.
-        let Some(ticket) = self.lifecycle.start_turn() else {
+        let Some(ticket) = self.session.begin_turn() else {
             return;
         };
         // ACP adapters inspect the first block for slash commands; local
@@ -39,7 +38,7 @@ impl AgentThread {
             )
         });
         if let Some(context) = &context {
-            self.context_bytes += context.len();
+            self.tools.account_context(context.len());
         }
         let mut visible = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
         visible.extend(images);
@@ -65,66 +64,77 @@ impl AgentThread {
         content.extend(visible);
         self.status = "Working…".into();
         self.status_error = false;
-        let future = cx
-            .background_executor()
-            .spawn(commands.prompt(acp::PromptRequest::new(session, content)));
+        let operation = super::session_driver::prompt_operation::PromptOperation::new(
+            self.session.authority(),
+            commands,
+            acp::PromptRequest::new(session, content),
+        );
+        let future = cx.background_executor().spawn(operation.run());
         cx.spawn(async move |this, cx| {
-            let result = future.await;
+            let (authority, result) = future.await;
             let _ = this.update(cx, |this, cx| {
-                if !cx.ai_enabled() {
-                    return;
-                }
-                let completed = matches!(
-                    &result,
-                    Ok(response) if response.stop_reason != acp::StopReason::Cancelled
-                ) && !this.lifecycle.stopped();
-                if !this.lifecycle.finish_turn(ticket, completed) {
-                    return;
-                }
-                this.prompt_attachments = None;
-                this.cancel_pending();
-                this.finalize_tool_displays();
-                this.persist(cx);
-                match result {
-                    Ok(response) => {
-                        if response.usage.is_some() {
-                            this.state.tokens(response.usage);
-                        }
-                        // Agents that keep limits in their own files have
-                        // just written this turn's.
-                        let agent = this.state.agent_id().to_owned();
-                        cx.defer(move |cx| {
-                            Runtime::global(cx)
-                                .update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
-                        });
-                        this.status = if this.lifecycle.stopped() {
-                            "Stopped".into()
-                        } else {
-                            format!("{:?}", response.stop_reason)
-                        };
-                        if !is_command && completed {
-                            this.state.set_pending_history(false, this.host.timestamp());
-                            this.persist(cx);
-                        }
-                        this.dispatch_next(cx);
-                        cx.notify();
-                    }
-                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
-                        this.require_authentication(&message, cx);
-                    }
-                    // Some agents answer a cancelled prompt with an error; the
-                    // session itself goes on.
-                    Err(error) if this.lifecycle.stopped() => {
-                        tracing::debug!(%error, "stopped prompt ended with an error");
-                        this.status = "Stopped".into();
-                        this.dispatch_next(cx);
-                        cx.notify();
-                    }
-                    Err(error) => this.fail(&error.to_string(), cx),
-                }
+                this.on_prompt_completion(authority, result, is_command, cx);
             });
         })
         .detach();
         cx.notify();
+    }
+    fn on_prompt_completion(
+        &mut self,
+        authority: super::session_driver::SessionAuthority,
+        result: Result<acp::PromptResponse, nocterm_ai::AgentError>,
+        is_command: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.ai_enabled() || !self.session.accepts_authority(&authority) {
+            return;
+        }
+        let completed = matches!(
+            &result,
+            Ok(response) if response.stop_reason != acp::StopReason::Cancelled
+        ) && !self.session.stopped();
+        if !self.session.finish_turn(authority.ticket(), completed) {
+            return;
+        }
+        self.tools.clear_scope();
+        self.cancel_pending();
+        self.finalize_tool_displays();
+        self.persist(cx);
+        match result {
+            Ok(response) => {
+                if response.usage.is_some() {
+                    self.state.tokens(response.usage);
+                }
+                // Agents that keep limits in their own files have
+                // just written this turn's.
+                let agent = self.state.agent_id().to_owned();
+                cx.defer(move |cx| {
+                    Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
+                });
+                self.status = if self.session.stopped() {
+                    "Stopped".into()
+                } else {
+                    format!("{:?}", response.stop_reason)
+                };
+                if !is_command && completed {
+                    self.state.set_pending_history(false, self.host.timestamp());
+                    self.persist(cx);
+                }
+                self.dispatch_next(cx);
+                cx.notify();
+            }
+            Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                self.require_authentication(&message, cx);
+            }
+            // Some agents answer a cancelled prompt with an error; the
+            // session itself goes on.
+            Err(error) if self.session.stopped() => {
+                tracing::debug!(%error, "stopped prompt ended with an error");
+                self.status = "Stopped".into();
+                self.dispatch_next(cx);
+                cx.notify();
+            }
+            Err(error) => self.fail(&error.to_string(), cx),
+        }
     }
 }

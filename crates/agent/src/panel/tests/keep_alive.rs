@@ -23,16 +23,16 @@ async fn the_shown_chat_outlives_the_idle_timeout_until_the_user_moves_on(cx: &m
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     tick(cx, 10);
     cx.update(|cx| {
-        assert!(first.read(cx).shown);
-        assert!(first.read(cx).lease.is_some(), "the shown chat stays warm");
+        assert!(first.read(cx).is_shown());
+        assert!(first.read(cx).is_leased(), "the shown chat stays warm");
     });
 
     new_chat(&f, cx);
-    cx.update(|cx| assert!(!first.read(cx).shown));
+    cx.update(|cx| assert!(!first.read(cx).is_shown()));
     tick(cx, 1);
     tick(cx, 3);
     cx.update(|cx| {
-        assert!(first.read(cx).lease.is_none());
+        assert!(!first.read(cx).is_leased());
         assert_eq!(first.read(cx).transcript().entries.len(), 2);
     });
 }
@@ -65,7 +65,7 @@ async fn a_session_still_closing_frees_the_slot_so_no_second_chat_is_evicted(
     cx.update(|cx| {
         let leased = [&first, &second]
             .iter()
-            .filter(|thread| thread.read(cx).lease.is_some())
+            .filter(|thread| thread.read(cx).is_leased())
             .count();
         assert_eq!(leased, 1, "one chat yields; the other keeps its session");
         assert!(third.read(cx).session().is_none());
@@ -77,7 +77,7 @@ async fn a_session_still_closing_frees_the_slot_so_no_second_chat_is_evicted(
         assert!(third.read(cx).session().is_some());
         let leased = [&first, &second]
             .iter()
-            .filter(|thread| thread.read(cx).lease.is_some())
+            .filter(|thread| thread.read(cx).is_leased())
             .count();
         assert_eq!(leased, 1);
     });
@@ -116,11 +116,11 @@ fn news_of_an_earlier_connection_leaves_the_current_session_alone(cx: &mut TestA
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert_eq!(
-            thread.lifecycle.phase(),
+            thread.session_phase(),
             nocterm_ai::session::SessionPhase::Ready
         );
         assert_eq!(thread.session(), &session);
-        assert!(!thread.status_error);
+        assert!(!thread.has_status_error());
     });
     exchange(&f, "still there?", "Yes.", cx);
 }

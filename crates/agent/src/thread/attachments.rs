@@ -78,9 +78,8 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn attachment_scope(&self) -> &[Attachment] {
-        self.prompt_attachments
-            .as_deref()
-            .unwrap_or_else(|| self.composer.default_attachments())
+        self.tools
+            .attachment_scope(self.composer.default_attachments())
     }
     pub(crate) fn end_composer_edit(&mut self, resume: bool, cx: &mut Context<Self>) {
         self.composer.end_edit();

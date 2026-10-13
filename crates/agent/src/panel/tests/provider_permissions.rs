@@ -275,8 +275,8 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
         let mut queued = submit(&f, cx, session.clone(), options());
         cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
         cx.update(|cx| {
-            assert!(thread.read(cx).lifecycle.stopped());
-            assert_eq!(thread.read(cx).lifecycle.accepts_updates(), !generating);
+            assert!(thread.read(cx).session_stopped());
+            assert_eq!(thread.read(cx).session_accepts_updates(), !generating);
         });
         assert_eq!(
             queued.try_recv().unwrap(),

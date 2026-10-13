@@ -132,18 +132,18 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
     let skipped = chat(&f, cx);
     skipped.update(cx, |thread, cx| thread.rename(Some("kept".into()), cx));
     cx.run_until_parked();
-    cx.update(|cx| assert!(skipped.read(cx).lifecycle.queued()));
+    cx.update(|cx| assert!(skipped.read(cx).session_queued()));
     let wanted = chat(&f, cx);
     cx.run_until_parked();
-    cx.update(|cx| assert!(!skipped.read(cx).lifecycle.queued()));
+    cx.update(|cx| assert!(!skipped.read(cx).session_queued()));
 
     complete_active(&f, cx);
     cx.background_executor
         .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(busy.read(cx).lease.is_none(), "the hidden idle chat yields");
-        assert!(skipped.read(cx).lease.is_none());
+        assert!(!busy.read(cx).is_leased(), "the hidden idle chat yields");
+        assert!(!skipped.read(cx).is_leased());
         assert!(wanted.read(cx).session().is_some());
     });
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);

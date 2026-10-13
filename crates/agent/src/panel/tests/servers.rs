@@ -184,7 +184,7 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
         assert!(workspace.is_background(background));
         assert_eq!(workspace.items().count(), 1, "no tab was opened");
         thread.update(cx, |thread, cx| {
-            assert_eq!(thread.background, vec![background]);
+            assert_eq!(thread.background_items(), vec![background]);
             assert!(thread.resolved(cx).iter().any(|(id, _, _)| *id == terminal));
             assert_eq!(thread.offline_servers(cx).len(), 1, "web is online now");
             // Detaching the folder ends the session the chat opened.
@@ -266,8 +266,8 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     let unlocks = Rc::new(Cell::new(0));
     let counter = unlocks.clone();
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(thread.read(cx).sign_ins.len(), 1);
-        assert!(thread.read(cx).sign_ins[0].vault);
+        assert_eq!(thread.read(cx).sign_in_waits().len(), 1);
+        assert!(thread.read(cx).sign_in_waits()[0].vault);
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
@@ -297,7 +297,7 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     let answer = response.try_recv().unwrap().unwrap().unwrap();
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
-        assert!(thread.read(cx).sign_ins.is_empty());
+        assert!(thread.read(cx).sign_in_waits().is_empty());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }
@@ -343,9 +343,9 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
-    let item = cx.update(|cx| thread.read(cx).sign_ins[0].item);
+    let item = cx.update(|cx| thread.read(cx).sign_in_waits()[0].item);
     cx.update_window(f.handle, |_, window, cx| {
-        assert!(!thread.read(cx).sign_ins[0].vault);
+        assert!(!thread.read(cx).sign_in_waits()[0].vault);
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find(("vault-unlock", 0usize)).is_none());
@@ -368,7 +368,7 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     let answer = response.try_recv().unwrap().unwrap().unwrap();
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
-        assert!(thread.read(cx).sign_ins.is_empty());
+        assert!(thread.read(cx).sign_in_waits().is_empty());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }

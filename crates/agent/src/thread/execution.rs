@@ -9,8 +9,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-mod jobs;
-pub(super) use jobs::Jobs;
+pub(in crate::thread) mod jobs;
 
 impl AgentThread {
     pub(super) fn execute_command(
@@ -37,16 +36,6 @@ impl AgentThread {
                 return;
             }
         };
-        let (id, state, cancel) = match self
-            .executions
-            .insert(request.terminal_id.clone(), executor.clone())
-        {
-            Ok(job) => job,
-            Err(error) => {
-                self.finish(call, Err(error.into()));
-                return;
-            }
-        };
         let program = ExecRequest {
             program: request.program.clone(),
             args: request.args.clone(),
@@ -58,9 +47,19 @@ impl AgentThread {
         let timer = cx
             .background_executor()
             .timer(jobs::timeout(request.timeout_ms));
-        cx.background_executor()
-            .spawn(jobs::run(executor, program, state, cancel, timer))
-            .detach();
+        let started =
+            match self
+                .tools
+                .start_command(request.terminal_id.clone(), executor, program, timer)
+            {
+                Ok(started) => started,
+                Err(error) => {
+                    self.finish(call, Err(error));
+                    return;
+                }
+            };
+        let (id, run) = started.into_run();
+        cx.background_executor().spawn(run).detach();
         self.start_execution_watch(cx);
         let terminal = request.terminal_id.clone();
         let yield_ms = request.yield_ms.unwrap_or(1000);
@@ -81,13 +80,10 @@ impl AgentThread {
             return;
         };
         let result = self
-            .executions
-            .get(&request.command_id, &request.terminal_id)
-            .map(|job| {
-                job.cancel(jobs::State::Cancelled);
-                self.command_payload(&request.command_id, job.snapshot(), cx)
-            });
-        self.finish(call, result.map_err(Into::into));
+            .tools
+            .cancel_command(&request.command_id, &request.terminal_id)
+            .map(|state| self.command_payload(&request.command_id, state, cx));
+        self.finish(call, result);
     }
 
     fn wait_command(
@@ -98,22 +94,21 @@ impl AgentThread {
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let ticket = self.lifecycle.ticket();
+        let ticket = self.session.ticket();
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
             let until = Instant::now() + Duration::from_millis(yield_ms);
             loop {
                 let result = this.update(cx, |this, cx| {
-                    if !this.lifecycle.session_current(ticket)
-                        || !this.lifecycle.accepts_updates()
+                    if !this.session.session_current(ticket)
+                        || !this.session.accepts_updates()
                         || !cx.ai_enabled()
                     {
                         return Err(ToolFailure::from("Chat is unavailable."));
                     }
                     this.revoke_executions(cx);
-                    let job = this.executions.get(&id, &terminal)?;
-                    let state = job.snapshot();
+                    let state = this.tools.command_snapshot(&id, &terminal)?;
                     if state.active() && Instant::now() < until {
                         return Ok(None);
                     }
@@ -152,7 +147,7 @@ impl AgentThread {
     fn command_payload(
         &self,
         id: &str,
-        state: jobs::Snapshot,
+        state: super::tool_runtime::CommandSnapshot,
         cx: &gpui_kit::App,
     ) -> serde_json::Value {
         let redact = |text: String| {
@@ -177,13 +172,13 @@ impl AgentThread {
     }
 
     pub(crate) fn revoke_executions(&mut self, cx: &gpui_kit::App) {
-        if self.executions.active().next().is_none() && self.live_commands.is_empty() {
+        if self.tools.active_commands().next().is_none() && self.tools.live_empty() {
             return;
         }
         let resolved = self.resolved(cx);
         let revoked = self
-            .executions
-            .active()
+            .tools
+            .active_commands()
             .filter_map(|(id, executor)| {
                 let current = resolved
                     .iter()
@@ -201,42 +196,28 @@ impl AgentThread {
                     .then_some(id.to_owned())
             })
             .collect::<Vec<_>>();
-        self.live_commands.retain(|id, lease| {
-            let attached = resolved.iter().any(|(candidate, _, _)| candidate == id);
-            if !attached {
-                lease.cancel();
-            }
-            attached && lease.is_active()
-        });
+        let attached = resolved
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect::<Vec<_>>();
+        self.tools.revoke_detached_live(&attached);
         for id in revoked {
             // All commands on a removed or replaced session lose their authority.
-            self.executions.cancel_terminal(&id);
+            self.tools.revoke_command_terminal(&id);
         }
     }
 
     fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
-        if self.execution_watch.is_some() {
+        if self.tools.has_watch() {
             return;
         }
-        self.execution_watch = Some(cx.spawn(async move |this, cx| {
+        self.tools.install_watch(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 let active = this
-                    .update(cx, |this, cx| {
-                        if !cx.ai_enabled() {
-                            this.cancel_execution();
-                        } else {
-                            this.revoke_executions(cx);
-                        }
-                        if this.executions.active().next().is_none() {
-                            this.execution_watch = None;
-                            false
-                        } else {
-                            true
-                        }
-                    })
+                    .update(cx, |this, cx| this.on_execution_watch(cx))
                     .unwrap_or(false);
                 if !active {
                     break;
@@ -245,12 +226,20 @@ impl AgentThread {
         }));
     }
 
-    pub(super) fn cancel_execution(&mut self) {
-        self.execution_watch = None;
-        self.executions.cancel_all();
-        for lease in self.live_commands.values() {
-            lease.cancel();
+    fn on_execution_watch(&mut self, cx: &gpui_kit::App) -> bool {
+        if !cx.ai_enabled() {
+            self.cancel_execution();
+        } else {
+            self.revoke_executions(cx);
         }
-        self.live_commands.clear();
+        if self.tools.active_commands().next().is_none() {
+            self.tools.finish_watch();
+            false
+        } else {
+            true
+        }
+    }
+    pub(super) fn cancel_execution(&mut self) {
+        self.tools.cancel_execution();
     }
 }

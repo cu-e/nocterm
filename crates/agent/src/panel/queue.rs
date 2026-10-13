@@ -102,7 +102,7 @@ impl AgentPanel {
         let id = thread.entity_id();
         let revision = self.composer.revision;
         self.composer.loading = Some((id, self.input.read(cx).value().to_string()));
-        let Some(window) = thread.read(cx).window else {
+        let Some(window) = thread.read(cx).window() else {
             return;
         };
         let panel = cx.weak_entity();
@@ -167,7 +167,7 @@ impl AgentPanel {
         let draft = self.original_composer_text(cx);
         self.composer.loading = None;
         thread.update(cx, |thread, cx| thread.set_draft(draft.clone(), cx));
-        let ticket = thread.read(cx).lifecycle.ticket();
+        let ticket = thread.read(cx).session_ticket();
         let ready = prompt.saved.images.is_empty();
         self.composer.edit = Some(QueueEdit {
             thread: thread.entity_id(),
@@ -212,7 +212,7 @@ impl AgentPanel {
                         return;
                     }
                     let _ = owner.update(cx, |thread, cx| {
-                        if !thread.lifecycle.session_current(ticket) || !cx.ai_enabled() {
+                        if !thread.session_request_current(ticket) || !cx.ai_enabled() {
                             return;
                         }
                         match result {

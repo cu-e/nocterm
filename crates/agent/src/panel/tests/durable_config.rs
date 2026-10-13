@@ -71,7 +71,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     choose(&second, "sonnet", cx);
     tick(cx, 1);
     tick(cx, 3);
-    cx.update(|cx| assert!(first.read(cx).lease.is_none(), "the hidden chat slept"));
+    cx.update(|cx| assert!(!first.read(cx).is_leased(), "the hidden chat slept"));
     assert_eq!(current_model(&first, cx), "Opus");
     let saved = cx.update(|_| f.repository.transcript(&id).unwrap());
     assert_eq!(

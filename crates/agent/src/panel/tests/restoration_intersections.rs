@@ -72,8 +72,8 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     );
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
-        assert!(thread.read(cx).lifecycle.generating());
-        assert!(!thread.read(cx).status_error);
+        assert!(thread.read(cx).session_generating());
+        assert!(!thread.read(cx).has_status_error());
         assert_eq!(
             thread.read(cx).composer().queue()[0].saved.text,
             "new submission"
@@ -125,7 +125,7 @@ fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
     );
     assert!(f.commands.prompts.lock().unwrap().is_empty());
     cx.update(|cx| {
-        assert!(thread.read(cx).status_error);
+        assert!(thread.read(cx).has_status_error());
         assert!(thread.read(cx).composer().paused());
         assert_eq!(thread.read(cx).composer().queue().len(), 2);
         assert_eq!(thread.read(cx).transcript().entries.len(), 1);

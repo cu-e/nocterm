@@ -80,8 +80,8 @@ impl AgentThread {
                 return;
             }
         };
-        self.live_commands
-            .insert(request.terminal_id.clone(), lease.clone());
+        self.tools
+            .install_live(request.terminal_id.clone(), lease.clone());
         let id = request.terminal_id.clone();
         let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
         let idle = Duration::from_millis(request.idle_ms.unwrap_or(1000));
@@ -99,7 +99,7 @@ impl AgentThread {
                     if !lease.is_active() {
                         return Err(TerminalOperationError::Revoked);
                     }
-                    if !this.lifecycle.accepts_updates() || !cx.ai_enabled() {
+                    if !this.session.accepts_updates() || !cx.ai_enabled() {
                         return Err(TerminalOperationError::Cancelled);
                     }
                     let (_, entry, _) = this
@@ -165,13 +165,7 @@ impl AgentThread {
                 }
             };
             let _ = this.update(cx, |this, _| {
-                if this
-                    .live_commands
-                    .get(&id)
-                    .is_some_and(|current| Arc::ptr_eq(current, &lease))
-                {
-                    this.live_commands.remove(&id);
-                }
+                this.tools.finish_live_if_same(&id, &lease);
             });
             drop(lease);
             let _ = this.update(cx, |this, cx| {

@@ -114,7 +114,7 @@ impl AgentThread {
         if self.is_archived() {
             return Err(SubmitError::Loading);
         }
-        if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
+        if !cx.ai_enabled() || self.session.sign_in_required() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.composer.images().is_empty() {
@@ -172,7 +172,7 @@ impl AgentThread {
             self.state.cancel_debounce();
         }
         self.persist(cx);
-        if !self.lifecycle.generating() && replace.is_none() {
+        if !self.session.generating() && replace.is_none() {
             self.composer.resume();
             self.dispatch_next(cx);
         }
@@ -182,8 +182,8 @@ impl AgentThread {
 
     pub(crate) fn dispatch_next(&mut self, cx: &mut Context<Self>) {
         if !self.queue_dispatchable()
-            || self.lifecycle.generating()
-            || self.lifecycle.sign_in_required()
+            || self.session.generating()
+            || self.session.sign_in_required()
         {
             return;
         }
@@ -196,14 +196,14 @@ impl AgentThread {
             self.request_activation(cx);
             return;
         }
-        if self.lifecycle.phase() != nocterm_ai::session::SessionPhase::Ready {
+        if self.session.phase() != nocterm_ai::session::SessionPhase::Ready {
             return;
         }
         let Some(prompt) = self.composer.take_next() else {
             return;
         };
         // Context is fixed for this turn, including terminal tool access.
-        self.prompt_attachments = Some(prompt.attachments);
+        self.tools.capture_scope(prompt.attachments);
         let saved = Arc::unwrap_or_clone(prompt.saved);
         self.start_prompt(saved.text, saved.images, cx);
     }
@@ -225,14 +225,14 @@ impl AgentThread {
         if !self.composer.move_to_front(id) {
             return;
         }
-        if self.lifecycle.generating() {
+        if self.session.generating() {
             self.stop(cx);
         }
         self.composer.resume();
         self.accept_document_inputs(cx, false);
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
-        if !self.lifecycle.generating() {
+        if !self.session.generating() {
             self.dispatch_next(cx);
         }
         cx.notify();

@@ -213,7 +213,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     cx.run_until_parked();
     thread.update(cx, |thread, _| {
         assert!(!thread.ended());
-        assert!(thread.lifecycle.generating());
+        assert!(thread.session_generating());
         assert_eq!(thread.composer().queue().len(), 1);
         assert_eq!(thread.composer().queue()[0].saved.text, "another");
     });
@@ -319,7 +319,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     complete_active(&f, cx);
     cx.update(|cx| {
         assert!(thread.read(cx).composer().paused());
-        assert!(thread.read(cx).status_error);
+        assert!(thread.read(cx).has_status_error());
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);

@@ -272,6 +272,22 @@ Its state is private. Prompt admission prepares a candidate queue, validates str
 and storage budgets without mutation, then commits the queue, draft and image changes
 as one transition. Editing retains the original context until the edit ends.
 
+A private `SessionDriver` owns the lease, session phase, visibility, pending restore,
+reported agent information and outstanding-operation counter. Open, authentication,
+prompt and cancellation operations return their captured ticket, connection, session
+and registration authority to named coordinator actions. Late completion cannot
+mutate a replacement session; an undelivered open closes its original agent session.
+Holding work remains visible until its original guard ends, including after lease release.
+
+A private `ToolRuntime` owns approval admission, fixed turn context, structured command
+jobs, live observations, terminal handoffs and tool-display state. Its nested owners
+return snapshots and named effects rather than mutable state. Fixed prompt attachments
+do not follow later composer defaults. Jobs retain their original executor identity;
+cancellation preserves bounded readable outcomes. Terminal sign-in waits retain their
+prompt epoch, reconnect cleanup retains its original receipt, and background cleanup
+preserves terminals promoted into ordinary tabs. Existing document, configuration,
+composer and archive owners remain separate from these responsibilities.
+
 A private `ChatConfig` owns per-chat desired choices, reported options and modes,
 slash commands and their revision, prompt model labels and bounded pre-open controls.
 It accepts asynchronous replies only for its current session ticket. Opening reports

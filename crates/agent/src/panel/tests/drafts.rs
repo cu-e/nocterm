@@ -182,7 +182,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     cx.run_until_parked();
     thread.update(cx, |thread, cx| thread.request_activation(cx));
     cx.run_until_parked();
-    cx.update(|cx| assert!(thread.read(cx).lifecycle.sign_in_required()));
+    cx.update(|cx| assert!(thread.read(cx).session_sign_in_required()));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })

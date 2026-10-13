@@ -32,15 +32,14 @@ impl AgentPanel {
         if self.preparing_queue_edit()
             || !thread
                 .read(cx)
-                .info
-                .as_ref()
+                .agent_info()
                 .is_some_and(|info| info.capabilities.prompt_capabilities.image)
         {
             return;
         }
         self.composer.pending_images += 1;
         cx.notify();
-        let ticket = thread.read(cx).lifecycle.ticket();
+        let ticket = thread.read(cx).session_ticket();
         let id = thread.entity_id();
         let revision = self.composer.revision;
         let thread = thread.downgrade();
@@ -58,7 +57,7 @@ impl AgentPanel {
                 }
                 panel.composer.pending_images = panel.composer.pending_images.saturating_sub(1);
                 let _ = thread.update(cx, |thread, cx| {
-                    if !thread.lifecycle.session_current(ticket) {
+                    if !thread.session_request_current(ticket) {
                         return;
                     }
                     match result {

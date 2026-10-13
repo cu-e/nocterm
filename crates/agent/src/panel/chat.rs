@@ -103,12 +103,12 @@ impl AgentPanel {
         let composer = self.render_composer(&thread, &state, &labels, cx);
         body = body
             .when(
-                thread.read(cx).lifecycle.generating()
+                thread.read(cx).session_generating()
                     || thread.read(cx).session().is_none()
-                    || thread.read(cx).lifecycle.sign_in_required()
+                    || thread.read(cx).session_sign_in_required()
                     || thread.read(cx).document().pending_history()
                     || thread.read(cx).has_status_error()
-                    || !thread.read(cx).lifecycle.accepts_updates(),
+                    || !thread.read(cx).session_accepts_updates(),
                 |body| {
                     body.child(
                         div()
@@ -123,9 +123,9 @@ impl AgentPanel {
                                     "agent-live-status-{}",
                                     thread.entity_id()
                                 )),
-                                thread.read(cx).status.clone(),
-                                thread.read(cx).lifecycle.generating()
-                                    && thread.read(cx).lifecycle.accepts_updates(),
+                                thread.read(cx).status().clone(),
+                                thread.read(cx).session_generating()
+                                    && thread.read(cx).session_accepts_updates(),
                                 cx,
                             )),
                     )

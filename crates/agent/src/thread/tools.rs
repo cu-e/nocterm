@@ -32,7 +32,7 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(180);
 impl AgentThread {
     pub(crate) fn handle_tool(&mut self, mut call: BridgeCall, cx: &mut Context<Self>) {
         if !cx.ai_enabled()
-            || !self.lifecycle.accepts_updates()
+            || !self.session.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             self.finish(call, Err("Chat is unavailable.".into()));
@@ -45,7 +45,7 @@ impl AgentThread {
         }
         let gate = self.tool_gate(&call.call, cx);
         let expected = self.tool_expectation(&call.call, cx);
-        let decision = self.approvals.receive_tool(
+        let decision = self.tools.approval_receive_tool(
             BoundToolCall::new(call, expected),
             &gate,
             &cx.setting::<nocterm_ai::AiSettings>().approval,
@@ -87,7 +87,7 @@ impl AgentThread {
         let unsafe_input = self.unsafe_live_input(call, cx);
         let expected = self.tool_expectation(call, cx);
         ToolGate::new(
-            cx.ai_enabled() && self.lifecycle.accepts_updates(),
+            cx.ai_enabled() && self.session.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
             attached,
             unsafe_input,
@@ -102,11 +102,11 @@ impl AgentThread {
         grant: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(call) = self.approvals.tool(token).cloned() else {
+        let Some(call) = self.tools.approval_tool(token).cloned() else {
             return;
         };
         let gate = self.tool_gate(&call, cx);
-        let decision = self.approvals.choose_tool(token, allow, grant, &gate);
+        let decision = self.tools.approval_choose_tool(token, allow, grant, &gate);
         self.apply_tool_decision(decision, cx);
     }
 
@@ -139,7 +139,7 @@ impl AgentThread {
         let captured = bound.expected();
         let call = bound.call();
         if !cx.ai_enabled()
-            || !self.lifecycle.accepts_updates()
+            || !self.session.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
             self.finish(bound.into_call(), Err("Chat is unavailable.".into()));
@@ -264,7 +264,7 @@ impl AgentThread {
             // Already connected: answer with the open session instead.
             let open = self.resolved(cx).into_iter().find(|(_, _, descriptor)| {
                 descriptor.connection.as_ref().is_some_and(|connection| {
-                    self.server_ids.resolve(&server) == Some(connection.id.as_str())
+                    self.tools.resolve_server(&server) == Some(connection.id.as_str())
                 })
             });
             match open {
@@ -321,7 +321,7 @@ impl AgentThread {
             window,
             directory,
             summary.id.to_string(),
-            self.lifecycle.ticket(),
+            self.session.ticket(),
             self.registration().as_ref().map(|value| value.id),
         );
         let guard = self.hold_operation();
@@ -351,7 +351,7 @@ impl AgentThread {
                 | TerminalCall::ExecCommand(_)
         );
         uses_session
-            && (self.reconnecting.contains(&entry.item)
+            && (self.tools.reconnecting(&entry.item)
                 || entry
                     .capabilities
                     .state()
@@ -395,7 +395,7 @@ impl AgentThread {
         let Some(window) = self.window else {
             return Task::ready(Err(ConnectionWaitError::WorkspaceClosed));
         };
-        let receipt = match self.reconnecting.receipt(expected) {
+        let receipt = match self.tools.reconnect_receipt(expected) {
             Some(receipt) => receipt,
             None => {
                 let result = entry
@@ -405,7 +405,7 @@ impl AgentThread {
                     .and_then(|port| port.reconnect(expected, cx));
                 match result {
                     Ok(receipt) => {
-                        self.reconnecting.insert(receipt);
+                        self.tools.accept_reconnect(receipt);
                         receipt
                     }
                     Err(error) => return Task::ready(Err(ConnectionWaitError::Terminal(error))),
@@ -413,7 +413,7 @@ impl AgentThread {
             }
         };
         let workspace = self.host.workspace().clone();
-        let ticket = self.lifecycle.ticket();
+        let ticket = self.session.ticket();
         let registration = self.registration().as_ref().map(|value| value.id);
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
@@ -430,14 +430,14 @@ impl AgentThread {
                 cx,
             )
             .await;
-            let _ = this.update(cx, |this, _| this.reconnecting.remove(receipt));
+            let _ = this.update(cx, |this, _| this.tools.finish_reconnect(receipt));
             result.map(|payload| (receipt, payload))
         })
     }
 
     /// A session this chat opened for `profile` whose connection closed.
     fn closed_background(&mut self, profile: &str, cx: &App) -> Option<TerminalEntry> {
-        let background = self.background.clone();
+        let background = self.tools.background().to_vec();
         self.resolved(cx)
             .into_iter()
             .find(|(_, entry, descriptor)| {
@@ -462,11 +462,7 @@ impl AgentThread {
             .into_iter()
             .map(|(_, entry, _)| entry.item)
             .collect();
-        let (keep, close): (Vec<_>, Vec<_>) = self
-            .background
-            .drain(..)
-            .partition(|id| resolved.contains(id));
-        self.background = keep;
+        let close = self.tools.prune_background(&resolved);
         if let Some(window) = self.window {
             let workspace = self.host.workspace().clone();
             cx.defer(move |cx| {
@@ -495,7 +491,7 @@ impl AgentThread {
         } else {
             tail.text
         };
-        self.tool_bytes += text.len();
+        self.tools.account_outcome(text.len());
         serde_json::json!({"text":text,"first_line":tail.first_line,"next_line":tail.next_line,"cursor_semantics":"inclusive snapshot; replace overlapping lines","truncated":tail.truncated,"alt_screen":tail.alt_screen})
     }
 }
@@ -553,8 +549,8 @@ pub(super) async fn wait_until_connected(
             .update(cx, |this, cx| {
                 if this.host.workspace().entity_id() != workspace.entity_id()
                     || this.registration().as_ref().map(|value| value.id) != registration
-                    || !this.lifecycle.session_current(ticket)
-                    || !this.lifecycle.accepts_updates()
+                    || !this.session.session_current(ticket)
+                    || !this.session.accepts_updates()
                     || !cx.ai_enabled()
                 {
                     return Err(ConnectionWaitError::Stopped);
@@ -588,24 +584,8 @@ pub(super) async fn wait_until_connected(
                     ))
                 });
                 let asking = wait.is_some();
-                let current = this.sign_ins.iter().position(|wait| wait.item == item);
-                match (current, wait) {
-                    (Some(index), Some(wait)) => {
-                        let old = &this.sign_ins[index];
-                        if old.prompt != wait.prompt || old.vault != wait.vault {
-                            this.sign_ins[index] = wait;
-                            cx.notify();
-                        }
-                    }
-                    (None, Some(wait)) => {
-                        this.sign_ins.push(wait);
-                        cx.notify();
-                    }
-                    (Some(index), None) => {
-                        this.sign_ins.remove(index);
-                        cx.notify();
-                    }
-                    (None, None) => {}
+                if this.tools.observe_prompt(item, wait) {
+                    cx.notify();
                 }
                 Ok((status, asking, descriptor))
             })
@@ -650,8 +630,7 @@ pub(super) async fn wait_until_connected(
         }
     };
     let _ = this.update(cx, |this, cx| {
-        this.sign_ins
-            .retain(|wait| wait.item != item || wait.prompt.token.expected() != expected);
+        this.tools.clear_wait(expected);
         cx.notify();
     });
     result

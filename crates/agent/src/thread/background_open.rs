@@ -38,8 +38,8 @@ impl BackgroundOpen {
     fn authorize(&self, thread: &AgentThread, cx: &App) -> Result<(), ConnectionWaitError> {
         if thread.host.workspace().entity_id() != self.workspace.entity_id()
             || thread.registration().as_ref().map(|value| value.id) != self.registration
-            || !thread.lifecycle.session_current(self.ticket)
-            || !thread.lifecycle.accepts_updates()
+            || !thread.session.session_current(self.ticket)
+            || !thread.session.accepts_updates()
             || !cx.ai_enabled()
         {
             return Err(ConnectionWaitError::Stopped);
@@ -58,7 +58,7 @@ impl BackgroundOpen {
         let registered = thread
             .update(cx, |thread, cx| {
                 self.authorize(thread, cx)?;
-                thread.background.push(opened.item);
+                thread.tools.remember_opened(opened.item);
                 Ok(())
             })
             .map_err(|_| ConnectionWaitError::ChatClosed);
@@ -81,9 +81,7 @@ impl BackgroundOpen {
             (Ok(Ok(())), None) => Err(ConnectionWaitError::SessionClosed),
         };
         if result.is_err() && opened.close_if_original(&self.workspace, self.window, cx) {
-            let _ = thread.update(cx, |thread, _| {
-                thread.background.retain(|item| *item != opened.item)
-            });
+            let _ = thread.update(cx, |thread, _| thread.tools.forget_opened(opened.item));
         }
         result
     }

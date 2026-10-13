@@ -51,7 +51,7 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     assert_eq!(texts(&f), ["first", "edited second"]);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).prompt_attachments.as_ref().unwrap(),
+            thread.read(cx).prompt_scope().as_ref().unwrap(),
             &[Attachment::Group("edited context".into())]
         )
     });
@@ -59,7 +59,7 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     assert_eq!(texts(&f), ["first", "edited second", "third"]);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).prompt_attachments.as_ref().unwrap(),
+            thread.read(cx).prompt_scope().as_ref().unwrap(),
             &[Attachment::Group("third context".into())]
         )
     });
@@ -116,7 +116,7 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     });
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(thread.read(cx).session_sign_in_required());
         assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "third");
     });
     assert_eq!(texts(&f), ["first", "second"]);
@@ -256,13 +256,14 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).lifecycle.sign_in_required());
+        assert!(thread.read(cx).session_sign_in_required());
         assert_eq!(
             thread.read(cx).snapshot(cx).unwrap().session_id,
             saved.session_id
         );
+        let restore = thread.read(cx).pending_restore().as_ref().unwrap();
         assert_eq!(
-            thread.read(cx).restore.as_ref().unwrap().session.0.as_ref(),
+            restore.session.0.as_ref(),
             saved.session_id.as_deref().unwrap()
         );
     });
@@ -424,8 +425,8 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).composer().paused());
-        assert!(thread.read(cx).status_error);
-        assert!(thread.read(cx).status.contains("Could not save chat"));
+        assert!(thread.read(cx).has_status_error());
+        assert!(thread.read(cx).status().contains("Could not save chat"));
         assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "retained");
     });
     complete_active(&f, cx);
@@ -572,17 +573,9 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
 #[gpui_kit::test]
 fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    f.connector.support_images();
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, _| {
-        thread
-            .info
-            .as_mut()
-            .unwrap()
-            .capabilities
-            .prompt_capabilities
-            .image = true;
-    });
     let (ready, wait) = oneshot::channel();
     let bytes = image_bytes();
     let codec = image_codec();
@@ -641,17 +634,8 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
 #[gpui_kit::test]
 fn late_image_preparation_cannot_attach_to_a_different_chat(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    f.connector.support_images();
     new_chat(&f, cx);
-    let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    old.update(cx, |thread, _| {
-        thread
-            .info
-            .as_mut()
-            .unwrap()
-            .capabilities
-            .prompt_capabilities
-            .image = true
-    });
     let (ready, wait) = oneshot::channel();
     f.panel.update(cx, |panel, cx| {
         panel.prepare_images(

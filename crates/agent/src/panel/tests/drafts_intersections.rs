@@ -133,14 +133,14 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
     saved.draft = Some("previous text".into());
     adopt(&mut f, saved, cx);
     let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
-    cx.update(|cx| assert!(!thread.read(cx).status_error));
+    cx.update(|cx| assert!(!thread.read(cx).has_status_error()));
     // Listing history stays lazy; opening the chat connects, which reports
     // the missing provider.
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).status_error);
+        assert!(thread.read(cx).has_status_error());
         assert!(thread.read(cx).session().is_none());
     });
     type_draft(&f, "latest text after provider failure", cx);

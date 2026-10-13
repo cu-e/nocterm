@@ -484,19 +484,11 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
 #[gpui_kit::test]
 fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    f.connector.support_images();
     new_chat(&f, cx);
     exchange(&f, "saved chat", "saved answer", cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let (send, receive) = oneshot::channel();
-    old.update(cx, |thread, _| {
-        thread
-            .info
-            .as_mut()
-            .unwrap()
-            .capabilities
-            .prompt_capabilities
-            .image = true
-    });
     set_input(&f, "image owner draft", cx);
     f.panel.update(cx, |panel, cx| {
         panel.prepare_images(

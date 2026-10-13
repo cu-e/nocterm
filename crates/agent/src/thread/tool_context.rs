@@ -64,7 +64,7 @@ impl AgentThread {
                 if !attached {
                     return None;
                 }
-                let id = self.ids.get(&format!("{:?}", entry.item));
+                let id = self.tools.terminal_id(&format!("{:?}", entry.item));
                 let connection = summary
                     .map(|summary| ConnectionDescriptor {
                         id: summary.id.to_string(),
@@ -131,7 +131,7 @@ impl AgentThread {
             .filter(|summary| !live.iter().any(|id| id == summary.id.as_ref()))
             .map(|summary| {
                 let descriptor = ServerDescriptor {
-                    server_id: self.server_ids.get(summary.id.as_ref()),
+                    server_id: self.tools.server_id(summary.id.as_ref()),
                     name: summary.name.to_string(),
                     group: summary.group.as_ref().map(ToString::to_string),
                     description: summary.description.to_string(),

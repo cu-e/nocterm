@@ -207,6 +207,20 @@ struct Connector {
         )>,
     >,
     event_senders: Mutex<Vec<async_channel::Sender<AgentEvent>>>,
+    info: Mutex<AgentInfo>,
+}
+impl Connector {
+    fn report_auth_methods(&self, methods: Vec<acp::AuthMethod>) {
+        self.info.lock().unwrap().auth_methods = methods;
+    }
+    fn support_images(&self) {
+        self.info
+            .lock()
+            .unwrap()
+            .capabilities
+            .prompt_capabilities
+            .image = true;
+    }
 }
 impl AgentConnector for Connector {
     fn connect(
@@ -219,20 +233,14 @@ impl AgentConnector for Connector {
             .push((request.working_directory, request.sandbox));
         self.connects.fetch_add(1, Ordering::SeqCst);
         let commands = self.commands.clone();
+        let info = self.info.lock().unwrap().clone();
         let (sender, events) = async_channel::bounded(256);
         self.event_senders.lock().unwrap().push(sender);
         async move {
             Ok(AgentConnection {
                 commands,
                 events,
-                info: AgentInfo {
-                    name: "Fake".into(),
-                    version: "1".into(),
-                    capabilities: Default::default(),
-                    auth_methods: vec![acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
-                        "sign-in", "Account",
-                    ))],
-                },
+                info,
             })
         }
         .boxed()
@@ -346,6 +354,14 @@ fn fixture_with_width(
             connects: AtomicUsize::new(0),
             roots: Default::default(),
             event_senders: Default::default(),
+            info: Mutex::new(AgentInfo {
+                name: "Fake".into(),
+                version: "1".into(),
+                capabilities: Default::default(),
+                auth_methods: vec![acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
+                    "sign-in", "Account",
+                ))],
+            }),
         });
         (
             commands,

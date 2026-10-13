@@ -293,7 +293,7 @@ impl AgentPanel {
         });
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
-        thread.update(cx, |thread, _| thread.window = Some(handle));
+        thread.update(cx, |thread, _| thread.bind_window(handle));
         self.subscriptions
             .push(cx.observe_in(thread, window, |this, loaded, window, cx| {
                 this.trim_resident_history(cx);

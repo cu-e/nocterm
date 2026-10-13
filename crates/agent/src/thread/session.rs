@@ -1,31 +1,18 @@
 use super::{AgentThread, Restore};
 use gpui_kit::Context;
-use nocterm_ai::{
-    AgentCommands, AgentInfo, acp,
-    session::{RESTORE_ATTEMPTS, RestoreFallback, restore_fallback},
-};
+use nocterm_ai::{AgentCommands, AgentInfo, acp};
 use nocterm_ui::ActiveAi as _;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 impl AgentThread {
     pub(crate) fn restore_descriptor(&self) -> Option<Restore> {
-        self.session()
-            .as_ref()
-            .and_then(|session| {
-                self.session_workdir().as_ref().map(|workdir| Restore {
-                    session: session.clone(),
-                    workdir: workdir.clone(),
-                    fork: false,
-                })
-            })
-            .or_else(|| self.restore.clone())
+        self.session.restore_descriptor()
     }
 
     /// Opens the chat's agent session on a fresh connection. A saved session
     /// is reopened, or copied for a fork; when the agent cannot do that, a
     /// new session starts and the saved conversation goes with the next
     /// message. Only a sign-in keeps the chat from going on.
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn create_session(
         &mut self,
         commands: Arc<dyn AgentCommands>,
@@ -40,116 +27,105 @@ impl AgentThread {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
-        self.lease.as_mut().expect("starting lease").commands = Some(commands.clone());
-        self.info = Some(info);
+        if !self
+            .session
+            .begin_open(commands.clone(), info, workdir.clone())
+        {
+            return;
+        }
         self.status = "Starting chat…".into();
         self.status_error = false;
-        if !self.lifecycle.may_resume() {
-            // Reopening this session failed before: start over with the
-            // saved conversation rather than fail the same way again.
-            self.restore = None;
-        }
+        self.session.discard_broken_restore();
         let restore = self
-            .restore
+            .session
+            .restore()
             .clone()
             .filter(|restore| !self.state.entries().is_empty() && restore.workdir.is_absolute())
             .map(|mut restore| {
                 restore.workdir = workdir.clone();
                 restore
             });
-        self.lease.as_mut().expect("starting lease").workdir = Some(workdir.clone());
-        let ticket = self.lifecycle.ticket();
-        self.config.opening_started(ticket);
-        let executor = cx.background_executor().clone();
-        let servers = vec![server];
-        let session_commands = commands.clone();
-        let pending_restore = restore.clone();
-        let future = cx.background_executor().spawn(async move {
-            if let Some(restore) = &restore {
-                for attempt in 0..RESTORE_ATTEMPTS {
-                    let error = match session_commands
-                        .restore_session(nocterm_ai::RestoreSessionRequest {
-                            session_id: restore.session.clone(),
-                            cwd: restore.workdir.clone(),
-                            mcp_servers: servers.clone(),
-                            fork: restore.fork,
-                        })
-                        .await
-                    {
-                        Ok(response) => return (Ok(response), Some(true), workdir),
-                        Err(error) => error,
-                    };
-                    match restore_fallback(&error, attempt, restore.fork) {
-                        RestoreFallback::SignIn | RestoreFallback::Fail => {
-                            return (Err(error), None, workdir);
-                        }
-                        RestoreFallback::Retry => {
-                            executor.timer(Duration::from_millis(250)).await;
-                        }
-                        RestoreFallback::StartFresh => {
-                            tracing::warn!(
-                                %error,
-                                fork = restore.fork,
-                                "agent could not reopen the saved session; starting a new one"
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            let result = session_commands
-                .new_session(acp::NewSessionRequest::new(workdir.clone()).mcp_servers(servers))
-                .await;
-            (result, restore.is_some().then_some(false), workdir)
-        });
+        let authority = self.session.authority();
+        self.config.opening_started(authority.ticket());
+        let operation = super::session_driver::open_operation::OpenSessionOperation::new(
+            commands.clone(),
+            authority,
+            restore,
+            workdir,
+            vec![server],
+            cx.background_executor().clone(),
+        );
+        let future = cx.background_executor().spawn(operation.run());
         cx.spawn(async move |this, cx| {
-            let (result, restored, workdir) = future.await;
-            let orphan = result.as_ref().ok().map(|response| response.session_id.clone());
-            let transferred = this.update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
-                    return false;
-                }
-                if restored == Some(false) {
-                    // The new session lives in the connection's directory.
-                    this.lease.as_mut().expect("starting lease").workdir = Some(workdir);
-                }
-                if restored.is_none() && result.is_err() {
-                    // Kept for after signing in, or for the next message.
-                    this.restore = pending_restore;
-                }
-                match result {
-                    Ok(response) => {
-                        // The agent's values for the new session; the chat's
-                        // own configuration is given to it in `configure`.
-                        this.config.start_open(ticket, response.modes, response.config_options.unwrap_or_default());
-                        let session = response.session_id;
-                        this.config.begin_reconciliation(&session, ticket);
-                        this.lease.as_mut().expect("starting lease").session = Some(session);
-                        this.restore = None;
-                        this.state.set_pending_history(this.state.pending_history() || (restored != Some(true) && !this.state.entries().is_empty()), this.host.timestamp());
-                        this.status = if this.state.pending_history() {
-                            "Reconnected in a new session. Saved conversation will accompany the next message.".into()
-                        } else {
-                            "Ready".into()
-                        };
-                        this.accept_document_inputs(cx,false);
-                        this.save(cx);
-                        this.configure(ticket, cx);
-                    }
-                    Err(nocterm_ai::AgentError::AuthRequired(message)) => {
-                        this.require_authentication(&message, cx);
-                    }
-                    Err(error) => this.fail(&error.to_string(), cx),
-                }
-                true
-            }).unwrap_or(false);
+            let completion = future.await;
+            let orphan = completion.orphan();
+            let transferred = this
+                .update(cx, |this, cx| {
+                    this.on_open_session_completion(completion, cx)
+                })
+                .unwrap_or(false);
             if !transferred && let Some(session) = orphan {
                 let cleanup = commands.close_session(session);
-                cx.background_executor().spawn(async move { let _ = cleanup.await; let _ = commands.shutdown_gracefully().await; }).detach();
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = cleanup.await;
+                        let _ = commands.shutdown_gracefully().await;
+                    })
+                    .detach();
             }
         })
         .detach();
         cx.notify();
+    }
+    fn on_open_session_completion(
+        &mut self,
+        completion: super::session_driver::open_operation::OpenSessionCompletion,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !cx.ai_enabled() || !self.session.accepts_authority(completion.authority()) {
+            return false;
+        }
+        let (authority, result, restored, workdir, pending_restore) = completion.into_parts();
+        let ticket = authority.ticket();
+        if restored.is_none() && result.is_err() {
+            self.session.retain_failed_restore(ticket, pending_restore);
+        }
+        match result {
+            Ok(response) => {
+                let session = response.session_id;
+                if !self.session.accept_open(
+                    ticket,
+                    session.clone(),
+                    (restored == Some(false)).then_some(workdir),
+                ) {
+                    return false;
+                }
+                self.config.start_open(
+                    ticket,
+                    response.modes,
+                    response.config_options.unwrap_or_default(),
+                );
+                self.config.begin_reconciliation(&session, ticket);
+                self.state.set_pending_history(
+                    self.state.pending_history()
+                        || (restored != Some(true) && !self.state.entries().is_empty()),
+                    self.host.timestamp(),
+                );
+                self.status = if self.state.pending_history() {
+                    "Reconnected in a new session. Saved conversation will accompany the next message.".into()
+                } else {
+                    "Ready".into()
+                };
+                self.accept_document_inputs(cx, false);
+                self.save(cx);
+                self.configure(ticket, cx);
+            }
+            Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                self.require_authentication(&message, cx)
+            }
+            Err(error) => self.fail(&error.to_string(), cx),
+        }
+        true
     }
 }
 
@@ -243,7 +219,7 @@ impl AgentThread {
         value: acp::SessionConfigOptionValue,
         cx: &mut Context<Self>,
     ) {
-        if self.lifecycle.generating() || !cx.ai_enabled() {
+        if self.session.generating() || !cx.ai_enabled() {
             return;
         }
         let choice = self.config.choose_option(&id, &value);
@@ -266,10 +242,10 @@ impl AgentThread {
         else {
             return cx.notify();
         };
-        if self.lifecycle.opening() {
+        if self.session.opening() {
             return cx.notify();
         }
-        let ticket = self.lifecycle.ticket();
+        let ticket = self.session.ticket();
         self.config.bind_request(ticket);
         let guard = self.hold_operation();
         let future = cx.background_executor().spawn(async move {
@@ -281,7 +257,7 @@ impl AgentThread {
         cx.spawn(async move |this, cx| {
             let result = future.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
+                if !this.session.session_current(ticket) || !cx.ai_enabled() {
                     return;
                 }
                 let Some(result) = this.config.accept_option_result(ticket, result) else {
@@ -305,7 +281,7 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
-        if self.lifecycle.generating() || !cx.ai_enabled() {
+        if self.session.generating() || !cx.ai_enabled() {
             return;
         }
         if self.config.choose_mode(id.clone()) {
@@ -317,10 +293,10 @@ impl AgentThread {
         else {
             return;
         };
-        if self.lifecycle.opening() {
+        if self.session.opening() {
             return;
         }
-        let ticket = self.lifecycle.ticket();
+        let ticket = self.session.ticket();
         self.config.bind_request(ticket);
         let guard = self.hold_operation();
         let future = cx.background_executor().spawn(async move {
@@ -333,7 +309,7 @@ impl AgentThread {
         cx.spawn(async move |this, cx| {
             let (mode, result) = future.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
+                if !this.session.session_current(ticket) || !cx.ai_enabled() {
                     return;
                 }
                 let Some(result) = this.config.accept_mode_result(ticket, mode, result, false)
@@ -382,8 +358,8 @@ impl AgentThread {
                 cx.spawn(async move |this, cx| {
                     let result = future.await;
                     let _ = this.update(cx, |this, cx| {
-                        if !this.lifecycle.session_current(ticket)
-                            || !this.lifecycle.opening()
+                        if !this.session.session_current(ticket)
+                            || !this.session.opening()
                             || !cx.ai_enabled()
                         {
                             return;
@@ -414,8 +390,8 @@ impl AgentThread {
                 cx.spawn(async move |this, cx| {
                     let (mode, result) = future.await;
                     let _ = this.update(cx, |this, cx| {
-                        if !this.lifecycle.session_current(ticket)
-                            || !this.lifecycle.opening()
+                        if !this.session.session_current(ticket)
+                            || !this.session.opening()
                             || !cx.ai_enabled()
                         {
                             return;
@@ -436,14 +412,14 @@ impl AgentThread {
         }
     }
     fn configured(&mut self, cx: &mut Context<Self>) {
-        self.lifecycle.opened();
+        self.session.opened();
         self.sync_config(true, cx);
         self.remember_options(cx);
         self.dispatch_next(cx);
         cx.notify();
     }
     pub(super) fn sync_config(&mut self, save: bool, cx: &mut Context<Self>) {
-        if self.config.sync_ready(self.lifecycle.phase()) && save {
+        if self.config.sync_ready(self.session.phase()) && save {
             self.accept_document_inputs(cx, false);
             self.save(cx);
         }

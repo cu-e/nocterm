@@ -68,11 +68,12 @@ impl AgentThread {
         if let Some(overlay) = overlay {
             self.composer.set_draft(overlay.text().to_owned());
         }
-        self.restore = chat.session_id.map(|session| Restore {
-            session: acp::SessionId::new(session),
-            workdir: chat.workdir.unwrap_or_default(),
-            fork: false,
-        });
+        self.session
+            .import_restore(chat.session_id.map(|session| Restore {
+                session: acp::SessionId::new(session),
+                workdir: chat.workdir.unwrap_or_default(),
+                fork: false,
+            }));
         self.config.restore(
             chat.config,
             chat.mode.map(acp::SessionModeId::new),
@@ -100,7 +101,7 @@ impl AgentThread {
         chat.config = self.config.choices().clone();
         chat.mode = self.config.mode_choice().map(ToString::to_string);
         chat.pending_history = self.state.pending_history() || !whole;
-        let restore = match (&self.session(), &self.restore) {
+        let restore = match (self.session(), self.session.restore()) {
             (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
                 session: session.clone(),
                 workdir,
@@ -131,7 +132,7 @@ impl AgentThread {
         thread
             .state
             .set_pending_history(pending_history, thread.host.timestamp());
-        thread.restore = fork.restore;
+        thread.session.import_restore(fork.restore);
         thread.composer.replace_context(fork.attachments);
         thread.establish_clean_document_inputs(cx);
         thread.state.fork_created();
@@ -174,7 +175,7 @@ impl AgentThread {
         if self.state.entries().is_empty() {
             return super::document::Resume::default();
         }
-        match (self.session(), &self.restore) {
+        match (self.session(), self.session.restore()) {
             (Some(session), _) => super::document::Resume::new(
                 Some(session.to_string()),
                 self.session_workdir().clone(),

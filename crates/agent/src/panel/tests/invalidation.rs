@@ -116,8 +116,15 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         .unwrap();
         cx.update(|cx| {
             owner.update(cx, |t, cx| {
-                t.status = "unchanged approval, more output".into();
-                cx.notify();
+                report_control(
+                    t,
+                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            "unchanged approval, more output",
+                        )),
+                    )),
+                    cx,
+                );
             })
         });
         cx.run_until_parked();

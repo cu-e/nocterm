@@ -19,7 +19,7 @@ fn adopt_saved(
     })
     .unwrap();
     cx.run_until_parked();
-    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -64,17 +64,26 @@ fn draft_only_history_starts_one_fresh_session_without_restoring(cx: &mut TestAp
 #[gpui_kit::test]
 fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = empty_chat(&f);
-    saved.queue.push(SavedPrompt {
-        id: 1,
-        text: "waiting request".into(),
-        images: Vec::new(),
-        attachments: Vec::new(),
-    });
-    let thread = adopt_saved(&mut f, saved, cx);
+    let saved = empty_chat(&f);
+    let source = adopt_saved(&mut f, saved, cx);
+    let thread = cx
+        .update_window(f.handle, |_, window, cx| {
+            f.panel.update(cx, |panel, cx| {
+                panel.fork_thread(source.entity_id(), window, cx)
+            });
+            f.panel.read(cx).current().unwrap()
+        })
+        .unwrap();
     thread.update(cx, |thread, cx| {
-        thread.restore.as_mut().unwrap().fork = true;
-        thread.send_now(1, cx);
+        assert!(
+            thread
+                .pending_restore()
+                .as_ref()
+                .is_some_and(|restore| restore.fork)
+        );
+        assert!(thread.submit("waiting request".into(), None, cx).unwrap());
+        let id = thread.queued_prompt_ids().next().unwrap();
+        thread.send_now(id, cx);
     });
     cx.run_until_parked();
     assert!(f.commands.restores.lock().unwrap().is_empty());

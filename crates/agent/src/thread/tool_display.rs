@@ -43,7 +43,21 @@ impl Record {
 }
 
 impl ToolDisplays {
-    fn prepare(&mut self, turn: u64, entries: usize) {
+    pub(super) fn finalize(&mut self, turn: u64) {
+        if self.turn != Some(turn) {
+            return;
+        }
+        for record in &mut self.records {
+            if matches!(
+                record.display.outcome,
+                Some(tool_display::ToolOutcome::Pending)
+            ) {
+                record.display.finish(Err("Request cancelled.".into()));
+            }
+        }
+    }
+
+    pub(super) fn prepare(&mut self, turn: u64, entries: usize) {
         if self.turn != Some(turn) {
             self.turn = Some(turn);
             self.start = entries;
@@ -51,7 +65,10 @@ impl ToolDisplays {
         }
     }
 
-    fn normalize(&mut self, entries: &[Entry]) -> Vec<super::document::ToolMetadataPatch> {
+    pub(super) fn normalize(
+        &mut self,
+        entries: &[Entry],
+    ) -> Vec<super::document::ToolMetadataPatch> {
         self.revoke_ambiguous_destinations(entries);
         let mut changed = Vec::new();
         for index in self.start..entries.len() {
@@ -141,7 +158,7 @@ impl ToolDisplays {
         }
     }
 
-    fn record_raw(
+    pub(super) fn record_raw(
         &mut self,
         server: String,
         request: (String, serde_json::Value),
@@ -174,7 +191,7 @@ impl ToolDisplays {
         self.record_raw(server, (tool.into(), arguments), display);
     }
 
-    fn finish(
+    pub(super) fn finish(
         &mut self,
         token: Option<(u64, u64)>,
         result: Result<serde_json::Value, ToolFailure>,
@@ -200,15 +217,15 @@ impl AgentThread {
         &mut self,
         mut update: acp::SessionUpdate,
     ) -> ThreadChange {
-        self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries().len());
+        self.tools
+            .prepare_displays(self.session.turn(), self.state.entries().len());
         tool_display::strip_provider_meta(&mut update);
         let change = if self.config.report_control(&update) {
             ThreadChange::Controls
         } else {
             self.state.apply_transcript(update, self.host.timestamp())
         };
-        let patches = self.tool_displays.normalize(self.state.entries());
+        let patches = self.tools.normalize_displays(self.state.entries());
         self.state.patch_tool_rows(patches, self.host.timestamp());
         change
     }
@@ -240,12 +257,12 @@ impl AgentThread {
         {
             display.redact();
         }
-        self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries().len());
+        self.tools
+            .prepare_displays(self.session.turn(), self.state.entries().len());
         call.display_token = self
-            .tool_displays
-            .record_raw(server, (tool.into(), arguments), display)
-            .map(|id| (self.lifecycle.turn(), id));
+            .tools
+            .record_display(server, (tool.into(), arguments), display)
+            .map(|id| (self.session.turn(), id));
         self.normalize_tool_displays();
         cx.notify();
     }
@@ -256,8 +273,8 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         if !cx.ai_enabled()
-            || !self.lifecycle.accepts_updates()
-            || self.lifecycle.stopped()
+            || !self.session.accepts_updates()
+            || self.session.stopped()
             || self.registration().as_ref().map(|value| value.id) != Some(rejected.registration_id)
         {
             return;
@@ -272,10 +289,10 @@ impl AgentThread {
         {
             display.redact();
         }
-        self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries().len());
-        self.tool_displays
-            .record_raw(server, (rejected.tool, rejected.arguments), display);
+        self.tools
+            .prepare_displays(self.session.turn(), self.state.entries().len());
+        self.tools
+            .record_display(server, (rejected.tool, rejected.arguments), display);
         self.normalize_tool_displays();
         cx.notify();
     }
@@ -286,29 +303,19 @@ impl AgentThread {
         call: BridgeCall,
         result: Result<serde_json::Value, ToolFailure>,
     ) {
-        self.tool_displays
-            .finish(call.display_token, result.clone());
+        self.tools
+            .finish_display(call.display_token, result.clone());
         self.normalize_tool_displays();
         let _ = call.respond.send(result);
     }
 
     pub(super) fn finalize_tool_displays(&mut self) {
-        if self.tool_displays.turn != Some(self.lifecycle.turn()) {
-            return;
-        }
-        for record in &mut self.tool_displays.records {
-            if matches!(
-                record.display.outcome,
-                Some(tool_display::ToolOutcome::Pending)
-            ) {
-                record.display.finish(Err("Request cancelled.".into()));
-            }
-        }
+        self.tools.finalize_displays(self.session.turn());
         self.normalize_tool_displays();
     }
 
     fn normalize_tool_displays(&mut self) {
-        let patches = self.tool_displays.normalize(self.state.entries());
+        let patches = self.tools.normalize_displays(self.state.entries());
         self.state.patch_tool_rows(patches, self.host.timestamp());
     }
 

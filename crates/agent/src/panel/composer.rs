@@ -64,7 +64,7 @@ impl AgentPanel {
         thread: &Entity<AgentThread>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let generating = thread.read(cx).lifecycle.generating();
+        let generating = thread.read(cx).session_generating();
         let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
         for option in &thread.read(cx).config_options() {
             let id = option.id.to_string();
@@ -241,13 +241,12 @@ impl AgentPanel {
         let context_tooltip = format!(
             "{} attached terminals · sent metadata {} B · terminal output {} B",
             thread.read(cx).composer().attachments().len(),
-            thread.read(cx).context_bytes,
-            thread.read(cx).tool_bytes
+            thread.read(cx).context_bytes(),
+            thread.read(cx).tool_bytes()
         );
         let images_supported = thread
             .read(cx)
-            .info
-            .as_ref()
+            .agent_info()
             .is_some_and(|info| info.capabilities.prompt_capabilities.image);
         let controls = self.render_config_controls(thread, cx);
         h_flex()
@@ -282,7 +281,7 @@ impl AgentPanel {
 
     /// Whether the send button stops the running turn instead.
     fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
-        thread.read(cx).lifecycle.generating()
+        thread.read(cx).session_generating()
             && self.input.read(cx).value().trim().is_empty()
             && thread.read(cx).composer().images().is_empty()
             && self.composer.edit.is_none()
@@ -306,7 +305,7 @@ impl AgentPanel {
             })
             .flex_shrink_0()
             .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(thread.read(cx).lifecycle.sign_in_required() || self.preparing_images())
+            .disabled(thread.read(cx).session_sign_in_required() || self.preparing_images())
             .on_click(cx.listener(|this, _, window, cx| match this.current() {
                 Some(thread) if this.stops(&thread, cx) => {
                     thread.update(cx, |thread, cx| thread.stop(cx));
@@ -337,7 +336,7 @@ impl AgentPanel {
                     .into_any_element(),
             );
         }
-        if thread.read(cx).ended() && !thread.read(cx).lifecycle.generating() {
+        if thread.read(cx).ended() && !thread.read(cx).session_generating() {
             notices.push(
                 Button::new("agent-restart")
                     .label("Restart chat")
@@ -345,8 +344,8 @@ impl AgentPanel {
                     .into_any_element(),
             );
         }
-        if thread.read(cx).lifecycle.sign_in_required()
-            && let Some(info) = &thread.read(cx).info
+        if thread.read(cx).session_sign_in_required()
+            && let Some(info) = &thread.read(cx).agent_info()
         {
             let terminal = crate::TerminalAuth::opener(cx).is_some();
             for method in &info.auth_methods {
@@ -359,7 +358,7 @@ impl AgentPanel {
                         .ghost()
                         .small()
                         .label(format!("Sign in: {}", method.name()))
-                        .disabled(thread.read(cx).lifecycle.signing_in())
+                        .disabled(thread.read(cx).session_signing_in())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(thread) = this.current() {
                                 thread.update(cx, |thread, cx| {

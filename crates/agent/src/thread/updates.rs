@@ -16,12 +16,12 @@ impl AgentThread {
         notification: &acp::SessionNotification,
         cx: &mut Context<Self>,
     ) {
-        if self.lifecycle.opening() && self.session().is_none() {
+        if self.session.opening() && self.session().is_none() {
             self.config
-                .keep_control(self.lifecycle.ticket(), notification);
+                .keep_control(self.session.ticket(), notification);
         }
         if self.session().as_ref() != Some(&notification.session_id)
-            || !self.lifecycle.accepts_updates()
+            || !self.session.accepts_updates()
             || matches!(notification.update, acp::SessionUpdate::UserMessageChunk(_))
         {
             return;

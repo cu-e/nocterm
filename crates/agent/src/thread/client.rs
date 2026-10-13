@@ -34,7 +34,8 @@ impl SessionClient for ThreadClient {
         Some(ClientState {
             chat_id: thread.state.chat_id().to_owned(),
             workdir: thread
-                .restore
+                .session
+                .restore()
                 .as_ref()
                 .filter(|restore| {
                     !thread.state.entries().is_empty() && restore.workdir.is_absolute()
@@ -43,10 +44,10 @@ impl SessionClient for ThreadClient {
             agent_id: thread.state.agent_id().to_owned(),
             session: thread.session().clone(),
             busy: thread.session_busy(),
-            leased: thread.lease.is_some(),
-            activation_pending: thread.lifecycle.queued(),
-            closing: thread.lifecycle.closing(),
-            shown: thread.shown,
+            leased: thread.session.leased(),
+            activation_pending: thread.session.queued(),
+            closing: thread.session.closing(),
+            shown: thread.session.shown(),
         })
     }
     fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
@@ -61,22 +62,22 @@ impl SessionClient for ThreadClient {
 
 impl AgentThread {
     pub(crate) fn has_pending_approvals(&self) -> bool {
-        self.approvals.pending()
+        self.tools.approval_pending()
     }
     pub(crate) fn approval_notice_generation(&self) -> u64 {
-        self.approvals.generation()
+        self.tools.approval_generation()
     }
     pub(crate) fn permission_cards(&self) -> Vec<PermissionCard> {
-        self.approvals.permission_cards()
+        self.tools.approval_permission_cards()
     }
     pub(crate) fn tool_cards(&self) -> Vec<ToolApprovalCard> {
-        self.approvals.tool_cards()
+        self.tools.approval_tool_cards()
     }
     fn permission_gate(&self, cx: &App) -> PermissionGate {
         PermissionGate::new(
             cx.ai_enabled(),
-            self.lifecycle.accepts_updates(),
-            self.lifecycle.stopped(),
+            self.session.accepts_updates(),
+            self.session.stopped(),
             self.session().clone(),
         )
     }
@@ -89,8 +90,8 @@ impl AgentThread {
         let gate = self.permission_gate(cx);
         let policy = cx.setting::<AiSettings>().approval.agent_permissions;
         if self
-            .approvals
-            .receive_provider(request, respond, &gate, policy)
+            .tools
+            .approval_receive_provider(request, respond, &gate, policy)
         {
             cx.notify();
         }
@@ -98,7 +99,7 @@ impl AgentThread {
     pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
         let gate = self.permission_gate(cx);
         let policy = cx.setting::<AiSettings>().approval.agent_permissions;
-        if self.approvals.apply_provider_policy(&gate, policy) {
+        if self.tools.approval_apply_provider_policy(&gate, policy) {
             cx.notify();
         }
     }
@@ -109,7 +110,7 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let gate = self.permission_gate(cx);
-        if self.approvals.choose_provider(token, choice, &gate) {
+        if self.tools.approval_choose_provider(token, choice, &gate) {
             cx.notify();
         }
     }
@@ -148,7 +149,7 @@ impl AgentThread {
                 info,
                 workdir,
             } => {
-                if self.holds(connection) && self.lifecycle.opening() {
+                if self.holds(connection) && self.session.opening() {
                     self.create_session(commands, *info, workdir, cx);
                 }
             }
@@ -185,7 +186,7 @@ impl AgentThread {
                 cx.notify();
             }
             SessionEvent::SessionClosed => {
-                self.lifecycle.closed();
+                self.session.connection_closed();
                 cx.notify();
             }
             SessionEvent::SaveAdmitted { revision } => self.document_admitted(revision, cx),
