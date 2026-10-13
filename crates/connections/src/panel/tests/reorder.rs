@@ -5,7 +5,7 @@ use super::*;
 fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
     let profile = |name: &str, group: Option<&str>| Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         group: group.map(Into::into),
         target: nocterm_session::Target::new("ci", name, 22),

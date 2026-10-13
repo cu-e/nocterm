@@ -3,8 +3,6 @@
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
-"nocterm_connections::store::Profile" = "Serialized connection profile value."
-"nocterm_connections::store::Recent" = "Serialized recent connection value."
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
 "nocterm_files::settings::ExplorerSettings" = "Serialized settings section."

@@ -6,17 +6,19 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
-## Connection drafts
+## Connection formats and rules
 
-`nocterm-connections-model` owns a nested `ProfileDraft`, typed validation and
-checked connection observation ports. Draft validation receives user/home values
-from its caller, preserves native credential, JSON, launch and session-option
-errors, and identifies the invalid field for presentation. It performs no native
-I/O, environment discovery or identifier generation. Saved profile formats and
-publication remain in the connections feature until their owners are separated.
+`nocterm-connections-model` owns saved profiles, recent destinations, detected
+facts and nested `ProfileDraft` validation. Collection transitions preserve
+checked edit expectations, remembered folders, user ordering, credential
+matching and recent deduplication. Native identifiers, timestamps and editor
+user/home defaults are supplied through values or narrow ports. Validation
+preserves typed credential, JSON, launch and session-option causes.
+`ConnectionRepository` describes blocking document calls without naming a file
+implementation; GPUI publication and observation scheduling stay outside the domain.
 
 ## Sessions and terminal emulation
 

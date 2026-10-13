@@ -1,5 +1,5 @@
 //! Snapshot identity and dialog/save lifecycle.
-use crate::store::{Profile, ProfileId};
+use nocterm_connections_model::profiles::{Profile, ProfileId};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -11,11 +11,9 @@ pub(super) struct EditState {
     dismissed: Dismissal,
 }
 impl EditState {
-    pub(super) fn new(original: Option<Profile>) -> Self {
+    pub(super) fn new(id: ProfileId, original: Option<Profile>) -> Self {
         Self {
-            id: original
-                .as_ref()
-                .map_or_else(ProfileId::generate, |profile| profile.id),
+            id,
             original,
             pending: false,
             dismissed: Default::default(),

@@ -10,11 +10,12 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: saved profile formats, views, backend codecs and detected-server state.
-//! Does not own: pure draft validation, session transport, credentials, DNS, HTTP, flag files or
+//! Owns: views, profile/recent publication and detected-server presentation/lifecycle.
+//! Does not own: profile formats/rules, files, native defaults/IDs/clock, session transport,
+//! credentials, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator,
-//! PublicAddressResolver, CountryLocator, FlagRepository.
+//! ProfileIds, ConnectionClock, PublicAddressResolver, CountryLocator, FlagRepository.
 //! Ports provided: ConnectionDirectory. Settings section: none.
 //! Globals: existing connection, facts and menu compatibility handles.
 //! Invariants: profiles publish after physical success; independent recents survive
@@ -29,13 +30,13 @@ mod model;
 mod observation;
 pub mod os;
 mod panel;
-pub mod store;
+mod prepared;
+pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]
 mod test_support;
 
-use gpui_kit::{App, Context, Window, prelude::*};
-use nocterm_core::Paths;
+use gpui_kit::{App, Context, Entity, Window, prelude::*};
 use nocterm_workspace::Workspace;
 
 pub use editor::{ConnectionEditor, open_editor};
@@ -55,25 +56,14 @@ gpui_kit::actions!(
     ]
 );
 
-/// Loads the saved connections and what is known about their servers. With
-/// no `paths`, nothing is read, written or fetched.
+/// Installs supplied documents and collaborators; performs no native acquisition.
 pub fn init(
-    paths: Option<&Paths>,
+    prepared: PreparedConnections,
     shutdown: &nocterm_store::ShutdownCoordinator,
-    observations: ObservationDeps,
     cx: &mut App,
-) -> Result<(), nocterm_store::StoreError> {
+) -> Result<Entity<Connections>, nocterm_store::StoreError> {
     menu::init(cx);
-    match paths {
-        Some(paths) => Connections::load(paths),
-        None => Connections::in_memory(),
-    }
-    .install(shutdown, cx)?;
-    match paths {
-        Some(paths) => ServerFacts::load(paths, observations),
-        None => ServerFacts::in_memory(observations),
-    }
-    .install(shutdown, cx)
+    prepared.install(shutdown, cx)
 }
 
 /// Adds the connections panel, the new-tab menu and the commands to a
@@ -107,13 +97,19 @@ pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context
     let panel = cx.new(|cx| ConnectionsPanel::new(connections.clone(), handle.clone(), window, cx));
     workspace.add_panel(panel, cx);
 
-    let menu = cx.new(|cx| NewTabMenu::new(connections, handle, window, cx));
+    let menu = cx.new(|cx| NewTabMenu::new(connections.clone(), handle, window, cx));
     workspace.set_new_tab_menu(menu, cx);
 
     workspace.register_action(|workspace, _: &ToggleServers, window, cx| {
         workspace.toggle_panel_of::<ConnectionsPanel>(window, cx);
     });
-    workspace.register_action(|_, _: &NewConnection, window, cx| {
-        open_editor(None, cx.entity().downgrade(), window, cx);
+    workspace.register_action(move |_, _: &NewConnection, window, cx| {
+        open_editor(
+            connections.clone(),
+            None,
+            cx.entity().downgrade(),
+            window,
+            cx,
+        );
     });
 }

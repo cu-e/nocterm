@@ -66,11 +66,13 @@ impl LocationRequest {
             observations,
         }
     }
-    pub(crate) fn locate(self) -> Result<(String, Option<(String, String)>), ObservationError> {
+    pub(crate) fn locate(
+        self,
+    ) -> Result<(String, Option<(String, CountryCode)>), ObservationError> {
         let found = self.country()?;
         Ok((self.host, found))
     }
-    fn country(&self) -> Result<Option<(String, String)>, ObservationError> {
+    fn country(&self) -> Result<Option<(String, CountryCode)>, ObservationError> {
         if !self.observations.network_enabled() {
             return Ok(None);
         }
@@ -83,9 +85,9 @@ impl LocationRequest {
             .get(&key)
             .and_then(|code| CountryCode::new(code).ok())
         {
-            return Ok(Some((key, code.as_str().to_owned())));
+            return Ok(Some((key, code)));
         }
         let code = self.observations.locator().country(ip)?;
-        Ok(code.map(|code| (key, code.as_str().to_owned())))
+        Ok(code.map(|code| (key, code)))
     }
 }

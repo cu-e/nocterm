@@ -2,13 +2,13 @@ use gpui_kit::{AppContext as _, test::TestWindowExt as _};
 use nocterm_session::{Auth, Target};
 
 use super::*;
-use crate::store::{ProfileId, Recent};
+use nocterm_connections_model::profiles::{ProfileId, Recent};
 
 fn profile(name: &str) -> Profile {
     Profile {
         description: String::new(),
         options: Default::default(),
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         target: Target::new("root", "192.0.2.1", 22),
         auth: Auth::Auto,
@@ -63,10 +63,10 @@ fn recent_profiles_deduplicate_ids_from_hand_edited_recents() {
     let mut profiles = Profiles::default();
     profiles.upsert(first.clone());
     profiles.upsert(second.clone());
-    let mut recents = Recents::default();
-    recents.record(recent(Some(first.id)));
-    recents.record(recent(Some(second.id)));
-    recents.iter_mut().nth(1).unwrap().profile = Some(second.id);
+    let duplicate = recent(Some(second.id));
+    let row = toml::to_string(&duplicate).unwrap();
+    let recents: Recents =
+        toml::from_str(&format!("[[recent]]\n{row}\n[[recent]]\n{row}")).unwrap();
     assert_eq!(
         recent_profiles(&profiles, &recents).collect::<Vec<_>>(),
         vec![&second]
@@ -149,14 +149,8 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         });
     }
     // Supply persisted observations and an injected flag, without native flag I/O.
-    let directory = tempfile::tempdir().unwrap();
-    let paths = nocterm_core::Paths::rooted_at(directory.path());
-    std::fs::create_dir_all(paths.state_dir()).unwrap();
-    std::fs::write(
-        paths.state_dir().join("servers.toml"),
-        format!("[server.\"{}\"]\ncountry = \"de\"\n", detected.id),
-    )
-    .unwrap();
+    let known: nocterm_connections_model::facts::Known =
+        toml::from_str(&format!("[server.\"{}\"]\ncountry = \"de\"\n", detected.id)).unwrap();
     let observations = std::sync::Arc::new(
         nocterm_connections_model::test_support::ScriptedObservations::default(),
     );
@@ -170,9 +164,13 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         false,
     );
     cx.update(|cx| {
-        ServerFacts::load(&paths, observations)
-            .install(&nocterm_store::ShutdownCoordinator::default(), cx)
-            .unwrap()
+        ServerFacts::with_backend(
+            known,
+            std::sync::Arc::new(|_| Box::pin(async { Ok(()) })),
+            observations,
+        )
+        .install(&nocterm_store::ShutdownCoordinator::default(), cx)
+        .unwrap()
     });
     cx.run_until_parked();
     for enabled in [true, false, true] {

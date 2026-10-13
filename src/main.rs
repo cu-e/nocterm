@@ -12,6 +12,7 @@ mod agent_auth;
 mod app_menus;
 mod application;
 mod bootstrap;
+mod connection_setup;
 mod keymap;
 mod startup;
 

@@ -22,7 +22,7 @@ fn description_preview_and_tooltip_are_bounded_without_losing_unicode() {
 fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &mut TestAppContext) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
     let profile = |name: &str, group: &str| Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         group: Some(group.into()),
         target: nocterm_session::Target::new("ci", name, 22),
@@ -190,7 +190,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
 
 fn gp(name: &str, group: Option<&str>) -> Profile {
     Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         group: group.map(Into::into),
         target: nocterm_session::Target::new("ci", name, 22),
@@ -219,7 +219,7 @@ fn setup(
 fn setup_with_writer(
     cx: &mut TestAppContext,
     profiles: &[Profile],
-    writer: Option<nocterm_store::SnapshotWriter<crate::store::Profiles>>,
+    writer: Option<nocterm_store::SnapshotWriter<nocterm_connections_model::profiles::Profiles>>,
 ) -> (
     gpui_kit::AnyWindowHandle,
     Entity<ConnectionsPanel>,
@@ -227,7 +227,7 @@ fn setup_with_writer(
 ) {
     let (handle, workspace, opened) = crate::test_support::workspace(cx);
     if let Some(writer) = writer {
-        let mut initial = crate::store::Profiles::default();
+        let mut initial = nocterm_connections_model::profiles::Profiles::default();
         for profile in profiles {
             initial.upsert(profile.clone());
         }
@@ -268,7 +268,7 @@ fn setup_with_writer(
     (handle, panel, opened)
 }
 
-fn profiles_of(cx: &mut TestAppContext) -> crate::store::Profiles {
+fn profiles_of(cx: &mut TestAppContext) -> nocterm_connections_model::profiles::Profiles {
     cx.read(|cx| Connections::global(cx).read(cx).profiles(cx).clone())
 }
 
@@ -756,7 +756,8 @@ fn failed_rename_rolls_back_collapsed_state_and_profiles(cx: &mut TestAppContext
     .unwrap();
 }
 
-fn failing_profile_writer() -> nocterm_store::SnapshotWriter<crate::store::Profiles> {
+fn failing_profile_writer()
+-> nocterm_store::SnapshotWriter<nocterm_connections_model::profiles::Profiles> {
     std::sync::Arc::new(|_| {
         Box::pin(async {
             Err(nocterm_store::StoreError::backend(std::io::Error::from(

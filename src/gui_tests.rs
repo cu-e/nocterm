@@ -214,6 +214,7 @@ fn boot_with_ports(
                 ),
             )),
             persist: false,
+            connections: crate::connection_setup::memory(),
             transport,
             local: false,
             files,

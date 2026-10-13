@@ -29,6 +29,7 @@ pub(crate) struct Services {
     pub(crate) themes: Option<Themes>,
     pub(crate) agent: nocterm_agent::AgentServices,
     pub(crate) vault: Option<VaultSetup>,
+    pub(crate) connections: nocterm_connections::PreparedConnections,
 }
 
 pub(crate) struct Themes {
@@ -77,6 +78,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         themes,
         agent,
         vault,
+        connections,
     } = services;
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
@@ -111,10 +113,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         );
         nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
     }
-    let observations = connection_observations(stored);
     report_store_registration(
         "connections",
-        nocterm_connections::init(stored, &shutdown, observations, cx),
+        nocterm_connections::init(connections, &shutdown, cx).map(|_| ()),
     );
     report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
     report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
@@ -243,20 +244,6 @@ pub(crate) fn build_workspace(
     }
 }
 
-/// Native observation ports are created only for configured persistence.
-fn connection_observations(paths: Option<&Paths>) -> nocterm_connections::ObservationDeps {
-    let Some(paths) = paths else {
-        return nocterm_connections::ObservationDeps::offline();
-    };
-    let native = nocterm_connections_io::NativeObservations::new(paths.state_dir().join("flags"));
-    nocterm_connections::ObservationDeps::new(
-        native.resolver(),
-        native.locator(),
-        native.flags(),
-        true,
-    )
-}
-
 #[cfg(test)]
 mod observation_tests {
     use super::*;
@@ -265,7 +252,7 @@ mod observation_tests {
     fn configured_observations_use_supplied_disk_cache(cx: &mut gpui_kit::TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
         let paths = Paths::rooted_at(directory.path());
-        let id = nocterm_connections::store::ProfileId::generate();
+        let id = nocterm_connections_model::test_support::profile_id_for("src/bootstrap.rs:1");
         std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
         std::fs::write(
             paths.state_dir().join("servers.toml"),
@@ -273,15 +260,11 @@ mod observation_tests {
         )
         .unwrap();
         std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
+        let prepared = crate::connection_setup::native(&paths);
         cx.update(|cx| {
             gpui_kit::init(cx);
-            nocterm_connections::init(
-                Some(&paths),
-                &nocterm_store::ShutdownCoordinator::default(),
-                connection_observations(Some(&paths)),
-                cx,
-            )
-            .unwrap();
+            nocterm_connections::init(prepared, &nocterm_store::ShutdownCoordinator::default(), cx)
+                .unwrap();
         });
         cx.run_until_parked();
         let facts = cx.read(nocterm_connections::ServerFacts::global);
@@ -292,7 +275,7 @@ mod observation_tests {
     fn memory_observations_ignore_even_an_existing_native_cache(cx: &mut gpui_kit::TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
         let paths = Paths::rooted_at(directory.path());
-        let id = nocterm_connections::store::ProfileId::generate();
+        let id = nocterm_connections_model::test_support::profile_id_for("src/bootstrap.rs:2");
         std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
         std::fs::write(
             paths.state_dir().join("servers.toml"),
@@ -305,9 +288,8 @@ mod observation_tests {
             // The observations are deliberately composed with no configured
             // paths, although old observations are present in the fixture.
             nocterm_connections::init(
-                Some(&paths),
+                crate::connection_setup::memory(),
                 &nocterm_store::ShutdownCoordinator::default(),
-                connection_observations(None),
                 cx,
             )
             .unwrap();

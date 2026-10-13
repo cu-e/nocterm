@@ -1,5 +1,6 @@
 //! The sidebar list of saved connections.
 
+use nocterm_connections_model::profiles::{Profile, ProfileId};
 use std::{collections::HashSet, sync::Arc};
 
 use gpui_kit::{
@@ -25,7 +26,6 @@ use crate::{
     model::{connect, spec_for_profile},
     open_editor,
     os::{self, Os},
-    store::{Profile, ProfileId},
 };
 
 mod row;
@@ -220,7 +220,13 @@ impl ConnectionsPanel {
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
         let profile = self.connections.read(cx).profiles(cx).get(id).cloned();
         if profile.is_some() {
-            open_editor(profile, self.workspace.clone(), window, cx);
+            open_editor(
+                self.connections.clone(),
+                profile,
+                self.workspace.clone(),
+                window,
+                cx,
+            );
         }
     }
 
@@ -681,7 +687,13 @@ impl ConnectionsPanel {
                     .icon(IconName::ServerPlus)
                     .label("New Connection")
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        open_editor(None, this.workspace.clone(), window, cx);
+                        open_editor(
+                            this.connections.clone(),
+                            None,
+                            this.workspace.clone(),
+                            window,
+                            cx,
+                        );
                     })),
             )
     }
@@ -742,7 +754,13 @@ impl Render for ConnectionsPanel {
                             .icon(IconName::ServerPlus)
                             .tooltip("New Connection")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                open_editor(None, this.workspace.clone(), window, cx);
+                                open_editor(
+                                    this.connections.clone(),
+                                    None,
+                                    this.workspace.clone(),
+                                    window,
+                                    cx,
+                                );
                             })),
                     ),
             )

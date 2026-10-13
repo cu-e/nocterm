@@ -1,48 +1,87 @@
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task, WeakEntity, Window};
-use nocterm_core::Paths;
 use nocterm_session::{Auth, CredentialId, Target};
 use nocterm_workspace::{SessionSpec, Workspace};
 
-use crate::store::{Profile, ProfileId, Profiles, Recent, Recents};
+use nocterm_connections_model::profiles::{Profile, ProfileId, Profiles, Recent, Recents};
 
 mod error;
-mod files;
 mod persistence;
 pub use error::ConnectionsError;
 
-use crate::store::{ProfileExpectation, ProfileMutation as Mutation};
-use files::{load_profiles, load_recents, now};
+use crate::EditorInputs;
+use nocterm_connections_model::profiles::{ProfileExpectation, ProfileMutation as Mutation};
+use nocterm_connections_model::{
+    draft::EditorDefaults,
+    repository::ConnectionStorageError,
+    value_ports::{ConnectionClock, SuppliedValues},
+};
+use std::sync::Arc;
 
 const MAX_PENDING_WRITES: usize = 32;
 
 /// Saved connections and recent ones, shared by every view that lists them.
 pub struct Connections {
     state: persistence::ConnectionStore,
-    load_error: Option<std::sync::Arc<nocterm_core::persist::PersistError>>,
+    load_error: Option<Arc<ConnectionStorageError>>,
+    inputs: EditorInputs,
+    clock: Arc<dyn ConnectionClock>,
 }
 struct GlobalConnections(Entity<Connections>);
 impl Global for GlobalConnections {}
 
 impl Connections {
-    pub fn load(paths: &Paths) -> Self {
-        let (profiles, load_error) = load_profiles(&paths.connections_file());
+    pub fn prepared(
+        profiles: Profiles,
+        recents: Recents,
+        profiles_writer: nocterm_store::SnapshotWriter<Profiles>,
+        recents_writer: nocterm_store::SnapshotWriter<Recents>,
+        load_error: Option<Arc<ConnectionStorageError>>,
+        inputs: EditorInputs,
+        clock: Arc<dyn ConnectionClock>,
+    ) -> Self {
         Self {
-            state: persistence::ConnectionStore::files(
+            state: persistence::ConnectionStore::backends(
                 profiles,
-                load_recents(&paths.recents_file()),
-                paths,
+                recents,
+                profiles_writer,
+                recents_writer,
             ),
             load_error,
+            inputs,
+            clock,
         }
+    }
+    pub fn memory_with_inputs(
+        profiles: Profiles,
+        recents: Recents,
+        inputs: EditorInputs,
+        clock: Arc<dyn ConnectionClock>,
+    ) -> Self {
+        Self {
+            state: persistence::ConnectionStore::memory(profiles, recents),
+            load_error: None,
+            inputs,
+            clock,
+        }
+    }
+    pub fn editor_inputs(&self) -> &EditorInputs {
+        &self.inputs
     }
     pub fn in_memory() -> Self {
         Self::with_documents(Profiles::default(), Recents::default())
     }
     /// A synchronous, explicitly memory-only owner, with no filesystem writes.
     pub fn with_documents(profiles: Profiles, recents: Recents) -> Self {
+        let values = Arc::new(SuppliedValues::excluding(
+            1,
+            0,
+            profiles.iter().map(|profile| profile.id),
+        ));
         Self {
             state: persistence::ConnectionStore::memory(profiles, recents),
             load_error: None,
+            inputs: EditorInputs::new(EditorDefaults::default(), values.clone()),
+            clock: values,
         }
     }
     /// Explicit persistence ports; useful for alternate backends and behavior tests.
@@ -52,6 +91,11 @@ impl Connections {
         profiles_writer: nocterm_store::SnapshotWriter<Profiles>,
         recents_writer: nocterm_store::SnapshotWriter<Recents>,
     ) -> Self {
+        let values = Arc::new(SuppliedValues::excluding(
+            1,
+            0,
+            profiles.iter().map(|profile| profile.id),
+        ));
         Self {
             state: persistence::ConnectionStore::backends(
                 profiles,
@@ -60,6 +104,8 @@ impl Connections {
                 recents_writer,
             ),
             load_error: None,
+            inputs: EditorInputs::new(EditorDefaults::default(), values.clone()),
+            clock: values,
         }
     }
     /// Construct an owner with explicit shutdown lifetime, without global lookup.
@@ -78,10 +124,10 @@ impl Connections {
         self,
         shutdown: &nocterm_store::ShutdownCoordinator,
         cx: &mut App,
-    ) -> Result<(), nocterm_store::StoreError> {
+    ) -> Result<Entity<Self>, nocterm_store::StoreError> {
         let entity = self.into_entity(shutdown, cx)?;
-        cx.set_global(GlobalConnections(entity));
-        Ok(())
+        cx.set_global(GlobalConnections(entity.clone()));
+        Ok(entity)
     }
     fn observe(&self, cx: &mut Context<Self>) {
         if let Some(installed) = self.state.installed() {
@@ -97,7 +143,7 @@ impl Connections {
     pub fn recents<'a>(&'a self, cx: &'a App) -> &'a Recents {
         self.state.recents(cx)
     }
-    pub fn load_error(&self) -> Option<&nocterm_core::persist::PersistError> {
+    pub fn load_error(&self) -> Option<&ConnectionStorageError> {
         self.load_error.as_deref()
     }
     /// Failures remain visible without rolling back a successfully written profile.
@@ -252,7 +298,7 @@ impl Connections {
             target: spec.target.clone(),
             auth: spec.auth.clone(),
             profile,
-            last_used: now(),
+            last_used: self.clock.unix_seconds(),
             credential: spec.credential,
             launch: spec.launch.clone(),
         };

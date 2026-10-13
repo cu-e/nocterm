@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store` and `nocterm-agent-storage`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage` and `nocterm-connections-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -145,3 +145,15 @@ environment on each launch, regardless of settings probe evidence. It refuses a
 changed canonical cwd, protected roots, unsupported platforms and missing or
 unexecutable bubblewrap. It projects ordered policy mounts into native flags while
 process grouping and cleanup retain their existing owner.
+
+## Connection files and native values
+
+`nocterm-connections-io` implements the connection repository with the shared
+foundation codecs. Profiles use `save_preserving` so configuration symlinks,
+comments and retained top-level tables keep their existing semantics; recents
+and facts use rebuildable snapshot files. A malformed profile load retains a
+typed read-only diagnostic; informational documents fall back to empty values.
+The adapter supplies user/home defaults, UUID entropy and Unix timestamps.
+Application startup preloads documents and defaults on its background executor;
+bootstrap installs only prepared documents and writer ports. The existing
+memory-only composition constructs no native repository or HTTP clients.

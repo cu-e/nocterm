@@ -2,17 +2,13 @@ use super::*;
 use futures::channel::oneshot;
 use nocterm_core::persist;
 use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
-use std::{
-    fs,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
-mod credentials;
 mod shutdown;
 
 fn profile(name: &str) -> Profile {
     Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         description: String::new(),
         options: Default::default(),
@@ -217,7 +213,9 @@ async fn rename_group_trims_the_new_name(cx: &mut gpui_kit::TestAppContext) {
 #[test]
 fn saved_profile_keeps_description_and_session_overrides_when_opened() {
     let profile = Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(
+            "crates/connections/src/model/tests.rs:2",
+        ),
         name: "Legacy build".into(),
         description: "Windows-1251 machine\nUses a private proxy".into(),
         target: nocterm_session::Target::new("ci", "build.example", 22),
@@ -242,41 +240,6 @@ fn saved_profile_keeps_description_and_session_overrides_when_opened() {
     let restored: Profile = toml::from_str(&serialized).unwrap();
     assert_eq!(restored.description, profile.description);
     assert_eq!(spec_for_profile(&restored).options, profile.options);
-}
-
-#[test]
-fn a_missing_file_is_an_empty_list() {
-    let dir = tempfile::tempdir().unwrap();
-
-    let (profiles, error) = load_profiles(&dir.path().join("connections.toml"));
-
-    assert!(profiles.is_empty());
-    assert!(error.is_none());
-    assert_eq!(
-        load_recents(&dir.path().join("recents.toml")),
-        Recents::default()
-    );
-}
-
-#[test]
-fn a_broken_file_is_reported_not_discarded() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("connections.toml");
-    fs::write(&path, "[[connection]]\nname = 3\n").unwrap();
-
-    let (profiles, error) = load_profiles(&path);
-
-    assert!(profiles.is_empty());
-    assert!(error.unwrap().to_string().contains("connections.toml"));
-}
-
-#[test]
-fn broken_recents_start_afresh() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("recents.toml");
-    fs::write(&path, "not toml at all [").unwrap();
-
-    assert_eq!(load_recents(&path), Recents::default());
 }
 
 fn documents(items: &[Profile]) -> Profiles {
@@ -343,7 +306,7 @@ async fn ordered_writes_rebase_failed_predecessors_and_reject_stale_editors(
     assert!(matches!(
         stale.await,
         Err(ConnectionsError::Profile(
-            crate::store::ProfileError::Conflict(_)
+            nocterm_connections_model::profiles::ProfileError::Conflict(_)
         ))
     ));
     assert_eq!(writes.lock().unwrap().len(), 2);
@@ -414,43 +377,6 @@ async fn consumed_credential_does_not_overwrite_later_independent_use(
     assert_eq!(
         entity.read_with(cx, |c, cx| c.recents(cx).iter().next().unwrap().credential),
         Some(newer)
-    );
-}
-
-#[gpui_kit::test]
-async fn readonly_broken_profiles_and_unknown_toml_are_preserved(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    let dir = tempfile::tempdir().unwrap();
-    let paths = Paths::rooted_at(dir.path());
-    fs::create_dir_all(paths.config_dir()).unwrap();
-    fs::write(paths.connections_file(), "invalid [[").unwrap();
-    let entity = cx.new(|_| Connections::load(&paths));
-    assert!(matches!(
-        entity
-            .update(cx, |c, cx| c.save_profile(profile("New"), cx))
-            .await,
-        Err(ConnectionsError::ReadOnly(_))
-    ));
-    assert_eq!(
-        fs::read_to_string(paths.connections_file()).unwrap(),
-        "invalid [["
-    );
-    fs::write(
-        paths.connections_file(),
-        "# user comment\nfolders = [\"Work\"] # folder comment\n[plugin]\nunknown = 7\n",
-    )
-    .unwrap();
-    let entity = cx.new(|_| Connections::load(&paths));
-    entity
-        .update(cx, |c, cx| c.save_profile(profile("New"), cx))
-        .await
-        .unwrap();
-    let text = fs::read_to_string(paths.connections_file()).unwrap();
-    assert!(
-        text.contains("# user comment")
-            && text.contains("unknown = 7")
-            && text.contains("# folder comment")
     );
 }
 
@@ -687,5 +613,39 @@ fn normal_publication_survives_dropping_model_and_receipt_tasks(cx: &mut gpui_ki
             .unwrap()
             .profile,
         None
+    );
+}
+
+#[gpui_kit::test]
+fn record_use_preserves_the_supplied_timestamp_without_clock_discovery(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    use nocterm_connections_model::{draft::EditorDefaults, value_ports::SuppliedValues};
+    let values = Arc::new(SuppliedValues::new(100, 42));
+    let owner = Connections::memory_with_inputs(
+        Profiles::default(),
+        Recents::default(),
+        crate::EditorInputs::new(
+            EditorDefaults {
+                user: Some("supplied-user".into()),
+                home: None,
+            },
+            values.clone(),
+        ),
+        values,
+    );
+    let entity = cx.new(|_| owner);
+    let profile = profile("Timestamp");
+    entity.update(cx, |connections, cx| {
+        connections.record_use(&spec_for_profile(&profile), Some(profile.id), cx)
+    });
+    assert_eq!(
+        entity.read_with(cx, |connections, cx| connections
+            .recents(cx)
+            .iter()
+            .next()
+            .unwrap()
+            .last_used),
+        42
     );
 }

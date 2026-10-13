@@ -10,7 +10,9 @@ fn deps(script: &Arc<ScriptedObservations>, online: bool) -> ObservationDeps {
 }
 fn profile() -> Profile {
     Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(
+            "crates/connections/src/facts/observation_tests.rs:1",
+        ),
         name: "web".into(),
         description: String::new(),
         target: nocterm_session::Target::new("root", "example.com", 22),
@@ -115,17 +117,17 @@ async fn persisted_ip_cache_bypasses_locator_and_invalid_code_is_rechecked(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     for (cached, calls) in [("de", 0), ("../", 1)] {
-        let directory = tempfile::tempdir().unwrap();
-        let paths = Paths::rooted_at(directory.path());
-        std::fs::create_dir_all(paths.state_dir()).unwrap();
-        std::fs::write(
-            paths.state_dir().join("servers.toml"),
-            format!("[geoip]\n\"8.8.8.8\" = \"{cached}\"\n"),
-        )
-        .unwrap();
+        let known: Known =
+            toml::from_str(&format!("[geoip]\n\"8.8.8.8\" = \"{cached}\"\n")).unwrap();
         let script = Arc::new(ScriptedObservations::default());
         answer(&script);
-        let facts = cx.new(|_| ServerFacts::load(&paths, deps(&script, true)));
+        let facts = cx.new(|_| {
+            ServerFacts::with_backend(
+                known,
+                Arc::new(|_| Box::pin(async { Ok(()) })),
+                deps(&script, true),
+            )
+        });
         let profile = profile();
         facts.update(cx, |facts, cx| {
             facts.probe(&profile, "example.com", Arc::new(InMemoryFs::default()), cx)

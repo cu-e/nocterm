@@ -137,6 +137,25 @@ pub struct ValidatedProfile {
     pub icon_color: Option<String>,
     pub country: Option<String>,
 }
+impl ValidatedProfile {
+    /// Attach the supplied persistent identity without introducing entropy or UI rules.
+    pub fn into_profile(self, id: crate::profiles::ProfileId) -> crate::profiles::Profile {
+        crate::profiles::Profile {
+            id,
+            name: self.name,
+            description: self.description,
+            options: self.options,
+            target: self.target,
+            auth: self.auth,
+            group: self.group,
+            credential: self.credential,
+            launch: self.launch,
+            icon: self.icon,
+            icon_color: self.icon_color,
+            country: self.country,
+        }
+    }
+}
 impl ProfileDraft {
     pub fn validate(
         &self,

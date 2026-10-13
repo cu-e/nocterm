@@ -1,8 +1,8 @@
 //! Authentication selection and its native inputs.
 use super::{ConnectionEditor, field, text, watch};
-use crate::store::Profile;
 use gpui_kit::{App, Context, Entity, Subscription, Window, component::input::InputState};
 use nocterm_connections_model::draft::{AuthKind, AuthenticationDraft};
+use nocterm_connections_model::profiles::Profile;
 use nocterm_session::Auth;
 pub(super) struct AuthenticationFields {
     kind: AuthKind,

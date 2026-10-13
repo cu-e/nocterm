@@ -17,9 +17,11 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
         crate::init(
-            None,
+            crate::PreparedConnections::memory(nocterm_connections_model::draft::EditorDefaults {
+                user: Some("tester".into()),
+                home: None,
+            }),
             &nocterm_store::ShutdownCoordinator::default(),
-            crate::ObservationDeps::offline(),
             cx,
         )
         .unwrap();
@@ -42,4 +44,60 @@ pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Wor
             .is_none()
     }));
     (window, workspace, opened)
+}
+
+/// The shared pure repository supplies failures/documents while the existing driver owns writes.
+pub(crate) fn prepared_repository(
+    repository: std::sync::Arc<
+        nocterm_connections_model::test_support::InMemoryConnectionRepository,
+    >,
+    observations: crate::ObservationDeps,
+) -> crate::PreparedConnections {
+    use nocterm_connections_model::{
+        draft::EditorDefaults, repository::ConnectionRepository, value_ports::SuppliedValues,
+    };
+    let documents = repository.load();
+    let profiles = repository.clone();
+    let recents = repository.clone();
+    let facts = repository;
+    let writers = crate::ConnectionWriters::new(
+        std::sync::Arc::new(move |snapshot| {
+            let repository = profiles.clone();
+            Box::pin(async move {
+                repository
+                    .save_profiles(&snapshot)
+                    .map_err(nocterm_store::StoreError::backend)
+            })
+        }),
+        std::sync::Arc::new(move |snapshot| {
+            let repository = recents.clone();
+            Box::pin(async move {
+                repository
+                    .save_recents(&snapshot)
+                    .map_err(nocterm_store::StoreError::backend)
+            })
+        }),
+        std::sync::Arc::new(move |snapshot| {
+            let repository = facts.clone();
+            Box::pin(async move {
+                repository
+                    .save_facts(&snapshot)
+                    .map_err(nocterm_store::StoreError::backend)
+            })
+        }),
+    );
+    let values = std::sync::Arc::new(SuppliedValues::new(1, 0));
+    crate::PreparedConnections::new(
+        documents,
+        writers,
+        crate::EditorInputs::new(
+            EditorDefaults {
+                user: Some("tester".into()),
+                home: None,
+            },
+            values.clone(),
+        ),
+        values,
+        observations,
+    )
 }

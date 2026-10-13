@@ -1,12 +1,18 @@
-//! Native adapters for connection country and flag observations.
+//! Native connection files, environment/entropy/clock and network observations.
 //!
-//! Owns: local DNS, bounded HTTP responses and private atomic flag cache files.
-//! Does not own: profile rules, GPUI images, observation scheduling or persistence.
-//! Ports used: none. Ports provided: PublicAddressResolver, CountryLocator,
+//! Owns: three-document repositories, native defaults/UUID/clock, DNS and bounded HTTP/flag cache.
+//! Does not own: profile rules, GPUI images, observation scheduling or persistence workers.
+//! Ports used: foundation persistence. Ports provided: ConnectionRepository, ProfileIds,
+//! ConnectionClock, PublicAddressResolver, CountryLocator,
 //! FlagRepository. Settings section: none. Globals: none.
 //! Invariants: country services receive public IPs only; bodies and cached flags
-//! are bounded; failure to cache never discards an acquired flag.
+//! are bounded; failure to cache never discards an acquired flag. Blocking document
+//! acquisition and writes run off foreground; profiles retain configuration publication semantics.
 
+mod native_values;
+mod repository;
+pub use native_values::NativeValues;
+pub use repository::FileConnectionRepository;
 mod flags;
 mod http;
 mod resolver;

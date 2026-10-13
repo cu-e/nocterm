@@ -17,6 +17,7 @@ nocterm-acp.workspace = true
 nocterm-agent.workspace = true
 nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
+nocterm-connections-model.workspace = true
 nocterm-connections-io.workspace = true
 nocterm-containers-ui.workspace = true
 nocterm-snippets-ui.workspace = true
@@ -116,6 +117,7 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-connections-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }

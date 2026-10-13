@@ -1,11 +1,11 @@
 //! Address, metadata and notes inputs.
 use super::{ConnectionEditor, field, text, watch};
-use crate::store::Profile;
 use gpui_kit::{
     App, Context, Entity, Subscription, Window,
     component::input::{InputState, TextareaState},
 };
 use nocterm_connections_model::draft::{EndpointDraft, MetadataDraft};
+use nocterm_connections_model::profiles::Profile;
 use nocterm_session::DEFAULT_PORT;
 pub(super) struct ConnectionFields {
     name: Entity<InputState>,
@@ -19,6 +19,7 @@ pub(super) struct ConnectionFields {
 impl ConnectionFields {
     pub(super) fn new(
         profile: Option<&Profile>,
+        defaults: &nocterm_connections_model::draft::EditorDefaults,
         window: &mut Window,
         cx: &mut Context<ConnectionEditor>,
     ) -> Self {
@@ -45,7 +46,7 @@ impl ConnectionFields {
             cx,
         );
         let user = field(
-            &super::local_user().unwrap_or_default(),
+            defaults.user.as_deref().unwrap_or_default(),
             profile.map(|p| p.target.user.clone()).unwrap_or_default(),
             window,
             cx,
@@ -107,7 +108,6 @@ impl ConnectionFields {
 
 use super::render::field_row;
 use super::{appearance::AppearanceFields, launch::LaunchFields};
-use crate::store::ProfileId;
 use gpui_kit::{
     AnyElement,
     base::TestSupportExt as _,
@@ -119,6 +119,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_connections_model::profiles::ProfileId;
 use nocterm_ui::{ActiveDesign as _, form};
 
 impl ConnectionFields {

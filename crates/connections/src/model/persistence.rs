@@ -1,9 +1,9 @@
 //! Connections persistence owners and immutable projections of committed effects.
 use super::{Connections, ConnectionsError, MAX_PENDING_WRITES};
-use crate::store::{ProfileId, ProfileMutation, Profiles, Recent, Recents};
 use futures::future::BoxFuture;
 use gpui_kit::{App, AppContext as _, Context, Entity};
-use nocterm_core::{Paths, persist};
+use nocterm_connections_model::profiles::{ProfileId, ProfileMutation, Profiles, Recent, Recents};
+use nocterm_connections_model::repository::ConnectionStorageError;
 use nocterm_session::{Auth, CredentialId, Target};
 use nocterm_store::{
     CommitPhase, Committed, Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError,
@@ -43,7 +43,7 @@ impl ProfileSnapshot {
         &mut self,
         mutation: &ProfileMutation,
         consumed: u64,
-        load_error: Option<&Arc<persist::PersistError>>,
+        load_error: Option<&Arc<ConnectionStorageError>>,
     ) -> Result<(), ConnectionsError> {
         let before = self.profiles.clone();
         mutation.apply(&mut self.profiles)?;
@@ -91,12 +91,7 @@ impl ProfileSnapshot {
                     }
                 }
                 Effect::Credential { target, auth, id } => {
-                    for recent in recents
-                        .iter_mut()
-                        .filter(|recent| &recent.target == target && &recent.auth == auth)
-                    {
-                        recent.credential = Some(*id);
-                    }
+                    recents.associate_credential(target, auth, *id);
                 }
             }
         }
@@ -146,24 +141,6 @@ impl ConnectionStore {
             recents_writer,
             memory: false,
         })
-    }
-    pub(super) fn files(profiles: Profiles, recents: Recents, paths: &Paths) -> Self {
-        let profile_path = paths.connections_file();
-        let recents_path = paths.recents_file();
-        Self::backends(
-            profiles,
-            recents,
-            Arc::new(move |profiles| {
-                let path = profile_path.clone();
-                Box::pin(async move {
-                    persist::save_preserving(&path, &profiles).map_err(StoreError::backend)
-                })
-            }),
-            Arc::new(move |recents| {
-                let path = recents_path.clone();
-                Box::pin(async move { persist::save(&path, &recents).map_err(StoreError::backend) })
-            }),
-        )
     }
     pub(super) fn install(&mut self, cx: &mut App) -> &Installed {
         if let Self::Prepared(prepared) = self {

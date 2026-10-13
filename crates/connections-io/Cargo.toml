@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-connections-io"
-description = "Native DNS, bounded country lookup and atomic flag cache adapters."
+description = "Native connection repository, value discovery and bounded observation adapters."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -12,6 +12,8 @@ layer = "adapter"
 [dependencies]
 nocterm-connections-model.workspace = true
 nocterm-core.workspace = true
+nocterm-session.workspace = true
+uuid.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

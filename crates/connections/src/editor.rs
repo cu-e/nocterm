@@ -13,6 +13,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_connections_model::profiles::Profile;
 
 use nocterm_ui::ActiveDesign as _;
 use nocterm_workspace::Workspace;
@@ -20,7 +21,6 @@ use nocterm_workspace::Workspace;
 use crate::{
     Connections,
     model::{connect, spec_for_profile},
-    store::Profile,
 };
 
 /// Two rows of icon tiles: 28 px tiles with a 4 px gap.
@@ -29,8 +29,7 @@ const ICON_ROWS_HEIGHT: f32 = 60.;
 mod appearance;
 mod profile;
 mod render;
-pub(crate) use profile::local_user;
-use profile::{build_profile, home_dir};
+use profile::build_profile;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditorSection {
@@ -80,14 +79,16 @@ impl FormError {
 /// Opens the form in a dialog: empty for a new connection, filled in for
 /// `profile`.
 pub fn open_editor(
+    connections: Entity<Connections>,
     profile: Option<Profile>,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let _ = open_editor_view(profile, workspace, window, cx);
+    let _ = open_editor_view(connections, profile, workspace, window, cx);
 }
 fn open_editor_view(
+    connections: Entity<Connections>,
     profile: Option<Profile>,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
@@ -99,7 +100,7 @@ fn open_editor_view(
         "New Connection"
     };
     let width = rems(cx.design().layout.connection_editor_width).to_pixels(window.rem_size());
-    let editor = cx.new(|cx| ConnectionEditor::new(profile, workspace, window, cx));
+    let editor = cx.new(|cx| ConnectionEditor::new(connections, profile, workspace, window, cx));
     let footer = cx.new(|cx| EditorFooter {
         editor: editor.clone(),
         _subscription: cx.observe(&editor, |_, _, cx| cx.notify()),
@@ -139,6 +140,7 @@ fn open_editor_view(
 
 /// The connection form.
 pub struct ConnectionEditor {
+    deps: EditorDeps,
     focus: FocusHandle,
     edit: EditState,
     workspace: WeakEntity<Workspace>,
@@ -152,6 +154,10 @@ pub struct ConnectionEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+struct EditorDeps {
+    connections: Entity<Connections>,
+    inputs: crate::EditorInputs,
+}
 fn field(
     placeholder: &str,
     value: String,
@@ -181,13 +187,18 @@ fn text(input: &Entity<InputState>, cx: &App) -> String {
 }
 impl ConnectionEditor {
     fn new(
+        connections: Entity<Connections>,
         profile: Option<Profile>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let inputs = connections.read(cx).editor_inputs().clone();
+        let id = profile
+            .as_ref()
+            .map_or_else(|| inputs.next_id(), |profile| profile.id);
         let existing = profile.as_ref();
-        let connection = ConnectionFields::new(existing, window, cx);
+        let connection = ConnectionFields::new(existing, inputs.defaults(), window, cx);
         let authentication = AuthenticationFields::new(existing, window, cx);
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, window, cx);
@@ -201,8 +212,12 @@ impl ConnectionEditor {
         });
         let subscription = cx.observe(&crate::ServerFacts::global(cx), |_, _, cx| cx.notify());
         Self {
+            deps: EditorDeps {
+                connections,
+                inputs,
+            },
             focus: cx.focus_handle(),
-            edit: EditState::new(profile),
+            edit: EditState::new(id, profile),
             workspace,
             connection,
             authentication,
@@ -242,7 +257,7 @@ impl ConnectionEditor {
             }
         };
 
-        let saved = Connections::global(cx).update(cx, |connections, cx| {
+        let saved = self.deps.connections.update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });
         self.error = None;
@@ -289,8 +304,8 @@ impl ConnectionEditor {
             self.edit.id(),
             &fields,
             self.authentication.kind(),
-            local_user().as_deref(),
-            home_dir().as_deref(),
+            self.deps.inputs.defaults().user.as_deref(),
+            self.deps.inputs.defaults().home.as_deref(),
         )
     }
 
@@ -373,13 +388,14 @@ impl ConnectionEditor {
                             .tooltip("Discard this draft and load the current saved connection")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if this.edit.pending() || this.edit.is_dismissed() { return; }
-                                let latest = Connections::global(cx).read(cx).profiles(cx).get(this.edit.id()).cloned();
+                                let latest = this.deps.connections.read(cx).profiles(cx).get(this.edit.id()).cloned();
                                 if let Some(profile) = latest {
                                     this.edit.dismiss();
                                     let workspace = this.workspace.clone();
+                                    let connections = this.deps.connections.clone();
                                     window.close_dialog(cx);
                                     // Finish dismissal before mounting the replacement and focusing its input.
-                                    window.defer(cx, move |window, cx| open_editor(Some(profile), workspace, window, cx));
+                                    window.defer(cx, move |window, cx| open_editor(connections, Some(profile), workspace, window, cx));
                                 }
                                 else { this.error = Some("This connection was deleted. Close the editor to create a new connection.".into()); cx.notify(); }
                             }))

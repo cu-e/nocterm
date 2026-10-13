@@ -1,12 +1,10 @@
 use gpui_kit::{App, EntityId, WeakEntity, Window};
+use nocterm_connections_model::profiles::{Profile, Profiles, Recents};
 use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, Workspace};
 
 use std::collections::HashSet;
 
-use crate::{
-    Connections, ServerFacts, connect, spec_for_profile,
-    store::{Profile, Profiles, Recents},
-};
+use crate::{Connections, ServerFacts, connect, spec_for_profile};
 
 pub(crate) struct Directory;
 

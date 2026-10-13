@@ -16,8 +16,8 @@ use gpui_kit::{
 use nocterm_ui::{IconName, form};
 
 use super::{ConnectionEditor, ICON_ROWS_HEIGHT, field, text};
-use crate::store::{Profile, ProfileId};
 use nocterm_connections_model::draft::AppearanceDraft;
+use nocterm_connections_model::profiles::{Profile, ProfileId};
 pub(super) struct AppearanceFields {
     icon: Option<String>,
     color: Entity<InputState>,

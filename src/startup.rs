@@ -68,17 +68,25 @@ impl PreparedApp {
         let chats = Arc::new(nocterm_agent_storage::FileChatRepository::new(
             self.paths.state_dir().join("agent-chats"),
         ));
-        let loading = cx
-            .background_executor()
-            .spawn(nocterm_agent_runtime::AgentStorage::prepare(state, chats));
+        let paths = self.paths.clone();
+        let loading = cx.background_executor().spawn(async move {
+            let connections = crate::connection_setup::native(&paths);
+            let storage = nocterm_agent_runtime::AgentStorage::prepare(state, chats).await;
+            (storage, connections)
+        });
         cx.spawn(async move |cx| {
-            let storage = loading.await;
-            cx.update(|cx| self.finish(storage, cx));
+            let (storage, connections) = loading.await;
+            cx.update(|cx| self.finish(storage, connections, cx));
         })
         .detach();
     }
 
-    fn finish(self, storage: nocterm_agent_runtime::AgentStorage, cx: &mut App) {
+    fn finish(
+        self,
+        storage: nocterm_agent_runtime::AgentStorage,
+        connections: nocterm_connections::PreparedConnections,
+        cx: &mut App,
+    ) {
         let agent = agent_services(&self.paths, self.executable, storage);
         let vault = Some(bootstrap::VaultSetup {
             file: self.paths.config_dir().join("vault.bin"),
@@ -99,6 +107,7 @@ impl PreparedApp {
                 themes: Some(self.themes),
                 agent,
                 vault,
+                connections,
             },
             cx,
         );

@@ -15,11 +15,12 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_connections_model::profiles::Recent;
 use nocterm_session::{Auth, Target};
 use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{OpenVault, SessionSpec, Workspace};
 
-use crate::{Connections, editor::local_user, model::connect, open_editor, store::Recent};
+use crate::{Connections, model::connect, open_editor};
 
 const KEY_CONTEXT: &str = "QuickConnect";
 
@@ -77,7 +78,15 @@ impl NewTabMenu {
     /// Connects to what was typed, without saving it.
     fn quick_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.quick_connect.read(cx).value().to_string();
-        let target = match Target::parse(&text, local_user().as_deref()) {
+        let target = match Target::parse(
+            &text,
+            self.connections
+                .read(cx)
+                .editor_inputs()
+                .defaults()
+                .user
+                .as_deref(),
+        ) {
             Ok(target) => target,
             Err(error) => {
                 self.error = Some(capitalize(&error.to_string()).into());
@@ -108,7 +117,13 @@ impl NewTabMenu {
         let _ = self
             .workspace
             .update(cx, |workspace, cx| workspace.show_new_tab_menu(false, cx));
-        open_editor(None, self.workspace.clone(), window, cx);
+        open_editor(
+            self.connections.clone(),
+            None,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
     }
 
     fn render_recents(&self, cx: &mut Context<Self>) -> impl IntoElement {

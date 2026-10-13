@@ -1,4 +1,4 @@
-//! Explicitly scripted, no-I/O observation ports for dev-dependency consumers.
+//! Explicitly scripted, no-I/O observation and document ports for dev-dependency consumers.
 use crate::observation::{
     CountryCode, CountryLocator, FlagRepository, ObservationError, PublicAddress,
     PublicAddressResolver,
@@ -65,3 +65,17 @@ impl FlagRepository for ScriptedObservations {
         self.flags.lock().unwrap().pop_front().unwrap_or(Ok(None))
     }
 }
+
+/// An identifier computed only from supplied test data, with no entropy or global sequence.
+pub fn profile_id_for(value: &str) -> crate::profiles::ProfileId {
+    let mut hash: u64 = 14695981039346656037;
+    for byte in value.bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(1099511628211);
+    }
+    let mut bytes = [0; 16];
+    bytes[8..].copy_from_slice(&hash.to_be_bytes());
+    crate::profiles::ProfileId::from_bytes(bytes)
+}
+
+mod repository;
+pub use repository::{InMemoryConnectionRepository, RepositoryCall, RepositoryGate};

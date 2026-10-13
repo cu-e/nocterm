@@ -1,8 +1,6 @@
 //! Informational snapshots coalesce through the shared service worker.
-use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{App, AppContext as _, Entity};
-use nocterm_core::persist;
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
 
 use super::Known;
@@ -16,16 +14,7 @@ pub(super) enum FactsStore {
 }
 
 impl FactsStore {
-    pub(super) fn new(known: Known, file: Option<PathBuf>) -> Self {
-        let writer: SnapshotWriter<Known> = Arc::new(move |known| {
-            let file = file.clone();
-            Box::pin(async move {
-                if let Some(file) = file {
-                    persist::save(&file, &known).map_err(StoreError::backend)?;
-                }
-                Ok(())
-            })
-        });
+    pub(super) fn new(known: Known, writer: SnapshotWriter<Known>) -> Self {
         Self::Prepared { known, writer }
     }
 

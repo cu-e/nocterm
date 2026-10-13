@@ -1,5 +1,5 @@
-use crate::store::ProfileError;
-use nocterm_core::persist::PersistError;
+use nocterm_connections_model::profiles::ProfileError;
+use nocterm_connections_model::repository::ConnectionStorageError;
 use nocterm_store::StoreError;
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ pub enum ConnectionsError {
     #[error(transparent)]
     Profile(#[from] ProfileError),
     #[error("Saved connections are read-only until the file is fixed: {0}")]
-    ReadOnly(#[source] Arc<PersistError>),
+    ReadOnly(#[source] Arc<ConnectionStorageError>),
     #[error("Connections service is shutting down.")]
     Closing,
     #[error("Connection save queue is full. Wait for pending saves to finish and retry.")]

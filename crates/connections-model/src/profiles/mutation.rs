@@ -30,14 +30,14 @@ pub enum ProfileError {
 }
 
 #[derive(Clone)]
-pub(crate) enum ProfileExpectation {
+pub enum ProfileExpectation {
     Any,
     Absent,
     Snapshot(Box<Profile>),
 }
 
 #[derive(Clone)]
-pub(crate) enum ProfileMutation {
+pub enum ProfileMutation {
     Save {
         profile: Box<Profile>,
         expected: ProfileExpectation,
@@ -65,7 +65,7 @@ pub(crate) enum ProfileMutation {
 }
 
 impl ProfileMutation {
-    pub(crate) fn validate(&self) -> Result<(), ProfileError> {
+    pub fn validate(&self) -> Result<(), ProfileError> {
         let metadata_bytes = match self {
             Self::Move { group, .. } => group.as_ref().map_or(0, String::len),
             Self::RenameGroup { from, to } => from.len().saturating_add(to.len()),
@@ -92,7 +92,7 @@ impl ProfileMutation {
         Ok(())
     }
 
-    pub(crate) fn apply(&self, profiles: &mut Profiles) -> Result<(), ProfileError> {
+    pub fn apply(&self, profiles: &mut Profiles) -> Result<(), ProfileError> {
         match self {
             Self::Save { profile, expected } => {
                 let current = profiles.get(profile.id);
@@ -107,13 +107,7 @@ impl ProfileMutation {
                 profiles.upsert(*profile.clone());
             }
             Self::Move { id, group, before } => {
-                if profiles.get(*id).is_none() {
-                    return Err(ProfileError::MissingProfile(*id));
-                }
-                // The existence check above is the only rejection of this transition.
-                profiles
-                    .place(*id, group.clone(), *before)
-                    .map_err(|_| ProfileError::MissingProfile(*id))?;
+                profiles.place(*id, group.clone(), *before)?;
             }
             Self::Delete(id) => {
                 profiles.remove(*id);
@@ -146,12 +140,7 @@ impl ProfileMutation {
                 profiles.remove_group(group);
             }
             Self::Credential { target, auth, id } => {
-                for profile in profiles
-                    .iter_mut()
-                    .filter(|profile| &profile.target == target && &profile.auth == auth)
-                {
-                    profile.credential = Some(*id);
-                }
+                profiles.associate_credential(target, auth, *id);
             }
         }
         Ok(())

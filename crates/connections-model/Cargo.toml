@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-connections-model"
-description = "Pure connection drafts, validation and injected observation ports."
+description = "Pure connection formats, drafts, checked transitions and native capability ports."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -13,6 +13,8 @@ layer = "domain"
 nocterm-session.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+toml.workspace = true
+uuid = { version = "1", default-features = false, features = ["std", "serde"] }
 thiserror.workspace = true
 
 [features]

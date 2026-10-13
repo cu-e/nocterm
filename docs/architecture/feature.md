@@ -83,8 +83,12 @@ them. Platform-key combinations remain application shortcuts.
 
 ## Connections, settings and Explorer
 
-`nocterm-connections` owns persisted profiles and recents,
-the grouped sidebar, profile editor and quick-connect menu. Its `ServerFacts`
+`nocterm-connections` owns profile/recent publication,
+the grouped sidebar, profile editor and quick-connect menu. Pure document formats
+and checked transitions belong to `nocterm-connections-model`; the app supplies
+preloaded documents and repository writers. Editor, reload and quick-connect
+use injected identifiers, defaults and clock capabilities through the existing
+shared connection entity. Its `ServerFacts`
 global keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
 `connections.toml`. `ObservationDeps` injects the pure country/resolution/flag
