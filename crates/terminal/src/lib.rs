@@ -14,6 +14,8 @@
 //! The crate never names a transport. The application installs one with
 //! [`init`], and the workspace reaches this crate through [`open_session`],
 //! installed as its session opener, and [`open_program`], its program opener.
+//! Text conversion remains here; directory synchronization preserves session
+//! charset errors through the workspace LocalTerminal contract.
 
 mod access;
 mod codec;

@@ -12,6 +12,7 @@ struct Probe {
     cwd: PathBuf,
     closes: Rc<Cell<usize>>,
     commands: Rc<RefCell<Vec<PathBuf>>>,
+    refusal: Option<crate::LocalDirectoryError>,
 }
 impl EventEmitter<ItemEvent> for Probe {}
 impl Focusable for Probe {
@@ -48,18 +49,30 @@ impl crate::LocalTerminal for Probe {
         path: PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
+        if let Some(error) = &self.refusal {
+            return Err(error.clone());
+        }
         self.cwd = path;
         cx.emit(ItemEvent::Changed);
         Ok(())
     }
 }
 fn probe(cx: &mut App, path: &str, closes: Rc<Cell<usize>>) -> Entity<Probe> {
+    probe_with_refusal(cx, path, closes, None)
+}
+fn probe_with_refusal(
+    cx: &mut App,
+    path: &str,
+    closes: Rc<Cell<usize>>,
+    refusal: Option<crate::LocalDirectoryError>,
+) -> Entity<Probe> {
     cx.new(|cx| Probe {
         focus: cx.focus_handle(),
         cwd: path.into(),
         closes,
         commands: Rc::default(),
+        refusal,
     })
 }
 fn fixture(
@@ -395,4 +408,64 @@ fn selected_split_group_controls_cwd_addition_and_toolkit_removal_closes_once(
             2
         );
     });
+}
+
+#[gpui_kit::test]
+fn directory_request_opens_local_shell_and_preserves_selected_target_on_refusal(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, _) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .change_local_directory("/opened".into(), window, cx)
+                .unwrap();
+            assert_eq!(workspace.local_terminal_cwd(cx), Some("/opened".into()));
+        });
+        let refusal = crate::LocalDirectoryError::Busy {
+            command: "cd -- '/refused'".into(),
+        };
+        let shell = probe_with_refusal(cx, "/busy", Rc::default(), Some(refusal.clone()));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_local_terminal(shell.clone(), window, cx);
+            workspace.toggle_local_terminal(window, cx);
+            assert_eq!(
+                workspace.change_local_directory("/refused".into(), window, cx),
+                Err(refusal)
+            );
+            assert_eq!(
+                workspace.selected_local_terminal(cx),
+                Some(shell.entity_id())
+            );
+            assert_eq!(workspace.local_terminal_cwd(cx), Some("/busy".into()));
+            assert!(workspace.local_terminal_is_visible(cx));
+            assert_eq!(
+                workspace
+                    .tabs(cx)
+                    .iter()
+                    .filter(|tab| tab.is_local())
+                    .count(),
+                2
+            );
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn directory_request_reports_unavailable_when_opener_registers_no_shell(cx: &mut TestAppContext) {
+    let (handle, workspace, _) = fixture(cx);
+    workspace.update(cx, |workspace, _| {
+        workspace.set_local_terminal_opener(|_, _, _, _| {})
+    });
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.change_local_directory("/tmp".into(), window, cx),
+                Err(crate::LocalDirectoryError::Unavailable)
+            );
+            assert!(workspace.selected_local_terminal(cx).is_none());
+        });
+    })
+    .unwrap();
 }

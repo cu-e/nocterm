@@ -2,7 +2,7 @@
 use super::{Terminal, TerminalEvent};
 use gpui_kit::Context;
 use nocterm_vt::encode_paste;
-use nocterm_workspace::LiveCommandLease;
+use nocterm_workspace::{LiveCommandLease, LocalDirectoryError};
 use std::{
     path::Path,
     sync::{
@@ -31,43 +31,39 @@ impl AgentInput {
 
 impl Terminal {
     /// Changes a known idle, empty local prompt. Otherwise returns a prepared command.
-    pub fn change_directory(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<(), String> {
+    pub fn change_directory(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Result<(), LocalDirectoryError> {
         if !self.local || !self.is_connected() {
-            return Err("Open a connected local terminal first.".into());
+            return Err(LocalDirectoryError::NotConnectedLocal);
         }
         let _ = cx;
         let stem = Path::new(&self.shell_program)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        let path = path
-            .to_str()
-            .ok_or("The shell cannot represent this directory path.")?;
+        let path = path.to_str().ok_or(LocalDirectoryError::NonUtf8Path)?;
         if path.contains(['\0', '\r', '\n']) {
-            return Err(
-                "Directory paths with control characters require manual navigation.".into(),
-            );
+            return Err(LocalDirectoryError::ControlCharacters);
         }
-        let command=match stem {
-            "bash"|"zsh"|"fish"=>format!("cd -- {}",nocterm_session::quote_posix(path)),
-            "pwsh"|"powershell"=>format!("Set-Location -LiteralPath {}",nocterm_session::quote_powershell(path)),
-            _=>return Err("Directory synchronization needs Bash, Zsh, fish or PowerShell with shell integration enabled.".into()),
+        let command = match stem {
+            "bash" | "zsh" | "fish" => format!("cd -- {}", nocterm_session::quote_posix(path)),
+            "pwsh" | "powershell" => format!(
+                "Set-Location -LiteralPath {}",
+                nocterm_session::quote_powershell(path)
+            ),
+            _ => return Err(LocalDirectoryError::UnsupportedShell),
         };
         let integration = self.integration.borrow();
         if !integration.at_prompt || integration.dirty_input || self.emulator.modes().alt_screen {
-            return Err(format!(
-                "The shell is busy or has unfinished input. Run at an empty prompt: {command}"
-            ));
+            return Err(LocalDirectoryError::Busy { command });
         }
         drop(integration);
-        let bytes = self
-            .codec
-            .encode(&format!("{command}\r"))
-            .map_err(|e| e.to_string())?;
+        let bytes = self.codec.encode(&format!("{command}\r"))?;
         if !self.send(bytes) {
-            return Err(
-                "Directory change was not sent because the terminal input queue is full.".into(),
-            );
+            return Err(LocalDirectoryError::QueueFull);
         }
         Ok(())
     }

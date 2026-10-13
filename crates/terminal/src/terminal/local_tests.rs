@@ -1,6 +1,7 @@
 use super::*;
 use futures::FutureExt as _;
-use gpui_kit::{AppContext as _, TestAppContext};
+use gpui_kit::{AppContext as _, Entity, TestAppContext};
+use nocterm_session::Command;
 use std::{path::Path, sync::Mutex};
 
 struct FakeTransport(Arc<Mutex<Option<nocterm_session::SessionDriver>>>);
@@ -120,11 +121,11 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
             terminal.handle_event(Event::Connected, cx);
-            assert!(
-                terminal
-                    .change_directory(Path::new("/tmp/a"), cx)
-                    .unwrap_err()
-                    .contains("busy")
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp/a"), cx),
+                Err(nocterm_workspace::LocalDirectoryError::Busy {
+                    command: "cd -- '/tmp/a'".into(),
+                })
             );
             terminal.handle_event(
                 Event::Output(b"\x1b]7;file://localhost/home/egor\x07\x1b]133;A\x07".to_vec()),
@@ -157,12 +158,205 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
         terminal.update(cx, |terminal, cx| {
             terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
             terminal.send(b"unfinished".to_vec());
-            assert!(
-                terminal
-                    .change_directory(Path::new("/tmp/c"), cx)
-                    .unwrap_err()
-                    .contains("unfinished")
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp/c"), cx),
+                Err(nocterm_workspace::LocalDirectoryError::Busy {
+                    command: "cd -- '/tmp/c'".into(),
+                })
             );
         })
     });
+}
+
+fn directory_terminal(
+    cx: &mut TestAppContext,
+    program: &str,
+    charset: nocterm_session::Charset,
+) -> (
+    Entity<Terminal>,
+    Arc<Mutex<Option<nocterm_session::SessionDriver>>>,
+) {
+    let driver = Arc::new(Mutex::new(None));
+    let captured = driver.clone();
+    let terminal = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let mut settings = nocterm_settings::SettingsDocument::default();
+        settings.update::<nocterm_session::LocalShellSettings>(|section| {
+            section.program = Some(program.into());
+        });
+        settings.update::<nocterm_ui::TerminalSettings>(|section| section.charset = charset);
+        nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            SettingsStore::in_memory(settings),
+            cx,
+        );
+        crate::init_local(
+            Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            cx,
+        );
+        cx.new(Terminal::new_local)
+    });
+    (terminal, driver)
+}
+
+#[gpui_kit::test]
+fn directory_bridge_validates_connection_and_literal_paths_before_submission(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace::LocalDirectoryError;
+    let (terminal, driver) = directory_terminal(cx, "/bin/bash", nocterm_session::Charset::Utf8);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp"), cx),
+                Err(LocalDirectoryError::NotConnectedLocal)
+            );
+            terminal.handle_event(Event::Connected, cx);
+            for path in ["/tmp/a\0b", "/tmp/a\rb", "/tmp/a\nb"] {
+                assert_eq!(
+                    terminal.change_directory(Path::new(path), cx),
+                    Err(LocalDirectoryError::ControlCharacters)
+                );
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStrExt as _;
+                let path = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xff"));
+                assert_eq!(
+                    terminal.change_directory(path, cx),
+                    Err(LocalDirectoryError::NonUtf8Path)
+                );
+            }
+            terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
+            terminal
+                .change_directory(Path::new("/tmp/literal"), cx)
+                .unwrap();
+        })
+    });
+    let driver = driver.lock().unwrap().take().unwrap();
+    assert_eq!(
+        driver.next_command().now_or_never().unwrap(),
+        Some(Command::Input(b"cd -- '/tmp/literal'\r".to_vec()))
+    );
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn directory_bridge_refuses_unsupported_shell_without_sending(cx: &mut TestAppContext) {
+    let (terminal, driver) = directory_terminal(cx, "cmd.exe", nocterm_session::Charset::Utf8);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp"), cx),
+                Err(nocterm_workspace::LocalDirectoryError::UnsupportedShell)
+            );
+        })
+    });
+    let driver = driver.lock().unwrap().take().unwrap();
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn directory_bridge_refuses_alternate_screen_and_accepts_after_leaving(cx: &mut TestAppContext) {
+    let (terminal, driver) = directory_terminal(cx, "/bin/bash", nocterm_session::Charset::Utf8);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            terminal.handle_event(Event::Output(b"\x1b]133;A\x07\x1b[?1049h".to_vec()), cx);
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp"), cx),
+                Err(nocterm_workspace::LocalDirectoryError::Busy {
+                    command: "cd -- '/tmp'".into(),
+                })
+            );
+        })
+    });
+    let driver = driver.lock().unwrap().take().unwrap();
+    assert!(driver.next_command().now_or_never().is_none());
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Output(b"\x1b[?1049l\x1b]133;A\x07".to_vec()), cx);
+            terminal.change_directory(Path::new("/tmp"), cx).unwrap();
+        })
+    });
+    assert_eq!(
+        driver.next_command().now_or_never().unwrap(),
+        Some(Command::Input(b"cd -- '/tmp'\r".to_vec()))
+    );
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn directory_bridge_preserves_unrepresentable_charset_cause_without_sending(
+    cx: &mut TestAppContext,
+) {
+    use std::error::Error as _;
+    let charset = nocterm_session::Charset::Windows1252;
+    let (terminal, driver) = directory_terminal(cx, "/bin/bash", charset);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
+            let error = terminal
+                .change_directory(Path::new("/tmp/中文"), cx)
+                .unwrap_err();
+            assert_eq!(
+                error,
+                nocterm_workspace::LocalDirectoryError::Encoding(
+                    nocterm_session::TextEncodingError::new(charset)
+                )
+            );
+            assert_eq!(
+                error
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<nocterm_session::TextEncodingError>()
+                    .unwrap()
+                    .charset(),
+                charset
+            );
+            terminal
+                .change_directory(Path::new("/tmp/ascii"), cx)
+                .unwrap();
+        })
+    });
+    let driver = driver.lock().unwrap().take().unwrap();
+    assert_eq!(
+        driver.next_command().now_or_never().unwrap(),
+        Some(Command::Input(b"cd -- '/tmp/ascii'\r".to_vec()))
+    );
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn directory_bridge_reports_full_input_queue_and_can_retry_after_drain(cx: &mut TestAppContext) {
+    let (terminal, driver) = directory_terminal(cx, "/bin/bash", nocterm_session::Charset::Utf8);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            assert!(terminal.send(vec![b'x'; 4 * 1024 * 1024]));
+            terminal.handle_event(Event::Output(b"\x1b]133;A\x07".to_vec()), cx);
+            assert_eq!(
+                terminal.change_directory(Path::new("/tmp"), cx),
+                Err(nocterm_workspace::LocalDirectoryError::QueueFull)
+            );
+        })
+    });
+    let driver = driver.lock().unwrap().take().unwrap();
+    assert!(matches!(
+        driver.next_command().now_or_never().unwrap(),
+        Some(Command::Input(_))
+    ));
+    assert!(driver.next_command().now_or_never().is_none());
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.change_directory(Path::new("/tmp"), cx).unwrap()
+        })
+    });
+    assert_eq!(
+        driver.next_command().now_or_never().unwrap(),
+        Some(Command::Input(b"cd -- '/tmp'\r".to_vec()))
+    );
 }

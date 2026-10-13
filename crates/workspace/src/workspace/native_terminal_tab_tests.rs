@@ -54,7 +54,7 @@ impl crate::LocalTerminal for Tab {
         path: PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         self.cwd = path;
         cx.emit(ItemEvent::Changed);
         Ok(())

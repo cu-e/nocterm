@@ -86,6 +86,10 @@ uses native dock visibility, preserving its pane tree, sizes, tab order,
 selections, groups and running processes. Every user tab shares one Item registry
 and the same close, split, grouping, rename and keyboard operations. Close scopes
 resolve the clicked tab's current native pane; Close All affects its dock placement.
+`LocalTerminal` directory synchronization returns `LocalDirectoryError`, distinguishing
+missing or disconnected shells, unsafe paths, unsupported integration, busy prompts,
+charset encoding causes and input queue rejection. Consumers format errors at notice
+presentation; the workspace retains the selected target on refusal.
 Local shell capability is an optional Item contract, so mixed panes and moved local
 tabs retain identical ownership. Local focus preserves the last central remote
 context for Explorer; native group selection owns the local cwd target. Header

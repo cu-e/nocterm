@@ -570,7 +570,7 @@ impl LocalPane {
                                             cx,
                                             "files-shell-directory",
                                             "Could not change shell directory",
-                                            error,
+                                            error.to_string(),
                                         );
                                     }
                                     cx.notify();

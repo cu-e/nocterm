@@ -123,8 +123,8 @@ nocterm-ui = 5
 "nocterm_ui::layout::LayoutMemory::init" = 1
 
 [string_errors]
-nocterm-terminal = 17
-nocterm-workspace = 13
+nocterm-terminal = 15
+nocterm-workspace = 9
 
 [struct_fields]
 "nocterm_agent::panel::AgentPanel" = 34

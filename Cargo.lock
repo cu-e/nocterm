@@ -5540,6 +5540,7 @@ dependencies = [
  "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
+ "thiserror 2.0.21",
  "tracing",
 ]
 

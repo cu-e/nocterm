@@ -283,7 +283,7 @@ impl Workspace {
         path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         if self.tabs.selected_local_id(cx).is_none() {
             self.new_local_terminal(window, cx);
         }
@@ -298,7 +298,7 @@ impl Workspace {
         }
         self.tabs
             .selected_local_handle(cx)
-            .ok_or("Local terminal is unavailable")?
+            .ok_or(crate::LocalDirectoryError::Unavailable)?
             .change_directory(path, window, cx)
     }
 }

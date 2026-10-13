@@ -538,7 +538,7 @@ impl nocterm_workspace::LocalTerminal for TerminalView {
         path: std::path::PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
         self.terminal
             .update(cx, |terminal, cx| terminal.change_directory(&path, cx))
     }

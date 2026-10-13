@@ -1,10 +1,6 @@
 //! Converts session text; transport and terminal protocol messages stay bytes.
 use encoding_rs::{CoderResult, Decoder, Encoding};
-use nocterm_session::Charset;
-
-#[derive(Debug, thiserror::Error)]
-#[error("Some characters cannot be sent in {0}. Change the session charset or edit the text.")]
-pub(crate) struct EncodeError(&'static str);
+use nocterm_session::{Charset, TextEncodingError};
 
 pub(crate) struct TextCodec {
     charset: Charset,
@@ -30,10 +26,10 @@ impl TextCodec {
         }
         text.into_bytes()
     }
-    pub(crate) fn encode(&self, text: &str) -> Result<Vec<u8>, EncodeError> {
+    pub(crate) fn encode(&self, text: &str) -> Result<Vec<u8>, TextEncodingError> {
         let (bytes, _, unmappable) = encoding(self.charset).encode(text);
         if unmappable {
-            return Err(EncodeError(self.charset.label()));
+            return Err(TextEncodingError::new(self.charset));
         }
         Ok(bytes.into_owned())
     }
@@ -52,6 +48,18 @@ fn encoding(charset: Charset) -> &'static Encoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unrepresentable_text_retains_configured_charset() {
+        let codec = TextCodec::new(Charset::Windows1252);
+        let error = codec.encode("中文").unwrap_err();
+        assert_eq!(error.charset(), Charset::Windows1252);
+        assert_eq!(
+            error.to_string(),
+            "Some characters cannot be sent in Windows-1252. Change the session charset or edit the text."
+        );
+        assert_eq!(codec.encode("plain text").unwrap(), b"plain text");
+    }
 
     #[test]
     fn fragmented_multibyte_and_control_sequences_remain_stable() {

@@ -102,7 +102,7 @@ impl LocalTerminal for Probe {
         _: PathBuf,
         _: &mut Window,
         _: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         Ok(())
     }
 }

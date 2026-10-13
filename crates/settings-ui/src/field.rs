@@ -275,4 +275,16 @@ mod tests {
         );
         assert!(environment(r#"{"1X":"x"}"#, "Environment").is_err());
     }
+
+    #[test]
+    fn agent_field_errors_keep_their_messages() {
+        assert_eq!(
+            FieldError::DuplicateAgent("codex".into()).to_string(),
+            "An agent named `codex` already exists."
+        );
+        assert_eq!(
+            FieldError::from(crate::ai::AgentValidationError::InvalidId).to_string(),
+            "Agent ids use letters, numbers, underscore or dash, up to 64 characters."
+        );
+    }
 }

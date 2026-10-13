@@ -486,9 +486,14 @@ impl nocterm_workspace::LocalTerminal for CwdShell {
         path: std::path::PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
         if self.busy {
-            return Err("Shell is busy; use an empty prompt.".into());
+            return Err(nocterm_workspace::LocalDirectoryError::Busy {
+                command: format!(
+                    "cd -- {}",
+                    nocterm_session::quote_posix(path.to_str().unwrap())
+                ),
+            });
         }
         self.cwd = path.clone();
         self.accepted.push(path);
@@ -551,7 +556,10 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
     panel.read_with(cx, |panel, cx| {
         assert!(panel.local_listing(cx).error().is_none())
     });
-    shell.read_with(cx, |shell, _| assert_eq!(shell.cwd, first));
+    shell.read_with(cx, |shell, _| {
+        assert_eq!(shell.cwd, first);
+        assert_eq!(shell.accepted, vec![first.clone()]);
+    });
     shell.update(cx, |shell, cx| {
         shell.cwd = first.clone();
         cx.emit(ItemEvent::Changed);

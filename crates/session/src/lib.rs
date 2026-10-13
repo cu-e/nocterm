@@ -1,5 +1,5 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, launch/override validation, opaque IDs and execution/FS contracts.
+//! Owns: targets, authentication, launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
 //! and recording::{OutputLogFactory, OutputLog}.
@@ -37,6 +37,7 @@ mod secret;
 mod session;
 mod settings;
 mod target;
+mod text;
 
 pub use credentials::{CredentialFuture, CredentialStore, CredentialStoreError};
 pub use exec::{
@@ -50,6 +51,7 @@ pub use session::{
     Reply, SecretRequest, Session, SessionDriver, SessionError, Transport, channel,
 };
 pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
+pub use text::TextEncodingError;
 
 pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};
 pub use program::{ProgramTransport, TerminalRequest};

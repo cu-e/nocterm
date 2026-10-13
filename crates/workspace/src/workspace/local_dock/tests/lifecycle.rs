@@ -118,7 +118,7 @@ impl crate::LocalTerminal for AccessProbe {
         path: PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         self.cwd = path;
         cx.emit(ItemEvent::Changed);
         Ok(())

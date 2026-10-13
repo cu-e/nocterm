@@ -144,7 +144,7 @@ impl crate::LocalTerminal for LocalProbe {
         _: std::path::PathBuf,
         _: &mut Window,
         _: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         Ok(())
     }
 }

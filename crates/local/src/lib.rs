@@ -90,7 +90,7 @@ enum LaunchError {
     #[error("file descriptor control error: {0}")]
     Fcntl(String),
     #[error("I/O error: {0}")]
-    Io(String),
+    Io(#[from] std::io::Error),
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -110,7 +110,7 @@ fn start(
         command.env_clear();
     }
     let integration = if launch.integration && launch.args.is_empty() {
-        prepare_integration(&program, &mut command).map_err(|e| LaunchError::Io(e.to_string()))?
+        prepare_integration(&program, &mut command)?
     } else {
         None
     };
@@ -221,11 +221,7 @@ fn start(
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 // The owned shell can also exit normally while a background
                 // job retains the slave; stop after its buffered output drains.
-                if child
-                    .try_wait()
-                    .map_err(|e| LaunchError::Io(e.to_string()))?
-                    .is_some()
-                {
+                if child.try_wait()?.is_some() {
                     done_tx.close();
                     break;
                 }
@@ -251,7 +247,7 @@ fn start(
             }
         }
     }
-    let exit = child.wait().map_err(|e| LaunchError::Io(e.to_string()))?;
+    let exit = child.wait()?;
     done_tx.close();
     // Keep ephemeral scripts alive until the shell has exited.
     drop(integration);

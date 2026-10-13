@@ -160,8 +160,8 @@ impl LocalTerminal for Terminal {
         _: PathBuf,
         _: &mut Window,
         _: &mut Context<Self>,
-    ) -> Result<(), String> {
-        Err("Unused by snippets".into())
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
+        Err(nocterm_workspace::LocalDirectoryError::UnsupportedShell)
     }
 }
 
