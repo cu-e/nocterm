@@ -98,7 +98,11 @@ pub(crate) fn prepared_repository(
             })
         }),
     );
-    let values = std::sync::Arc::new(SuppliedValues::new(1, 0));
+    let values = std::sync::Arc::new(SuppliedValues::excluding(
+        1,
+        0,
+        documents.profiles.iter().map(|profile| profile.id),
+    ));
     crate::PreparedConnections::new(
         documents,
         writers,
@@ -121,9 +125,11 @@ pub(crate) fn install_owners(
     settings: nocterm_store::SettingsHandle,
     cx: &mut gpui_kit::App,
 ) -> Installed {
+    let inputs = model_inputs(&connections, cx);
     Installed::from_owners(
         connections,
         facts,
+        inputs,
         settings,
         &nocterm_store::ShutdownCoordinator::default(),
         cx,
@@ -140,5 +146,19 @@ pub(crate) fn install_model(
         ServerFacts::in_memory(ObservationDeps::offline()),
         installed.settings().clone(),
         cx,
+    )
+}
+
+fn model_inputs(connections: &Connections, cx: &gpui_kit::App) -> crate::EditorInputs {
+    let values = std::sync::Arc::new(
+        nocterm_connections_model::value_ports::SuppliedValues::excluding(
+            1,
+            0,
+            connections.profiles(cx).iter().map(|p| p.id),
+        ),
+    );
+    crate::EditorInputs::new(
+        nocterm_connections_model::draft::EditorDefaults::default(),
+        values,
     )
 }

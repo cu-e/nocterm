@@ -22,9 +22,9 @@ fn disk_recents(path: std::path::PathBuf) -> SnapshotWriter<Recents> {
     })
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn active_prefix_and_independent_recents_are_durable_while_final_profile_hangs(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let (mut a, mut b) = (profile("A"), profile("B"));
     a.target.host = "a".into();
@@ -62,9 +62,7 @@ async fn active_prefix_and_independent_recents_are_durable_while_final_profile_h
     let active = entity.update(cx, |c, cx| c.delete_profile(a.id, cx));
     cx.run_until_parked();
     let final_save = entity.update(cx, |c, cx| c.delete_profile(b.id, cx));
-    entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&independent), None, cx)
-    });
+    entity.update(cx, |c, cx| c.record_use(recent_use(&independent, None), cx));
     let work = cx.update(|cx| shutdown.capture_all(cx));
     drop(entity);
     let task = cx.background_executor.spawn(work);
@@ -102,9 +100,9 @@ async fn active_prefix_and_independent_recents_are_durable_while_final_profile_h
     drop(final_save);
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn equal_profile_payload_still_requires_real_publication_before_unlinking(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     for fail in [true, false] {
         let original = profile("Original");
@@ -159,10 +157,8 @@ async fn equal_profile_payload_still_requires_real_publication_before_unlinking(
     }
 }
 
-#[gpui_kit::test]
-async fn failed_recents_never_revoke_a_successful_profile_receipt(
-    cx: &mut gpui_kit::TestAppContext,
-) {
+#[gpui::test]
+async fn failed_recents_never_revoke_a_successful_profile_receipt(cx: &mut gpui::TestAppContext) {
     let original = profile("Original");
     let directory = tempfile::tempdir().unwrap();
     let profile_path = directory.path().join("profiles.toml");
@@ -199,8 +195,8 @@ async fn failed_recents_never_revoke_a_successful_profile_receipt(
     );
 }
 
-#[gpui_kit::test]
-async fn independent_recents_save_even_when_profiles_fail(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+async fn independent_recents_save_even_when_profiles_fail(cx: &mut gpui::TestAppContext) {
     let original = profile("Original");
     let directory = tempfile::tempdir().unwrap();
     let recents_path = directory.path().join("recents.toml");
@@ -219,7 +215,7 @@ async fn independent_recents_save_even_when_profiles_fail(cx: &mut gpui_kit::Tes
     });
     let deleted = entity.update(cx, |c, cx| c.delete_profile(original.id, cx));
     entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        c.record_use(recent_use(&original, Some(original.id)), cx)
     });
     let work = cx.update(|cx| shutdown.capture_all(cx));
     let report = cx.background_executor.spawn(work).await;
@@ -237,9 +233,9 @@ async fn independent_recents_save_even_when_profiles_fail(cx: &mut gpui_kit::Tes
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn final_capture_retries_the_failed_active_intent_as_part_of_its_complete_document(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let (mut a, mut b) = (profile("A"), profile("B"));
     a.target.host = "a".into();
@@ -293,9 +289,9 @@ async fn final_capture_retries_the_failed_active_intent_as_part_of_its_complete_
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn final_failure_preserves_physical_prefix_effects_and_final_success_applies_all(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     for fail_final in [true, false] {
         let (mut a, mut b) = (profile("A"), profile("B"));

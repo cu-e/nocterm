@@ -77,7 +77,7 @@ impl PreparedConnections {
             observations: ObservationDeps::offline(),
         }
     }
-    pub(crate) fn into_owners(self) -> (Connections, ServerFacts) {
+    pub(crate) fn into_owners(self) -> (Connections, EditorInputs, ServerFacts) {
         let profiles = self.documents.profiles;
         let recents = self.documents.recents;
         let (connections, facts) = match self.writers {
@@ -88,16 +88,15 @@ impl PreparedConnections {
                     writers.profiles,
                     writers.recents,
                     self.documents.read_only,
-                    self.inputs,
                     self.clock,
                 ),
                 ServerFacts::with_backend(self.documents.known, writers.facts, self.observations),
             ),
             None => (
-                Connections::memory_with_inputs(profiles, recents, self.inputs, self.clock),
+                Connections::memory_with_clock(profiles, recents, self.clock),
                 ServerFacts::in_memory(self.observations),
             ),
         };
-        (connections, facts)
+        (connections, self.inputs, facts)
     }
 }

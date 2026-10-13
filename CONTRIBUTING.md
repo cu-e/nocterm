@@ -77,6 +77,10 @@ Rules:
 
 - **Header** ≤ 72 chars. Subject in imperative mood, lower-case first letter, no trailing period: `fix(pty): handle zero-size resize`.
 - **Scope** is optional, lower-case kebab, and names the affected module (`pty`, `renderer`, `config`). Use `deps` for dependency bumps. Keep the scope list in [AGENTS.md](AGENTS.md) up to date as modules appear.
+
+| Scope | Covers |
+| ----- | ------ |
+| `connections-store` | ordered profile/recent publication and committed authority |
 - **Body** explains *why*, not *what*; wrap at ~100 chars. Blank line after the header.
 - **Breaking changes**: add `!` after the type/scope *and* a `BREAKING CHANGE: <what breaks and how to migrate>` footer.
 - **Footers**: `Refs: #123`, `Closes: #123`, `Co-Authored-By: ...`.

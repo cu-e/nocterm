@@ -10,8 +10,8 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views, profile/recent publication and detected-server presentation/lifecycle.
-//! Does not own: profile formats/rules, files, native defaults/IDs/clock, session transport,
+//! Owns: views, editor inputs, session-intent conversion and detected-server presentation/lifecycle.
+//! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
@@ -20,7 +20,8 @@
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
-//! Windows/actions use supplied installation; scheduling/publication remain feature migration debt.
+//! Connections aliases the actual service entity; windows/actions use supplied installation.
+//! Detected-fact scheduling/publication remains feature migration debt.
 
 mod installed;
 mod session_intents;
@@ -31,7 +32,6 @@ mod editor;
 mod facts;
 mod geo;
 mod menu;
-mod model;
 mod observation;
 pub mod os;
 mod panel;
@@ -47,7 +47,7 @@ use nocterm_workspace::Workspace;
 pub use editor::{ConnectionEditor, open_editor};
 pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
-pub use model::{Connections, ConnectionsError};
+pub use nocterm_connections_store::{ConnectionStore as Connections, ConnectionsError};
 pub use observation::ObservationDeps;
 pub use panel::ConnectionsPanel;
 

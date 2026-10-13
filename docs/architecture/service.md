@@ -104,3 +104,26 @@ checks cancellation before and after preparation and passes one resulting canoni
 root to the process, session requests and connected event. Candidate connection
 keys/serials remain unchanged when the prepared root is accepted. A late successful
 connector still follows the existing retained orphan-cleanup completion.
+
+## Connection publication
+
+`nocterm-connections-store` owns checked profile admission, ordered profile/recent
+publication and coupled shutdown capture. The feature re-exports its actual entity,
+so installed views and credential callbacks retain identical ownership. Writers and
+a `ConnectionClock` are explicit dependencies; editor inputs, native acquisitions,
+settings, views and fact jobs stay outside this service.
+
+Profiles use durable checked edits, recents use optimistic coalescing, and both
+reuse `Persisted` and `ShutdownCoordinator` with the common 180-ms budget.
+Each candidate applies pure authority transitions before the next candidate.
+Incarnation, exact endpoint and manual icon/country stamps therefore retain
+delete/re-add and A→B→A history even when one final capture serializes identical
+profiles. Stamps and derived effects are internal; writers receive only `Profiles`.
+
+The synchronous success hook applies derived recents before completing receipts
+and publishes a supplied immutable projection into a distinct `ProfilePublications`
+entity. It never rereads leased profile persistence or starts observation jobs.
+Failed, rejected and unadmitted mutations cannot publish authority. Captured
+background drain has no App/entity access; successful physical prefix/final
+snapshots alone select recents effects through the existing two-event feed.
+See [ADR0047](../adr/0047-connection-publication-authority-service.md).

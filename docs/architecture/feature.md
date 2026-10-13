@@ -87,12 +87,13 @@ them. Platform-key combinations remain application shortcuts.
 
 ## Connections, settings and Explorer
 
-`nocterm-connections` owns profile/recent publication,
-the grouped sidebar, profile editor and quick-connect menu. Pure document formats
+`nocterm-connections` owns the grouped sidebar, profile editor, editor inputs,
+session-intent conversion and quick-connect menu. `Connections` aliases the actual
+`nocterm-connections-store::ConnectionStore` service entity. Pure document formats
 and checked transitions belong to `nocterm-connections-model`; the app supplies
 preloaded documents and repository writers. Editor, reload and quick-connect
-use injected identifiers, defaults and clock capabilities through the existing
-shared connection entity. Its retained `ServerFacts`
+use injected identifiers/defaults retained by `Installed`; recent-use intents
+receive their timestamp from the service's injected clock. Its retained `ServerFacts`
 entity keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
 `connections.toml`. `ObservationDeps` injects the pure country/resolution/flag
@@ -115,7 +116,7 @@ vault credentials are left untouched. Profiles use durable checked edits through
 `nocterm-store`; recents and detected facts remain optimistic and coalesce. The
 injected shutdown coordinator captures profiles/recents together, saves independent
 uses before waiting for profile outcomes, and applies only physically successful
-prefix/final effects. The feature supplies typed backend errors and codecs;
+prefix/final effects. The service supplies typed publication errors; the domain supplies codecs;
 no separate writer loop or quit handler remains. Unknown top-level profile tables
 and comments on retained keys round-trip through the existing atomic writer.
 `nocterm-settings-ui`
@@ -401,6 +402,7 @@ profile/facts entities, editor inputs, explicit settings and observer lifetimes.
 Directories, editors, menus and group actions capture those owners; connection
 and facts globals are removed. Session intents remain feature conversions over
 the unchanged workspace session factory. Country policy uses the supplied
-SettingsHandle. Publication/scheduling remain existing feature migration debt;
+SettingsHandle. Profile/recent publication belongs to the service; detected-fact
+publication/scheduling remains existing feature migration debt;
 stale observation completion authority remains separate work.
 See [ADR0043](../adr/0043-retained-connections-installation.md).

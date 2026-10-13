@@ -586,8 +586,16 @@ fn new_connection_uses_supplied_user_and_identifier_source(cx: &mut TestAppConte
         home: None,
     });
     let installed = cx.update(|cx| {
-        let (connections, facts) = inputs.into_owners();
-        crate::test_support::install_owners(connections, facts, installed.settings().clone(), cx)
+        let (connections, inputs, facts) = inputs.into_owners();
+        crate::Installed::from_owners(
+            connections,
+            facts,
+            inputs,
+            installed.settings().clone(),
+            &nocterm_store::ShutdownCoordinator::default(),
+            cx,
+        )
+        .unwrap()
     });
     let connections = installed.connections().clone();
     cx.update_window(handle, |_, window, cx| {

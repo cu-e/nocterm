@@ -1,109 +1,79 @@
-use gpui_kit::{App, AppContext as _, Context, Entity, Task};
+use gpui::{App, AppContext as _, Context, Entity, Task};
 use nocterm_session::{Auth, CredentialId, Target};
-use nocterm_workspace::SessionSpec;
 
 use nocterm_connections_model::profiles::{Profile, ProfileId, Profiles, Recent, Recents};
 
-mod error;
-mod persistence;
-pub use error::ConnectionsError;
+use crate::{error::ConnectionsError, publication};
+use nocterm_connections_model::recents::RecentUse;
 
-use crate::EditorInputs;
 use nocterm_connections_model::profiles::{ProfileExpectation, ProfileMutation as Mutation};
 use nocterm_connections_model::{
-    draft::EditorDefaults,
     repository::ConnectionStorageError,
     value_ports::{ConnectionClock, SuppliedValues},
 };
 use std::sync::Arc;
 
-const MAX_PENDING_WRITES: usize = 32;
+pub(super) const MAX_PENDING_WRITES: usize = 32;
 
 /// Saved connections and recent ones, shared by every view that lists them.
-pub struct Connections {
-    state: persistence::ConnectionStore,
+pub struct ConnectionStore {
+    state: publication::PublicationDriver,
     load_error: Option<Arc<ConnectionStorageError>>,
-    inputs: EditorInputs,
     clock: Arc<dyn ConnectionClock>,
 }
-impl Connections {
+impl ConnectionStore {
     pub fn prepared(
         profiles: Profiles,
         recents: Recents,
         profiles_writer: nocterm_store::SnapshotWriter<Profiles>,
         recents_writer: nocterm_store::SnapshotWriter<Recents>,
         load_error: Option<Arc<ConnectionStorageError>>,
-        inputs: EditorInputs,
         clock: Arc<dyn ConnectionClock>,
     ) -> Self {
         Self {
-            state: persistence::ConnectionStore::backends(
+            state: publication::PublicationDriver::backends(
                 profiles,
                 recents,
                 profiles_writer,
                 recents_writer,
             ),
             load_error,
-            inputs,
             clock,
         }
     }
-    pub fn memory_with_inputs(
+    pub fn memory_with_clock(
         profiles: Profiles,
         recents: Recents,
-        inputs: EditorInputs,
         clock: Arc<dyn ConnectionClock>,
     ) -> Self {
         Self {
-            state: persistence::ConnectionStore::memory(profiles, recents),
+            state: publication::PublicationDriver::memory(profiles, recents),
             load_error: None,
-            inputs,
             clock,
         }
-    }
-    pub fn editor_inputs(&self) -> &EditorInputs {
-        &self.inputs
     }
     pub fn in_memory() -> Self {
         Self::with_documents(Profiles::default(), Recents::default())
     }
     /// A synchronous, explicitly memory-only owner, with no filesystem writes.
     pub fn with_documents(profiles: Profiles, recents: Recents) -> Self {
-        let values = Arc::new(SuppliedValues::excluding(
-            1,
-            0,
-            profiles.iter().map(|profile| profile.id),
-        ));
-        Self {
-            state: persistence::ConnectionStore::memory(profiles, recents),
-            load_error: None,
-            inputs: EditorInputs::new(EditorDefaults::default(), values.clone()),
-            clock: values,
-        }
+        Self::memory_with_clock(profiles, recents, Arc::new(SuppliedValues::new(1, 0)))
     }
-    /// Explicit persistence ports; useful for alternate backends and behavior tests.
+    /// Alternate-backend fixture convenience; clock is the explicitly inert value source.
     pub fn with_backends(
         profiles: Profiles,
         recents: Recents,
         profiles_writer: nocterm_store::SnapshotWriter<Profiles>,
         recents_writer: nocterm_store::SnapshotWriter<Recents>,
     ) -> Self {
-        let values = Arc::new(SuppliedValues::excluding(
-            1,
-            0,
-            profiles.iter().map(|profile| profile.id),
-        ));
-        Self {
-            state: persistence::ConnectionStore::backends(
-                profiles,
-                recents,
-                profiles_writer,
-                recents_writer,
-            ),
-            load_error: None,
-            inputs: EditorInputs::new(EditorDefaults::default(), values.clone()),
-            clock: values,
-        }
+        Self::prepared(
+            profiles,
+            recents,
+            profiles_writer,
+            recents_writer,
+            None,
+            Arc::new(SuppliedValues::new(1, 0)),
+        )
     }
     /// Construct an owner with explicit shutdown lifetime, without global lookup.
     pub fn into_entity(
@@ -148,10 +118,10 @@ impl Connections {
         if newly_installed {
             self.observe(cx);
         }
-        let installed = self.state.installed().unwrap();
+        let installed = self.state.install(cx);
         let consumed = installed.consumed();
         let load_error = self.load_error.clone();
-        let edit = move |snapshot: &mut persistence::ProfileSnapshot| {
+        let edit = move |snapshot: &mut publication::ProfileSnapshot| {
             snapshot
                 .apply(&mutation, consumed.get(), load_error.as_ref())
                 .map_err(nocterm_store::StoreError::edit)
@@ -272,27 +242,31 @@ impl Connections {
             cx,
         )
     }
-    pub fn record_use(
-        &mut self,
-        spec: &SessionSpec,
-        profile: Option<ProfileId>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn record_use(&mut self, request: RecentUse, cx: &mut Context<Self>) {
         let recent = Recent {
-            options: spec.options.clone(),
-            target: spec.target.clone(),
-            auth: spec.auth.clone(),
-            profile,
+            options: request.options,
+            target: request.target,
+            auth: request.auth,
+            profile: request.profile,
             last_used: self.clock.unix_seconds(),
-            credential: spec.credential,
-            launch: spec.launch.clone(),
+            credential: request.credential,
+            launch: request.launch,
         };
         let newly_installed = self.state.installed().is_none();
         self.state.install(cx);
         if newly_installed {
             self.observe(cx);
         }
-        self.state.installed().unwrap().record(recent, cx);
+        self.state.install(cx).record(recent, cx);
+    }
+    /// Distinct immutable carrier; callers never need to reread leased profile storage.
+    pub fn publications(&mut self, cx: &mut Context<Self>) -> Entity<crate::ProfilePublications> {
+        let newly_installed = self.state.installed().is_none();
+        self.state.install(cx);
+        if newly_installed {
+            self.observe(cx);
+        }
+        self.state.install(cx).publications().clone()
     }
 }
 

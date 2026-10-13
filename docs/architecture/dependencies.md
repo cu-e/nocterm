@@ -12,9 +12,10 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-store` | ACP agent connections, their admission and the chats' durable documents. |
 | `nocterm-agent-storage` | adapter | `nocterm-ai`, `nocterm-core` | Bounded agent history and favorites filesystem repositories. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
-| `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-core`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
+| `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-connections-store`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-connections-io` | adapter | `nocterm-connections-model`, `nocterm-core`, `nocterm-session` | Native connection repository, value discovery and bounded observation adapters. |
 | `nocterm-connections-model` | domain | `nocterm-session` | Pure connection formats, drafts, checked transitions and native capability ports. |
+| `nocterm-connections-store` | service | `nocterm-connections-model`, `nocterm-core`, `nocterm-session`, `nocterm-store` | Ordered connection publication and immutable committed profile authority. |
 | `nocterm-containers` | domain | `nocterm-session` | Containers on a host: listing, actions, logs and shells through the docker or podman CLI. |
 | `nocterm-containers-ui` | feature | `nocterm-containers`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's containers in the sidebar, with their logs and shells in tabs. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
@@ -104,7 +105,7 @@ graph TD
     nocterm_ai --> nocterm_core
     nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_connections_model
-    nocterm_connections --> nocterm_core
+    nocterm_connections --> nocterm_connections_store
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_store
     nocterm_connections --> nocterm_ui
@@ -113,6 +114,10 @@ graph TD
     nocterm_connections_io --> nocterm_core
     nocterm_connections_io --> nocterm_session
     nocterm_connections_model --> nocterm_session
+    nocterm_connections_store --> nocterm_connections_model
+    nocterm_connections_store --> nocterm_core
+    nocterm_connections_store --> nocterm_session
+    nocterm_connections_store --> nocterm_store
     nocterm_containers --> nocterm_session
     nocterm_containers_ui --> nocterm_containers
     nocterm_containers_ui --> nocterm_session

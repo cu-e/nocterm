@@ -163,7 +163,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `ui` | shared UI theme, assets and settings globals |
 | `workspace` | window, tabs, panels and actions |
 | `terminal` | terminal model and view |
-| `connections` | profile publication and connection UI |
+| `connections` | connection UI, editor inputs and detected facts |
+| `connections-store` | ordered profile/recent publication and committed authority |
 | `connections-model` | connection formats, rules and capability ports |
 | `connections-io` | native connection files, values and observations |
 | `settings-ui` | settings tab |

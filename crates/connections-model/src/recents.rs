@@ -6,6 +6,16 @@ pub const MAX_RECENTS: usize = 8;
 fn is_auto(auth: &Auth) -> bool {
     *auth == Auth::Auto
 }
+/// Supplied recent-use intent; its owner acquires the observation timestamp once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentUse {
+    pub options: nocterm_session::SessionOptions,
+    pub target: Target,
+    pub auth: Auth,
+    pub profile: Option<ProfileId>,
+    pub credential: Option<CredentialId>,
+    pub launch: Option<ShellLaunch>,
+}
 /// A connection that was opened, saved or not.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recent {

@@ -1,10 +1,11 @@
 use super::*;
-use crate::spec_for_profile;
+use crate::ConnectionStore as Connections;
 use futures::channel::oneshot;
 use nocterm_core::persist;
 use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
 use std::sync::{Arc, Mutex};
 
+mod publication;
 mod shutdown;
 
 fn profile(name: &str) -> Profile {
@@ -24,9 +25,9 @@ fn profile(name: &str) -> Profile {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Build");
     let entity = cx.new(|_| Connections::in_memory());
@@ -85,8 +86,8 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
     );
 }
 
-#[gpui_kit::test]
-async fn group_mutations_apply_atomically_and_unlink_recents(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+async fn group_mutations_apply_atomically_and_unlink_recents(cx: &mut gpui::TestAppContext) {
     let grouped = |name: &str, group: Option<&str>| {
         let mut item = profile(name);
         item.target = Target::new("ci", name, 22);
@@ -106,8 +107,8 @@ async fn group_mutations_apply_atomically_and_unlink_recents(cx: &mut gpui_kit::
             .unwrap();
     }
     entity.update(cx, |e, cx| {
-        e.record_use(&spec_for_profile(&a), Some(a.id), cx);
-        e.record_use(&spec_for_profile(&c), Some(c.id), cx);
+        e.record_use(recent_use(&a, Some(a.id)), cx);
+        e.record_use(recent_use(&c, Some(c.id)), cx);
     });
     entity
         .update(cx, |e, cx| e.rename_group("Work".into(), "Team".into(), cx))
@@ -149,9 +150,9 @@ async fn group_mutations_apply_atomically_and_unlink_recents(cx: &mut gpui_kit::
     });
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn delete_group_rejects_members_that_changed_since_they_were_shown(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let mut a = profile("a");
     a.group = Some("Work".into());
@@ -184,8 +185,8 @@ async fn delete_group_rejects_members_that_changed_since_they_were_shown(
     assert!(entity.read_with(cx, |e, cx| e.profiles(cx).is_empty()));
 }
 
-#[gpui_kit::test]
-async fn rename_group_trims_the_new_name(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+async fn rename_group_trims_the_new_name(cx: &mut gpui::TestAppContext) {
     let mut a = profile("a");
     a.group = Some("Work".into());
     let mut b = profile("b");
@@ -212,38 +213,6 @@ async fn rename_group_trims_the_new_name(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
-#[test]
-fn saved_profile_keeps_description_and_session_overrides_when_opened() {
-    let profile = Profile {
-        id: nocterm_connections_model::test_support::profile_id_for(
-            "crates/connections/src/model/tests.rs:2",
-        ),
-        name: "Legacy build".into(),
-        description: "Windows-1251 machine\nUses a private proxy".into(),
-        target: nocterm_session::Target::new("ci", "build.example", 22),
-        auth: nocterm_session::Auth::Auto,
-        group: None,
-        credential: None,
-        launch: None,
-        icon: None,
-        icon_color: None,
-        country: None,
-        options: nocterm_session::SessionOptions {
-            term: Some("screen-256color".into()),
-            charset: Some(nocterm_session::Charset::Windows1251),
-            proxy: Some(nocterm_session::ProxyConfig::HttpConnect {
-                host: "127.0.0.1".into(),
-                port: 8080,
-            }),
-            logging: Some(nocterm_session::LoggingOptions::default()),
-        },
-    };
-    let serialized = toml::to_string(&profile).unwrap();
-    let restored: Profile = toml::from_str(&serialized).unwrap();
-    assert_eq!(restored.description, profile.description);
-    assert_eq!(spec_for_profile(&restored).options, profile.options);
-}
-
 fn documents(items: &[Profile]) -> Profiles {
     let mut profiles = Profiles::default();
     for item in items {
@@ -255,9 +224,9 @@ fn ready_writer<T: Send + 'static>() -> SnapshotWriter<T> {
     Arc::new(|_| Box::pin(async { Ok(()) }))
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn ordered_writes_rebase_failed_predecessors_and_reject_stale_editors(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Build");
     let (release, blocked) = oneshot::channel();
@@ -323,9 +292,9 @@ async fn ordered_writes_rebase_failed_predecessors_and_reject_stale_editors(
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn save_success_applies_recent_effects_before_receipt_without_a_waiting_caller(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Build");
     let entity = cx.new(|_| {
@@ -337,7 +306,7 @@ async fn save_success_applies_recent_effects_before_receipt_without_a_waiting_ca
         )
     });
     entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        c.record_use(recent_use(&original, Some(original.id)), cx)
     });
     let save = entity.update(cx, |c, cx| c.delete_profile(original.id, cx));
     drop(save);
@@ -348,9 +317,9 @@ async fn save_success_applies_recent_effects_before_receipt_without_a_waiting_ca
     }));
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn consumed_credential_does_not_overwrite_later_independent_use(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Build");
     let entity = cx.new(|_| {
@@ -367,9 +336,9 @@ async fn consumed_credential_does_not_overwrite_later_independent_use(
         .await
         .unwrap();
     let newer = CredentialId::from_bytes([3; 16]);
-    let mut spec = spec_for_profile(&original);
+    let mut spec = recent_use(&original, Some(original.id));
     spec.credential = Some(newer);
-    entity.update(cx, |c, cx| c.record_use(&spec, Some(original.id), cx));
+    entity.update(cx, |c, cx| c.record_use(spec, cx));
     entity
         .update(cx, |c, cx| {
             c.move_profile(original.id, Some("Work".into()), cx)
@@ -382,8 +351,8 @@ async fn consumed_credential_does_not_overwrite_later_independent_use(
     );
 }
 
-#[gpui_kit::test]
-async fn queue_full_and_captured_closing_are_semantic_errors(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+async fn queue_full_and_captured_closing_are_semantic_errors(cx: &mut gpui::TestAppContext) {
     let shutdown = ShutdownCoordinator::default();
     let entity = cx.update(|cx| {
         Connections::with_backends(
@@ -418,9 +387,9 @@ async fn queue_full_and_captured_closing_are_semantic_errors(cx: &mut gpui_kit::
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn successful_profile_save_preserves_recents_failure_until_explicit_retry(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     use std::sync::atomic::{AtomicBool, Ordering};
     let original = profile("Build");
@@ -445,7 +414,7 @@ async fn successful_profile_save_preserves_recents_failure_until_explicit_retry(
         )
     });
     entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        c.record_use(recent_use(&original, Some(original.id)), cx)
     });
     cx.run_until_parked();
     assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_some()));
@@ -458,16 +427,13 @@ async fn successful_profile_save_preserves_recents_failure_until_explicit_retry(
     assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_some()));
     fail.store(false, Ordering::SeqCst);
     entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        c.record_use(recent_use(&original, Some(original.id)), cx)
     });
     cx.run_until_parked();
     assert!(entity.read_with(cx, |c, cx| c.persistence_error(cx).is_none()));
 }
 
-async fn reject_invalid_group_actions(
-    entity: &Entity<Connections>,
-    cx: &mut gpui_kit::TestAppContext,
-) {
+async fn reject_invalid_group_actions(entity: &Entity<Connections>, cx: &mut gpui::TestAppContext) {
     entity
         .update(cx, |e, cx| e.rename_group("Work".into(), "X".into(), cx))
         .await
@@ -498,9 +464,9 @@ async fn reject_invalid_group_actions(
         .unwrap_err();
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn noop_profiles_do_not_write_and_backend_sources_remain_typed(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Original");
     let writes = Arc::new(Mutex::new(0));
@@ -547,9 +513,9 @@ async fn noop_profiles_do_not_write_and_backend_sources_remain_typed(
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 async fn deleting_and_readding_the_same_profile_keeps_the_old_recent_unlinked(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
     let original = profile("Original");
     let entity = cx.new(|_| {
@@ -559,7 +525,7 @@ async fn deleting_and_readding_the_same_profile_keeps_the_old_recent_unlinked(
         )
     });
     entity.update(cx, |c, cx| {
-        c.record_use(&spec_for_profile(&original), Some(original.id), cx)
+        c.record_use(recent_use(&original, Some(original.id)), cx)
     });
     entity
         .update(cx, |c, cx| c.delete_profile(original.id, cx))
@@ -579,8 +545,8 @@ async fn deleting_and_readding_the_same_profile_keeps_the_old_recent_unlinked(
     );
 }
 
-#[gpui_kit::test]
-fn normal_publication_survives_dropping_model_and_receipt_tasks(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+fn normal_publication_survives_dropping_model_and_receipt_tasks(cx: &mut gpui::TestAppContext) {
     let original = profile("Original");
     let directory = tempfile::tempdir().unwrap();
     let recents_path = directory.path().join("recents.toml");
@@ -617,28 +583,18 @@ fn normal_publication_survives_dropping_model_and_receipt_tasks(cx: &mut gpui_ki
     );
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn record_use_preserves_the_supplied_timestamp_without_clock_discovery(
-    cx: &mut gpui_kit::TestAppContext,
+    cx: &mut gpui::TestAppContext,
 ) {
-    use nocterm_connections_model::{draft::EditorDefaults, value_ports::SuppliedValues};
-    let values = Arc::new(SuppliedValues::new(100, 42));
-    let owner = Connections::memory_with_inputs(
-        Profiles::default(),
-        Recents::default(),
-        crate::EditorInputs::new(
-            EditorDefaults {
-                user: Some("supplied-user".into()),
-                home: None,
-            },
-            values.clone(),
-        ),
-        values,
-    );
+    use nocterm_connections_model::test_support::CountingClock;
+    let values = Arc::new(CountingClock::new(42));
+    let owner =
+        Connections::memory_with_clock(Profiles::default(), Recents::default(), values.clone());
     let entity = cx.new(|_| owner);
     let profile = profile("Timestamp");
     entity.update(cx, |connections, cx| {
-        connections.record_use(&spec_for_profile(&profile), Some(profile.id), cx)
+        connections.record_use(recent_use(&profile, Some(profile.id)), cx)
     });
     assert_eq!(
         entity.read_with(cx, |connections, cx| connections
@@ -649,4 +605,16 @@ fn record_use_preserves_the_supplied_timestamp_without_clock_discovery(
             .last_used),
         42
     );
+    assert_eq!(values.calls(), 1);
+}
+
+fn recent_use(profile: &Profile, id: Option<ProfileId>) -> RecentUse {
+    RecentUse {
+        options: profile.options.clone(),
+        target: profile.target.clone(),
+        auth: profile.auth.clone(),
+        profile: id,
+        credential: profile.credential,
+        launch: profile.launch.clone(),
+    }
 }

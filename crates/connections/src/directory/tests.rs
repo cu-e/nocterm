@@ -93,7 +93,12 @@ async fn empty_center_reconnect_uses_normal_directory_and_current_profile(
         .await
         .unwrap();
     connections.update(cx, |connections, cx| {
-        connections.record_use(&spec_for_profile(&server), Some(server.id), cx)
+        crate::session_intents::record_use(
+            connections,
+            &spec_for_profile(&server),
+            Some(server.id),
+            cx,
+        )
     });
     server.name = "Current name".into();
     server.target.host = "203.0.113.9".into();
@@ -140,7 +145,12 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
             .await
             .unwrap();
         connections.update(cx, |connections, cx| {
-            connections.record_use(&spec_for_profile(server), Some(server.id), cx)
+            crate::session_intents::record_use(
+                connections,
+                &spec_for_profile(server),
+                Some(server.id),
+                cx,
+            )
         });
     }
     // Supply persisted observations and an injected flag, without native flag I/O.

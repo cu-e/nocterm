@@ -19,6 +19,11 @@ user/home defaults are supplied through values or narrow ports. Validation
 preserves typed credential, JSON, launch and session-option causes.
 `ConnectionRepository` describes blocking document calls without naming a file
 implementation; GPUI publication and observation scheduling stay outside the domain.
+`RecentUse` supplies semantic session-use inputs without workspace types or timestamps.
+`ObservationEpochs` tracks only live profile IDs. Supplied generations advance
+incarnation, exact target and manual icon/country stamps at each candidate transition;
+equal final payloads retain intermediate history. `ProfilePublication` projects immutable
+live authority without serialized stamps or full document copies.
 Checked `OsId` and release aliases/marker eligibility are pure rules.
 `RemoteOsDetector` supplies typed acquisition results over a held session capability;
 legacy detected-fact strings retain their serialized representation.

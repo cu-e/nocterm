@@ -17,12 +17,12 @@ impl Installed {
     pub(crate) fn from_owners(
         connections: Connections,
         facts: ServerFacts,
+        inputs: EditorInputs,
         settings: SettingsHandle,
         shutdown: &ShutdownCoordinator,
         cx: &mut App,
     ) -> Result<Self, StoreError> {
         let connections = connections.into_entity(shutdown, cx)?;
-        let inputs = connections.read(cx).editor_inputs().clone();
         let (facts, mut subscriptions) = facts.install(&connections, shutdown, cx)?;
         let observed = facts.downgrade();
         subscriptions.push(settings.observe(cx, move |cx| {
@@ -67,6 +67,13 @@ pub fn install(
     ready
         .settings()
         .register::<nocterm_ui::AppearanceSettings>(cx);
-    let (connections, facts) = prepared.into_owners();
-    Installed::from_owners(connections, facts, ready.settings().clone(), shutdown, cx)
+    let (connections, inputs, facts) = prepared.into_owners();
+    Installed::from_owners(
+        connections,
+        facts,
+        inputs,
+        ready.settings().clone(),
+        shutdown,
+        cx,
+    )
 }

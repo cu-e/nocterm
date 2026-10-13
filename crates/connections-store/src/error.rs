@@ -9,6 +9,8 @@ pub enum ConnectionsError {
     Profile(#[from] ProfileError),
     #[error("Saved connections are read-only until the file is fixed: {0}")]
     ReadOnly(#[source] Arc<ConnectionStorageError>),
+    #[error("Connection publication revision is exhausted.")]
+    RevisionExhausted,
     #[error("Connections service is shutting down.")]
     Closing,
     #[error("Connection save queue is full. Wait for pending saves to finish and retry.")]

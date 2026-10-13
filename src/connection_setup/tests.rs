@@ -1,9 +1,8 @@
 //! Native repository/publication integration; no adapter dependency enters the feature.
 use super::*;
 use gpui_kit::AppContext as _;
-use nocterm_connections::{Connections, ConnectionsError, EditorInputs};
+use nocterm_connections::{Connections, ConnectionsError};
 use nocterm_connections_model::{
-    draft::EditorDefaults,
     profiles::{Profile, Profiles},
     recents::{Recent, Recents},
     value_ports::SuppliedValues,
@@ -42,7 +41,6 @@ fn owner(paths: &Paths) -> Connections {
             })
         }),
         documents.read_only,
-        EditorInputs::new(EditorDefaults::default(), values.clone()),
         values,
     )
 }

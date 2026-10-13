@@ -5054,14 +5054,13 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-connections-model",
- "nocterm-core",
+ "nocterm-connections-store",
  "nocterm-session",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
@@ -5092,6 +5091,22 @@ dependencies = [
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "uuid",
+]
+
+[[package]]
+name = "nocterm-connections-store"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-connections-model",
+ "nocterm-core",
+ "nocterm-session",
+ "nocterm-store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]

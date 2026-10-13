@@ -116,3 +116,26 @@ impl crate::os_observation::RemoteOsDetector for ScriptedOsDetector {
         Box::pin(async move { result })
     }
 }
+
+/// Supplied clock with public call accounting, reusable across service/feature tests.
+pub struct CountingClock {
+    seconds: u64,
+    calls: std::sync::atomic::AtomicUsize,
+}
+impl CountingClock {
+    pub fn new(seconds: u64) -> Self {
+        Self {
+            seconds,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+    pub fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+impl crate::value_ports::ConnectionClock for CountingClock {
+    fn unix_seconds(&self) -> u64 {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.seconds
+    }
+}

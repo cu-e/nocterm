@@ -41,7 +41,29 @@ pub fn connect(
     cx: &mut App,
 ) {
     installed.connections().update(cx, |connections, cx| {
-        connections.record_use(&spec, profile, cx)
+        record_use(connections, &spec, profile, cx)
     });
     let _ = workspace.update(cx, |workspace, cx| workspace.open_session(spec, window, cx));
 }
+
+/// Compatibility conversion only: service receives plain intent data, never Workspace types.
+pub(crate) fn record_use(
+    connections: &mut crate::Connections,
+    spec: &SessionSpec,
+    profile: Option<ProfileId>,
+    cx: &mut gpui_kit::Context<crate::Connections>,
+) {
+    connections.record_use(
+        nocterm_connections_model::recents::RecentUse {
+            options: spec.options.clone(),
+            target: spec.target.clone(),
+            auth: spec.auth.clone(),
+            profile,
+            credential: spec.credential,
+            launch: spec.launch.clone(),
+        },
+        cx,
+    );
+}
+#[cfg(test)]
+mod tests;

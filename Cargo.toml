@@ -157,6 +157,7 @@ nocterm-agent-runtime = { path = "crates/agent-runtime" }
 # Internal crates. Their versions stay at 0.0.0: only the `nocterm` package is released.
 nocterm-device-unlock = { path = "crates/device-unlock" }
 nocterm-connections = { path = "crates/connections" }
+nocterm-connections-store = { path = "crates/connections-store" }
 nocterm-connections-model = { path = "crates/connections-model" }
 nocterm-connections-io = { path = "crates/connections-io" }
 nocterm-containers = { path = "crates/containers" }
