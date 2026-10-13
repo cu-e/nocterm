@@ -6,7 +6,13 @@ use nocterm_connections_model::{
 use nocterm_session::testing::InMemoryFs;
 
 fn deps(script: &Arc<ScriptedObservations>, online: bool) -> ObservationDeps {
-    ObservationDeps::new(script.clone(), script.clone(), script.clone(), online)
+    ObservationDeps::new(
+        script.clone(),
+        script.clone(),
+        script.clone(),
+        online,
+        Arc::new(nocterm_connections_model::os_observation::OfflineOsDetector),
+    )
 }
 fn profile() -> Profile {
     Profile {

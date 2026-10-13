@@ -5070,6 +5070,7 @@ dependencies = [
 name = "nocterm-connections-io"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "gpui-pre-reqwest",
  "nocterm-connections-model",
  "nocterm-core",

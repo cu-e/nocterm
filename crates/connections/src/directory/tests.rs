@@ -162,6 +162,7 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         observations.clone(),
         observations,
         false,
+        std::sync::Arc::new(nocterm_connections_model::os_observation::OfflineOsDetector),
     );
     cx.update(|cx| {
         ServerFacts::with_backend(

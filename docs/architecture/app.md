@@ -66,3 +66,7 @@ supply AI's shared scripted capabilities rather than reaching adapters or global
 Startup constructs NativeImageCodec and passes ImageDeps through bootstrap Services.
 Booted retains those dependencies for all windows; GUI fixtures supply the shared
 scripted AI codec. Image ports are not discovered through globals or Runtime.
+
+Prepared connection observation dependencies include an explicit remote OS detector:
+startup supplies `NativeOsDetector`; memory composition supplies an inert detector
+that performs no remote acquisition. Bootstrap consumes the prepared collaborators.

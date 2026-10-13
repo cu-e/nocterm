@@ -31,29 +31,6 @@ use crate::{
     os::{self, Os},
 };
 
-const MAX_OS_RELEASE_BYTES: usize = 16 * 1024;
-/// Files that only one system has, for systems without `os-release`.
-/// Appliances built on another system, which their `os-release` names
-/// instead: a file only the appliance has, the appliance, and the systems it
-/// can be built on (empty: no `os-release` at all).
-const PLATFORMS: [(&str, &str, &[&str]); 9] = [
-    ("/usr/bin/pveversion", "proxmox", &["debian"]),
-    ("/usr/bin/midclt", "truenas", &["debian", "freebsd", ""]),
-    ("/etc/openmediavault", "openmediavault", &["debian"]),
-    ("/opt/vyatta", "vyos", &["debian"]),
-    ("/etc/unraid-version", "unraid", &["slackware", ""]),
-    ("/usr/local/opnsense", "opnsense", &["freebsd", ""]),
-    ("/etc/platform", "pfsense", &["freebsd", ""]),
-    ("/etc/synoinfo.conf", "synology", &["linux", ""]),
-    ("/etc/config/uLinux.conf", "qnap", &["linux", ""]),
-];
-const MARKERS: [(&str, &str); 4] = [
-    ("/System/Library/CoreServices/SystemVersion.plist", "macos"),
-    ("/bin/freebsd-version", "freebsd"),
-    ("/bsd", "openbsd"),
-    ("/netbsd", "netbsd"),
-];
-
 /// Detected systems and countries of saved connections, and flag images.
 pub struct ServerFacts {
     observations: ObservationDeps,
@@ -182,18 +159,18 @@ impl ServerFacts {
         // The system is looked at on every new session: it is one small read,
         // and catches a reinstalled server. A chosen icon needs no detection.
         if profile.icon.is_none() {
-            let detection = cx.background_spawn(detect_os(fs));
+            let detection = cx.background_spawn(self.observations.os().detect(fs));
             cx.spawn(async move |this, cx| {
-                let Some(os) = detection.await else {
-                    return;
+                let os = match detection.await {
+                    Ok(Some(os)) => os,
+                    Ok(None) => return,
+                    Err(error) => {
+                        tracing::debug!(%error, "could not observe remote operating system");
+                        return;
+                    }
                 };
                 let _ = this.update(cx, |this, cx| {
-                    this.known.update(
-                        |known| {
-                            known.set_os(id, os.id.to_owned());
-                        },
-                        cx,
-                    );
+                    this.known.update(|known| known.set_os(id, os), cx);
                     cx.notify();
                 });
             })
@@ -338,61 +315,6 @@ pub(crate) fn probe_sessions(workspace: &Workspace, cx: &mut App) {
     });
 }
 
-async fn detect_os(fs: Arc<dyn RemoteFs>) -> Option<&'static Os> {
-    let mut base = None;
-    // `/etc/os-release` is usually a link, which downloads refuse; its
-    // target is the second choice.
-    for path in ["/etc/os-release", "/usr/lib/os-release"] {
-        if let Some(text) = read_small(fs.as_ref(), path).await
-            && let Some(os) = os::from_os_release(&text)
-        {
-            base = Some(os);
-            break;
-        }
-    }
-    let base_id = base.map_or("", |os| os.id);
-    for (path, id, bases) in PLATFORMS {
-        if bases.contains(&base_id) && matches!(fs.stat(path).await, Ok(Some(_))) {
-            return os::find(id);
-        }
-    }
-    if base.is_some() {
-        return base;
-    }
-    for (path, id) in MARKERS {
-        if matches!(fs.stat(path).await, Ok(Some(_))) {
-            return os::find(id);
-        }
-    }
-    // Windows' OpenSSH shows drives as `/C:/Users/…`.
-    let home = fs.home().await.ok()?;
-    let home = home.strip_prefix('/').unwrap_or(&home).as_bytes();
-    (home.len() >= 2 && home[0].is_ascii_alphabetic() && home[1] == b':')
-        .then(|| os::find("windows"))
-        .flatten()
-}
-
-/// The text of a small remote file; `None` if it is missing, large or binary.
-async fn read_small(fs: &dyn RemoteFs, path: &str) -> Option<String> {
-    let mut file = fs.download(path).await.ok()?;
-    let mut bytes = Vec::new();
-    loop {
-        let chunk = file
-            .read(MAX_OS_RELEASE_BYTES + 1 - bytes.len())
-            .await
-            .ok()?;
-        if chunk.is_empty() {
-            break;
-        }
-        bytes.extend(chunk);
-        if bytes.len() > MAX_OS_RELEASE_BYTES {
-            return None;
-        }
-    }
-    let _ = file.close().await;
-    String::from_utf8(bytes).ok()
-}
-
 fn load_flag(code: &str, observations: &ObservationDeps) -> Option<Vec<u8>> {
     let checked = CountryCode::new(code).ok()?;
     observations
@@ -409,9 +331,13 @@ mod observation_tests;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use nocterm_connections_model::{os::OsId, test_support::ScriptedOsDetector};
+    use nocterm_session::testing::InMemoryFs;
 
-    use nocterm_session::{DirEntry, FsError, FsFuture, fs::RemoteDownload};
+    fn observations(detector: Arc<ScriptedOsDetector>) -> ObservationDeps {
+        let offline = Arc::new(nocterm_connections_model::observation::OfflineObservations);
+        ObservationDeps::new(offline.clone(), offline.clone(), offline, false, detector)
+    }
 
     use super::*;
 
@@ -419,7 +345,9 @@ mod tests {
     async fn sessions_are_probed_once_and_chosen_icons_skip_detection(
         cx: &mut gpui_kit::TestAppContext,
     ) {
-        let facts = cx.new(|_| ServerFacts::in_memory(ObservationDeps::offline()));
+        let detector = Arc::new(ScriptedOsDetector::default());
+        detector.answer_next(Ok(OsId::new("debian")));
+        let facts = cx.new(|_| ServerFacts::in_memory(observations(detector.clone())));
         let profile = Profile {
             description: String::new(),
             options: Default::default(),
@@ -436,26 +364,41 @@ mod tests {
             icon_color: None,
             country: None,
         };
-        let downloads = Arc::new(AtomicUsize::new(0));
-        let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=debian\n", downloads.clone(), &[]));
+        let fs: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
         let detected = |facts: &Entity<ServerFacts>, cx: &mut gpui_kit::TestAppContext| {
             facts.read_with(cx, |facts, cx| facts.os(profile.id, cx).map(|os| os.id))
         };
         facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs.clone(), cx));
         cx.run_until_parked();
         assert_eq!(detected(&facts, cx), Some("debian"));
-        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        assert_eq!(detector.calls(), 1);
 
         facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs.clone(), cx));
         cx.run_until_parked();
-        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        assert_eq!(detector.calls(), 1);
 
         let mut chosen = profile.clone();
         chosen.icon = Some("arch".into());
-        let other: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=ubuntu\n", downloads.clone(), &[]));
+        let other: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
         facts.update(cx, |facts, cx| facts.probe(&chosen, "web", other, cx));
         cx.run_until_parked();
-        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        assert_eq!(detector.calls(), 1);
+        assert_eq!(detected(&facts, cx), Some("debian"));
+        detector.answer_next(Err(
+            nocterm_connections_model::os_observation::OsObservationError::Home(
+                nocterm_session::FsError::NotConnected,
+            ),
+        ));
+        let failed: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
+        facts.update(cx, |facts, cx| facts.probe(&profile, "web", failed, cx));
+        cx.run_until_parked();
+        assert_eq!(detector.calls(), 2);
+        assert_eq!(detected(&facts, cx), Some("debian"));
+        detector.answer_next(Ok(None));
+        let absent: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
+        facts.update(cx, |facts, cx| facts.probe(&profile, "web", absent, cx));
+        cx.run_until_parked();
+        assert_eq!(detector.calls(), 3);
         assert_eq!(detected(&facts, cx), Some("debian"));
     }
 
@@ -497,15 +440,15 @@ mod tests {
             std::io::Error::from(std::io::ErrorKind::StorageFull),
         ));
         let shutdown = ShutdownCoordinator::default();
-        let prepared = crate::test_support::prepared_repository(
-            repository.clone(),
-            ObservationDeps::offline(),
-        );
+        let detector = Arc::new(ScriptedOsDetector::default());
+        detector.answer_next(Ok(OsId::new("debian")));
+        let prepared =
+            crate::test_support::prepared_repository(repository.clone(), observations(detector));
         cx.update(|cx| {
             crate::init(prepared, &shutdown, cx).unwrap();
         });
         let facts = cx.read(ServerFacts::global);
-        let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs("ID=debian\n", Default::default(), &[]));
+        let fs: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
         facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs, cx));
         cx.run_until_parked();
         assert_eq!(
@@ -516,73 +459,5 @@ mod tests {
         let report = cx.background_executor.spawn(work).await;
         assert!(report.failures().is_empty());
         assert_eq!(repository.snapshot().known.os(profile.id), Some("debian"));
-    }
-
-    #[test]
-    fn appliances_are_told_apart_from_the_system_they_are_built_on() {
-        let detect = |release: &'static str, files: &'static [&'static str]| {
-            let fs: Arc<dyn RemoteFs> = Arc::new(FakeFs(release, Default::default(), files));
-            futures::executor::block_on(detect_os(fs)).map(|os| os.id)
-        };
-        assert_eq!(
-            detect("ID=debian\n", &["/usr/bin/pveversion"]),
-            Some("proxmox")
-        );
-        assert_eq!(
-            detect("ID=debian\n", &["/etc/openmediavault"]),
-            Some("openmediavault")
-        );
-        assert_eq!(detect("ID=debian\n", &[]), Some("debian"));
-        // A marker on an unrelated system is a coincidence.
-        assert_eq!(
-            detect("ID=ubuntu\n", &["/usr/bin/pveversion"]),
-            Some("ubuntu")
-        );
-        assert_eq!(detect("", &["/usr/local/opnsense"]), Some("opnsense"));
-        assert_eq!(detect("", &["/bin/freebsd-version"]), Some("freebsd"));
-        assert_eq!(detect("", &[]), None);
-    }
-
-    /// Serves `/etc/os-release`, has the files in the third field, and counts downloads.
-    struct FakeFs(&'static str, Arc<AtomicUsize>, &'static [&'static str]);
-
-    impl RemoteFs for FakeFs {
-        fn home(&self) -> FsFuture<String> {
-            Box::pin(async { Ok("/root".to_owned()) })
-        }
-        fn read_dir(&self, _: &str) -> FsFuture<Vec<DirEntry>> {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-        fn stat(&self, path: &str) -> FsFuture<Option<DirEntry>> {
-            let entry = self.2.contains(&path).then(|| DirEntry {
-                name: path.rsplit('/').next().unwrap_or_default().to_owned(),
-                kind: nocterm_session::EntryKind::File,
-                is_symlink: false,
-                size: None,
-            });
-            Box::pin(async move { Ok(entry) })
-        }
-        fn download(&self, path: &str) -> FsFuture<Box<dyn RemoteDownload>> {
-            self.1.fetch_add(1, Ordering::SeqCst);
-            let found = (path == "/etc/os-release").then(|| self.0.as_bytes().to_vec());
-            let path = path.to_owned();
-            Box::pin(async move {
-                found
-                    .map(|bytes| Box::new(FakeDownload(Some(bytes))) as Box<dyn RemoteDownload>)
-                    .ok_or(FsError::NotFound { path })
-            })
-        }
-    }
-
-    struct FakeDownload(Option<Vec<u8>>);
-
-    impl RemoteDownload for FakeDownload {
-        fn read(&mut self, _: usize) -> FsFuture<Vec<u8>> {
-            let bytes = self.0.take().unwrap_or_default();
-            Box::pin(async move { Ok(bytes) })
-        }
-        fn close(self: Box<Self>) -> FsFuture<()> {
-            Box::pin(async { Ok(()) })
-        }
     }
 }

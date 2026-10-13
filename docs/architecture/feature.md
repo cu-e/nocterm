@@ -349,3 +349,9 @@ ImagePipeline owns the preview cache and request generations, rejects stale
 same-key completions and remeasures rows only for accepted delivery. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
+
+Connection facts schedule injected `RemoteOsDetector` work and present checked
+identities with the feature OS glyph/color catalog. Release parsing and remote
+read/close work belong to domain rules and the native adapter. Probe-once and
+manual-icon precedence remain feature policy; fact publication race guards and
+compatibility globals remain existing lifecycle debt.

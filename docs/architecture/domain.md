@@ -19,6 +19,9 @@ user/home defaults are supplied through values or narrow ports. Validation
 preserves typed credential, JSON, launch and session-option causes.
 `ConnectionRepository` describes blocking document calls without naming a file
 implementation; GPUI publication and observation scheduling stay outside the domain.
+Checked `OsId` and release aliases/marker eligibility are pure rules.
+`RemoteOsDetector` supplies typed acquisition results over a held session capability;
+legacy detected-fact strings retain their serialized representation.
 
 ## Sessions and terminal emulation
 

@@ -1,4 +1,4 @@
-//! Operating systems a server can run, how to recognise them and how they are
+//! Operating system presentation catalog and how entries are
 //! drawn in the sidebar.
 //!
 //! The glyphs are simplified marks on a 24×24 grid, not the vendors' logos;
@@ -40,58 +40,6 @@ pub use catalog::CATALOG;
 /// The catalog entry for `id`.
 pub fn find(id: &str) -> Option<&'static Os> {
     CATALOG.iter().find(|os| os.id == id)
-}
-
-/// The system an `os-release` file describes: its `ID` when the catalog knows
-/// it, else the first `ID_LIKE` it knows, else plain Linux.
-pub fn from_os_release(text: &str) -> Option<&'static Os> {
-    let mut id = None;
-    let mut like = None;
-    let mut variant = None;
-    for line in text.lines() {
-        let Some((key, value)) = line.trim().split_once('=') else {
-            continue;
-        };
-        let value = value.trim().trim_matches(['"', '\'']).to_ascii_lowercase();
-        match key.trim() {
-            "ID" => id = Some(value),
-            "ID_LIKE" => like = Some(value),
-            "VARIANT_ID" => variant = Some(value),
-            _ => {}
-        }
-    }
-    let mut id = id?;
-    if id == "fedora" && variant.as_deref() == Some("coreos") {
-        id = "fedora-coreos".to_owned();
-    }
-    std::iter::once(id.as_str())
-        .chain(like.iter().flat_map(|like| like.split_whitespace()))
-        .find_map(by_release_id)
-        .or_else(|| find("linux"))
-}
-
-/// Maps `os-release` IDs onto catalog entries; distributions with several IDs
-/// share one entry.
-fn by_release_id(id: &str) -> Option<&'static Os> {
-    let id = match id {
-        "opensuse-leap" | "opensuse-tumbleweed" | "opensuse-microos" | "opensuse-slowroll" => {
-            "opensuse"
-        }
-        "sles" | "sled" | "sle-micro" => "suse",
-        "archarm" | "arch32" => "arch",
-        "manjaro-arm" => "manjaro",
-        "redhat" | "rhel" | "rhcos" => "rhel",
-        "centos-stream" => "centos",
-        "raspberrypi" => "raspbian",
-        "fedora-asahi-remix" => "fedora",
-        "mariner" => "azurelinux",
-        "alt" => "altlinux",
-        "hassos" => "haos",
-        "cachyos-linux" => "cachyos",
-        "chromiumos" => "chromeos",
-        id => id,
-    };
-    find(id)
 }
 
 /// Whether `color` is a colour the sidebar can draw: `#RGB` or `#RRGGBB`.
@@ -218,6 +166,9 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), CATALOG.len());
+        let mut domain_ids = nocterm_connections_model::os::SUPPORTED_IDS.to_vec();
+        domain_ids.sort_unstable();
+        assert_eq!(ids, domain_ids);
         for os in CATALOG {
             assert!(is_valid_color(os.color), "{}", os.id);
             if let Badge(_, letters) = os.glyph {
@@ -232,27 +183,6 @@ mod tests {
             assert!(!svg.contains("{c}"), "{}", os.id);
             assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
         }
-    }
-
-    #[test]
-    fn os_release_id_wins_then_id_like_then_generic_linux() {
-        let ubuntu =
-            "NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n";
-        assert_eq!(from_os_release(ubuntu).unwrap().id, "ubuntu");
-        let derived = "ID=\"bodhi\"\nID_LIKE=\"ubuntu debian\"\n";
-        assert_eq!(from_os_release(derived).unwrap().id, "ubuntu");
-        let leap = "ID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"";
-        assert_eq!(from_os_release(leap).unwrap().id, "opensuse");
-        let alma = "ID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"";
-        assert_eq!(from_os_release(alma).unwrap().id, "almalinux");
-        let coreos = "ID=fedora\nVARIANT_ID=coreos\n";
-        assert_eq!(from_os_release(coreos).unwrap().id, "fedora-coreos");
-        let alt = "ID=altlinux\n";
-        assert_eq!(from_os_release(alt).unwrap().id, "altlinux");
-        let unknown = "ID=exotic\n";
-        assert_eq!(from_os_release(unknown).unwrap().id, "linux");
-        assert_eq!(from_os_release("# no id\nNAME=x"), None);
-        assert_eq!(from_os_release("  ID = 'Arch'  ").unwrap().id, "arch");
     }
 
     #[test]

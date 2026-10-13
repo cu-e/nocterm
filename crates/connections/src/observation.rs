@@ -3,6 +3,7 @@ use nocterm_connections_model::observation::{
     CountryCode, CountryLocator, FlagRepository, ObservationError, OfflineObservations,
     PublicAddressResolver,
 };
+use nocterm_connections_model::os_observation::{OfflineOsDetector, RemoteOsDetector};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone)]
@@ -11,6 +12,7 @@ pub struct ObservationDeps {
     locator: Arc<dyn CountryLocator>,
     flags: Arc<dyn FlagRepository>,
     network_enabled: bool,
+    os: Arc<dyn RemoteOsDetector>,
 }
 impl ObservationDeps {
     pub fn new(
@@ -18,12 +20,14 @@ impl ObservationDeps {
         locator: Arc<dyn CountryLocator>,
         flags: Arc<dyn FlagRepository>,
         network_enabled: bool,
+        os: Arc<dyn RemoteOsDetector>,
     ) -> Self {
         Self {
             resolver,
             locator,
             flags,
             network_enabled,
+            os,
         }
     }
     pub fn offline() -> Self {
@@ -32,7 +36,11 @@ impl ObservationDeps {
             Arc::new(OfflineObservations),
             Arc::new(OfflineObservations),
             false,
+            Arc::new(OfflineOsDetector),
         )
+    }
+    pub(crate) fn os(&self) -> &dyn RemoteOsDetector {
+        self.os.as_ref()
     }
     pub(crate) fn resolver(&self) -> &dyn PublicAddressResolver {
         self.resolver.as_ref()

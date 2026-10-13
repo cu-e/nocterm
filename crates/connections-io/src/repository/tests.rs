@@ -46,7 +46,10 @@ fn three_documents_round_trip_without_format_migration() {
         launch: None,
     });
     let mut known = Known::default();
-    known.set_os(profile.id, "debian".into());
+    known.set_os(
+        profile.id,
+        nocterm_connections_model::os::OsId::new("debian").unwrap(),
+    );
     repository.save_profiles(&profiles).unwrap();
     repository.save_recents(&recents).unwrap();
     repository.save_facts(&known).unwrap();

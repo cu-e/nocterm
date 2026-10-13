@@ -55,6 +55,7 @@ pub(crate) fn native(paths: &Paths) -> PreparedConnections {
             observations.locator(),
             observations.flags(),
             true,
+            Arc::new(nocterm_connections_io::NativeOsDetector),
         ),
     )
 }

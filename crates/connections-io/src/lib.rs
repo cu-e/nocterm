@@ -1,14 +1,16 @@
 //! Native connection files, environment/entropy/clock and network observations.
 //!
-//! Owns: three-document repositories, native defaults/UUID/clock, DNS and bounded HTTP/flag cache.
+//! Owns: three-document repositories, native defaults/UUID/clock, DNS, bounded remote OS reads and HTTP/flag cache.
 //! Does not own: profile rules, GPUI images, observation scheduling or persistence workers.
 //! Ports used: foundation persistence. Ports provided: ConnectionRepository, ProfileIds,
 //! ConnectionClock, PublicAddressResolver, CountryLocator,
-//! FlagRepository. Settings section: none. Globals: none.
+//! FlagRepository, RemoteOsDetector. Settings section: none. Globals: none.
 //! Invariants: country services receive public IPs only; bodies and cached flags
 //! are bounded; failure to cache never discards an acquired flag. Blocking document
 //! acquisition and writes run off foreground; profiles retain configuration publication semantics.
 
+mod os_probe;
+pub use os_probe::NativeOsDetector;
 mod native_values;
 mod repository;
 pub use native_values::NativeValues;

@@ -12,10 +12,10 @@
 //!
 //! Owns: views, profile/recent publication and detected-server presentation/lifecycle.
 //! Does not own: profile formats/rules, files, native defaults/IDs/clock, session transport,
-//! credentials, DNS, HTTP, flag files or
+//! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator,
-//! ProfileIds, ConnectionClock, PublicAddressResolver, CountryLocator, FlagRepository.
+//! ProfileIds, ConnectionClock, PublicAddressResolver, CountryLocator, FlagRepository, RemoteOsDetector.
 //! Ports provided: ConnectionDirectory. Settings section: none.
 //! Globals: existing connection, facts and menu compatibility handles.
 //! Invariants: profiles publish after physical success; independent recents survive

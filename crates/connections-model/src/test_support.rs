@@ -79,3 +79,40 @@ pub fn profile_id_for(value: &str) -> crate::profiles::ProfileId {
 
 mod repository;
 pub use repository::{InMemoryConnectionRepository, RepositoryCall, RepositoryGate};
+
+/// Scripted OS capability; calls do not touch the supplied filesystem.
+#[derive(Default)]
+pub struct ScriptedOsDetector {
+    replies:
+        Mutex<VecDeque<Result<Option<crate::os::OsId>, crate::os_observation::OsObservationError>>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+impl ScriptedOsDetector {
+    pub fn answer_next(
+        &self,
+        result: Result<Option<crate::os::OsId>, crate::os_observation::OsObservationError>,
+    ) {
+        self.replies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push_back(result);
+    }
+    pub fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+impl crate::os_observation::RemoteOsDetector for ScriptedOsDetector {
+    fn detect(
+        &self,
+        _: std::sync::Arc<dyn nocterm_session::RemoteFs>,
+    ) -> crate::os_observation::OsFuture {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let result = self
+            .replies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop_front()
+            .unwrap_or(Ok(None));
+        Box::pin(async move { result })
+    }
+}

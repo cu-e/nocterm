@@ -165,3 +165,9 @@ WebP decoding applies shared pure preflight before bounded decoder allocation:
 4096 pixels per axis and 64 MiB. It validates full decode against header facts.
 Previews preserve aspect and alpha, fit requested bounds up to 640 pixels, and
 encode PNG through a sink capped at 4 MiB. Native errors retain typed causes.
+
+Remote OS acquisition belongs to `nocterm-connections-io::NativeOsDetector`.
+Its 16-KiB release reads use bounded chunks and explicit best-effort close on every
+opened-reader result. Cancellation releases handles through Drop. Unknown native
+failures retain typed sources, and inert composition issues no remote requests.
+See [ADR 0039](../adr/0039-remote-os-observation-boundary.md).

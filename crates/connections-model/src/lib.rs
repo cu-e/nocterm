@@ -1,8 +1,8 @@
 //! Pure saved-connection formats, drafts, transitions and native capability ports.
 //!
-//! Owns: profile/recent/facts formats, checked mutations, drafts and observation values.
+//! Owns: profile/recent/facts formats, checked mutations, drafts, checked OS identities/release policy and observation values.
 //! Does not own: DNS, HTTP, files, clocks, GPUI or observation lifecycle.
-//! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock and observation ports.
+//! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock and country/flag/RemoteOsDetector observation ports.
 //! Ports used: session value types. Settings section: none. Globals: none.
 //! Invariants: only checked public addresses reach country lookup; country keys
 //! are two lower-case ASCII letters. IDs/timestamps/defaults are supplied values;
@@ -11,6 +11,8 @@
 pub mod draft;
 pub mod facts;
 pub mod observation;
+pub mod os;
+pub mod os_observation;
 pub mod profiles;
 pub mod recents;
 pub mod repository;
