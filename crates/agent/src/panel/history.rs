@@ -59,12 +59,16 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let active = self.current().map(|thread| thread.entity_id());
-        let removed: Vec<_> = self
+        let proposed: Vec<_> = self
             .threads
             .iter()
             .filter(|thread| !keep(thread, cx))
             .map(|thread| thread.entity_id())
             .collect();
+        let removed = proposed
+            .into_iter()
+            .filter(|id| self.admit_before_removal(*id, cx))
+            .collect::<Vec<_>>();
         if self
             .composer
             .edit
@@ -109,7 +113,7 @@ impl AgentPanel {
     ) {
         if let Some(index) = self.index_of(id) {
             let thread = self.threads[index].clone();
-            let chat = thread.read(cx).chat_id().to_owned();
+            let chat = thread.read(cx).document().chat_id().to_owned();
             thread.update(cx, |thread, cx| thread.release_resources(cx));
             Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
@@ -243,7 +247,12 @@ impl AgentPanel {
         let chats: Vec<(bool, u64)> = self
             .threads
             .iter()
-            .map(|thread| (thread.read(cx).pinned, thread.read(cx).updated))
+            .map(|thread| {
+                (
+                    thread.read(cx).document().pinned(),
+                    thread.read(cx).document().updated(),
+                )
+            })
             .collect();
         order(&chats)
             .into_iter()
@@ -252,8 +261,8 @@ impl AgentPanel {
                 let thread = thread.read(cx);
                 query.is_empty()
                     || thread.title().to_lowercase().contains(&query)
-                    || thread.state.mentions(&query)
-                    || self.archive_matches.contains(&thread.chat_id)
+                    || thread.transcript().mentions(&query)
+                    || self.archive_matches.contains(thread.document().chat_id())
             })
             .cloned()
             .collect()
@@ -317,7 +326,7 @@ impl AgentPanel {
         let key = id.as_u64();
         let chat = thread.read(cx);
         let title = chat.title();
-        let pinned = chat.pinned;
+        let pinned = chat.document().pinned();
         let selected = self
             .current()
             .is_some_and(|current| current.entity_id() == id);
@@ -403,7 +412,7 @@ impl AgentPanel {
                                     .color(cx.theme().muted_foreground)
                                     .into_any_element()
                             } else {
-                                nocterm_ui::agent_icon(&chat.agent_id)
+                                nocterm_ui::agent_icon(chat.document().agent_id())
                                     .small()
                                     .into_any_element()
                             })

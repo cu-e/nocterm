@@ -19,7 +19,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut body = v_flex().size_full().min_w_0().min_h_0();
-        let model = &thread.read(cx).state;
+        let model = &thread.read(cx).transcript();
         let count = model.entries.len();
         let state = nocterm_ai::thread::ThreadState {
             plan: model.plan.clone(),
@@ -36,7 +36,7 @@ impl AgentPanel {
             }
             self.list_count = count;
         }
-        let dirty = thread.update(cx, |thread, _| std::mem::take(&mut thread.dirty_rows));
+        let dirty = thread.update(cx, |thread, _| thread.take_changed_rows());
         let dirty = dirty.into_iter().collect::<Vec<_>>();
         self.navigation.observe(
             thread.entity_id(),
@@ -106,7 +106,7 @@ impl AgentPanel {
                 thread.read(cx).lifecycle.generating()
                     || thread.read(cx).session().is_none()
                     || thread.read(cx).lifecycle.sign_in_required()
-                    || thread.read(cx).fallback_history
+                    || thread.read(cx).document().pending_history()
                     || thread.read(cx).has_status_error()
                     || !thread.read(cx).lifecycle.accepts_updates(),
                 |body| {

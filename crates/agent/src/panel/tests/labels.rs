@@ -53,10 +53,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     let prompt = "смотри в чем соль\nтут";
     let session = exchange(&f, prompt, "answer", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    f.panel.update(cx, |panel, cx| {
-        panel.history = true;
-        cx.notify();
-    });
+    f.panel.update(cx, |panel, cx| panel.set_history(true, cx));
     // Compare identical words: explicit line breaks must not increase either label's height.
     thread.update(cx, |thread, cx| {
         thread.rename(Some(single_line_label(prompt)), cx)
@@ -67,7 +64,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert_eq!(thread.title(), prompt);
-        assert!(matches!(&thread.state.entries[0], Entry::User(parts)
+        assert!(matches!(&thread.transcript().entries[0], Entry::User(parts)
             if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
     });
 
@@ -90,8 +87,8 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     assert_eq!(chat_label_heights(&f, &long, cx), baseline);
     cx.update(|cx| {
         let thread = thread.read(cx);
-        assert_eq!(thread.name.as_deref(), Some(long.as_str()));
-        assert_eq!(thread.state.title.as_deref(), Some(agent_title));
+        assert_eq!(thread.document().name(), Some(long.as_str()));
+        assert_eq!(thread.transcript().title.as_deref(), Some(agent_title));
     });
     cx.run_until_parked();
     let saved = f.repository.chats();
@@ -127,7 +124,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
                 .try_find(("history-thread", thread.entity_id().as_u64()))
                 .is_some()
         );
-        assert_eq!(thread.read(cx).name.as_deref(), Some(long.as_str()));
+        assert_eq!(thread.read(cx).document().name(), Some(long.as_str()));
     })
     .unwrap();
 }
@@ -149,6 +146,9 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
         ] {
             let mut heights = Vec::new();
             for title in [single_line_label(script), script.into()] {
+                if f.commands.pending.lock().unwrap().is_some() {
+                    complete_active(&f, cx);
+                }
                 thread.update(cx, |thread, cx| {
                     let mut call = acp::ToolCall::new("script", title.clone());
                     call.status = status;
@@ -160,12 +160,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                         }))
                         .unwrap(),
                     ];
-                    thread.state.entries = vec![Entry::Tool(call)];
-                    thread.lifecycle.force_phase(if live {
-                        nocterm_ai::session::SessionPhase::Prompting
-                    } else {
-                        nocterm_ai::session::SessionPhase::Ready
-                    });
+                    restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
                     thread.mark_dirty(0);
                     cx.notify();
                 });
@@ -179,7 +174,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                         );
                         let entry = window.find(("agent-entry", 0usize)).bounds();
                         assert!(header.bounds().right() <= entry.right() + px(1.));
-                        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+                        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                             panic!("expected tool call");
                         };
                         assert_eq!(call.title, title);
@@ -197,7 +192,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
             cx.update_window(f.handle, |_, window, cx| {
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_some());
-                let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+                let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                     panic!("expected tool call");
                 };
                 let acp::ToolCallContent::Content(output) = &call.content[0] else {

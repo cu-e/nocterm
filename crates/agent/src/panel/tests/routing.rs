@@ -55,7 +55,7 @@ fn each_chat_gives_its_agent_a_server_of_its_own(cx: &mut TestAppContext) {
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     // Not a draft, so the second chat does not replace it.
-    cx.update(|cx| first.update(cx, |thread, _| thread.name = Some("first".into())));
+    cx.update(|cx| first.update(cx, |thread, cx| thread.rename(Some("first".into()), cx)));
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_eq!(
@@ -82,7 +82,7 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update(|cx| {
         first.update(cx, |thread, cx| {
-            thread.name = Some("first".into());
+            thread.rename(Some("first".into()), cx);
             // The first chat has no terminals.
             thread.attach(Attachment::Terminal(f.terminal), cx);
             assert!(thread.composer().attachments().is_empty());

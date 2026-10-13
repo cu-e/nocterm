@@ -52,7 +52,7 @@ impl AgentThread {
         let restore = self
             .restore
             .clone()
-            .filter(|restore| !self.state.entries.is_empty() && restore.workdir.is_absolute())
+            .filter(|restore| !self.state.entries().is_empty() && restore.workdir.is_absolute())
             .map(|mut restore| {
                 restore.workdir = workdir.clone();
                 restore
@@ -126,12 +126,13 @@ impl AgentThread {
                         this.config.begin_reconciliation(&session, ticket);
                         this.lease.as_mut().expect("starting lease").session = Some(session);
                         this.restore = None;
-                        this.fallback_history = this.fallback_history || (restored != Some(true) && !this.state.entries.is_empty());
-                        this.status = if this.fallback_history {
+                        this.state.set_pending_history(this.state.pending_history() || (restored != Some(true) && !this.state.entries().is_empty()), nocterm_ai::time::now());
+                        this.status = if this.state.pending_history() {
                             "Reconnected in a new session. Saved conversation will accompany the next message.".into()
                         } else {
                             "Ready".into()
                         };
+                        this.accept_document_inputs(cx,false);
                         this.save(cx);
                         this.configure(ticket, cx);
                     }
@@ -228,9 +229,13 @@ impl AgentThread {
     pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
         let state = crate::runtime::Runtime::global(cx).read(cx).favorites(cx);
         self.config.preview(
-            state.choices(&self.agent_id),
-            state.options.get(&self.agent_id).map_or(&[], Vec::as_slice),
+            state.choices(self.state.agent_id()),
+            state
+                .options
+                .get(self.state.agent_id())
+                .map_or(&[], Vec::as_slice),
         );
+        self.establish_clean_document_inputs(cx);
     }
     pub(crate) fn set_config(
         &mut self,
@@ -246,10 +251,11 @@ impl AgentThread {
             return;
         }
         if choice.durable_changed() {
+            self.accept_document_inputs(cx, false);
             self.save(cx);
         }
         if let Some((option, choice)) = choice.remember() {
-            let agent = self.agent_id.clone();
+            let agent = self.state.agent_id().to_owned();
             cx.defer(move |cx| {
                 crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
                     runtime.remember_choice(&agent, &option, &choice, cx)
@@ -303,6 +309,7 @@ impl AgentThread {
             return;
         }
         if self.config.choose_mode(id.clone()) {
+            self.accept_document_inputs(cx, false);
             self.save(cx);
         }
         cx.notify();
@@ -437,11 +444,15 @@ impl AgentThread {
     }
     pub(super) fn sync_config(&mut self, save: bool, cx: &mut Context<Self>) {
         if self.config.sync_ready(self.lifecycle.phase()) && save {
+            self.accept_document_inputs(cx, false);
             self.save(cx);
         }
     }
     fn remember_options(&self, cx: &mut Context<Self>) {
-        let (agent, options) = (self.agent_id.clone(), self.config.options().to_vec());
+        let (agent, options) = (
+            self.state.agent_id().to_owned(),
+            self.config.options().to_vec(),
+        );
         cx.defer(move |cx| {
             crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
                 runtime.remember_options(&agent, &options, cx)

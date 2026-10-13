@@ -9,7 +9,9 @@
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
 //! Settings section: ai consumer. Globals: existing RuntimeGlobal compatibility shell.
 //! Invariants: one current document owner per ID; delete seals an ID; persistence
-//! events refer to the physically published owner/revision; final work reads no App.
+//! admission and physical publication are separate revision-bearing events. Registry
+//! stamps change only after writer acceptance; final work reads no App and joins
+//! captured admission failures with publication failures.
 
 mod admission;
 mod bridge;
@@ -130,17 +132,6 @@ impl Runtime {
         if self.shutting_down {
             return;
         }
-        if !self.ai_enabled(cx) {
-            let ids = self
-                .chats
-                .clients()
-                .iter()
-                .map(|client| client.id())
-                .collect::<Vec<_>>();
-            for id in ids {
-                self.capture_and_detach_document(id, cx);
-            }
-        }
         let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
         for warning in &registry.warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");
@@ -153,6 +144,11 @@ impl Runtime {
             .collect();
         for key in keys {
             self.stop_connection(key, "Agent configuration changed. Start a new chat.", cx);
+        }
+        if !self.ai_enabled(cx) {
+            for id in self.chats.capture_and_detach_all(cx) {
+                self.admission.withdraw(id);
+            }
         }
         self.apply_isolation(cx);
         if !self.ai_enabled(cx) {

@@ -5,7 +5,7 @@ use super::{Attachment, queue::QueuedPrompt};
 use nocterm_ai::images::PromptImage;
 
 pub(crate) struct Composer {
-    draft: Option<String>,
+    draft: Option<std::sync::Arc<String>>,
     attachments: Vec<Attachment>,
     images: Vec<PromptImage>,
     queue: Vec<QueuedPrompt>,
@@ -48,7 +48,10 @@ impl PromptCandidate {
 }
 impl Composer {
     pub(crate) fn draft(&self) -> Option<&String> {
-        self.draft.as_ref()
+        self.draft.as_deref()
+    }
+    pub(super) fn shared_draft(&self) -> Option<std::sync::Arc<String>> {
+        self.draft.clone()
     }
     pub(crate) fn attachments(&self) -> &[Attachment] {
         &self.attachments
@@ -150,7 +153,9 @@ impl Composer {
             .unwrap_or(0)
             + 1;
         Self {
-            draft: draft.filter(|draft| !draft.is_empty()),
+            draft: draft
+                .filter(|draft| !draft.is_empty())
+                .map(std::sync::Arc::new),
             attachments,
             queue,
             queue_paused: true,
@@ -180,7 +185,7 @@ impl Composer {
 
     /// Sets the draft; an empty text clears it. Returns whether it changed.
     pub(crate) fn set_draft(&mut self, text: String) -> bool {
-        let draft = (!text.is_empty()).then_some(text);
+        let draft = (!text.is_empty()).then(|| std::sync::Arc::new(text));
         if self.draft == draft {
             return false;
         }

@@ -48,7 +48,7 @@ pub enum SavedAttachment {
 }
 
 /// A prompt waiting its turn. Images remain complete until it is dispatched.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedPrompt {
     pub id: u64,
     pub text: String,
@@ -130,9 +130,14 @@ pub struct SavedChat {
 impl SavedChat {
     /// A new, empty chat with `agent_id`.
     pub fn new(agent_id: String) -> Self {
+        Self::for_identity(agent_id, uuid::Uuid::new_v4().to_string(), now())
+    }
+
+    /// An empty framing value for an already allocated identity and supplied timestamp.
+    pub fn for_identity(agent_id: String, id: String, updated: u64) -> Self {
         Self {
             version: VERSION,
-            id: uuid::Uuid::new_v4().to_string(),
+            id,
             agent_id,
             title: None,
             name: None,
@@ -144,7 +149,7 @@ impl SavedChat {
             mode: None,
             pending_history: false,
             draft: None,
-            updated: now(),
+            updated,
             entries: Vec::new(),
             queue: Vec::new(),
             attachments: Vec::new(),
@@ -156,8 +161,7 @@ impl SavedChat {
 
     /// A draft edit made before the archived transcript has been hydrated.
     pub fn archive_draft(id: String, agent_id: String, text: String, updated: u64) -> Self {
-        let mut chat = Self::new(agent_id);
-        chat.id = id;
+        let mut chat = Self::for_identity(agent_id, id, updated);
         chat.draft = (!text.is_empty()).then_some(text);
         chat.updated = updated;
         chat.archived_draft = true;
@@ -200,6 +204,10 @@ impl SavedChat {
     }
     pub fn prepared_budget(&self) -> Option<&PreparedBudget> {
         self.prepared.as_ref()
+    }
+    /// First row included by the version-one bounded transcript projection.
+    pub fn saved_entry_start(entries_len: usize) -> usize {
+        entries_len.saturating_sub(MAX_SAVED_ENTRIES)
     }
     pub fn bounded_times(entries_len: usize, times: &[u64]) -> Vec<u64> {
         times

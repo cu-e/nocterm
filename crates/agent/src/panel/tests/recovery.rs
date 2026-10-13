@@ -75,7 +75,7 @@ fn a_fork_the_agent_cannot_copy_starts_fresh_and_sends(cx: &mut TestAppContext) 
     assert!(history.contains("restart nginx") && history.contains("Use systemctl."));
     assert_eq!(text.last().unwrap(), "and reload it");
     complete_active(&f, cx);
-    cx.update(|cx| assert!(!fork.read(cx).fallback_history));
+    cx.update(|cx| assert!(!fork.read(cx).document().pending_history()));
 }
 
 #[gpui_kit::test]

@@ -48,6 +48,12 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
             thread.send("hello".into(), cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        thread.update(cx, |thread, cx| {
             thread.stop(cx);
             thread.send("blocked".into(), cx);
         });
@@ -66,7 +72,7 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         assert!(
-            !thread.read(cx).state.entries.iter().any(
+            !thread.read(cx).transcript().entries.iter().any(
                 |entry| matches!(entry,nocterm_ai::thread::Entry::Agent(value)if value=="late")
             )
         );

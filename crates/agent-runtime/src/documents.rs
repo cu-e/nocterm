@@ -56,12 +56,17 @@ impl DocumentRegistry {
     fn capture_current(&self, id: &str, owner: EntityId) -> bool {
         !self.deleted.contains(id) && self.owners.get(id) == Some(&owner)
     }
-    fn accept(&mut self, id: &str, owner: EntityId, revision: u64) -> bool {
-        if !self.current(id, owner) {
-            return false;
-        }
+    fn accepted(&mut self, id: &str, owner: EntityId, revision: u64) {
         self.stamps.insert(id.to_owned(), (owner, revision));
-        true
+    }
+    fn accepts_revision(&self, id: &str, owner: EntityId, revision: u64) -> bool {
+        self.capture_current(id, owner)
+            && self
+                .stamps
+                .get(id)
+                .is_none_or(|(accepted_owner, accepted_revision)| {
+                    *accepted_owner != owner || revision >= *accepted_revision
+                })
     }
     fn seal(&mut self, id: String) {
         self.deleted.insert(id.clone());
@@ -140,7 +145,10 @@ impl ChatStore {
                             Ok(()) => SessionEvent::Saved {
                                 revision: stamp.tag().revision,
                             },
-                            Err(error) => SessionEvent::SaveFailed(error.into()),
+                            Err(error) => SessionEvent::SaveFailed {
+                                revision: stamp.tag().revision,
+                                error: error.into(),
+                            },
                         };
                         client.emit(event, cx);
                     }
@@ -186,13 +194,18 @@ impl ChatStore {
         owner: EntityId,
         revision: u64,
         cx: &mut App,
-    ) {
-        if !self.registry.borrow_mut().accept(&chat.id, owner, revision) {
-            return;
+    ) -> Result<bool, AgentPersistenceError> {
+        if !self.registry.borrow().current(&chat.id, owner)
+            || !self
+                .registry
+                .borrow()
+                .accepts_revision(&chat.id, owner, revision)
+        {
+            return Ok(false);
         }
         let id = chat.id.clone();
         self.submit(
-            id,
+            id.clone(),
             ChatIntent::Save(chat),
             CandidateStamp {
                 owner: Some(owner),
@@ -200,22 +213,66 @@ impl ChatStore {
                 deleted: false,
             },
             cx,
-        );
+        )?;
+        self.registry.borrow_mut().accepted(&id, owner, revision);
+        self.notify_admission(&id, owner, revision, cx);
+        Ok(true)
     }
-    fn submit(&mut self, id: String, intent: ChatIntent, stamp: CandidateStamp, cx: &mut App) {
-        if let Err(error) = self
-            .writer
+    fn notify_admission(&self, id: &str, owner: EntityId, revision: u64, cx: &mut App) {
+        let registry = self.registry.clone();
+        let id = id.to_owned();
+        cx.defer(move |cx| {
+            let target = {
+                let registry = registry.borrow();
+                registry
+                    .capture_current(&id, owner)
+                    .then(|| registry.client(owner))
+                    .flatten()
+            };
+            if let Some(client) = target {
+                client.emit(SessionEvent::SaveAdmitted { revision }, cx);
+            }
+        });
+    }
+    fn notify_failed_admission(
+        &self,
+        id: String,
+        owner: EntityId,
+        revision: u64,
+        error: AgentPersistenceError,
+        cx: &mut App,
+    ) {
+        let registry = self.registry.clone();
+        cx.defer(move |cx| {
+            let target = {
+                let registry = registry.borrow();
+                registry
+                    .capture_current(&id, owner)
+                    .then(|| registry.client(owner))
+                    .flatten()
+            };
+            if let Some(client) = target {
+                client.emit(SessionEvent::SaveFailed { revision, error }, cx);
+            }
+        });
+    }
+    fn submit(
+        &mut self,
+        id: String,
+        intent: ChatIntent,
+        stamp: CandidateStamp,
+        cx: &mut App,
+    ) -> Result<(), StoreError> {
+        self.writer
             .update(cx, |writer, cx| writer.update_latest(id, intent, stamp, cx))
-        {
-            tracing::warn!(%error,"agent document admission failed")
-        }
+            .map(|_| ())
     }
     pub(super) fn delete(&mut self, id: String, cx: &mut App) {
         if self.registry.borrow().closing {
             return;
         }
         self.registry.borrow_mut().seal(id.clone());
-        self.submit(
+        if let Err(error) = self.submit(
             id,
             ChatIntent::Delete,
             CandidateStamp {
@@ -224,7 +281,50 @@ impl ChatStore {
                 deleted: true,
             },
             cx,
-        );
+        ) {
+            tracing::warn!(%error, "agent deletion admission failed");
+        }
+    }
+    fn capture_and_detach_document(
+        &mut self,
+        id: EntityId,
+        cx: &mut App,
+    ) -> Result<bool, AgentPersistenceError> {
+        let Some(client) = self.client(id) else {
+            return Ok(false);
+        };
+        if let Some((chat, revision)) = client.capture(cx) {
+            let key = chat.id.clone();
+            match self.save(chat, id, revision, cx) {
+                Ok(true) => {
+                    let target = client.clone();
+                    cx.defer(move |cx| target.emit(SessionEvent::SaveAdmitted { revision }, cx));
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    self.notify_failed_admission(key, id, revision, error.clone(), cx);
+                    return Err(error);
+                }
+            }
+        }
+        self.retire(id, cx);
+        Ok(true)
+    }
+    pub(super) fn capture_and_detach_all(&mut self, cx: &mut App) -> Vec<EntityId> {
+        self.clients()
+            .into_iter()
+            .filter_map(|client| {
+                let id = client.id();
+                match self.capture_and_detach_document(id, cx) {
+                    Ok(true) => Some(id),
+                    Ok(false) => None,
+                    Err(error) => {
+                        tracing::warn!(%error, "could not retain disabled agent document");
+                        None
+                    }
+                }
+            })
+            .collect()
     }
     pub(super) fn take_saved(&mut self) -> Option<Vec<SavedChat>> {
         self.catalog.take_saved()
@@ -248,29 +348,30 @@ impl ChatStore {
     pub(super) fn begin_shutdown(&mut self) {
         self.registry.borrow_mut().stop();
     }
-    fn capture_document(&mut self, client: &Client, cx: &mut App) {
+    fn capture_document(&mut self, client: &Client, cx: &mut App) -> Result<(), StoreError> {
         let Some(state) = client.state(cx) else {
-            return;
+            return Ok(());
         };
         if !self
             .registry
             .borrow()
             .capture_current(&state.chat_id, client.id())
         {
-            return;
+            return Ok(());
         }
         let Some((chat, revision)) = client.capture(cx) else {
-            return;
+            return Ok(());
         };
         if !self
             .registry
             .borrow()
-            .capture_current(&chat.id, client.id())
+            .accepts_revision(&chat.id, client.id(), revision)
         {
-            return;
+            return Ok(());
         }
+        let id = chat.id.clone();
         self.submit(
-            chat.id.clone(),
+            id.clone(),
             ChatIntent::Save(chat),
             CandidateStamp {
                 owner: Some(client.id()),
@@ -278,22 +379,33 @@ impl ChatStore {
                 deleted: false,
             },
             cx,
-        );
+        )?;
+        self.registry
+            .borrow_mut()
+            .accepted(&id, client.id(), revision);
+        self.notify_admission(&id, client.id(), revision, cx);
+        Ok(())
     }
     pub(super) fn capture(&mut self, cx: &mut App) -> BoxFuture<'static, Result<(), StoreError>> {
         self.begin_shutdown();
-        for client in self.clients() {
-            self.capture_document(&client, cx);
-        }
+        let admission_errors = self
+            .clients()
+            .into_iter()
+            .filter_map(|client| self.capture_document(&client, cx).err())
+            .collect::<Vec<_>>();
         self.catalog.stop();
         self.registry.borrow_mut().stop();
         let captured = self.writer.update(cx, |writer, _| writer.capture());
         Box::pin(async move {
-            let failure = captured
-                .run()
-                .await
+            let failure = admission_errors
                 .into_iter()
-                .filter_map(|outcome| outcome.result().err())
+                .chain(
+                    captured
+                        .run()
+                        .await
+                        .into_iter()
+                        .filter_map(|outcome| outcome.result().err()),
+                )
                 .reduce(|first, second| StoreError::Joined {
                     first: Arc::new(first),
                     second: Arc::new(second),
@@ -312,13 +424,16 @@ impl Runtime {
     pub fn document_is_current(&self, chat_id: &str, owner: EntityId) -> bool {
         !self.shutting_down && self.chats.current(chat_id, owner)
     }
-    pub fn capture_and_detach_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
-        if let Some(client) = self.chats.client(id)
-            && let Some((chat, revision)) = client.capture(cx)
-        {
-            self.chats.save(chat, id, revision, cx)
+    pub fn capture_and_detach_document(
+        &mut self,
+        id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, AgentPersistenceError> {
+        let detached = self.chats.capture_and_detach_document(id, cx)?;
+        if detached {
+            self.admission.withdraw(id);
         }
-        self.unregister_document(id, cx);
+        Ok(detached)
     }
     pub fn save_chat(
         &mut self,
@@ -326,7 +441,7 @@ impl Runtime {
         owner: EntityId,
         revision: u64,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<bool, AgentPersistenceError> {
         self.chats.save(chat, owner, revision, cx)
     }
     pub fn delete_chat(&mut self, id: String, cx: &mut Context<Self>) {

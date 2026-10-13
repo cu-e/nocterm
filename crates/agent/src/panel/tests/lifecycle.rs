@@ -37,7 +37,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
         )))
         .unwrap();
     cx.run_until_parked();
-    cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).state.entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes>0);assert_eq!(thread.read(cx).tool_bytes,0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
+    cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).transcript().entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes>0);assert_eq!(thread.read(cx).tool_bytes,0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
@@ -267,7 +267,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
         assert!(
             !thread
                 .read(cx)
-                .state
+                .transcript()
                 .entries
                 .iter()
                 .any(|entry| matches!(entry, nocterm_ai::thread::Entry::Agent(_)))
@@ -278,13 +278,14 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
         thread.update(cx, |thread, cx| thread.send("go on".into(), cx));
     })
     .unwrap();
+    cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 2);
     f.events.try_send(late("answer")).unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(thread.read(cx).session().as_ref(), Some(&session));
-        assert!(thread.read(cx).state.entries.iter().any(
+        assert!(thread.read(cx).transcript().entries.iter().any(
             |entry| matches!(entry, nocterm_ai::thread::Entry::Agent(text) if text == "answer")
         ));
     });
@@ -343,6 +344,7 @@ fn ready_hides_auth_and_status_while_working_status_precedes_composer(cx: &mut T
                 thread.send("Question".into(), cx);
             });
     });
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let status = window.find("agent-status").bounds();
@@ -366,10 +368,11 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
             .read(cx)
             .current()
             .unwrap()
-            .update(cx, |thread, cx| { thread.send("Question".into(), cx);
-                for status in ["pending", "completed"] {
-                    thread.state.apply(acp::SessionUpdate::ToolCall(serde_json::from_value(serde_json::json!({"toolCallId":status,"title":"Before auth required","status":status})).unwrap()));
-                } });
+            .update(cx, |thread, cx| { let entries = ["pending", "completed"].into_iter().map(|status| {
+                    nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":status,"title":"Before auth required","status":status})).unwrap())
+                }).collect();
+                restore_entries(&f, thread, entries, cx);
+                thread.send("Question".into(), cx); });
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -379,7 +382,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
         assert!(!thread.read(cx).lifecycle.generating());
         let statuses = thread
             .read(cx)
-            .state
+            .transcript()
             .entries
             .iter()
             .filter_map(|entry| {
@@ -527,20 +530,38 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
 #[gpui_kit::test]
 fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    new_chat(&f, cx);
     for fail in [false, true] {
-        cx.update(|cx| {
-            let thread = f.panel.read(cx).current().unwrap();
-            thread.update(cx, |thread, cx| {
-                thread.state.entries = ["pending", "in_progress", "completed", "failed"].into_iter().map(|status| nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":status,"title":"Tool", "status":status})).unwrap())).collect();
-                thread.lifecycle.force_phase(nocterm_ai::session::SessionPhase::Prompting);
-                if fail { thread.fail("Adapter error", cx); } else { thread.stop(cx); }
-                for (index, entry) in thread.state.entries.iter().enumerate() {
-                    let nocterm_ai::thread::Entry::Tool(call) = entry else { panic!() };
-                    assert_eq!(call.status, if index == 2 { acp::ToolCallStatus::Completed } else { acp::ToolCallStatus::Failed });
-                    assert!(!crate::panel::widgets::entry_is_live(&thread.state.entries, index, thread.lifecycle.generating() && thread.lifecycle.accepts_updates()));
-                }
-            });
+        new_chat(&f, cx);
+        let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+        thread.update(cx,|thread,cx|restore_entries(&f,thread,["pending","in_progress","completed","failed"].into_iter().map(|status|nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":status,"title":"Tool","status":status})).unwrap())).collect(),cx));
+        thread.update(cx, |thread, cx| {
+            thread.send("Observe tool finalization".into(), cx)
+        });
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            if fail {
+                thread.fail("Adapter error", cx);
+            } else {
+                thread.stop(cx);
+            }
+            for (index, entry) in thread.history_entries().iter().enumerate() {
+                let nocterm_ai::thread::Entry::Tool(call) = entry else {
+                    continue;
+                };
+                assert_eq!(
+                    call.status,
+                    if index == 2 {
+                        acp::ToolCallStatus::Completed
+                    } else {
+                        acp::ToolCallStatus::Failed
+                    }
+                );
+                assert!(!crate::panel::widgets::entry_is_live(
+                    thread.history_entries(),
+                    index,
+                    thread.lifecycle.generating() && thread.lifecycle.accepts_updates()
+                ));
+            }
         });
         cx.update_window(f.handle, |_, window, cx| {
             window.render_frame(cx);

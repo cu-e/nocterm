@@ -34,7 +34,7 @@ fn send(
 }
 
 fn assert_error(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) {
-    let Entry::Tool(call) = &thread.read(cx).state.entries[index] else {
+    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
         panic!("tool row");
     };
     assert!(tool_display::header(call).contains("Execute program"));
@@ -115,7 +115,7 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
         }
     }
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool row");
         };
         let output = tool_output::source(call, false).unwrap();
@@ -181,7 +181,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.stop(cx);
-            let Entry::Tool(active) = &thread.state.entries[0] else {
+            let Entry::Tool(active) = &thread.transcript().entries[0] else {
                 panic!("tool row");
             };
             assert!(matches!(
@@ -190,7 +190,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
                     .outcome,
                 Some(tool_display::ToolOutcome::Err(_))
             ));
-            let Entry::Tool(complete) = &thread.state.entries[1] else {
+            let Entry::Tool(complete) = &thread.transcript().entries[1] else {
                 panic!("tool row");
             };
             assert!(matches!(
@@ -229,7 +229,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool row");
         };
         assert!(tool_display::ToolDisplay::from_call(call).is_none());

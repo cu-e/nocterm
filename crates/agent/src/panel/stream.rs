@@ -111,7 +111,7 @@ impl AgentPanel {
         };
         let mut changed = dirty.to_vec();
         changed.extend(self.stream.observe(
-            &thread.read(cx).state.entries,
+            &thread.read(cx).transcript().entries,
             dirty,
             thread.read(cx).lifecycle.generating(),
             cx.reduce_motion(),
@@ -155,7 +155,7 @@ impl AgentPanel {
                 };
                 let changed = this
                     .stream
-                    .advance(&thread.read(cx).state.entries, cx.reduce_motion());
+                    .advance(&thread.read(cx).transcript().entries, cx.reduce_motion());
                 this.remeasure_rows(changed, cx);
                 this.schedule_stream_tick(cx);
                 cx.notify();

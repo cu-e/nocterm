@@ -41,6 +41,7 @@ struct ProbeClient {
     revision: Cell<u64>,
     events: RefCell<Vec<SessionEvent>>,
     on_saved: Option<SavedCallback>,
+    on_admitted: RefCell<Option<SavedCallback>>,
 }
 impl ProbeClient {
     fn new(cx: &mut TestAppContext, chat: Arc<SharedChat>) -> Rc<Self> {
@@ -57,6 +58,7 @@ impl ProbeClient {
             revision: Cell::new(1),
             events: RefCell::new(Vec::new()),
             on_saved,
+            on_admitted: RefCell::new(None),
         })
     }
 }
@@ -69,8 +71,12 @@ impl SessionClient for ProbeClient {
     }
     fn emit(&self, event: SessionEvent, cx: &mut App) {
         let saved = matches!(&event, SessionEvent::Saved { .. });
+        let admitted = matches!(&event, SessionEvent::SaveAdmitted { .. });
         self.events.borrow_mut().push(event);
         if saved && let Some(callback) = &self.on_saved {
+            callback(self.id(), cx);
+        }
+        if admitted && let Some(callback) = self.on_admitted.borrow().as_ref() {
             callback(self.id(), cx);
         }
     }
@@ -177,12 +183,14 @@ fn snapshot() -> Arc<SharedChat> {
 fn admit(runtime: &Entity<Runtime>, client: Rc<ProbeClient>, cx: &mut TestAppContext) {
     runtime.update(cx, |runtime, cx| {
         runtime.register_document(client.clone(), cx);
-        runtime.save_chat(
-            client.chat.borrow().clone(),
-            client.id(),
-            client.revision.get(),
-            cx,
-        );
+        runtime
+            .save_chat(
+                client.chat.borrow().clone(),
+                client.id(),
+                client.revision.get(),
+                cx,
+            )
+            .unwrap();
     });
 }
 #[gpui::test]
@@ -224,7 +232,7 @@ async fn the_latest_queued_snapshot_wins_over_an_unacknowledged_disk_write(
     *client.chat.borrow_mut() = latest.clone();
     client.revision.set(2);
     runtime.update(cx, |runtime, cx| {
-        runtime.save_chat(latest, client.id(), 2, cx)
+        runtime.save_chat(latest, client.id(), 2, cx).unwrap()
     });
     let final_work = runtime.update(cx, |runtime, cx| runtime.shutdown(cx));
     release.send(Ok(())).unwrap();
@@ -326,7 +334,7 @@ fn one_chat_failure_does_not_block_another_owner_and_new_intent_retries(cx: &mut
             .events
             .borrow()
             .iter()
-            .any(|event| matches!(event, SessionEvent::SaveFailed(_)))
+            .any(|event| matches!(event, SessionEvent::SaveFailed { .. }))
     );
     assert!(
         second_client
@@ -376,13 +384,18 @@ fn an_old_owner_failure_cannot_poison_its_replacement(cx: &mut TestAppContext) {
     admit(&runtime, replacement.clone(), cx);
     release.send(Err(AgentStorageError::Interrupted)).unwrap();
     cx.run_until_parked();
-    assert!(old.events.borrow().is_empty());
+    assert!(
+        old.events
+            .borrow()
+            .iter()
+            .all(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 1 }))
+    );
     assert!(
         !replacement
             .events
             .borrow()
             .iter()
-            .any(|event| matches!(event, SessionEvent::SaveFailed(_)))
+            .any(|event| matches!(event, SessionEvent::SaveFailed { .. }))
     );
     assert!(
         replacement
@@ -452,7 +465,7 @@ fn an_older_failed_revision_cannot_pause_a_newer_accepted_document(cx: &mut Test
             .events
             .borrow()
             .iter()
-            .any(|event| matches!(event, SessionEvent::SaveFailed(_)))
+            .any(|event| matches!(event, SessionEvent::SaveFailed { .. }))
     );
     assert!(
         client
@@ -547,11 +560,27 @@ fn an_old_owner_success_cannot_acknowledge_its_replacements_blocked_document(
     first.send(Ok(())).unwrap();
     cx.run_until_parked();
     assert_eq!(repository.transcript(&chat.id).unwrap().draft, chat.draft);
-    assert!(old.events.borrow().is_empty());
-    assert!(replacement.events.borrow().is_empty());
+    assert!(
+        old.events
+            .borrow()
+            .iter()
+            .all(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 1 }))
+    );
+    assert!(
+        replacement
+            .events
+            .borrow()
+            .iter()
+            .all(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 2 }))
+    );
     second.send(Ok(())).unwrap();
     cx.run_until_parked();
-    assert!(old.events.borrow().is_empty());
+    assert!(
+        old.events
+            .borrow()
+            .iter()
+            .all(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 1 }))
+    );
     assert_eq!(
         replacement
             .events
@@ -567,5 +596,98 @@ fn an_old_owner_success_cannot_acknowledge_its_replacements_blocked_document(
     assert_eq!(
         repository.transcript(&chat.id).unwrap().draft.as_deref(),
         Some("replacement desired document"),
+    );
+}
+
+#[gpui::test]
+fn a_delayed_offer_cannot_replace_an_already_admitted_newer_revision(cx: &mut TestAppContext) {
+    let (runtime, _directory, repository) = fixture(cx);
+    let old = snapshot();
+    let client = ProbeClient::new(cx, old.clone());
+    let mut metadata = old.metadata.clone();
+    metadata.draft = Some("newer admitted draft".into());
+    let latest = Arc::new(SharedChat {
+        metadata,
+        queue: Vec::new(),
+    });
+    *client.chat.borrow_mut() = latest.clone();
+    client.revision.set(2);
+    admit(&runtime, client.clone(), cx);
+    let accepted = runtime.update(cx, |runtime, cx| {
+        runtime.save_chat(old.clone(), client.id(), 1, cx).unwrap()
+    });
+    assert!(
+        !accepted,
+        "revision one cannot revoke an already admitted revision two"
+    );
+    cx.run_until_parked();
+    assert_eq!(repository.transcript(&old.id).unwrap().draft, latest.draft);
+    assert!(!client.events.borrow().iter().any(|event| matches!(
+        event,
+        SessionEvent::SaveAdmitted { revision: 1 } | SessionEvent::Saved { revision: 1 }
+    )));
+}
+
+#[gpui::test]
+async fn stale_closing_capture_preserves_the_newer_writer_owned_candidate(cx: &mut TestAppContext) {
+    let (runtime, _directory, repository) = fixture(cx);
+    let old = snapshot();
+    let client = ProbeClient::new(cx, old.clone());
+    let mut metadata = old.metadata.clone();
+    metadata.draft = Some("writer owned newest".into());
+    let latest = Arc::new(SharedChat {
+        metadata,
+        queue: Vec::new(),
+    });
+    runtime.update(cx, |runtime, cx| {
+        runtime.register_document(client.clone(), cx);
+        assert!(
+            runtime
+                .save_chat(latest.clone(), client.id(), 2, cx)
+                .unwrap()
+        );
+    });
+    let final_work = runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx));
+    final_work.await.unwrap();
+    assert_eq!(repository.transcript(&old.id).unwrap().draft, latest.draft);
+}
+
+#[gpui::test]
+fn a_detached_capture_acknowledges_its_original_client_outside_the_runtime_borrow(
+    cx: &mut TestAppContext,
+) {
+    let (runtime, _directory, repository) = fixture(cx);
+    let client = ProbeClient::new(cx, snapshot());
+    let callback_runtime = runtime.clone();
+    let reentered = Rc::new(Cell::new(false));
+    let observed = reentered.clone();
+    *client.on_admitted.borrow_mut() = Some(Box::new(move |id, cx| {
+        callback_runtime.update(cx, |runtime, cx| runtime.unregister_document(id, cx));
+        observed.set(true);
+    }));
+    runtime.update(cx, |runtime, cx| {
+        runtime.register_document(client.clone(), cx);
+        assert!(
+            runtime
+                .capture_and_detach_document(client.id(), cx)
+                .unwrap()
+        );
+        assert!(
+            !reentered.get(),
+            "admission delivery is deferred until the Runtime borrow ends"
+        );
+    });
+    cx.run_until_parked();
+    assert!(reentered.get());
+    assert!(
+        client
+            .events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 1 }))
+    );
+    assert_eq!(
+        repository.transcript(&snapshot().id).unwrap().draft,
+        snapshot().draft
     );
 }

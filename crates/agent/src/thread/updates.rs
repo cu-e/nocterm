@@ -27,10 +27,10 @@ impl AgentThread {
             return;
         }
         let index = match &notification.update {
-            acp::SessionUpdate::ToolCallUpdate(update) => self.state.entries.iter().position(
+            acp::SessionUpdate::ToolCallUpdate(update) => self.state.entries().iter().position(
                 |entry| matches!(entry, Entry::Tool(call) if call.tool_call_id == update.tool_call_id),
             ),
-            _ => self.state.entries.len().checked_sub(1),
+            _ => self.state.entries().len().checked_sub(1),
         };
         let configuration = matches!(
             notification.update,
@@ -41,7 +41,7 @@ impl AgentThread {
                 if let Some(index) = index {
                     self.mark_dirty(index);
                 }
-                if let Some(index) = self.state.entries.len().checked_sub(1) {
+                if let Some(index) = self.state.entries().len().checked_sub(1) {
                     self.mark_dirty(index);
                 }
             }
@@ -57,8 +57,10 @@ impl AgentThread {
     /// forgets its transcript and what was attached.
     pub(crate) fn connection_stopped(&mut self, message: &str, cx: &mut Context<Self>) {
         self.fail(message, cx);
-        if !cx.ai_enabled() {
-            self.state = Default::default();
+        self.clear_settled_disabled_document(cx);
+    }
+    pub(super) fn clear_settled_disabled_document(&mut self, cx: &gpui_kit::App) {
+        if !cx.ai_enabled() && self.state.release_disabled() {
             self.config.disabled();
             self.composer.reset_after_disable();
         }

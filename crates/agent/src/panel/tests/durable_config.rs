@@ -61,7 +61,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     cx.run_until_parked();
     choose(&first, "opus", cx);
     exchange(&f, "hello", "Hi.", cx);
-    let id = cx.update(|cx| first.read(cx).chat_id.clone());
+    let id = cx.update(|cx| first.read(cx).document().chat_id().to_owned());
 
     // Another chat of the agent picks another model, which becomes the
     // agent's default; the first chat keeps its own.

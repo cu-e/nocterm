@@ -43,10 +43,17 @@ impl AgentThread {
         }
         let mut visible = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
         visible.extend(images);
-        let history = (self.fallback_history && !is_command)
-            .then(|| super::session::history_context(&self.state.entries));
-        self.state.push_user(visible.clone());
-        self.mark_dirty(self.state.entries.len() - 1);
+        let history = (self.state.pending_history() && !is_command)
+            .then(|| super::session::history_context(self.state.entries()));
+        self.config.bind_request(ticket);
+        self.config.prompt_started();
+        let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
+        let resume =
+            super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
+        let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
+        self.state
+            .append_user(visible.clone(), nocterm_ai::time::now(), &input);
+        self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
         let mut content = Vec::new();
         if let Some(context) = context {
@@ -56,8 +63,6 @@ impl AgentThread {
             content.push(acp::ContentBlock::Text(acp::TextContent::new(history)));
         }
         content.extend(visible);
-        self.config.bind_request(ticket);
-        self.config.prompt_started();
         self.status = "Working…".into();
         self.status_error = false;
         let future = cx
@@ -83,11 +88,11 @@ impl AgentThread {
                 match result {
                     Ok(response) => {
                         if response.usage.is_some() {
-                            this.state.tokens = response.usage;
+                            this.state.tokens(response.usage);
                         }
                         // Agents that keep limits in their own files have
                         // just written this turn's.
-                        let agent = this.agent_id.clone();
+                        let agent = this.state.agent_id().to_owned();
                         cx.defer(move |cx| {
                             Runtime::global(cx)
                                 .update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
@@ -98,7 +103,8 @@ impl AgentThread {
                             format!("{:?}", response.stop_reason)
                         };
                         if !is_command && completed {
-                            this.fallback_history = false;
+                            this.state
+                                .set_pending_history(false, nocterm_ai::time::now());
                             this.persist(cx);
                         }
                         this.dispatch_next(cx);

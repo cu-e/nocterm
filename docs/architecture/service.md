@@ -54,6 +54,18 @@ optimistic `Persisted` snapshots. `ChatStore` checks current document identity a
 permanent deletion tombstones before admitting independent keys to one
 `KeyedPersisted` worker; one chat failure does not stop unrelated chats.
 
+The existing `save_chat` method returns typed acceptance: false for stale ownership,
+true only after the keyed writer owns the immutable candidate. Revision-bearing
+`SaveAdmitted`, `Saved` and `SaveFailed` events distinguish intake from physical
+publication. Registry stamps are committed after intake succeeds. Capture retains
+writer-owned intents when a client has nothing pending; shutdown returns captured
+admission errors together with drained publication failures. Normal detach leaves a
+client registered when admission fails so its desired candidate can still be retried.
+An older revision from the same current owner cannot replace a newer admitted intent.
+Successful detach admission acknowledges its original client outside the Runtime
+borrow even after unregistering it; candidate revision validation remains feature-owned.
+AI disable finalizes session transitions before taking that durable capture.
+
 Both snapshot and keyed policies use Store's common normal/captured disk
 executor and gate. Ready capacity is 32 key tokens, with one newest retained
 intent per dirty document; a full ready queue never drops accepted work. This is

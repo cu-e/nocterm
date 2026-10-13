@@ -59,7 +59,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert!(thread.dormant());
-        assert_eq!(thread.state.entries.len(), 2);
+        assert_eq!(thread.transcript().entries.len(), 2);
         assert!(thread.session().is_none());
     });
     assert!(f.commands.restores.lock().unwrap().is_empty());
@@ -75,7 +75,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), sessions);
     cx.update(|cx| assert_eq!(thread.read(cx).session().as_ref(), Some(&session)));
 
-    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
     cx.run_until_parked();
     assert!(f.repository.chats().is_empty());
@@ -95,7 +95,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
     let (old, chat) = cx.update(|cx| {
         let panel = f.panel.read(cx);
         let old = panel.threads[0].clone();
-        let chat = old.read(cx).chat_id.clone();
+        let chat = old.read(cx).document().chat_id().to_owned();
         (old, chat)
     });
     let id = old.entity_id();
@@ -118,7 +118,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
         assert_eq!(panel.threads.len(), 1);
         let thread = panel.current().unwrap().read(cx);
         assert_ne!(panel.current().unwrap().entity_id(), id);
-        assert_eq!(thread.chat_id, chat);
+        assert_eq!(thread.document().chat_id().to_owned(), chat);
         assert_eq!(thread.title(), "check the disk");
         assert!(!thread.ended());
     });
@@ -207,12 +207,15 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         assert!(panel.history, "history stays beside the chat");
         let fork = panel.current().unwrap().read(cx);
         assert_eq!(fork.title(), "restart nginx (fork)");
-        assert_eq!(fork.state.entries.len(), 2);
+        assert_eq!(fork.transcript().entries.len(), 2);
         assert_eq!(
             fork.session().clone(),
             Some(acp::SessionId::new(format!("fork-of-{nginx_session}")))
         );
-        assert_ne!(fork.chat_id, nginx.read(cx).chat_id);
+        assert_ne!(
+            fork.document().chat_id(),
+            nginx.read(cx).document().chat_id().to_owned()
+        );
     });
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -278,21 +281,33 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
                 cx,
             );
             thread.send("First request".into(), cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        thread.update(cx, |thread, cx| {
             let model = thread.model();
             assert_eq!(model.as_deref(), Some("First model"));
-            assert_eq!(thread.state.entries.len(), 1);
+            assert_eq!(thread.transcript().entries.len(), 1);
             report_control(
                 thread,
                 acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(Vec::new())),
                 cx,
             );
             thread.send("Rejected while busy".into(), cx);
-            assert_eq!(thread.state.entries.len(), 1);
+            assert_eq!(thread.transcript().entries.len(), 1);
             assert_eq!(thread.model(), model);
-            thread.state.title = Some("Updated title".into());
+            report_control(
+                thread,
+                acp::SessionUpdate::SessionInfoUpdate(
+                    serde_json::from_value(serde_json::json!({"title":"Updated title"})).unwrap(),
+                ),
+                cx,
+            );
             thread.stop(cx);
             thread.send("Rejected while stopping".into(), cx);
-            assert_eq!(thread.state.entries.len(), 1);
+            assert_eq!(thread.transcript().entries.len(), 1);
         });
     });
     cx.update_window(f.handle, |_, window, cx| {

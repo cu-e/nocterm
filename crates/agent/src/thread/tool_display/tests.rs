@@ -1,6 +1,23 @@
 use super::*;
 use serde_json::json;
 
+fn normalize(displays: &mut ToolDisplays, entries: &mut Vec<Entry>) -> Vec<usize> {
+    let mut saved =
+        nocterm_ai::history::SavedChat::for_identity("fixture".into(), "document".into(), 0);
+    saved.entries = std::mem::take(entries);
+    let mut document = super::super::document::ChatDocument::new(
+        saved.agent_id.clone(),
+        saved.id.clone(),
+        saved.updated,
+    );
+    document.imported_clean(&mut saved, false);
+    let patches = displays.normalize(document.entries());
+    let rows = patches.iter().map(|patch| patch.row()).collect();
+    document.patch_tool_rows(patches, 1);
+    *entries = document.entries().to_vec();
+    rows
+}
+
 fn row(id: &str) -> Entry {
     Entry::Tool(acp::ToolCall::new(id.to_owned(), "mcp.nocterm-3.run_command").raw_input(json!({
         "server":"nocterm-3","tool":"run_command","arguments":{"terminal_id":"t1","command":"echo hello"}
@@ -35,11 +52,11 @@ fn events_can_arrive_before_or_after_execution() {
             displays.records.push(record());
         }
         entries.push(row("c1"));
-        displays.normalize(&mut entries);
+        normalize(&mut displays, &mut entries);
         if !bridge_first {
             displays.records.push(record());
         }
-        displays.normalize(&mut entries);
+        normalize(&mut displays, &mut entries);
         let Entry::Tool(call) = &entries[0] else {
             unreachable!()
         };
@@ -59,18 +76,18 @@ fn late_input_can_match_but_later_provider_updates_cannot_rewrite_verified_paylo
     };
     let input = call.raw_input.take();
     let mut entries = vec![Entry::Tool(call)];
-    assert!(displays.normalize(&mut entries).is_empty());
+    assert!(normalize(&mut displays, &mut entries).is_empty());
     let Entry::Tool(call) = &mut entries[0] else {
         unreachable!()
     };
     call.raw_input = input;
-    assert_eq!(displays.normalize(&mut entries), vec![0]);
+    assert_eq!(normalize(&mut displays, &mut entries), vec![0]);
     let Entry::Tool(call) = &mut entries[0] else {
         unreachable!()
     };
     call.title = "forged server".into();
     call.raw_input = Some(json!({"command":"echo forged"}));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
@@ -91,7 +108,7 @@ fn ambiguous_rows_or_requests_do_not_receive_an_invented_destination() {
         } else {
             entries.push(row("c2"));
         }
-        assert!(displays.normalize(&mut entries).is_empty());
+        assert!(normalize(&mut displays, &mut entries).is_empty());
         for entry in entries {
             let Entry::Tool(call) = entry else {
                 unreachable!()
@@ -108,7 +125,7 @@ fn a_new_turn_cannot_backfill_an_old_unmatched_row() {
     displays.prepare(2, 1);
     displays.records.push(record());
     entries.push(row("current"));
-    assert_eq!(displays.normalize(&mut entries), vec![1]);
+    assert_eq!(normalize(&mut displays, &mut entries), vec![1]);
     let Entry::Tool(old) = &entries[0] else {
         unreachable!()
     };
@@ -140,7 +157,7 @@ fn later_duplicate_requests_revoke_an_eager_destination_association() {
     let mut bridge_b = record();
     bridge_b.display.destination = Some("Host B · root@b.example:22".into());
     displays.records.push(bridge_b);
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
 
     // ACP and bridge identifiers are unrelated. The request that actually
     // belongs to provider-b can arrive while provider-a is the only row.
@@ -148,7 +165,7 @@ fn later_duplicate_requests_revoke_an_eager_destination_association() {
     let mut bridge_a = record();
     bridge_a.display.destination = Some("Host A · root@a.example:22".into());
     displays.records.push(bridge_a);
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
 
     for entry in &entries {
         let Entry::Tool(call) = entry else {
@@ -172,7 +189,7 @@ fn later_duplicate_requests_revoke_an_eager_destination_association() {
         unreachable!()
     };
     call.raw_input = Some(json!({"command":"echo provider-forged"}));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
@@ -187,7 +204,7 @@ fn a_late_duplicate_row_permanently_revokes_only_its_destination() {
     displays.prepare(1, 0);
     displays.records.push(record());
     let mut entries = vec![row("first")];
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &mut entries[0] else {
         unreachable!()
     };
@@ -196,13 +213,13 @@ fn a_late_duplicate_row_permanently_revokes_only_its_destination() {
         .unwrap()
         .insert("external/key".into(), json!({"preserved":true}));
     entries.push(row("later"));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     entries.pop();
     let Entry::Tool(call) = &mut entries[0] else {
         unreachable!()
     };
     call.raw_input = Some(json!({"command":"provider replacement"}));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
@@ -233,7 +250,7 @@ fn a_reordered_request_at_the_tracking_limit_revokes_the_old_host_without_losing
         displays.record("nocterm-3".into(), &request, display);
     }
     let mut entries = vec![row("provider-a")];
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = row("provider-b") else {
         unreachable!()
     };
@@ -245,12 +262,12 @@ fn a_reordered_request_at_the_tracking_limit_revokes_the_old_host_without_losing
     );
     assert_eq!(displays.records.len(), 128);
     entries.push(Entry::Tool(call));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &mut entries[0] else {
         unreachable!()
     };
     call.raw_input = Some(json!({"command":"provider replacement"}));
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
@@ -282,17 +299,17 @@ fn both_provider_spellings_match_one_snapshot_and_duplicate_rows_revoke_the_host
         if bridge_first {
             displays.records.push(record());
         }
-        displays.normalize(&mut entries);
+        normalize(&mut displays, &mut entries);
         if !bridge_first {
             displays.records.push(record());
         }
-        displays.normalize(&mut entries);
+        normalize(&mut displays, &mut entries);
         let Entry::Tool(call) = &entries[0] else {
             unreachable!()
         };
         assert!(tool_display::header(call).contains("original.example"));
         entries.push(row("c2"));
-        displays.normalize(&mut entries);
+        normalize(&mut displays, &mut entries);
         for entry in &entries {
             let Entry::Tool(call) = entry else {
                 unreachable!()
@@ -310,9 +327,9 @@ fn completion_updates_bound_rows_and_cannot_cross_turns_or_duplicate_requests() 
     first.id = 5;
     displays.records.push(first);
     let mut entries = vec![row("first")];
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     displays.finish(Some((1, 5)), Ok(json!({"text":"late result"})));
-    assert_eq!(displays.normalize(&mut entries), vec![0]);
+    assert_eq!(normalize(&mut displays, &mut entries), vec![0]);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
@@ -323,7 +340,7 @@ fn completion_updates_bound_rows_and_cannot_cross_turns_or_duplicate_requests() 
     let mut second = record();
     second.id = 6;
     displays.records.push(second);
-    displays.normalize(&mut entries);
+    normalize(&mut displays, &mut entries);
     displays.finish(Some((1, 6)), Err("second result".into()));
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
@@ -352,7 +369,7 @@ fn an_execution_completed_before_its_provider_row_binds_the_saved_outcome() {
     displays.records.push(completed);
     displays.finish(Some((1, 5)), Ok(json!({"text":"completed before row"})));
     let mut entries = vec![row("late-provider-row")];
-    assert_eq!(displays.normalize(&mut entries), vec![0]);
+    assert_eq!(normalize(&mut displays, &mut entries), vec![0]);
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };

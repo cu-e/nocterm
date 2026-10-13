@@ -7,6 +7,10 @@ use crate::{
 use gpui_kit::{AppContext as _, Context, Entity, Window};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::time::Duration;
+enum ThreadStart {
+    New(String),
+    Restart(Box<crate::thread::RestartData>),
+}
 impl AgentPanel {
     pub(super) fn reset_chat_view(&mut self, cx: &mut Context<Self>) {
         self.stream_tick = None;
@@ -74,18 +78,39 @@ impl AgentPanel {
         self.trim_resident_history(cx);
         cx.notify();
     }
+    pub(super) fn admit_before_removal(
+        &mut self,
+        id: gpui_kit::EntityId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.capture_and_detach_document(id, cx)
+        }) {
+            Ok(true) => {
+                if let Some(thread) = self.threads.iter().find(|thread| thread.entity_id() == id) {
+                    thread.update(cx, |thread, cx| {
+                        thread.document_admitted(thread.document().desired_revision(), cx)
+                    });
+                }
+                true
+            }
+            Ok(false) => true,
+            Err(error) => {
+                self.error = Some(format!("Could not retain chat: {error}"));
+                false
+            }
+        }
+    }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.original_composer_text(cx);
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
         }
         self.leave_composer_with(true, cx);
-        for thread in &self.threads {
-            Runtime::global(cx).update(cx, |runtime, cx| {
-                runtime.capture_and_detach_document(thread.entity_id(), cx);
-            });
+        self.retain_threads(|_, _| false, cx);
+        if !self.threads.is_empty() {
+            return;
         }
-        self.threads.clear();
         self.active = None;
         self.composer = Default::default();
         self.queue_heights.clear();
@@ -100,15 +125,19 @@ impl AgentPanel {
     }
 
     pub(super) fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_thread_connection(id, false, window, cx);
+        self.new_thread_connection(ThreadStart::New(id), window, cx);
     }
-    pub(super) fn new_thread_connection(
+    fn new_thread_connection(
         &mut self,
-        id: String,
-        restarting: bool,
+        start: ThreadStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let restarting = matches!(&start, ThreadStart::Restart(_));
+        let id = match &start {
+            ThreadStart::New(id) => id.clone(),
+            ThreadStart::Restart(data) => data.agent_id().to_owned(),
+        };
         let Some(_launch) = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
             .get(&id)
             .cloned()
@@ -123,14 +152,15 @@ impl AgentPanel {
             .and_then(|workspace| workspace.read(cx).active_terminal(cx));
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
-        let thread = cx.new(|cx| {
-            let mut thread = AgentThread::new(id, self.workspace.clone(), cx);
-            if !restarting {
+        let thread = cx.new(|cx| match start {
+            ThreadStart::New(id) => {
+                let mut thread = AgentThread::new(id, self.workspace.clone(), cx);
                 thread.preview_config(cx);
+                thread
             }
-            thread
+            ThreadStart::Restart(data) => AgentThread::restarted(*data, self.workspace.clone(), cx),
         });
-        if let Some(id) = active {
+        if !restarting && let Some(id) = active {
             thread.update(cx, |thread, cx| {
                 thread.add_composer_attachment(Attachment::Terminal(id), cx)
             });
@@ -156,14 +186,13 @@ impl AgentPanel {
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
         let data = old.read(cx).restart_data();
-        self.new_thread_connection(data.agent.clone(), true, window, cx);
+        self.new_thread_connection(ThreadStart::Restart(Box::new(data)), window, cx);
         let Some(thread) = self
             .current()
             .filter(|thread| thread.entity_id() != old.entity_id())
         else {
             return;
         };
-        thread.update(cx, |thread, _| thread.apply_restart(data));
         Runtime::global(cx).update(cx, |runtime, cx| {
             runtime.register_document(crate::thread::client(&thread), cx)
         });
@@ -199,7 +228,7 @@ impl AgentPanel {
                     .threads
                     .iter()
                     .chain(&restored)
-                    .any(|thread| thread.read(cx).chat_id == summary.id)
+                    .any(|thread| thread.read(cx).chat_id() == summary.id)
                 {
                     continue;
                 }
@@ -225,7 +254,7 @@ impl AgentPanel {
             .map(|thread| thread.read(cx).resident_history_bytes())
             .sum();
         let mut candidates = self.threads.clone();
-        candidates.sort_by_key(|thread| thread.read(cx).updated);
+        candidates.sort_by_key(|thread| thread.read(cx).document().updated());
         for thread in candidates {
             if resident <= BUDGET {
                 break;
@@ -235,8 +264,8 @@ impl AgentPanel {
             }
             let bytes = thread.read(cx).resident_history_bytes();
             let query = self.history_search.read(cx).value().trim().to_lowercase();
-            let matched = !query.is_empty() && thread.read(cx).state.mentions(&query);
-            let chat_id = thread.read(cx).chat_id.clone();
+            let matched = !query.is_empty() && thread.read(cx).transcript().mentions(&query);
+            let chat_id = thread.read(cx).document().chat_id().to_owned();
             if thread.update(cx, |thread, cx| thread.evict_history(cx)) {
                 resident = resident.saturating_sub(bytes);
                 if matched {

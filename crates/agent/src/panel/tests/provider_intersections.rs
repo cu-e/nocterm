@@ -118,7 +118,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         cx,
     );
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             unreachable!()
         };
         assert!(
@@ -169,7 +169,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         cx,
     );
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             unreachable!()
         };
         assert_eq!(

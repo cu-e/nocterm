@@ -1,45 +1,37 @@
-//! Only durable chat state transfers to a replacement process.
+//! Replacement processes transfer durable meaning without allocating a new chat identity.
 use super::{AgentThread, Composer, Restore};
-use nocterm_ai::thread::ThreadState;
+use gpui_kit::{Context, WeakEntity};
+use nocterm_workspace::Workspace;
 pub(crate) struct RestartData {
-    pub agent: String,
-    chat_id: String,
-    updated: u64,
-    name: Option<String>,
-    pinned: bool,
-    history_queued: bool,
-    state: ThreadState,
+    document: super::document::DocumentRestart,
     config: super::config::RestartConfig,
     composer: Composer,
-    fallback_history: bool,
     restore: Option<Restore>,
+}
+impl RestartData {
+    pub(crate) fn agent_id(&self) -> &str {
+        self.document.agent_id()
+    }
 }
 impl AgentThread {
     pub(crate) fn restart_data(&self) -> RestartData {
         RestartData {
-            agent: self.agent_id.clone(),
-            chat_id: self.chat_id.clone(),
-            updated: self.updated,
-            name: self.name.clone(),
-            pinned: self.pinned,
-            history_queued: self.history_queued,
-            state: self.state.clone(),
+            document: self.state.restart_snapshot(),
             config: self.config.restart_snapshot(),
             composer: self.composer.restarted(),
-            fallback_history: self.fallback_history,
             restore: self.restore_descriptor(),
         }
     }
-    pub(crate) fn apply_restart(&mut self, data: RestartData) {
-        self.chat_id = data.chat_id;
-        self.updated = data.updated;
-        self.name = data.name;
-        self.pinned = data.pinned;
-        self.history_queued = data.history_queued;
-        self.state = data.state;
-        self.config.hydrate_restart(data.config);
-        self.composer = data.composer;
-        self.fallback_history = data.fallback_history;
-        self.restore = data.restore;
+    pub(crate) fn restarted(
+        data: RestartData,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let state = super::document::ChatDocument::restarted(data.document);
+        let mut thread = Self::from_document(state, workspace, cx);
+        thread.config.hydrate_restart(data.config);
+        thread.composer = data.composer;
+        thread.restore = data.restore;
+        thread
     }
 }

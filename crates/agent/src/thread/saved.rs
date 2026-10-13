@@ -13,7 +13,15 @@ impl AgentThread {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut thread = Self::new(chat.agent_id.clone(), workspace, cx);
+        let mut thread = Self::from_document(
+            super::document::ChatDocument::new(
+                chat.agent_id.clone(),
+                chat.id.clone(),
+                chat.updated,
+            ),
+            workspace,
+            cx,
+        );
         thread.restore_content(chat);
         thread.preview_config(cx);
         thread
@@ -23,7 +31,7 @@ impl AgentThread {
     }
     pub(super) fn restore_content_with_overlay(
         &mut self,
-        chat: nocterm_ai::history::SavedChat,
+        mut chat: nocterm_ai::history::SavedChat,
         overlay: Option<super::archive::DraftOverlay>,
     ) {
         self.archive.hydration_committed(chat.resident_bytes());
@@ -33,18 +41,13 @@ impl AgentThread {
             .prepared_budget()
             .map(|prepared| prepared.prompt_sizes().to_vec())
             .unwrap_or_default();
-        self.storage_budget = nocterm_ai::history::HistoryBudget::restored(chat.prepared_budget());
-        self.chat_id = chat.id;
-        self.history_queued = true;
-        self.updated = overlay
-            .as_ref()
-            .map_or(chat.updated, |overlay| overlay.updated());
+        if let Some(overlay) = &overlay {
+            self.state
+                .imported_with_overlay(&mut chat, pending_history, overlay.updated());
+        } else {
+            self.state.imported_clean(&mut chat, pending_history);
+        }
         self.status = "Saved chat".into();
-        self.state.entries = chat.entries;
-        self.state.times = chat.times;
-        self.state.title = chat.title;
-        self.name = chat.name;
-        self.pinned = chat.pinned;
         let queue = chat
             .queue
             .into_iter()
@@ -65,9 +68,7 @@ impl AgentThread {
         );
         if let Some(overlay) = overlay {
             self.composer.set_draft(overlay.text().to_owned());
-            self.draft_changed = true;
         }
-        self.fallback_history = pending_history;
         self.restore = chat.session_id.map(|session| Restore {
             session: acp::SessionId::new(session),
             workdir: chat.workdir.unwrap_or_default(),
@@ -82,24 +83,24 @@ impl AgentThread {
     /// A copy of this chat, to go on with separately. When opened, the copy
     /// continues in a copy of this chat's agent session.
     pub(crate) fn fork(&self) -> Fork {
-        self.fork_at(self.state.entries.len())
+        self.fork_at(self.state.entries().len())
     }
     /// A copy of the chat's first `len` entries. Only a copy of the whole
     /// chat continues in a copy of the agent's session; an earlier cut
     /// starts a new session, since the agent cannot forget the rest.
     pub(crate) fn fork_at(&self, len: usize) -> Fork {
-        let whole = len >= self.state.entries.len();
-        let mut chat = nocterm_ai::history::SavedChat::new(self.agent_id.clone());
-        let mut state = self.state.clone();
+        let whole = len >= self.state.entries().len();
+        let mut chat = nocterm_ai::history::SavedChat::new(self.state.agent_id().to_owned());
+        let mut state = self.state.transcript().clone();
         state.truncate(len);
         chat.entries = state.entries;
         chat.times = state.times;
-        chat.title = self.state.title.clone();
+        chat.title = self.state.transcript().title.clone();
         chat.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
         chat.config = self.config.choices().clone();
         chat.mode = self.config.mode_choice().map(ToString::to_string);
-        chat.pending_history = self.fallback_history || !whole;
+        chat.pending_history = self.state.pending_history() || !whole;
         let restore = match (&self.session(), &self.restore) {
             (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
                 session: session.clone(),
@@ -128,9 +129,13 @@ impl AgentThread {
         let pending_history =
             fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
         let mut thread = Self::restored(fork.chat, workspace, cx);
-        thread.fallback_history = pending_history;
+        thread
+            .state
+            .set_pending_history(pending_history, nocterm_ai::time::now());
         thread.restore = fork.restore;
         thread.composer.replace_context(fork.attachments);
+        thread.establish_clean_document_inputs(cx);
+        thread.state.fork_created();
         thread.status = "Forked chat".into();
         thread
     }
@@ -138,7 +143,7 @@ impl AgentThread {
     /// the first message.
     pub(crate) fn title(&self) -> String {
         self.archive.summary().map_or_else(
-            || chat_title(self.name.as_deref(), &self.state),
+            || chat_title(self.state.name(), self.state.transcript()),
             |summary| summary.title().to_owned(),
         )
     }
@@ -151,10 +156,9 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Rename { name }, cx);
             return;
         }
-        self.name = name
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty());
-        self.save(cx);
+        if self.state.rename(name, nocterm_ai::time::now()) {
+            self.save(cx);
+        }
         cx.notify();
     }
     pub(crate) fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
@@ -162,46 +166,35 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Pin { pinned }, cx);
             return;
         }
-        self.pinned = pinned;
-        self.save(cx);
+        if self.state.pin(pinned, nocterm_ai::time::now()) {
+            self.save(cx);
+        }
         cx.notify();
     }
-    /// Metadata shared by transcript, queue and unsent composer snapshots.
+    pub(super) fn persistent_resume(&self) -> super::document::Resume {
+        if self.state.entries().is_empty() {
+            return super::document::Resume::default();
+        }
+        match (self.session(), &self.restore) {
+            (Some(session), _) => super::document::Resume::new(
+                Some(session.to_string()),
+                self.session_workdir().clone(),
+            ),
+            (None, Some(restore)) if !restore.fork => super::document::Resume::new(
+                Some(restore.session.to_string()),
+                Some(restore.workdir.clone()),
+            ),
+            _ => super::document::Resume::default(),
+        }
+    }
     pub(super) fn history_metadata(&self, cx: &gpui_kit::App) -> nocterm_ai::history::SavedChat {
-        let mut chat = nocterm_ai::history::SavedChat::new(self.agent_id.clone());
-        chat.id = self.chat_id.clone();
-        chat.updated = self.updated;
-        chat.title = self.state.title.clone();
-        chat.name = self.name.clone();
-        chat.pinned = self.pinned;
-        chat.draft = self.composer.draft().cloned();
-        chat.attachments = self.stable_attachments(self.composer.default_attachments(), cx);
-        chat.times = nocterm_ai::history::SavedChat::bounded_times(
-            self.state.entries.len(),
-            &self.state.times,
+        let input = super::document::Inputs::new(
+            &self.composer,
+            &self.config,
+            self.stable_attachments(self.composer.default_attachments(), cx),
+            self.persistent_resume(),
         );
-        chat.model = self.model();
-        chat.config = self.config.choices().clone();
-        chat.mode = self.config.mode_choice().map(ToString::to_string);
-        chat.pending_history = self.fallback_history;
-        // Providers may not persist an empty session until its first prompt.
-        if self.state.entries.is_empty() {
-            return chat;
-        }
-        match (&self.session(), &self.restore) {
-            (Some(session), _) => {
-                chat.session_id = Some(session.0.to_string());
-                chat.workdir = self.session_workdir().clone();
-            }
-            // A fork not yet opened has no session of its own: reopening the
-            // original would continue it rather than a copy.
-            (None, Some(restore)) if !restore.fork => {
-                chat.session_id = Some(restore.session.0.to_string());
-                chat.workdir = Some(restore.workdir.clone());
-            }
-            (None, _) => {}
-        }
-        chat
+        self.state.metadata(&input)
     }
     pub(crate) fn shared_snapshot(
         &self,
@@ -210,25 +203,26 @@ impl AgentThread {
         if self.is_archived() {
             return None;
         }
-        if !self.pinned
-            && self.name.is_none()
-            && self.state.entries.is_empty()
-            && self.composer.queue().is_empty()
-            && self.composer.draft().is_none()
-        {
-            return None;
-        }
-        let mut metadata = self.history_metadata(cx);
-        metadata.entries = nocterm_ai::history::SavedChat::bounded_entries(&self.state.entries);
-        Some(std::sync::Arc::new(nocterm_ai::history::SharedChat {
-            metadata,
-            queue: self
-                .composer
-                .queue()
-                .iter()
-                .map(|prompt| prompt.saved.clone())
-                .collect(),
-        }))
+        let input = super::document::Inputs::new(
+            &self.composer,
+            &self.config,
+            self.stable_attachments(self.composer.default_attachments(), cx),
+            self.persistent_resume(),
+        );
+        self.state.snapshot(&input)
+    }
+    pub(super) fn accept_document_inputs(&mut self, cx: &gpui_kit::App, draft: bool) -> bool {
+        let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
+        let resume = self.persistent_resume();
+        let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
+        self.state
+            .accept_inputs(&input, nocterm_ai::time::now(), draft)
+    }
+    pub(super) fn establish_clean_document_inputs(&mut self, cx: &gpui_kit::App) {
+        let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
+        let resume = self.persistent_resume();
+        let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
+        self.state.establish_clean_inputs(&input);
     }
     #[cfg(test)]
     pub(crate) fn snapshot(&self, cx: &gpui_kit::App) -> Option<nocterm_ai::history::SavedChat> {
@@ -241,27 +235,34 @@ impl AgentThread {
             .collect();
         Some(chat)
     }
-    /// Marks the chat as changed now and saves it.
     pub(crate) fn persist(&mut self, cx: &mut Context<Self>) {
-        self.updated = nocterm_ai::time::now();
         self.save(cx);
     }
-    /// Saves transcript, queued prompts or an unsent draft to history.
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
-        if let Some(chat) = self.pending_snapshot(cx) {
-            self.history_queued = true;
-            self.draft_save = None;
-            self.draft_changed = false;
-            self.document_revision += 1;
-            let revision = self.document_revision;
-            // Deferred: this may run while the runtime itself is updating.
-            let owner = cx.entity_id();
-            cx.defer(move |cx| {
-                Runtime::global(cx).update(cx, |runtime, cx| {
-                    runtime.save_chat(chat, owner, revision, cx)
-                })
-            });
+        let Some((chat, revision)) = self.capture_pending(cx) else {
+            return;
+        };
+        if !self.state.mark_normal_offer(revision) {
+            return;
         }
+        let owner = cx.entity_id();
+        let thread = cx.weak_entity();
+        cx.defer(move |cx| {
+            let result = Runtime::global(cx).update(cx, |runtime, cx| {
+                runtime.save_chat(chat, owner, revision, cx)
+            });
+            match result {
+                Ok(true) => {
+                    let _ = thread.update(cx, |thread, cx| thread.document_admitted(revision, cx));
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    let _ = thread.update(cx, |thread, cx| {
+                        thread.document_save_failed(revision, error, cx)
+                    });
+                }
+            }
+        });
     }
 }
 

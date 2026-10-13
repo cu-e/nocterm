@@ -278,6 +278,34 @@ persistence effects, saving accepted choices before dispatch. Configuration is s
 from the transcript reducer, and restart snapshots retain preview data while excluding
 pending controls and attempts ([ADR 0034](../adr/0034-chat-config-composer-owners.md)).
 
+A private `ChatDocument` owns identity, metadata, transcript, semantic revisions,
+publication diagnostics and cached persistence budgets. Composer and configuration
+remain separate owners. Accepted durable row or metadata transitions advance the
+revision before timestamping; snapshots, clean browsing and capture do not. A revision
+records accepted activity, so changing a saved value and changing it back can remain
+dirty. Matching updates and view-only plan, usage or token changes remain clean.
+
+The document compares affected saved rows before mutation. Only the codec's bounded
+transcript window is durable; normalization supplies concrete patches to the existing
+tool-display metadata key. Literal drafts and queued payloads share their immutable
+storage while metadata projections retain no second transcript/media baseline.
+Snapshot framing uses the existing identity and timestamp. The legacy transcript
+reducer still supplies native timestamps for new rows; version-one protocol-backed
+history and genuine new-ID allocation retain their established boundaries.
+
+Deferred normal offers coalesce while preserving an immutable candidate and its
+semantic revision. Capture offers pending work without consuming it. Admission to
+the shared writer and physical publication have distinct acknowledgements; retry
+retains the same revision/snapshot, and old failures cannot pause newer desired work.
+Normal panel removal captures before releasing the document, retaining the owner when
+admission fails. Archive hydration applies an already accepted draft overlay with its
+original revision and timestamp; eviction requires settled durable state.
+
+Disabled presentation is released only after the current immutable candidate is
+admitted or the document is settled; rejected admission retains its input. Physical
+failure still retries that original admitted snapshot. Normal archive eviction
+keeps its stricter settled-state gate. See [ADR0037](../adr/0037-chat-document-semantic-revisions.md).
+
 Archived chat hydration belongs to a private feature `Archive` owner
 ([ADR0031](../adr/0031-archive-hydration-owner.md)). It queues typed open, fork,
 rename and pin intentions and accepts a result only for its local load generation

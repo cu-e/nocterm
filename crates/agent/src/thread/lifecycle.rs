@@ -81,7 +81,7 @@ impl AgentThread {
     pub(crate) fn warm(&mut self, cx: &mut Context<Self>) {
         if self.shown
             && !self.is_archived()
-            && self.persistence_error.is_none()
+            && self.state.persistence_error().is_none()
             && cx.ai_enabled()
             && cx.setting::<AiSettings>().sessions.warm_start
             && self.lifecycle.phase() == SessionPhase::Detached

@@ -7,24 +7,29 @@ fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::Age
     new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "First question",
-            ))]),
-            Entry::Thought("Reasoning before answer".into()),
-            Entry::Tool(acp::ToolCall::new("one", "Inspect terminal")),
-            Entry::Agent("A tall first answer with wrapped text.\n\n".repeat(80)),
-            Entry::Thought("Reasoning between messages".into()),
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "Second question with several paragraphs.\n\n".repeat(80),
-            ))]),
-            Entry::Content(acp::ContentBlock::Text(acp::TextContent::new(
-                "Additional content",
-            ))),
-            Entry::Agent("A tall second answer with wrapped text.\n\n".repeat(80)),
-            Entry::Agent("A tall final answer with wrapped text.\n\n".repeat(80)),
-        ];
-        for index in 0..thread.state.entries.len() {
+        restore_entries(
+            f,
+            thread,
+            vec![
+                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "First question",
+                ))]),
+                Entry::Thought("Reasoning before answer".into()),
+                Entry::Tool(acp::ToolCall::new("one", "Inspect terminal")),
+                Entry::Agent("A tall first answer with wrapped text.\n\n".repeat(80)),
+                Entry::Thought("Reasoning between messages".into()),
+                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "Second question with several paragraphs.\n\n".repeat(80),
+                ))]),
+                Entry::Content(acp::ContentBlock::Text(acp::TextContent::new(
+                    "Additional content",
+                ))),
+                Entry::Agent("A tall second answer with wrapped text.\n\n".repeat(80)),
+                Entry::Agent("A tall final answer with wrapped text.\n\n".repeat(80)),
+            ],
+            cx,
+        );
+        for index in 0..thread.transcript().entries.len() {
             thread.mark_dirty(index);
         }
         cx.notify();
@@ -184,16 +189,15 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
     scroll_to(&f, 5, cx);
     let before = top(&f, cx);
     thread.update(cx, |thread, cx| {
-        if let Entry::Agent(text) = &mut thread.state.entries[8] {
+        let mut entries = thread.history_entries().to_vec();
+        if let Entry::Agent(text) = &mut entries[8] {
             text.push_str(&"New streamed text. ".repeat(50));
         }
         thread.mark_dirty(8);
-        thread
-            .state
-            .entries
-            .push(Entry::User(vec![acp::ContentBlock::Text(
-                acp::TextContent::new("Third question"),
-            )]));
+        entries.push(Entry::User(vec![acp::ContentBlock::Text(
+            acp::TextContent::new("Third question"),
+        )]));
+        restore_entries(&f, thread, entries, cx);
         thread.mark_dirty(9);
         cx.notify();
     });
@@ -220,10 +224,9 @@ fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &m
     let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver(), image_deps());
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
-        thread
-            .state
-            .entries
-            .extend((0..500).map(|i| Entry::Agent(format!("Additional message {i}"))));
+        let mut entries = thread.history_entries().to_vec();
+        entries.extend((0..500).map(|i| Entry::Agent(format!("Additional message {i}"))));
+        restore_entries(&f, thread, entries, cx);
         cx.notify();
     });
     for mode in [
@@ -289,7 +292,9 @@ fn top_of_chat_includes_leading_tools_before_the_first_user_message(cx: &mut Tes
     let f = fixture(cx);
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
-        thread.state.entries[0] = Entry::Tool(acp::ToolCall::new("leading", "Leading tool"));
+        let mut entries = thread.history_entries().to_vec();
+        entries[0] = Entry::Tool(acp::ToolCall::new("leading", "Leading tool"));
+        restore_entries(&f, thread, entries, cx);
         thread.mark_dirty(0);
         cx.notify();
     });

@@ -39,6 +39,8 @@ pub(crate) use queue::QueuedPrompt;
 mod lifecycle;
 mod live;
 mod restart;
+pub(crate) use restart::RestartData;
+mod document;
 mod saved;
 mod session;
 mod tool_context;
@@ -106,29 +108,15 @@ pub(crate) struct AgentThread {
     pub lifecycle: SessionState,
     /// A panel shows this chat: its idle session is kept warm.
     pub shown: bool,
-    pub document_revision: u64,
-    pub persisted_revision: u64,
-    pub persistence_error: Option<String>,
     pub operation_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    pub agent_id: String,
-    /// Names the chat's file in the saved history.
-    pub chat_id: String,
-    /// When the chat last changed, in seconds since the Unix epoch.
-    pub updated: u64,
     archive: archive::Archive,
     execution_watch: Option<Task<()>>,
     pub restore: Option<Restore>,
-    /// The name the user gave the chat.
-    pub name: Option<String>,
-    pub pinned: bool,
     /// The input state, kept apart from the conversation.
     composer: Composer,
     config: config::ChatConfig,
-    draft_changed: bool,
-    /// A snapshot was queued for history, or this chat was restored.
-    history_queued: bool,
-    draft_save: Option<Task<()>>,
-    pub state: ThreadState,
+    /// Private durable metadata, transcript and semantic persistence owner.
+    state: document::ChatDocument,
     pub status: String,
     pub status_error: bool,
     pub info: Option<AgentInfo>,
@@ -144,10 +132,6 @@ pub(crate) struct AgentThread {
     /// arrive meanwhile wait for the same connection.
     reconnecting: reconnects::Reconnects,
     pub prompt_attachments: Option<Vec<Attachment>>,
-    pub dirty_rows: std::collections::HashSet<usize>,
-    storage_dirty: std::collections::HashSet<usize>,
-    storage_budget: nocterm_ai::history::HistoryBudget,
-    pub fallback_history: bool,
     approvals: ApprovalInbox,
     pub context_bytes: usize,
     pub tool_bytes: usize,
@@ -161,9 +145,8 @@ pub(crate) struct AgentThread {
     _workspace_authority: Option<Subscription>,
 }
 impl AgentThread {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(crate) fn new(
-        agent_id: String,
+    fn from_document(
+        state: document::ChatDocument,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -174,16 +157,16 @@ impl AgentThread {
         let release = cx.on_release(move |this, cx| {
             this.cancel_pending();
             this.finalize_tool_displays();
-            let snapshot = cx.ai_enabled().then(|| this.flush_snapshot(cx)).flatten();
-            this.document_revision += 1;
-            let revision = this.document_revision;
+            let snapshot = cx.ai_enabled().then(|| this.capture_pending(cx)).flatten();
             this.cancel_execution();
             // The lease releases its connection when it is dropped.
             drop(this.lease.take());
             cx.defer(move |cx| {
                 Runtime::global(cx).update(cx, |runtime, cx| {
-                    if let Some(chat) = snapshot {
-                        runtime.save_chat(chat, id, revision, cx);
+                    if let Some((chat, revision)) = snapshot
+                        && let Err(error) = runtime.save_chat(chat, id, revision, cx)
+                    {
+                        tracing::warn!(%error,"released chat admission failed");
                     }
                     runtime.unregister_document(id, cx);
                 });
@@ -202,28 +185,16 @@ impl AgentThread {
                 });
             }
         });
-        let chat = nocterm_ai::history::SavedChat::new(agent_id.clone());
         Self {
             lease: None,
             lifecycle: SessionState::default(),
             shown: false,
-            document_revision: 0,
-            persisted_revision: 0,
-            persistence_error: None,
             operation_count: Default::default(),
-            agent_id,
-            chat_id: chat.id,
-            updated: chat.updated,
             archive: archive::Archive::default(),
             execution_watch: None,
             restore: None,
-            name: None,
-            pinned: false,
             composer: Composer::default(),
-            draft_changed: false,
-            history_queued: false,
-            draft_save: None,
-            state: Default::default(),
+            state,
             config: Default::default(),
             status: "Ready — send a message to start the agent".into(),
             status_error: false,
@@ -234,10 +205,6 @@ impl AgentThread {
             sign_ins: Vec::new(),
             reconnecting: Default::default(),
             prompt_attachments: None,
-            dirty_rows: Default::default(),
-            storage_dirty: Default::default(),
-            storage_budget: Default::default(),
-            fallback_history: false,
             approvals: ApprovalInbox::default(),
             context_bytes: 0,
             tool_bytes: 0,
@@ -250,16 +217,30 @@ impl AgentThread {
             _workspace_authority: authority,
         }
     }
+    pub(crate) fn new(
+        agent_id: String,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let chat = nocterm_ai::history::SavedChat::new(agent_id);
+        Self::from_document(
+            document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
+            workspace,
+            cx,
+        )
+    }
     pub(crate) fn archived(
         summary: nocterm_ai::history::ChatSummary,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut thread = Self::new(summary.agent_id.clone(), workspace, cx);
-        thread.chat_id = summary.id.clone();
-        thread.name = summary.name.clone();
-        thread.pinned = summary.pinned;
-        thread.updated = summary.updated;
+        let mut state = document::ChatDocument::new(
+            summary.agent_id.clone(),
+            summary.id.clone(),
+            summary.updated,
+        );
+        state.archived_clean(&summary);
+        let mut thread = Self::from_document(state, workspace, cx);
         thread.config.saved_model(summary.model.clone());
         thread.status = "Saved chat".into();
         thread.archive = archive::Archive::archived(summary);
@@ -272,10 +253,19 @@ impl AgentThread {
         self.archive.summary()
     }
     pub(crate) fn chat_id(&self) -> &str {
-        &self.chat_id
+        self.state.chat_id()
     }
     pub(crate) fn history_entries(&self) -> &[nocterm_ai::thread::Entry] {
-        &self.state.entries
+        self.state.entries()
+    }
+    pub(crate) fn take_changed_rows(&mut self) -> std::collections::HashSet<usize> {
+        self.state.take_changed_rows()
+    }
+    pub(crate) fn document(&self) -> &document::ChatDocument {
+        &self.state
+    }
+    pub(crate) fn transcript(&self) -> &ThreadState {
+        self.state.transcript()
     }
     pub(crate) fn composer(&self) -> &Composer {
         &self.composer
@@ -299,7 +289,7 @@ impl AgentThread {
         self.lifecycle.phase()
     }
     pub(crate) fn updated_at(&self) -> u64 {
-        self.updated
+        self.state.updated()
     }
     pub(crate) fn has_status_error(&self) -> bool {
         self.status_error
@@ -311,8 +301,8 @@ impl AgentThread {
         let request = self.archive.request(intent, self.lifecycle.ticket());
         let archive::RequestOutcome::Start {
             load_id,
-            chat_id,
             ticket,
+            chat_id,
         } = request
         else {
             if let archive::RequestOutcome::RunNow(intent) = request {
@@ -332,7 +322,7 @@ impl AgentThread {
                     && cx.ai_enabled()
                     && Runtime::global(cx)
                         .read(cx)
-                        .document_is_current(&this.chat_id, cx.entity_id());
+                        .document_is_current(this.state.chat_id(), cx.entity_id());
                 match this.archive.accept(load_id, current, result, permit) {
                     archive::LoadOutcome::Stale => return,
                     archive::LoadOutcome::Failed(error) => {
@@ -346,7 +336,7 @@ impl AgentThread {
                     } => {
                         this.restore_content_with_overlay(*chat, overlay);
                         this.preview_config(cx);
-                        if this.draft_changed {
+                        if this.state.draft_changed() {
                             this.save(cx);
                         }
                         for intent in intents {
@@ -392,7 +382,7 @@ impl AgentThread {
         }
         self.archive
             .resident_bytes()
-            .max(self.storage_budget.resident_bytes())
+            .max(self.state.resident_bytes())
             + self
                 .composer
                 .queue()
@@ -405,22 +395,19 @@ impl AgentThread {
         let gate = archive::EvictionGate::new(
             self.lease.is_none(),
             !self.session_busy(),
-            self.document_revision == self.persisted_revision,
-            !self.draft_changed,
-            self.persistence_error.is_none(),
-            self.history_queued,
+            self.state.desired_revision() == self.state.published_revision(),
+            !self.state.draft_changed(),
+            self.state.persistence_error().is_none(),
+            self.state.history_present(),
         );
         let mut summary = nocterm_ai::history::ChatSummary::from_chat(&self.history_metadata(cx));
         summary.title = Some(self.title());
-        summary.has_content = !self.state.entries.is_empty() || !self.composer.is_empty();
+        summary.has_content = !self.state.entries().is_empty() || !self.composer.is_empty();
         if !self.archive.request_evict(gate, summary) {
             return false;
         }
-        self.state = Default::default();
+        self.state.evict_clean();
         self.composer = Default::default();
-        self.storage_budget = Default::default();
-        self.dirty_rows.clear();
-        self.storage_dirty.clear();
         self.tool_displays = Default::default();
         true
     }
@@ -435,10 +422,10 @@ impl AgentThread {
     /// An empty chat nobody has named: dropped when the user moves on.
     pub(crate) fn is_draft(&self) -> bool {
         !self.is_archived()
-            && !self.pinned
-            && self.state.entries.is_empty()
+            && !self.state.pinned()
+            && self.state.entries().is_empty()
             && self.composer.is_empty()
-            && self.name.is_none()
+            && self.state.name().is_none()
             && !self.lifecycle.generating()
             && !self.approvals.pending()
     }
@@ -559,29 +546,16 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn mark_dirty(&mut self, index: usize) {
-        self.dirty_rows.insert(index);
-        self.storage_dirty.insert(index);
+        self.state.mark_row(index);
     }
     pub(super) fn refresh_storage_budget(
         &mut self,
     ) -> Result<(), nocterm_ai::history::HistoryCodecError> {
-        let dirty = self.storage_dirty.drain().collect::<Vec<_>>();
-        self.storage_budget.refresh(&self.state.entries, &dirty)
+        self.state.refresh_budget()
     }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();
-        for (index, entry) in self.state.entries.iter_mut().enumerate() {
-            if let nocterm_ai::thread::Entry::Tool(call) = entry
-                && matches!(
-                    call.status,
-                    acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
-                )
-            {
-                call.status = acp::ToolCallStatus::Failed;
-                self.dirty_rows.insert(index);
-                self.storage_dirty.insert(index);
-            }
-        }
+        self.state.finish_pending_tools(nocterm_ai::time::now());
     }
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.
@@ -633,6 +607,7 @@ impl AgentThread {
                 self.prune_background(cx);
             }
         }
+        self.accept_document_inputs(cx, false);
         self.save(cx);
         cx.notify();
     }

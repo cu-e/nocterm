@@ -160,14 +160,15 @@ impl AgentThread {
         if replace.is_none() {
             metadata.draft = None;
         }
-        self.storage_budget
-            .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
-        self.storage_budget
-            .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
+        self.state.validate_candidate(
+            &metadata,
+            queue.iter().map(|prompt| prompt.encoded_len),
+            queue.iter().map(|prompt| prompt.memory_len),
+        )?;
         self.composer.commit_prompt_change(candidate);
+        self.accept_document_inputs(cx, false);
         if replace.is_none() {
-            self.draft_save = None;
-            self.draft_changed = false;
+            self.state.cancel_debounce();
         }
         self.persist(cx);
         if !self.lifecycle.generating() && replace.is_none() {
@@ -185,8 +186,8 @@ impl AgentThread {
         {
             return;
         }
-        if self.persistence_error.is_some()
-            || (self.lease.is_none() && self.persisted_revision < self.document_revision)
+        if self.state.persistence_error().is_some()
+            || self.state.published_revision() < self.state.desired_revision()
         {
             return;
         }
@@ -214,7 +215,7 @@ impl AgentThread {
         }
         // A chat left with nothing else has no snapshot of its own; its file
         // must still lose the prompt, or it comes back on the next start.
-        self.draft_changed = true;
+        self.accept_document_inputs(cx, false);
         self.persist(cx);
         cx.notify();
     }
@@ -227,6 +228,7 @@ impl AgentThread {
             self.stop(cx);
         }
         self.composer.resume();
+        self.accept_document_inputs(cx, false);
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
         if !self.lifecycle.generating() {

@@ -14,6 +14,7 @@ use nocterm_session::{
 use nocterm_terminal::TerminalView;
 use nocterm_workspace::{SessionSpec, Workspace};
 
+mod chat_history;
 mod menu_tabs;
 mod program_opening;
 mod shortcuts;

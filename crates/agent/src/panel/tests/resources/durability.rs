@@ -4,12 +4,8 @@ use super::*;
 fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let thread = draft(&f, cx);
-    thread.update(cx, |thread, _| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "latest dormant document",
-            ))]);
+    thread.update(cx, |thread, cx| {
+        thread.set_draft("latest dormant document".into(), cx);
     });
     let weak = thread.downgrade();
     drop(thread);
@@ -29,9 +25,7 @@ fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mu
     );
     let chats = repository.chats();
     assert_eq!(chats.len(), 1);
-    assert!(
-        matches!(&chats[0].entries[0], nocterm_ai::thread::Entry::User(blocks) if matches!(&blocks[0], acp::ContentBlock::Text(text) if text.text == "latest dormant document"))
-    );
+    assert_eq!(chats[0].draft.as_deref(), Some("latest dormant document"));
 }
 
 #[gpui_kit::test]
@@ -42,16 +36,12 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     lazy_start(cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "original content",
-            ))]);
-        thread.name = Some("old snapshot".into());
+        thread.set_draft("original content".into(), cx);
+        thread.rename(Some("old snapshot".into()), cx);
         thread.save(cx);
     });
-    thread.update(cx, |thread, _| {
-        thread.name = Some("latest unsaved document".into())
+    thread.update(cx, |thread, cx| {
+        thread.rename(Some("latest unsaved document".into()), cx)
     });
     // Native GPUI may drop this cleanup task after its 200ms grace period.
     // Durability must already hold when the synchronous quit callback returns.

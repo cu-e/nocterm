@@ -109,13 +109,13 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return div().into_any_element();
         };
-        let Some(entry) = thread.read(cx).state.entries.get(index) else {
+        let Some(entry) = thread.read(cx).transcript().entries.get(index) else {
             return div().into_any_element();
         };
         let mut pending_images = Vec::new();
         let expanded = self.expanded.contains(&index);
         let live = entry_is_live(
-            &thread.read(cx).state.entries,
+            &thread.read(cx).transcript().entries,
             index,
             thread.read(cx).lifecycle.generating() && thread.read(cx).lifecycle.accepts_updates(),
         );
@@ -167,7 +167,7 @@ impl AgentPanel {
                 }
                 row = row.child(bubble);
                 if let Some(text) = message_text(entry) {
-                    let time = thread.read(cx).state.time(index);
+                    let time = thread.read(cx).transcript().time(index);
                     row = row.child(self.render_message_actions(
                         thread.entity_id(),
                         index,
@@ -179,7 +179,7 @@ impl AgentPanel {
                 }
             }
             Entry::Agent(text) => {
-                let time = thread.read(cx).state.time(index);
+                let time = thread.read(cx).transcript().time(index);
                 let full_text = text.clone();
                 let text = self.stream.text(index, text);
                 row = row.group(MESSAGE_GROUP).child(

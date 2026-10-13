@@ -54,7 +54,7 @@ fn draft_only_history_starts_one_fresh_session_without_restoring(cx: &mut TestAp
     assert!(f.commands.restores.lock().unwrap().is_empty());
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
-    cx.update(|cx| assert!(!thread.read(cx).fallback_history));
+    cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
 }
 
 #[gpui_kit::test]
@@ -80,7 +80,7 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
     assert!(prompts[0].prompt.iter().any(
         |block| matches!(block, acp::ContentBlock::Text(text) if text.text == "waiting request")
     ));
-    cx.update(|cx| assert!(!thread.read(cx).fallback_history));
+    cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
 }
 
 #[gpui_kit::test]
@@ -116,7 +116,7 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
     assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("User: remember this") && text.text.contains("Assistant: previous answer"))));
     assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text == "continue conversation")));
     drop(prompts);
-    cx.update(|cx| assert_eq!(thread.read(cx).state.entries.len(), 3));
+    cx.update(|cx| assert_eq!(thread.read(cx).transcript().entries.len(), 3));
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| thread.send("next message".into(), cx));
     cx.run_until_parked();

@@ -183,6 +183,13 @@ usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing
 `session_config` helpers retain pure choice and category rules; protocol-backed
 version-one values remain migration debt at their established seams.
+
+Version-one `SavedChat::for_identity` constructs framing from supplied values without
+allocating a replacement UUID or querying time. Its saved-window boundary is shared
+with feature semantic comparisons. Genuine new/fork allocation and the legacy
+transcript reducer still use the existing UUID/clock paths; the history wire format
+and protocol-backed records retain their current representation.
+
 ## Agent image contracts
 
 AI owns pure image header preflight, checked format/dimension facts, exact prompt

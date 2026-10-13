@@ -130,7 +130,7 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
     cx.run_until_parked();
 
     let skipped = chat(&f, cx);
-    skipped.update(cx, |thread, _| thread.name = Some("kept".into()));
+    skipped.update(cx, |thread, cx| thread.rename(Some("kept".into()), cx));
     cx.run_until_parked();
     cx.update(|cx| assert!(skipped.read(cx).lifecycle.queued()));
     let wanted = chat(&f, cx);

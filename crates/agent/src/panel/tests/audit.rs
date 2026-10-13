@@ -293,8 +293,13 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
         "  /$skill:review аргументы",
     ] {
         thread.update(cx, |thread, cx| {
-            thread.state.entries = vec![Entry::Agent("remember this context".into())];
-            thread.fallback_history = true;
+            restore_entries(
+                &f,
+                thread,
+                vec![Entry::Agent("remember this context".into())],
+                cx,
+            );
+            restore_pending_history(&f, thread, cx);
             report_control(
                 thread,
                 acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
@@ -395,16 +400,17 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![
+        let mut entries = vec![
             Entry::Thought("short".into()),
             Entry::Tool(acp::ToolCall::new("call", "Tool")),
         ];
-        thread.state.entries.extend((0..30).map(|i| {
+        entries.extend((0..30).map(|i| {
             Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
                 format!("question {i}"),
             ))])
         }));
-        for index in 0..thread.state.entries.len() {
+        restore_entries(&f, thread, entries, cx);
+        for index in 0..thread.transcript().entries.len() {
             thread.mark_dirty(index);
         }
         cx.notify();
@@ -426,7 +432,9 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
         })
         .unwrap();
     thread.update(cx, |thread, cx| {
-        thread.state.entries[0] = Entry::Thought("thought line\n\n".repeat(10));
+        let mut entries = thread.history_entries().to_vec();
+        entries[0] = Entry::Thought("thought line\n\n".repeat(10));
+        restore_entries(&f, thread, entries, cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -446,9 +454,9 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
     })
     .unwrap();
     thread.update(cx, |thread, cx| {
-        thread.state.apply(acp::SessionUpdate::ToolCallUpdate(serde_json::from_value(serde_json::json!({
+        report_control(thread, acp::SessionUpdate::ToolCallUpdate(serde_json::from_value(serde_json::json!({
             "toolCallId":"call", "content":[{"type":"content", "content":{"type":"text", "text":"tool line\n".repeat(12)}}]
-        })).unwrap()));
+        })).unwrap()), cx);
         thread.mark_dirty(1);
         cx.notify();
     });

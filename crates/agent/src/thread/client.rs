@@ -32,13 +32,15 @@ impl SessionClient for ThreadClient {
         let thread = self.0.upgrade()?;
         let thread = thread.read(cx);
         Some(ClientState {
-            chat_id: thread.chat_id.clone(),
+            chat_id: thread.state.chat_id().to_owned(),
             workdir: thread
                 .restore
                 .as_ref()
-                .filter(|restore| !thread.state.entries.is_empty() && restore.workdir.is_absolute())
+                .filter(|restore| {
+                    !thread.state.entries().is_empty() && restore.workdir.is_absolute()
+                })
                 .map(|restore| restore.workdir.clone()),
-            agent_id: thread.agent_id.clone(),
+            agent_id: thread.state.agent_id().to_owned(),
             session: thread.session().clone(),
             busy: thread.session_busy(),
             leased: thread.lease.is_some(),
@@ -51,11 +53,9 @@ impl SessionClient for ThreadClient {
         self.0.upgrade()?.read(cx).flush_snapshot(cx)
     }
     fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
-        self.0.upgrade()?.update(cx, |thread, cx| {
-            let chat = thread.flush_snapshot(cx)?;
-            thread.document_revision += 1;
-            Some((chat, thread.document_revision))
-        })
+        self.0
+            .upgrade()?
+            .update(cx, |thread, cx| thread.capture_pending(cx))
     }
 }
 
@@ -117,6 +117,28 @@ impl AgentThread {
     fn holds(&self, key: u64) -> bool {
         self.connection_key() == Some(key)
     }
+    pub(crate) fn document_admitted(&mut self, revision: u64, cx: &mut Context<Self>) {
+        self.state.acknowledge_admission(revision);
+        self.clear_settled_disabled_document(cx);
+        cx.notify();
+    }
+    pub(super) fn document_save_failed(
+        &mut self,
+        revision: u64,
+        error: crate::runtime::AgentPersistenceError,
+        cx: &mut Context<Self>,
+    ) {
+        let message = format!(
+            "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
+        );
+        if !self.state.failed(revision, error) {
+            return;
+        }
+        self.status = message;
+        self.composer.pause();
+        self.status_error = true;
+        cx.notify();
+    }
     fn runtime_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Leased(lease) => self.begin_lease(lease),
@@ -166,20 +188,19 @@ impl AgentThread {
                 self.lifecycle.closed();
                 cx.notify();
             }
+            SessionEvent::SaveAdmitted { revision } => self.document_admitted(revision, cx),
             SessionEvent::Saved { revision } => {
-                self.persisted_revision = self.persisted_revision.max(revision);
-                self.persistence_error = None;
-                self.dispatch_next(cx);
+                if self.state.published(revision) {
+                    if cx.ai_enabled() {
+                        self.dispatch_next(cx);
+                    } else {
+                        self.clear_settled_disabled_document(cx);
+                    }
+                }
                 cx.notify();
             }
-            SessionEvent::SaveFailed(error) => {
-                self.status = format!(
-                    "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
-                );
-                self.persistence_error = Some(error.to_string());
-                self.composer.pause();
-                self.status_error = true;
-                cx.notify();
+            SessionEvent::SaveFailed { revision, error } => {
+                self.document_save_failed(revision, error, cx)
             }
             SessionEvent::PolicyChanged => self.apply_permission_policy(cx),
             SessionEvent::Shutdown => self.release_resources(cx),

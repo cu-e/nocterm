@@ -167,7 +167,7 @@ impl AgentPanel {
                                     }
                                     values.sort_by_key(|value| {
                                         !Runtime::global(cx).read(cx).favorites(cx).contains(
-                                            &thread.read(cx).agent_id,
+                                            thread.read(cx).document().agent_id(),
                                             &id,
                                             value.value.0.as_ref(),
                                         )
@@ -178,14 +178,15 @@ impl AgentPanel {
                                     {
                                         let favorite =
                                             Runtime::global(cx).read(cx).favorites(cx).contains(
-                                                &thread.read(cx).agent_id,
+                                                thread.read(cx).document().agent_id(),
                                                 &id,
                                                 value.value.0.as_ref(),
                                             );
                                         let value_id = value.value.clone();
                                         let config = option.id.clone();
                                         let star_value = value.value.to_string();
-                                        let agent = thread.read(cx).agent_id.clone();
+                                        let agent =
+                                            thread.read(cx).document().agent_id().to_owned();
                                         let star_id = id.clone();
                                         menu=menu.child(h_flex().w_full().child(menu_row(SharedString::from(format!("config-{id}-{value_id}")), value.name, cx).flex_1().min_w_0().selected(value.value==select.current_value).on_click(cx.listener(move|this,_,_,cx|{if let Some(thread)=this.current(){thread.update(cx,|thread,cx|thread.set_config(config.clone(),acp::SessionConfigOptionValue::ValueId{value:value_id.clone()},cx));}this.menu=None;cx.notify();})))
                                 .when(option.category==Some(acp::SessionConfigOptionCategory::Model),|row|row.child(Button::new(SharedString::from(format!("favorite-{star_id}-{star_value}"))).custom(menu_variant(cx)).small().icon(if favorite{IconName::StarFill}else{IconName::Star}).tooltip("Favorite model").on_click(move|_,_,cx|Runtime::global(cx).update(cx,|runtime,cx|runtime.toggle_favorite(&agent,&star_id,&star_value,cx))))));

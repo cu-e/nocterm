@@ -35,7 +35,7 @@ fn unsent_chat_survives_switching_and_restores_its_composer(cx: &mut TestAppCont
             f.panel.read(cx).input.read(cx).value().as_ref(),
             "draft\n界"
         );
-        assert!(first.read(cx).state.entries.is_empty());
+        assert!(first.read(cx).transcript().entries.is_empty());
         assert_eq!(first.read(cx).title(), "New Agent");
     });
 }
@@ -45,7 +45,16 @@ fn ordinary_edits_are_persisted_without_sending_or_switching(cx: &mut TestAppCon
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "hello", "answer", cx);
-    let id = cx.update(|cx| f.panel.read(cx).current().unwrap().read(cx).chat_id.clone());
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
     set_input(&f, "unsent text\n界", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -58,7 +67,16 @@ fn ordinary_edits_are_persisted_without_sending_or_switching(cx: &mut TestAppCon
 fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    let id = cx.update(|cx| f.panel.read(cx).current().unwrap().read(cx).chat_id.clone());
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
     set_input(&f, "last keystroke", cx);
     shutdown_runtime(cx);
     assert_eq!(saved_value(&f, &id)["draft"], "last keystroke");
@@ -82,7 +100,7 @@ fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut
             panel.read(cx).input.read(cx).value().as_ref(),
             "restored\ntext"
         );
-        assert!(thread.read(cx).state.entries.is_empty());
+        assert!(thread.read(cx).transcript().entries.is_empty());
     });
 }
 
@@ -91,7 +109,7 @@ fn clear_save_and_quit_in_one_update_cannot_resurrect_an_old_draft(cx: &mut Test
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     set_input(&f, "old text", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
@@ -113,7 +131,16 @@ fn clear_save_and_quit_in_one_update_cannot_resurrect_an_old_draft(cx: &mut Test
 fn clearing_a_draft_is_reversible_for_the_same_chat_id(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    let id = cx.update(|cx| f.panel.read(cx).current().unwrap().read(cx).chat_id.clone());
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
     for text in ["first", "", "second"] {
         set_input(&f, text, cx);
         cx.background_executor.advance_clock(Duration::from_secs(1));
@@ -146,11 +173,12 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
         )
     });
     set_input(&f, "kept when offline", cx);
-    thread.update(cx, |thread, _| {
-        thread
-            .lifecycle
-            .force_phase(nocterm_ai::session::SessionPhase::SignInRequired)
-    });
+    f.commands.auth_required.store(true, Ordering::SeqCst);
+    thread.update(cx, |thread, cx| thread.release_resources(cx));
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| thread.request_activation(cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(thread.read(cx).lifecycle.sign_in_required()));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
@@ -161,11 +189,14 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
             Some("kept when offline")
         )
     });
-    thread.update(cx, |thread, _| {
-        thread
-            .lifecycle
-            .force_phase(nocterm_ai::session::SessionPhase::Ready)
-    });
+    f.commands.auth_required.store(false, Ordering::SeqCst);
+    cx.update_window(f.handle, |_, window, cx| {
+        thread.update(cx, |thread, cx| {
+            thread.authenticate(acp::AuthMethodId::new("sign-in"), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
@@ -174,9 +205,9 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     cx.update(|cx| {
         assert!(thread.read(cx).composer().draft().is_none());
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
-        assert_eq!(thread.read(cx).state.entries.len(), 1);
+        assert_eq!(thread.read(cx).transcript().entries.len(), 1);
     });
-    let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     assert!(saved_value(&f, &id)["draft"].is_null());
 }
 
@@ -271,8 +302,9 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let text = "x".repeat(17 * 1024 * 1024);
+    thread.update(cx, |thread, cx| thread.send("active prompt".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("active prompt".into(), cx);
         thread.set_draft(text.clone(), cx);
         assert!(matches!(thread.submit(text, None, cx), Ok(true)));
         assert!(thread.composer().draft().is_none());
@@ -304,7 +336,16 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
 fn hiding_the_panel_flushes_its_latest_text_without_waiting_for_the_timer(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    let id = cx.update(|cx| f.panel.read(cx).current().unwrap().read(cx).chat_id.clone());
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
     set_input(&f, "before hide", cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.workspace
@@ -322,7 +363,7 @@ fn a_retained_restarted_model_cannot_overwrite_the_replacement_draft(cx: &mut Te
     exchange(&f, "saved request", "answer", cx);
     set_input(&f, "original draft", cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = old.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = old.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
     })
@@ -349,7 +390,7 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
     new_chat(&f, cx);
     exchange(&f, "saved request", "saved answer", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.input.update(cx, |input, cx| {
@@ -369,7 +410,7 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
     assert_eq!(value["entries"].as_array().unwrap().len(), 2);
     shutdown_runtime(cx);
     assert_eq!(saved_value(&f, &id), value);
-    cx.update(|cx| assert!(thread.read(cx).state.entries.is_empty()));
+    cx.update(|cx| assert!(thread.read(cx).transcript().entries.is_empty()));
 }
 
 fn history_file_count(f: &Fixture) -> usize {

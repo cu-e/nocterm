@@ -159,8 +159,16 @@ impl Archive {
             ticket,
         }
     }
-    pub(super) fn edit_draft(&mut self, text: String, updated: u64) {
+    pub(super) fn edit_draft(&mut self, text: String, updated: u64) -> bool {
+        if self
+            .draft_overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.text() == text)
+        {
+            return false;
+        }
         self.draft_overlay = Some(DraftOverlay::new(text, updated));
+        true
     }
     pub(super) fn draft_patch(&self, id: &str, agent: &str) -> Option<SavedChat> {
         self.is_archived().then_some(())?;

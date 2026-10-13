@@ -47,7 +47,13 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
         assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread.read(cx).state.tokens.as_ref().unwrap().total_tokens,
+            thread
+                .read(cx)
+                .transcript()
+                .tokens
+                .as_ref()
+                .unwrap()
+                .total_tokens,
             30_000
         );
     });
@@ -363,32 +369,26 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
-    cx.update(|cx| {
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| {
-                thread.state.entries = vec![
-                    nocterm_ai::thread::Entry::User(vec![acp::ContentBlock::Text(
-                        acp::TextContent::new("Question"),
-                    )]),
-                    nocterm_ai::thread::Entry::Thought(
-                        "Inspecting the current terminal carefully before running commands".into(),
-                    ),
-                ];
-                thread
-                    .lifecycle
-                    .force_phase(nocterm_ai::session::SessionPhase::Prompting);
-                cx.notify();
-            });
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("Question".into(), cx));
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+                acp::TextContent::new(
+                    "Inspecting the current terminal carefully before running commands",
+                ),
+            ))),
+            cx,
+        )
     });
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let chips = window.find("agent-attachment-chips").bounds();
@@ -423,20 +423,12 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
         );
     })
     .unwrap();
-    cx.update(|cx| {
-        cx.set_reduce_motion(false);
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| {
-                thread
-                    .lifecycle
-                    .force_phase(nocterm_ai::session::SessionPhase::Ready);
-                cx.notify();
-            });
-    });
+    cx.update(|cx| cx.set_reduce_motion(false));
+    complete_active(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Deliver final publication/layout callbacks before checking sustained animation.
+        window.simulate_next_frame(cx);
         window.render_frame(cx);
         assert_eq!(
             window.simulate_next_frame(cx),
@@ -465,7 +457,7 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {
         f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
-            thread.state.entries = vec![nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"mcp","title":format!("terminal.run_command {long}"),"status":"completed","kind":"execute","content":[{"type":"content","content":{"type":"text","text":long}}]})).unwrap())];
+            restore_entries(&f,thread,vec![nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"mcp","title":format!("terminal.run_command {long}"),"status":"completed","kind":"execute","content":[{"type":"content","content":{"type":"text","text":long}}]})).unwrap())],cx);
             cx.notify();
         });
     });
@@ -496,9 +488,14 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                thread.state.entries = vec![nocterm_ai::thread::Entry::Thought(format!(
-                    "Inspecting command `{long}`\n\n```json\n{{\"command\":\"{long}\"}}\n```"
-                ))];
+                restore_entries(
+                    &f,
+                    thread,
+                    vec![nocterm_ai::thread::Entry::Thought(format!(
+                        "Inspecting command `{long}`\n\n```json\n{{\"command\":\"{long}\"}}\n```"
+                    ))],
+                    cx,
+                );
                 cx.notify();
             });
     });

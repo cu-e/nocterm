@@ -1,6 +1,7 @@
 //! Agent chat presentation and session coordination through injected contracts.
 //!
-//! Owns: panel views, private Composer and ChatConfig owners, AgentThread coordination and the session-scoped
+//! Owns: panel views, private Composer/ChatConfig/ChatDocument owners, AgentThread
+//! coordination and the session-scoped
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
@@ -18,6 +19,9 @@
 //! Terminal operation causes stay typed until tool transcripts and sign-in errors are presented.
 //! Configuration replies accept only their current session ticket; candidate prompt admission
 //! validates bounded payloads before committing draft, image and queue changes.
+//! ChatDocument revisions describe accepted durable transitions, not capture or a
+//! content fingerprint. Deferred offers remain pending until shared-writer admission;
+//! old publication failures cannot pause a newer desired document.
 
 mod image_deps;
 mod panel;

@@ -11,6 +11,8 @@
 //! Image preflight and encoded admission are pure; native decoding is injected.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
+//! Snapshot framing accepts existing supplied identity/time; genuine new identities
+//! and transcript timestamps retain their legacy UUID/clock dependencies.
 //! Existing ACP-backed DTOs and clock/entropy are explicit
 //! migration debt; storage ports add no new protocol-specific types.
 pub use agent_client_protocol_schema::v1 as acp;

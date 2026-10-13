@@ -31,7 +31,7 @@ fn completed(id: &str, text: String) -> acp::SessionUpdate {
 }
 
 fn row(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) -> acp::ToolCall {
-    let Entry::Tool(call) = &thread.read(cx).state.entries[index] else {
+    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
         panic!("tool row expected");
     };
     call.clone()

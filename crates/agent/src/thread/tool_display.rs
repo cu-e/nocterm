@@ -51,7 +51,7 @@ impl ToolDisplays {
         }
     }
 
-    fn normalize(&mut self, entries: &mut [Entry]) -> Vec<usize> {
+    fn normalize(&mut self, entries: &[Entry]) -> Vec<super::document::ToolMetadataPatch> {
         self.revoke_ambiguous_destinations(entries);
         let mut changed = Vec::new();
         for index in self.start..entries.len() {
@@ -96,14 +96,18 @@ impl ToolDisplays {
                 continue;
             };
             let record = &mut self.records[candidate];
-            let Entry::Tool(call) = &mut entries[index] else {
+            let Entry::Tool(call) = &entries[index] else {
                 continue;
             };
             record.row = Some(call.tool_call_id.clone());
-            let old = call.meta.clone();
-            record.display.attach(call);
-            if old != call.meta {
-                changed.push(index);
+            if let Ok(value) = serde_json::to_value(&record.display)
+                && call
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.get(tool_display::META_KEY))
+                    != Some(&value)
+            {
+                changed.push(super::document::ToolMetadataPatch::new(index, value));
             }
         }
         changed
@@ -197,17 +201,15 @@ impl AgentThread {
         mut update: acp::SessionUpdate,
     ) -> ThreadChange {
         self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries().len());
         tool_display::strip_provider_meta(&mut update);
         let change = if self.config.report_control(&update) {
             ThreadChange::Controls
         } else {
-            self.state.apply(update)
+            self.state.apply_transcript(update, nocterm_ai::time::now())
         };
-        let changed = self.tool_displays.normalize(&mut self.state.entries);
-        for index in changed {
-            self.mark_dirty(index);
-        }
+        let patches = self.tool_displays.normalize(self.state.entries());
+        self.state.patch_tool_rows(patches, nocterm_ai::time::now());
         change
     }
 
@@ -239,7 +241,7 @@ impl AgentThread {
             display.redact();
         }
         self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries().len());
         call.display_token = self
             .tool_displays
             .record_raw(server, (tool.into(), arguments), display)
@@ -271,7 +273,7 @@ impl AgentThread {
             display.redact();
         }
         self.tool_displays
-            .prepare(self.lifecycle.turn(), self.state.entries.len());
+            .prepare(self.lifecycle.turn(), self.state.entries().len());
         self.tool_displays
             .record_raw(server, (rejected.tool, rejected.arguments), display);
         self.normalize_tool_displays();
@@ -306,10 +308,8 @@ impl AgentThread {
     }
 
     fn normalize_tool_displays(&mut self) {
-        let changed = self.tool_displays.normalize(&mut self.state.entries);
-        for index in changed {
-            self.mark_dirty(index);
-        }
+        let patches = self.tool_displays.normalize(self.state.entries());
+        self.state.patch_tool_rows(patches, nocterm_ai::time::now());
     }
 
     fn tool_destination(

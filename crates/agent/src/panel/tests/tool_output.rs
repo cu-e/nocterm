@@ -39,7 +39,7 @@ pub(super) fn settle(f: &Fixture, cx: &mut TestAppContext) {
 pub(super) fn set_call(f: &Fixture, call: acp::ToolCall, cx: &mut TestAppContext) {
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -366,7 +366,7 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
                 }
             );
             let thread = f.panel.read(cx).current().unwrap();
-            let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+            let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                 unreachable!()
             };
             assert_eq!(call.raw_output.as_ref().unwrap()["stdout"], original);

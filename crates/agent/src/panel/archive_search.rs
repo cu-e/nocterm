@@ -14,7 +14,7 @@ impl AgentPanel {
             .threads
             .iter()
             .filter(|thread| thread.read(cx).is_archived())
-            .map(|thread| thread.read(cx).chat_id.clone())
+            .map(|thread| thread.read(cx).document().chat_id().to_owned())
             .collect::<Vec<_>>();
         let reader = Runtime::global(cx).read(cx).history_reader();
         let expected = query.clone();

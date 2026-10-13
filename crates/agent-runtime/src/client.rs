@@ -51,12 +51,19 @@ pub enum SessionEvent {
     CleanupUnconfirmed(String),
     /// The previous session's close finished; a new one may start.
     SessionClosed,
+    /// The shared writer accepted and owns this revision's immutable candidate.
+    SaveAdmitted {
+        revision: u64,
+    },
     /// The chat's snapshot at `revision` was written.
     Saved {
         revision: u64,
     },
     /// The chat's last snapshot could not be written.
-    SaveFailed(super::AgentPersistenceError),
+    SaveFailed {
+        revision: u64,
+        error: super::AgentPersistenceError,
+    },
     /// The permission settings changed.
     PolicyChanged,
     /// The application is quitting: release everything the agent holds.

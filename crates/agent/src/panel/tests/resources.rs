@@ -1,7 +1,7 @@
 use super::*;
 use std::time::Duration;
 
-fn draft(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
+pub(super) fn draft(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
             .update(cx, |panel, cx| panel.new_thread("codex".into(), window, cx));
@@ -40,7 +40,7 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert!(first.read(cx).lease.is_none());
-        assert_eq!(first.read(cx).state.entries.len(), 1);
+        assert_eq!(first.read(cx).transcript().entries.len(), 1);
         assert!(f.panel.read(cx).current().unwrap().read(cx).lease.is_none());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
         assert!(f.access.sent().borrow().is_empty());
@@ -93,7 +93,7 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     // Another chat is shown; the shown one keeps its session.
-    thread.update(cx, |thread, _| thread.shown = false);
+    thread.update(cx, |thread, cx| thread.set_shown(false, cx));
     let guard = cx.update(|cx| thread.read(cx).hold_operation());
     tick(cx, 5);
     cx.update(|cx| assert!(thread.read(cx).lease.is_some()));
@@ -147,7 +147,7 @@ async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestApp
     .unwrap();
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    first.update(cx, |thread, _| thread.name = Some("keep".into()));
+    first.update(cx, |thread, cx| thread.rename(Some("keep".into()), cx));
     f.commands.shutdown_failure.store(true, Ordering::SeqCst);
     first.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
@@ -202,7 +202,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     let f = fixture(cx);
     lazy_start(cx);
     let thread = draft(&f, cx);
-    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     f.repository.fail_next(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Read {
@@ -214,19 +214,19 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     cx.update(|cx| {
-        assert!(thread.read(cx).persistence_error.is_some());
+        assert!(thread.read(cx).document().persistence_error().is_some());
         assert!(thread.read(cx).composer().paused());
         assert_eq!(
             thread.read(cx).composer().queue()[0].saved.text,
             "retain me"
         );
-        assert_eq!(thread.read(cx).persisted_revision, 0);
+        assert_eq!(thread.read(cx).document().published_revision(), 0);
     });
     thread.update(cx, |thread, cx| thread.send("next".into(), cx));
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
-        assert!(thread.read(cx).persistence_error.is_none());
+        assert!(thread.read(cx).document().persistence_error().is_none());
         assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "next");
     });
     complete_active(&f, cx);
@@ -237,20 +237,14 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     let f = fixture(cx);
     lazy_start(cx);
     let thread = draft(&f, cx);
-    thread.update(cx, |thread, _| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "unsaved dormant edit",
-            ))]);
+    thread.update(cx, |thread, cx| {
+        thread.set_draft("unsaved dormant edit".into(), cx);
     });
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
     cx.run_until_parked();
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
-    assert!(
-        matches!(&chats[0].entries[0],nocterm_ai::thread::Entry::User(blocks) if matches!(&blocks[0],acp::ContentBlock::Text(text) if text.text == "unsaved dormant edit"))
-    );
+    assert_eq!(chats[0].draft.as_deref(), Some("unsaved dormant edit"));
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 #[gpui_kit::test]
@@ -409,7 +403,7 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
         assert!(thread.read(cx).lease.is_none());
         let tools = thread
             .read(cx)
-            .state
+            .transcript()
             .entries
             .iter()
             .filter_map(|entry| match entry {
@@ -434,16 +428,14 @@ fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut
     lazy_start(cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "saved message",
-            ))]);
-        thread.name = Some("old snapshot".into());
+        thread.set_draft("saved message".into(), cx);
+        thread.rename(Some("old snapshot".into()), cx);
         thread.save(cx);
     });
     // The old snapshot has been queued but its writer has not completed.
-    thread.update(cx, |thread, _| thread.name = Some("latest document".into()));
+    thread.update(cx, |thread, cx| {
+        thread.rename(Some("latest document".into()), cx)
+    });
     cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
     cx.run_until_parked();
     let chats = f.repository.chats();
@@ -571,7 +563,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         .try_send(late)
         .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert!(!thread.read(cx).state.entries.iter().any(|entry| matches!(entry, nocterm_ai::thread::Entry::Agent(text) if text == "late abandoned response"))));
+    cx.update(|cx| assert!(!thread.read(cx).transcript().entries.iter().any(|entry| matches!(entry, nocterm_ai::thread::Entry::Agent(text) if text == "late abandoned response"))));
     close.send(()).unwrap();
     cx.run_until_parked();
     assert_eq!(
@@ -589,12 +581,8 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     lazy_start(cx);
     let old = draft(&f, cx);
     old.update(cx, |thread, cx| {
-        thread
-            .state
-            .push_user(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "old message",
-            ))]);
-        thread.name = Some("old document".into());
+        thread.set_draft("old message".into(), cx);
+        thread.rename(Some("old document".into()), cx);
         for _ in 0..3 {
             thread.save(cx);
         }
@@ -610,7 +598,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
         );
     }
     assert_eq!(f.repository.chats().len(), 1);
-    cx.update(|cx| assert_eq!(old.read(cx).persisted_revision, 0));
+    cx.update(|cx| assert_eq!(old.read(cx).document().published_revision(), 0));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
     })
@@ -619,7 +607,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     assert_ne!(old.entity_id(), replacement.entity_id());
     replacement.update(cx, |thread, cx| thread.send("new unsaved queue".into(), cx));
     // Reject the replacement's physical publication while the old successful ACK is queued.
-    let replacement_id = cx.update(|cx| replacement.read(cx).chat_id.clone());
+    let replacement_id = cx.update(|cx| replacement.read(cx).document().chat_id().to_owned());
     f.repository.fail_next(
         nocterm_ai::testing::StorageOperation::Save(replacement_id),
         nocterm_ai::storage::AgentStorageError::Read {
@@ -630,7 +618,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     while cx.background_executor.tick() {
         cx.update(|cx| {
             assert_eq!(
-                replacement.read(cx).persisted_revision,
+                replacement.read(cx).document().published_revision(),
                 0,
                 "old document acknowledged a different document's queue"
             );
@@ -638,7 +626,13 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     }
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     cx.update(|cx| {
-        assert!(replacement.read(cx).persistence_error.is_some());
+        assert!(
+            replacement
+                .read(cx)
+                .document()
+                .persistence_error()
+                .is_some()
+        );
         assert_eq!(
             replacement.read(cx).composer().queue()[0].saved.text,
             "new unsaved queue"
@@ -657,14 +651,19 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
     *f.commands.close_gate.lock().unwrap() = Some(gate);
     old.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
-    let chat_id = cx.update(|cx| old.read(cx).chat_id.clone());
+    let chat_id = cx.update(|cx| old.read(cx).document().chat_id().to_owned());
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
     })
     .unwrap();
     let replacement = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_ne!(old.entity_id(), replacement.entity_id());
-    cx.update(|cx| assert_eq!(replacement.read(cx).chat_id, chat_id));
+    cx.update(|cx| {
+        assert_eq!(
+            replacement.read(cx).document().chat_id().to_owned(),
+            chat_id
+        )
+    });
     drop(old);
     replacement.update(cx, |thread, cx| thread.send("second turn".into(), cx));
     cx.run_until_parked();
@@ -728,7 +727,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     })
     .unwrap();
     // Another chat is shown; the shown one keeps its session.
-    thread.update(cx, |thread, _| thread.shown = false);
+    thread.update(cx, |thread, cx| thread.set_shown(false, cx));
     tick(cx, 1);
     tick(cx, 3);
     cx.update(|cx| {
@@ -737,7 +736,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
             thread.read(cx).composer().draft().map(String::as_str),
             Some("draft retained after idle")
         );
-        assert_eq!(thread.read(cx).state.entries.len(), 1);
+        assert_eq!(thread.read(cx).transcript().entries.len(), 1);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert_eq!(

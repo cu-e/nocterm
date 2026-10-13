@@ -186,8 +186,9 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
         thread.send("retained".into(), cx);
     });
     cx.run_until_parked();
@@ -284,8 +285,9 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
         thread.send("retained".into(), cx);
     });
     cx.run_until_parked();
@@ -294,7 +296,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         window.click("queue-edit-first", cx);
     })
     .unwrap();
-    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     f.repository.reject(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
@@ -305,6 +307,15 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
             )),
         },
     );
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+                acp::TextContent::new("durable response before completion"),
+            ))),
+            cx,
+        );
+    });
     complete_active(&f, cx);
     cx.update(|cx| {
         assert!(thread.read(cx).composer().paused());
@@ -329,8 +340,9 @@ fn cancelling_queue_edit_does_not_resume_after_explicit_stop(cx: &mut TestAppCon
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
         thread.send("retained".into(), cx);
     });
     cx.run_until_parked();
@@ -372,7 +384,7 @@ fn reopen(
 ) -> Entity<crate::thread::AgentThread> {
     f.panel.update(cx, |panel, cx| {
         for thread in &panel.threads {
-            if thread.read(cx).chat_id == saved.id {
+            if thread.read(cx).document().chat_id() == saved.id {
                 thread.update(cx, |thread, cx| thread.release_resources(cx));
             }
         }
@@ -411,7 +423,7 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
 
     // Native resume succeeds for the new session, which has not received old messages.
     let second = reopen(&f, fresh, cx);
-    cx.update(|cx| assert!(second.read(cx).fallback_history));
+    cx.update(|cx| assert!(second.read(cx).document().pending_history()));
     second.update(cx, |thread, cx| {
         report_control(
             thread,
@@ -460,7 +472,7 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.run_until_parked();
 
     let fourth = reopen(&f, delivered, cx);
-    cx.update(|cx| assert!(!fourth.read(cx).fallback_history));
+    cx.update(|cx| assert!(!fourth.read(cx).document().pending_history()));
     fourth.update(cx, |thread, cx| thread.send("next question".into(), cx));
     cx.run_until_parked();
     assert!(!f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
@@ -484,7 +496,7 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     let fork = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| fork.read(cx).chat_id.clone());
+    let id = cx.update(|cx| fork.read(cx).document().chat_id().to_owned());
     assert!(disk_chat(&f, &id).pending_history);
     assert!(
         f.commands.restores.lock().unwrap().is_empty(),
@@ -532,11 +544,19 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![nocterm_ai::thread::Entry::Agent("old answer".into())];
-        thread.fallback_history = true;
+        restore_entries(
+            &f,
+            thread,
+            vec![nocterm_ai::thread::Entry::Agent("old answer".into())],
+            cx,
+        );
+        restore_pending_history(&f, thread, cx);
         thread.send("interrupted question".into(), cx);
+    });
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
         thread.stop(cx);
     });
     cx.run_until_parked();
@@ -557,7 +577,7 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
     .unwrap();
     cx.run_until_parked();
     let restarted = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    cx.update(|cx| assert!(restarted.read(cx).fallback_history));
+    cx.update(|cx| assert!(restarted.read(cx).document().pending_history()));
     restarted.update(cx, |thread, cx| thread.send("try again".into(), cx));
     cx.run_until_parked();
     assert!(f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(

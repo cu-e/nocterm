@@ -31,7 +31,10 @@ fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestA
     type_draft(&f, "window's final text\n界", cx);
     let (id, thread) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        (thread.read(cx).chat_id.clone(), thread.downgrade())
+        (
+            thread.read(cx).document().chat_id().to_owned(),
+            thread.downgrade(),
+        )
     });
     let panel = f.panel.downgrade();
     cx.update_window(f.handle, |_, window, _| window.remove_window())
@@ -57,7 +60,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     new_chat(&f, cx);
     type_draft(&f, "draft before disabling AI", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
     })
@@ -73,7 +76,10 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     assert!(value["entries"].as_array().unwrap().is_empty());
     // A retained entity must not replace the saved text with its cleared UI state at quit.
     shutdown_runtime(cx);
-    assert_eq!(thread.read_with(cx, |thread, _| thread.chat_id.clone()), id);
+    assert_eq!(
+        thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned()),
+        id
+    );
     assert_eq!(disk_value(&f.repository, &id), value);
 }
 
@@ -157,7 +163,7 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
     type_draft(&f, "replacement being edited", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    let id = thread.read_with(cx, |thread, _| thread.chat_id.clone());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     let before = disk_value(&f.repository, &id);
     assert_eq!(before["draft"], "separate unsent draft");
     assert_eq!(before["queue"][0]["text"], "queued original");

@@ -97,7 +97,11 @@ impl HistoryBudget {
         let prompts = prompts.collect::<Vec<_>>();
         if !prompts.is_empty() {
             // The same serializer provides the field/empty-array framing; no mirrored field formula.
-            let mut with_queue = SavedChat::new(metadata.agent_id.clone());
+            let mut with_queue = SavedChat::for_identity(
+                metadata.agent_id.clone(),
+                metadata.id.clone(),
+                metadata.updated,
+            );
             with_queue.queue.push(super::SavedPrompt {
                 id: 0,
                 text: String::new(),

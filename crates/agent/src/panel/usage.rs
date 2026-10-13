@@ -88,7 +88,7 @@ impl AgentPanel {
     /// Reads the plan limits again when the card opens.
     pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.current() {
-            let agent = thread.read(cx).agent_id.clone();
+            let agent = thread.read(cx).document().agent_id().to_owned();
             Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx));
         }
     }
@@ -96,17 +96,21 @@ impl AgentPanel {
     fn usage_report(&self, cx: &App) -> Option<Report> {
         let thread = self.current()?;
         let thread = thread.read(cx);
-        let context = thread.state.usage.clone().filter(|usage| usage.size > 0);
+        let context = thread
+            .transcript()
+            .usage
+            .clone()
+            .filter(|usage| usage.size > 0);
         let breakdown = context
             .as_ref()
-            .map(|usage| Breakdown::estimate(&thread.state.entries, usage.used))
+            .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
             .unwrap_or_default();
         let limits: Vec<RateLimit> = Runtime::global(cx)
             .read(cx)
-            .limits(&thread.agent_id)
+            .limits(thread.document().agent_id())
             .map(|limits| limits.iter().cloned().collect())
             .unwrap_or_default();
-        let limits_hint = match thread.agent_id.as_str() {
+        let limits_hint = match thread.document().agent_id() {
             "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
             "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
             _ => None,
@@ -114,7 +118,7 @@ impl AgentPanel {
         Some(Report {
             context,
             breakdown,
-            tokens: thread.state.tokens.clone(),
+            tokens: thread.transcript().tokens.clone(),
             limits,
             limits_hint,
         })

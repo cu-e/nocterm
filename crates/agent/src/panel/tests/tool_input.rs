@@ -232,7 +232,7 @@ fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> F
             {"type":"content", "content":{"type":"text", "text":"original result"}}
         ]))
         .unwrap();
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -261,7 +261,7 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
         let thread = f.panel.read(cx).current().unwrap();
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool missing")
         };
         assert_eq!(call.raw_input, Some(json!({"command":script})));
@@ -379,7 +379,7 @@ fn set_verified(f: &Fixture, mut call: acp::ToolCall, cx: &mut TestAppContext) {
     call.status = acp::ToolCallStatus::Completed;
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -633,7 +633,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                         .status(acp::ToolCallStatus::Completed),
                 ),
             ));
-            let Entry::Tool(call) = &thread.state.entries[0] else {
+            let Entry::Tool(call) = &thread.transcript().entries[0] else {
                 unreachable!()
             };
             assert_eq!(
@@ -666,7 +666,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 respond,
             };
             thread.record_tool_display(&mut request, Some(&entry), cx);
-            let Entry::Tool(call) = &thread.state.entries[1] else {
+            let Entry::Tool(call) = &thread.transcript().entries[1] else {
                 unreachable!()
             };
             assert!(

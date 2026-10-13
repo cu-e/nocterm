@@ -4,7 +4,7 @@ use nocterm_ai::{
     history::{SavedChat, SavedPrompt},
     thread::Entry,
 };
-fn archived(
+pub(super) fn archived(
     f: &Fixture,
     chat: &SavedChat,
     cx: &mut TestAppContext,
@@ -22,7 +22,7 @@ fn archived(
         f.panel
             .read(cx)
             .chat_documents()
-            .find(|thread| thread.read(cx).chat_id() == chat.id)
+            .find(|thread| thread.read(cx).document().chat_id() == chat.id)
             .unwrap()
             .clone()
     })
@@ -128,7 +128,7 @@ fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext)
             f.panel
                 .read(cx)
                 .chat_documents()
-                .all(|thread| thread.read(cx).chat_id() != chat.id)
+                .all(|thread| thread.read(cx).document().chat_id() != chat.id)
         );
     });
 }
@@ -264,6 +264,7 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
 #[gpui_kit::test]
 fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    lazy_start(cx);
     cx.run_until_parked();
     let mut chat = saved();
     chat.updated = 1;

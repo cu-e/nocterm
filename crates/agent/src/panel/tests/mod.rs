@@ -624,3 +624,50 @@ fn report_control(
         .expect("fixture chat has an open agent session");
     thread.session_update(&acp::SessionNotification::new(session, update), cx);
 }
+
+fn restored_projection(
+    thread: &crate::thread::AgentThread,
+    cx: &gpui_kit::App,
+) -> nocterm_ai::history::SavedChat {
+    let mut chat = thread.snapshot(cx).unwrap_or_else(|| {
+        nocterm_ai::history::SavedChat::for_identity(
+            thread.document().agent_id().to_owned(),
+            thread.chat_id().to_owned(),
+            thread.document().updated(),
+        )
+    });
+    if let Some(session) = thread.session() {
+        chat.session_id = Some(session.to_string());
+        chat.workdir = thread.session_workdir().clone();
+    }
+    chat
+}
+fn restore_entries(
+    f: &Fixture,
+    thread: &mut crate::thread::AgentThread,
+    entries: Vec<nocterm_ai::thread::Entry>,
+    cx: &mut Context<crate::thread::AgentThread>,
+) {
+    let mut chat = restored_projection(thread, cx);
+    chat.entries = entries;
+    chat.times.clear();
+    f.repository.seed_chat(&chat).unwrap();
+    thread.restore_content(chat);
+    thread.preview_config(cx);
+    for row in 0..thread.history_entries().len() {
+        thread.mark_dirty(row);
+    }
+    cx.notify();
+}
+fn restore_pending_history(
+    f: &Fixture,
+    thread: &mut crate::thread::AgentThread,
+    cx: &mut Context<crate::thread::AgentThread>,
+) {
+    let mut chat = restored_projection(thread, cx);
+    chat.pending_history = true;
+    f.repository.seed_chat(&chat).unwrap();
+    thread.restore_content(chat);
+    thread.preview_config(cx);
+    cx.notify();
+}

@@ -24,8 +24,9 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("first".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("first".into(), cx);
         thread.replace_composer_context(vec![Attachment::Group("second context".into())], cx);
         assert!(thread.submit("second".into(), None, cx).unwrap());
         thread.replace_composer_context(vec![Attachment::Group("third context".into())], cx);
@@ -70,8 +71,9 @@ fn send_now_waits_for_cancellation_then_retains_other_messages(cx: &mut TestAppC
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("first".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("first".into(), cx);
         thread.send("second".into(), cx);
         thread.send("priority".into(), cx);
         let priority = thread.composer().queue()[1].saved.id;
@@ -96,8 +98,9 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("first".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("first".into(), cx);
         thread.send("second".into(), cx);
         thread.stop(cx);
     });
@@ -271,7 +274,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     .unwrap();
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        assert!(thread.fallback_history);
+        assert!(thread.document().pending_history());
         thread.send("what now?".into(), cx);
     });
     cx.run_until_parked();
@@ -281,7 +284,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     drop(requests);
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| {
-        assert!(!thread.fallback_history);
+        assert!(!thread.document().pending_history());
         thread.send("next".into(), cx);
     });
     cx.run_until_parked();
@@ -383,7 +386,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
             thread.read(cx).session().as_ref().unwrap().0.as_ref(),
             saved.session_id.as_deref().unwrap()
         );
-        assert!(!thread.read(cx).fallback_history);
+        assert!(!thread.read(cx).document().pending_history());
     });
 }
 
@@ -392,7 +395,9 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| thread.read(cx).chat_id.clone());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     f.repository.reject(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
@@ -404,7 +409,6 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
         },
     );
     thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
         thread.send("retained".into(), cx);
     });
     cx.run_until_parked();
@@ -501,8 +505,13 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![nocterm_ai::thread::Entry::Agent("saved context".into())];
-        thread.fallback_history = true;
+        restore_entries(
+            &f,
+            thread,
+            vec![nocterm_ai::thread::Entry::Agent("saved context".into())],
+            cx,
+        );
+        restore_pending_history(&f, thread, cx);
         report_control(
             thread,
             acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
@@ -527,7 +536,7 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| {
         assert!(
-            thread.fallback_history,
+            thread.document().pending_history(),
             "local ACP commands did not rebuild the model's context"
         );
         thread.send("/review these changes".into(), cx);
@@ -547,7 +556,7 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
         assert!(requests.last().unwrap().prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") && text.text.contains("saved context"))));
     }
     complete_active(&f, cx);
-    cx.update(|cx| assert!(!thread.read(cx).fallback_history));
+    cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
 }
 
 #[gpui_kit::test]

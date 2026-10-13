@@ -124,6 +124,6 @@ fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
         assert!(thread.read(cx).status_error);
         assert!(thread.read(cx).composer().paused());
         assert_eq!(thread.read(cx).composer().queue().len(), 2);
-        assert_eq!(thread.read(cx).state.entries.len(), 1);
+        assert_eq!(thread.read(cx).transcript().entries.len(), 1);
     });
 }

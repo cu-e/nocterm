@@ -33,7 +33,7 @@ async fn the_shown_chat_outlives_the_idle_timeout_until_the_user_moves_on(cx: &m
     tick(cx, 3);
     cx.update(|cx| {
         assert!(first.read(cx).lease.is_none());
-        assert_eq!(first.read(cx).state.entries.len(), 2);
+        assert_eq!(first.read(cx).transcript().entries.len(), 2);
     });
 }
 

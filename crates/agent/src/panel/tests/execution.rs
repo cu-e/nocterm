@@ -277,7 +277,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
 fn command_handles_are_owned_by_the_chat_that_started_them(cx: &mut TestAppContext) {
     let (f, first, programs, terminal) = setup(cx);
     let id = start(&f, &first, &terminal, cx);
-    cx.update(|cx| first.update(cx, |thread, _| thread.name = Some("first".into())));
+    cx.update(|cx| first.update(cx, |thread, cx| thread.rename(Some("first".into()), cx)));
     new_chat(&f, cx);
     let second = current(&f, cx);
     let second_terminal = terminal_id(&second, cx);

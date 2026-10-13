@@ -36,3 +36,4 @@ acceptance; a later record supersedes an earlier one.
 | [0034](0034-chat-config-composer-owners.md) | Per-chat configuration and composer transitions have private feature owners |
 | [0035](0035-injected-image-codecs.md) | Inject bounded native image codecs and bind preview delivery to request generations |
 | [0036](0036-connection-profile-native-boundary.md) | Connection documents and native values use explicit domain ports |
+| [0037](0037-chat-document-semantic-revisions.md) | Durable chat revisions, pending candidates and capture have separate ownership |

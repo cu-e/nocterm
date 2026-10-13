@@ -563,7 +563,7 @@ impl Render for AgentPanel {
                     .child({
                         let agent = self
                             .current()
-                            .map(|thread| thread.read(cx).agent_id.clone());
+                            .map(|thread| thread.read(cx).document().agent_id().to_owned());
                         match agent {
                             Some(agent) => nocterm_ui::agent_icon(&agent).small(),
                             None => gpui_kit::component::Icon::new(IconName::Bot)
