@@ -359,11 +359,16 @@ mod tests {
 
     #[test]
     fn rejected_image_collection_preserves_existing_images_and_edit_defaults() {
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(2, 2)
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
-        let image = PromptImage::validate(png.into_inner()).unwrap();
+        let bytes = nocterm_ai::testing::images::png_header_fixture(2, 2, 33);
+        let codec = nocterm_ai::testing::ScriptedImageCodec::default();
+        codec.inspection(
+            &bytes,
+            Ok(
+                nocterm_ai::images::ImageFacts::new(nocterm_ai::images::ImageFormat::Png, 2, 2)
+                    .unwrap(),
+            ),
+        );
+        let image = PromptImage::validate(bytes, &codec).unwrap();
         let mut composer = Composer::default();
         composer.replace_images(vec![image.clone()]).unwrap();
         composer.replace_context(vec![Attachment::Group("own".into())]);

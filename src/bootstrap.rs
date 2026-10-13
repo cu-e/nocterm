@@ -28,6 +28,7 @@ pub(crate) struct Services {
     pub(crate) files: nocterm_files::Deps,
     pub(crate) themes: Option<Themes>,
     pub(crate) agent: nocterm_agent::AgentServices,
+    pub(crate) images: nocterm_agent::ImageDeps,
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
 }
@@ -48,6 +49,7 @@ pub(crate) struct VaultSetup {
 #[derive(Clone)]
 pub(crate) struct Booted {
     settings_ui: nocterm_settings_ui::Deps,
+    images: nocterm_agent::ImageDeps,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
     pub(crate) themes: nocterm_ui::ThemeUi,
@@ -77,6 +79,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         files,
         themes,
         agent,
+        images,
         vault,
         connections,
     } = services;
@@ -128,6 +131,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     );
     let booted = Booted {
         settings_ui,
+        images,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -224,7 +228,7 @@ pub(crate) fn build_workspace(
     nocterm_snippets_ui::register(workspace, window, cx);
     nocterm_containers_ui::register(workspace, window, cx);
     nocterm_monitor_ui::register(workspace, window, cx);
-    nocterm_agent::register(workspace, window, cx);
+    nocterm_agent::register(workspace, booted.images.clone(), window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(vault) = vault
         && cx

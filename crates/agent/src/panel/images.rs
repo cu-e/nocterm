@@ -80,9 +80,14 @@ impl AgentPanel {
         .detach();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        self.prepare_images(async move { Ok(vec![PromptImage::validate(bytes)?]) }, cx);
+        let inspector = self.image_cache.inspector();
+        self.prepare_images(
+            async move { Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?]) },
+            cx,
+        );
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let inspector = self.image_cache.inspector();
         self.prepare_images(
             async move {
                 paths
@@ -92,7 +97,7 @@ impl AgentPanel {
                         let mut bytes = Vec::new();
                         std::io::Read::take(&mut file, (MAX_IMAGE_BYTES + 1) as u64)
                             .read_to_end(&mut bytes)?;
-                        Ok(PromptImage::validate(bytes)?)
+                        Ok(PromptImage::validate(bytes, inspector.as_ref())?)
                     })
                     .collect()
             },

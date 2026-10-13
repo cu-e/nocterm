@@ -311,3 +311,9 @@ operations continue through GPUI's platform open/reveal surface.
 Explorer refreshes the affected destination after a finished transfer that acknowledged a
 file publication or destination directory preparation, including transfers that later fail
 or cancel. Empty-directory copies therefore refresh without being counted as completed files.
+
+Agent image codecs are explicit ImageDeps passed into each panel. Its private
+ImagePipeline owns the preview cache and request generations, rejects stale
+same-key completions and remeasures rows only for accepted delivery. Attachment
+preparation preserves chat/lifecycle/composer revision checks and admits a complete
+validated candidate collection atomically. The feature never decodes image data.

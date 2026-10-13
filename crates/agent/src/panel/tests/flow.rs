@@ -565,11 +565,8 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
             .image = true;
     });
     let (ready, wait) = oneshot::channel();
-    let mut png = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3])))
-        .write_to(&mut png, image::ImageFormat::Png)
-        .unwrap();
-    let bytes = png.into_inner();
+    let bytes = image_bytes();
+    let codec = image_codec();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel
@@ -578,7 +575,10 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
             panel.prepare_images(
                 async move {
                     wait.await.unwrap();
-                    Ok(vec![nocterm_ai::images::PromptImage::validate(bytes)?])
+                    Ok(vec![nocterm_ai::images::PromptImage::validate(
+                        bytes,
+                        codec.as_ref(),
+                    )?])
                 },
                 cx,
             );

@@ -14,22 +14,30 @@ use nocterm_ui::IconName;
 use nocterm_ui::SettingsExt as _;
 
 use super::{
-    AgentPanel, CachedImage,
+    AgentPanel,
+    image_pipeline::PreviewState,
     message_actions::{MESSAGE_GROUP, escape_markdown, message_text},
     widgets::{chat_markdown, disclosure_header, entry_is_live, safe_markdown},
 };
 
+#[derive(Debug, thiserror::Error)]
+enum PreviewError {
+    #[error("{0}")]
+    Base64(#[from] base64::DecodeError),
+    #[error("{0}")]
+    Codec(#[from] nocterm_ai::images::ImageCodecError),
+}
 pub(super) mod tool_input;
 pub(super) mod tool_output;
 
 impl AgentPanel {
     fn image_view(&self, key: (usize, usize, bool)) -> gpui_kit::AnyElement {
-        match self.image_cache.get(&key) {
-            Some(CachedImage::Ready(image)) => img(image.clone())
+        match self.image_cache.state(&key) {
+            Some(PreviewState::Ready(image)) => img(image.clone())
                 .max_w_full()
                 .h(rems(10.))
                 .into_any_element(),
-            Some(CachedImage::Failed) => {
+            Some(PreviewState::Failed) => {
                 div().child("Image could not be loaded.").into_any_element()
             }
             _ => div().child("Loading image…").into_any_element(),
@@ -52,44 +60,34 @@ impl AgentPanel {
         row: Option<usize>,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        if let std::collections::hash_map::Entry::Vacant(entry) = self.image_cache.entry(key) {
-            entry.insert(CachedImage::Loading(None));
+        if let Some(ticket) = self.image_cache.request(key) {
             let bytes = data();
+            let thumbnailer = self.image_cache.thumbnailer();
             let future = cx.background_executor().spawn(async move {
                 let bytes = if encoded {
                     if bytes.len() > nocterm_ai::images::MAX_IMAGE_BYTES.div_ceil(3) * 4 {
-                        return Err("Image exceeds size limit".to_owned());
+                        return Err(PreviewError::Codec(
+                            nocterm_ai::images::ImageCodecError::SourceSize,
+                        ));
                     }
-                    base64::engine::general_purpose::STANDARD
-                        .decode(bytes)
-                        .map_err(|error| error.to_string())?
+                    base64::engine::general_purpose::STANDARD.decode(bytes)?
                 } else {
                     bytes
                 };
-                let image = nocterm_ai::images::PromptImage::validate(bytes)
-                    .map_err(|error| error.to_string())?;
-                let thumbnail = image::load_from_memory(image.bytes())
-                    .map_err(|error| error.to_string())?
-                    .thumbnail(640, 640);
-                let mut png = std::io::Cursor::new(Vec::new());
-                thumbnail
-                    .write_to(&mut png, image::ImageFormat::Png)
-                    .map_err(|error| error.to_string())?;
-                Ok::<_, String>(Arc::new(gpui_kit::Image::from_bytes(
+                let bounds = nocterm_ai::images::PreviewBounds::new(640, 640)?;
+                let preview = thumbnailer.thumbnail(bytes.into(), bounds)?;
+                // Supplied previews retain the same pure size/format contract.
+                let preview =
+                    nocterm_ai::images::EncodedPreview::new(preview.bytes().clone(), bounds)?;
+                Ok::<_, PreviewError>(Arc::new(gpui_kit::Image::from_bytes(
                     gpui_kit::ImageFormat::Png,
-                    png.into_inner(),
+                    preview.bytes().to_vec(),
                 )))
             });
             let task = cx.spawn(async move |this, cx| {
                 let result = future.await;
                 let _ = this.update(cx, |this, cx| {
-                    if let std::collections::hash_map::Entry::Occupied(mut entry) =
-                        this.image_cache.entry(key)
-                    {
-                        entry.insert(match result {
-                            Ok(image) => CachedImage::Ready(image),
-                            Err(_) => CachedImage::Failed,
-                        });
+                    if this.image_cache.complete(ticket, result.ok()) {
                         if let Some(row) = row {
                             this.list
                                 .update(cx, |list, cx| list.remeasure_items(row..row + 1, cx));
@@ -98,9 +96,7 @@ impl AgentPanel {
                     }
                 });
             });
-            if let Some(CachedImage::Loading(pending)) = self.image_cache.get_mut(&key) {
-                *pending = Some(task);
-            }
+            self.image_cache.install_task(ticket, task);
         }
         self.image_view(key)
     }

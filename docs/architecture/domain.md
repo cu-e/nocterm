@@ -161,7 +161,7 @@ validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
 Existing SavedChat/SharedChat ACP payloads remain protocol migration debt, as do
-separate image and clock/entropy responsibilities. New storage
+separate clock/entropy responsibilities. New storage
 contracts use the existing typed records without adding protocol-specific fields.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
@@ -183,3 +183,10 @@ usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing
 `session_config` helpers retain pure choice and category rules; protocol-backed
 version-one values remain migration debt at their established seams.
+## Agent image contracts
+
+AI owns pure image header preflight, checked format/dimension facts, exact prompt
+encoding and collection limits. ImageInspector supplies validated original bytes;
+prompt admission checks their Arc identity and facts against its own preflight.
+ImageThumbnailer supplies bounded PNG previews, with pure checked dimensions and
+output-size contracts. Native decoding and PNG encoding belong to an adapter.

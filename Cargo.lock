@@ -4924,6 +4924,7 @@ dependencies = [
  "nocterm-design",
  "nocterm-device-unlock",
  "nocterm-files",
+ "nocterm-image-codec",
  "nocterm-keymap",
  "nocterm-keymap-ui",
  "nocterm-local",
@@ -4985,7 +4986,6 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
- "image",
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-session",
@@ -5035,7 +5035,6 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "futures",
- "image",
  "nocterm-core",
  "nocterm-settings",
  "regex",
@@ -5179,6 +5178,14 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-image-codec"
+version = "0.0.0"
+dependencies = [
+ "image",
+ "nocterm-ai",
 ]
 
 [[package]]

@@ -6,10 +6,12 @@
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: AgentConnector, ToolBridge,
 //! AgentStateRepository, ChatRepository, usage::AccountUsageSource,
-//! workspace::WorkdirResolver and sandbox::SandboxProbe.
+//! workspace::WorkdirResolver, sandbox::SandboxProbe and
+//! images::{ImageInspector, ImageThumbnailer}.
+//! Image preflight and encoded admission are pure; native decoding is injected.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
-//! Existing ACP-backed DTOs, image I/O and clock/entropy are explicit
+//! Existing ACP-backed DTOs and clock/entropy are explicit
 //! migration debt; storage ports add no new protocol-specific types.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
@@ -27,7 +29,7 @@ pub mod sandbox;
 pub mod session;
 pub mod session_config;
 mod settings;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod thread;
 pub mod time;

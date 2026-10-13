@@ -135,7 +135,7 @@ fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext)
 #[gpui_kit::test]
 fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut TestAppContext) {
     let resolver = workspace_resolver();
-    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone());
+    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone(), image_deps());
     cx.run_until_parked();
     let a = f._directory.path().join("A");
     let b = f._directory.path().join("B");
@@ -363,7 +363,7 @@ fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut Te
 #[gpui_kit::test]
 fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut TestAppContext) {
     let resolver = workspace_resolver();
-    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone());
+    let f = fixture_with_width(cx, 26., usage_source(), resolver.clone(), image_deps());
     cx.run_until_parked();
     let mut invalid = saved();
     invalid.session_id = Some("old-session".into());

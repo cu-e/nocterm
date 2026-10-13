@@ -24,11 +24,8 @@ nocterm-vt = 5
 nocterm-workspace = 4
 
 [domain_dependencies]
-"nocterm-ai::image" = 1
 
 [domain_io]
-"nocterm_ai::images::image::ImageReader::new" = 1
-"nocterm_ai::images::image::Limits::default" = 1
 
 [global_reads]
 nocterm = 3

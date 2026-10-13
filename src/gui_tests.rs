@@ -206,6 +206,10 @@ fn boot_with_ports(
     });
     let booted = crate::bootstrap::bootstrap(
         crate::bootstrap::Services {
+            images: {
+                let codec = Arc::new(nocterm_ai::testing::ScriptedImageCodec::default());
+                nocterm_agent::ImageDeps::new(codec.clone(), codec)
+            },
             tokens: nocterm_ui::DesignTokens::builtin(),
             settings: nocterm_ui::SettingsStore::in_memory(settings),
             settings_ui: nocterm_settings_ui::Deps::new(Arc::new(

@@ -217,7 +217,7 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
 
 #[gpui_kit::test]
 fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver(), image_deps());
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
         thread

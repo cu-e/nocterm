@@ -4,9 +4,9 @@
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
-//! Does not own: ACP transport, runtime connection admission or filesystem storage adapters.
-//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, terminal ports
-//! and ConnectionDirectory.
+//! Does not own: ACP transport, connection admission, filesystem storage or image decoding.
+//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, terminal ports,
+//! ConnectionDirectory, ImageInspector and ImageThumbnailer through ImageDeps.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
@@ -14,11 +14,14 @@
 //! choice revalidates current session, registration and attachment authority.
 //! Archive delivery also validates document ownership and its local load generation;
 //! a literal pending draft supersedes the saved draft and its timestamp together.
+//! Preview cache generations reject stale same-key delivery after clear or chat changes.
 //! Terminal operation causes stay typed until tool transcripts and sign-in errors are presented.
 //! Configuration replies accept only their current session ticket; candidate prompt admission
 //! validates bounded payloads before committing draft, image and queue changes.
 
+mod image_deps;
 mod panel;
+pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
 mod thread;
 pub use runtime::TerminalAuthRequest;
@@ -134,11 +137,12 @@ gpui_kit::actions!(
 /// Installs a window-local panel with an initially empty chat history.
 pub fn register(
     workspace: &mut nocterm_workspace::Workspace,
+    images: ImageDeps,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) {
     let owner = cx.entity().downgrade();
-    let panel = cx.new(|panel_cx| panel::AgentPanel::new(owner, window, panel_cx));
+    let panel = cx.new(|panel_cx| panel::AgentPanel::new(owner, images, window, panel_cx));
     workspace.set_right_panel(panel, window, cx);
     workspace.set_right_panel_available(nocterm_ui::ActiveAi::ai_enabled(&**cx), window, cx);
 }

@@ -17,7 +17,7 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
             reached: false,
         },
     ])));
-    let f = fixture_with_width(cx, 26., source, workspace_resolver());
+    let f = fixture_with_width(cx, 26., source, workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -136,33 +136,77 @@ fn implicit_markdown_images_are_disabled_and_config_labels_show_selection() {
 }
 #[gpui_kit::test]
 fn image_preparation_runs_once_and_renders_a_cached_small_static_preview(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    let mut png = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image::RgbaImage::new(800, 800))
-        .write_to(&mut png, image::ImageFormat::Png)
-        .unwrap();
-    let data = png.into_inner();
+    let codec = image_codec();
+    let f = fixture_with_width(
+        cx,
+        26.,
+        usage_source(),
+        workspace_resolver(),
+        crate::ImageDeps::new(codec.clone(), codec.clone()),
+    );
+    let data = image_bytes();
     let key = (1usize, data.len(), false);
+    let expected = Arc::new(gpui_kit::Image::from_bytes(
+        gpui_kit::ImageFormat::Png,
+        data.clone(),
+    ));
     cx.update(|cx| {
         f.panel.update(cx, |panel, cx| {
             panel.cached_image(key, || data, false, cx);
-            assert!(matches!(
-                panel.image_cache.get(&key),
-                Some(crate::panel::CachedImage::Loading(_))
-            ));
         })
     });
     cx.run_until_parked();
-    cx.update(|cx| {
-        f.panel.update(cx, |panel, cx| {
-            let Some(crate::panel::CachedImage::Ready(image)) = panel.image_cache.get(&key) else {
-                panic!("preview not ready");
-            };
-            let decoded = image::load_from_memory(&image.bytes).unwrap();
-            assert!(decoded.width() <= 640 && decoded.height() <= 640);
-            panel.cached_image(key, || panic!("cache hit must not decode again"), false, cx);
-        })
+    assert_eq!(codec.requests().len(), 1);
+    let window = cx.add_empty_window();
+    window.update(|_, cx| assert!(!expected.is_asset_cached(cx)));
+    struct PreviewView {
+        panel: Entity<AgentPanel>,
+        key: (usize, usize, bool),
+    }
+    impl gpui_kit::Render for PreviewView {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.panel.update(cx, |panel, cx| {
+                panel.cached_image(
+                    self.key,
+                    || panic!("cache hit must not decode again"),
+                    false,
+                    cx,
+                )
+            })
+        }
+    }
+    let view = window.new(|_| PreviewView {
+        panel: f.panel.clone(),
+        key,
     });
+    let draw_preview = |_: &mut Window, _: &mut App| view.clone().into_any_element();
+    window.draw(
+        gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)),
+        gpui_kit::size(gpui_kit::px(160.), gpui_kit::px(160.)),
+        draw_preview,
+    );
+    window.run_until_parked();
+    let rendered = window.update(|window, cx| {
+        assert!(expected.is_asset_cached(cx));
+        expected
+            .clone()
+            .get_render_image(window, cx)
+            .expect("successful preview rendering must load its supplied PNG")
+    });
+    assert_eq!(rendered.frame_count(), 1);
+    assert_eq!(rendered.size(0), gpui_kit::size(2u32.into(), 2u32.into()));
+    assert_eq!(rendered.as_bytes(0).unwrap().len(), 2 * 2 * 4);
+    window.draw(
+        gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)),
+        gpui_kit::size(gpui_kit::px(160.), gpui_kit::px(160.)),
+        draw_preview,
+    );
+    window.update(|window, cx| {
+        assert!(window.has_image_atlas_entry(&rendered));
+        let reused = expected.clone().get_render_image(window, cx).unwrap();
+        assert!(Arc::ptr_eq(&rendered, &reused));
+    });
+    assert_eq!(codec.requests().len(), 1);
 }
 
 #[gpui_kit::test]
@@ -191,7 +235,7 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     f.commands
         .config
         .set_options(vec![acp::SessionConfigOption::select(
@@ -323,7 +367,7 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| {
         f.panel
@@ -416,7 +460,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
 
 #[gpui_kit::test]
 fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {

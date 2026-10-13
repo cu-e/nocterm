@@ -1,3 +1,4 @@
+mod image_fixtures;
 use crate::{
     AgentServices,
     panel::AgentPanel,
@@ -10,6 +11,7 @@ use gpui_kit::{
     AnyWindowHandle, App, Context, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
     Window, WindowOptions, prelude::*,
 };
+use image_fixtures::{image_bytes, image_codec, image_deps, prompt_image};
 use nocterm_ai::{
     AgentCommands, AgentConnection, AgentConnector, AgentError, AgentEvent, AgentInfo, BridgeCall,
     BridgeRegistration, ConnectRequest, ToolBridge, acp,
@@ -292,7 +294,7 @@ struct Fixture {
     shutdown: nocterm_store::ShutdownCoordinator,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
-    fixture_with_width(cx, 26., usage_source(), workspace_resolver())
+    fixture_with_width(cx, 26., usage_source(), workspace_resolver(), image_deps())
 }
 fn workspace_resolver() -> Arc<nocterm_ai::testing::ScriptedWorkdirResolver> {
     Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests())
@@ -306,6 +308,7 @@ fn fixture_with_width(
     width: f32,
     usage_source: Arc<nocterm_ai::testing::ScriptedUsageSource>,
     workdir_resolver: Arc<nocterm_ai::testing::ScriptedWorkdirResolver>,
+    images: crate::ImageDeps,
 ) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let repository = Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
@@ -384,7 +387,7 @@ fn fixture_with_width(
                     terminal = Some(item.entity_id());
                     workspace.add_item(item, window, cx);
                     let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| AgentPanel::new(owner, window, cx));
+                    let view = cx.new(|cx| AgentPanel::new(owner, images, window, cx));
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
                     workspace.toggle_right_panel(window, cx);
@@ -455,7 +458,8 @@ fn install_fixture(
     });
     let panel = cx
         .update_window(f.handle, |_, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), window, cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), image_deps(), window, cx));
             f.workspace.update(cx, |workspace, cx| {
                 workspace.set_right_panel(panel.clone(), window, cx)
             });

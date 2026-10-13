@@ -11,7 +11,7 @@ fn settle(f: &Fixture, cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -71,21 +71,14 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
 
 #[gpui_kit::test]
 fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(2, 2)
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
         thread
-            .accept_composer_images(
-                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
-                cx,
-            )
+            .accept_composer_images(vec![prompt_image()], cx)
             .unwrap();
         thread.replace_composer_context(vec![Attachment::Group("Production servers".into())], cx);
         thread.send(

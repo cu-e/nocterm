@@ -92,8 +92,11 @@ impl PreparedApp {
             file: self.paths.config_dir().join("vault.bin"),
             device_unlock: true,
         });
+        let codec = Arc::new(nocterm_image_codec::NativeImageCodec);
+        let images = nocterm_agent::ImageDeps::new(codec.clone(), codec);
         let booted = bootstrap::bootstrap(
             bootstrap::Services {
+                images,
                 tokens: self.tokens,
                 settings: self.settings,
                 settings_ui: nocterm_settings_ui::Deps::new(Arc::new(

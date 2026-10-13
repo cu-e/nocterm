@@ -165,7 +165,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
                     let mut workspace =
                         Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| AgentPanel::new(owner, window, cx));
+                    let view = cx.new(|cx| AgentPanel::new(owner, image_deps(), window, cx));
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
                     workspace.toggle_right_panel(window, cx);

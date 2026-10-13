@@ -19,7 +19,6 @@ use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
     time::Duration,
 };
 use widgets::HEADER_HEIGHT;
@@ -33,6 +32,7 @@ pub(crate) mod commands;
 mod composer;
 mod entries;
 mod history;
+mod image_pipeline;
 mod images;
 mod lifecycle;
 mod menu;
@@ -54,13 +54,9 @@ enum MenuKind {
     /// The context usage card, over the chat rather than in a popover.
     Usage,
 }
-enum CachedImage {
-    Loading(Option<Task<()>>),
-    Ready(Arc<gpui_kit::Image>),
-    Failed,
-}
+
 pub(crate) struct AgentPanel {
-    image_cache: HashMap<(usize, usize, bool), CachedImage>,
+    image_cache: image_pipeline::ImagePipeline,
     focus: FocusHandle,
     workspace: WeakEntity<Workspace>,
     threads: Vec<Entity<AgentThread>>,
@@ -105,6 +101,7 @@ impl AgentPanel {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
+        images: crate::ImageDeps,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -219,7 +216,7 @@ impl AgentPanel {
             }
         });
         Self {
-            image_cache: HashMap::new(),
+            image_cache: image_pipeline::ImagePipeline::new(images),
             sign_in_inputs: HashMap::new(),
             focus: cx.focus_handle(),
             workspace,

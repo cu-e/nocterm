@@ -251,6 +251,8 @@ no longer offers is skipped. Changes the agent reports itself become the chat's.
 Modes are kept per chat and never carried over to other chats. Image input accepts validated PNG, JPEG, GIF and
 WebP, at most 5 MiB per image, eight images and 20 MiB per prompt. Decoding is
 bounded to 4096 pixels per axis, 16 million pixels and 64 MiB allocation.
+Transcript previews preserve aspect ratio and alpha, fit 640 pixels per axis and
+encode at most 4 MiB of PNG; prompt/history encoding retains the original image.
 
 ## Usage and plan limits
 
@@ -372,7 +374,8 @@ with successful execution.
 
 `nocterm-ai` is runtime-neutral domain logic: registry, environment policy,
 contracts, ACP update reducer, descriptors, MCP parser, approvals, filtering,
-favorites and image validation. `nocterm-acp` adapts subprocess stdio and local
+favorites and pure image admission. `nocterm-image-codec` implements bounded
+physical image validation and PNG previews through injected image ports. `nocterm-acp` adapts subprocess stdio and local
 bridge transport. `nocterm-agent` owns GPUI lifecycle, chat state/UI and routing.
 Saved chats (`nocterm_ai::history`), Claude limit metadata and transcript usage
 estimates (`nocterm_ai::usage`) remain domain code. Codex session-log parsing and

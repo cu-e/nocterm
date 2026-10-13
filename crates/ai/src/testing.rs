@@ -47,3 +47,5 @@ mod sandbox;
 mod workspace;
 pub use sandbox::ScriptedSandboxProbe;
 pub use workspace::ScriptedWorkdirResolver;
+pub mod images;
+pub use images::{ImageRequest, ScriptedImageCodec};

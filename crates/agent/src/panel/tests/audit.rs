@@ -369,15 +369,8 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(2, 2)
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
         thread
-            .accept_composer_images(
-                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
-                cx,
-            )
+            .accept_composer_images(vec![prompt_image()], cx)
             .unwrap();
         thread.send("queued\n\"\\界".into(), cx);
         let first = thread.shared_snapshot(cx).unwrap();
@@ -496,13 +489,7 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
         panel.prepare_images(
             async move {
                 receive.await.unwrap();
-                let mut png = std::io::Cursor::new(Vec::new());
-                image::RgbaImage::new(2, 2)
-                    .write_to(&mut png, image::ImageFormat::Png)
-                    .unwrap();
-                Ok(vec![nocterm_ai::images::PromptImage::validate(
-                    png.into_inner(),
-                )?])
+                Ok(vec![prompt_image()])
             },
             cx,
         )
@@ -604,15 +591,8 @@ fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
     owner.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(2, 2)
-            .write_to(&mut png, image::ImageFormat::Png)
-            .unwrap();
         thread
-            .accept_composer_images(
-                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
-                cx,
-            )
+            .accept_composer_images(vec![prompt_image()], cx)
             .unwrap();
         thread.send("queued image".into(), cx);
     });

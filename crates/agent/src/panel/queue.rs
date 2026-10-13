@@ -182,19 +182,18 @@ impl AgentPanel {
         });
         if !ready {
             let saved = prompt.saved.clone();
+            let inspector = self.image_cache.inspector();
             let future = cx.background_executor().spawn(async move {
                 saved
                     .images
                     .iter()
                     .filter_map(|block| match block {
-                        acp::ContentBlock::Image(image) => Some(
-                            base64::engine::general_purpose::STANDARD
-                                .decode(&image.data)
-                                .map_err(ImageAttachError::from)
-                                .and_then(|bytes| {
-                                    PromptImage::validate(bytes).map_err(ImageAttachError::from)
-                                }),
-                        ),
+                        acp::ContentBlock::Image(image) => {
+                            Some(decode_saved_image(&image.data).and_then(|bytes| {
+                                PromptImage::validate(bytes, inspector.as_ref())
+                                    .map_err(ImageAttachError::from)
+                            }))
+                        }
                         _ => None,
                     })
                     .collect::<Result<Vec<_>, _>>()
@@ -554,4 +553,11 @@ impl AgentPanel {
             thread.update(cx, |thread, cx| thread.set_draft(text, cx));
         }
     }
+}
+
+fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError> {
+    if data.len() > nocterm_ai::images::MAX_IMAGE_BYTES.div_ceil(3) * 4 {
+        return Err(nocterm_ai::images::PromptImageError::TooLarge.into());
+    }
+    Ok(base64::engine::general_purpose::STANDARD.decode(data)?)
 }

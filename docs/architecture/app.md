@@ -63,3 +63,6 @@ Composition also supplies the ACP native workspace resolver through AgentService
 and retains settings `Deps` in Booted for every window and settings action. Native
 sandbox probe selection happens at startup composition; feature/service fixtures
 supply AI's shared scripted capabilities rather than reaching adapters or globals.
+Startup constructs NativeImageCodec and passes ImageDeps through bootstrap Services.
+Booted retains those dependencies for all windows; GUI fixtures supply the shared
+scripted AI codec. Image ports are not discovered through globals or Runtime.

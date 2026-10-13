@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage` and `nocterm-connections-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec` and `nocterm-connections-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -157,3 +157,11 @@ The adapter supplies user/home defaults, UUID entropy and Unix timestamps.
 Application startup preloads documents and defaults on its background executor;
 bootstrap installs only prepared documents and writer ports. The existing
 memory-only composition constructs no native repository or HTTP clients.
+## Image codec
+
+`nocterm-image-codec::NativeImageCodec` implements AI's image inspector and
+thumbnailer without filesystem access, GPUI or its own workers. PNG, JPEG, GIF and
+WebP decoding applies shared pure preflight before bounded decoder allocation:
+4096 pixels per axis and 64 MiB. It validates full decode against header facts.
+Previews preserve aspect and alpha, fit requested bounds up to 640 pixels, and
+encode PNG through a sink capped at 4 MiB. Native errors retain typed causes.
