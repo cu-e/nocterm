@@ -88,15 +88,12 @@ fn reducer_merges_chunks_and_keeps_message_boundaries() {
     assert_eq!(s.entries.len(), 4);
 }
 #[test]
-fn reducer_handles_all_stable_control_updates_and_tool_replacement() {
+fn reducer_handles_transcript_metadata_usage_and_tool_replacement() {
     let mut s = ThreadState::default();
     for value in [
         json!({"sessionUpdate":"tool_call","toolCallId":"1","title":"read","kind":"read","status":"pending"}),
         json!({"sessionUpdate":"tool_call_update","toolCallId":"1","status":"completed","title":"done","rawOutput":{"text":"ok"}}),
         json!({"sessionUpdate":"plan","entries":[]}),
-        json!({"sessionUpdate":"available_commands_update","availableCommands":[]}),
-        json!({"sessionUpdate":"current_mode_update","currentModeId":"ask"}),
-        json!({"sessionUpdate":"config_option_update","configOptions":[]}),
         json!({"sessionUpdate":"session_info_update","title":"A title"}),
         json!({"sessionUpdate":"usage_update","used":50,"size":100}),
         json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"user"}}),
@@ -360,20 +357,8 @@ fn all_supported_image_formats_validate_and_aggregate_bytes_are_bounded() {
 }
 
 #[test]
-fn config_categories_override_legacy_modes_and_image_chunks_are_retained() {
+fn image_chunks_are_retained() {
     let mut state = ThreadState::default();
-    state.apply(update(json!({"sessionUpdate":"config_option_update","configOptions":[
-        {"id":"effort","name":"Effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"high","name":"High"}]},
-        {"id":"model","name":"Model","category":"model","type":"select","currentValue":"a","options":[{"value":"a","name":"Model A"}]},
-        {"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"ask","options":[{"value":"ask","name":"Ask"}]}
-    ]})));
-    assert!(state.config_overrides_modes());
-    assert_eq!(
-        state.config(acp::SessionConfigOptionCategory::Model)[0]
-            .id
-            .to_string(),
-        "model"
-    );
     state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})));
     assert!(matches!(
         state.entries.last(),

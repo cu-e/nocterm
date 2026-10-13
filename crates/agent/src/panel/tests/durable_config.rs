@@ -38,7 +38,7 @@ fn choose(thread: &Entity<AgentThread>, model: &str, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 fn current_model(thread: &Entity<AgentThread>, cx: &mut TestAppContext) -> String {
-    cx.update(|cx| crate::thread::config_label(&thread.read(cx).state.config_options[0]))
+    cx.update(|cx| crate::thread::config_label(&thread.read(cx).config_options()[0]))
 }
 fn tick(cx: &mut TestAppContext, seconds: u64) {
     cx.background_executor
@@ -56,7 +56,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     })
     .await
     .unwrap();
-    *f.commands.config.lock().unwrap() = models();
+    f.commands.config.set_options(models());
     let first = chat(&f, cx);
     cx.run_until_parked();
     choose(&first, "opus", cx);
@@ -80,14 +80,14 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     );
 
     // A new process starts with the agent's defaults again.
-    *f.commands.config.lock().unwrap() = models();
-    let requests = f.commands.config_requests.lock().unwrap().len();
+    f.commands.config.set_options(models());
+    let requests = f.commands.config.requests().len();
     f.panel
         .update(cx, |panel, cx| panel.open_thread(first.entity_id(), cx));
     cx.run_until_parked();
     cx.update(|cx| assert!(first.read(cx).session().is_some()));
     assert_eq!(current_model(&first, cx), "Opus");
-    let asked = f.commands.config_requests.lock().unwrap()[requests..].to_vec();
+    let asked = f.commands.config.requests()[requests..].to_vec();
     assert_eq!(asked.len(), 1);
     assert_eq!(
         ConfigValue::from_acp(&asked[0].value),

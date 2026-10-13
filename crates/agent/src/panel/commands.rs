@@ -179,8 +179,8 @@ pub(super) fn tooltip(name: String, panel: WeakEntity<AgentPanel>, cx: &mut App)
         .and_then(|thread| {
             thread
                 .read(cx)
-                .state
-                .commands
+                .configuration()
+                .commands()
                 .iter()
                 .find(|command| command.name == name)
                 .cloned()
@@ -192,8 +192,7 @@ pub(super) fn tooltip(name: String, panel: WeakEntity<AgentPanel>, cx: &mut App)
         .and_then(|thread| {
             thread
                 .read(cx)
-                .state
-                .config_options
+                .config_options()
                 .iter()
                 .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
                 .map(|option| option.id.to_string())
@@ -240,7 +239,10 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        let key = (thread.entity_id(), thread.read(cx).state.commands_revision);
+        let key = (
+            thread.entity_id(),
+            thread.read(cx).configuration().commands_revision(),
+        );
         if self.commands.advertisement == Some(key) {
             return;
         }
@@ -260,8 +262,8 @@ impl AgentPanel {
             .filter(|span| {
                 !thread
                     .read(cx)
-                    .state
-                    .commands
+                    .configuration()
+                    .commands()
                     .iter()
                     .any(|command| command.name == span.token().id().as_ref())
             })
@@ -302,8 +304,8 @@ impl AgentPanel {
             .map(|thread| {
                 thread
                     .read(cx)
-                    .state
-                    .commands
+                    .configuration()
+                    .commands()
                     .iter()
                     .enumerate()
                     .filter_map(|(index, command)| {
@@ -324,7 +326,7 @@ impl AgentPanel {
         let invocation = self
             .current()
             .and_then(|thread| {
-                nocterm_ai::commands::invocation(&value, &thread.read(cx).state.commands)
+                nocterm_ai::commands::invocation(&value, thread.read(cx).configuration().commands())
             })
             .filter(|invocation| invocation.has_arguments);
         let Some(invocation) = invocation else {
@@ -382,7 +384,7 @@ impl AgentPanel {
         let names = commands
             .iter()
             .map(|index| {
-                self.current().unwrap().read(cx).state.commands[*index]
+                self.current().unwrap().read(cx).configuration().commands()[*index]
                     .name
                     .clone()
             })
@@ -478,7 +480,7 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return div().into_any_element();
         };
-        let command = &thread.read(cx).state.commands[command_index];
+        let command = &thread.read(cx).configuration().commands()[command_index];
         let name = command.name.clone();
         let hover = name.clone();
         let owner = cx.weak_entity();

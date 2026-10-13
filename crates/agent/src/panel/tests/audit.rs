@@ -47,9 +47,9 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
     let editing = cx.update(|cx| f.panel.read(cx).current().unwrap());
     editing.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        thread.composer.attachments = vec![Attachment::Group("queued scope".into())];
+        thread.replace_composer_context(vec![Attachment::Group("queued scope".into())], cx);
         thread.send("queued".into(), cx);
-        thread.composer.attachments = vec![Attachment::Group("draft scope".into())];
+        thread.replace_composer_context(vec![Attachment::Group("draft scope".into())], cx);
     });
     cx.run_until_parked();
     set_input(&f, "editing chat draft", cx);
@@ -64,9 +64,9 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
         assert_eq!(panel.current().unwrap().entity_id(), owner.entity_id());
         assert_eq!(panel.input.read(cx).value().as_ref(), "owner draft");
         assert!(panel.composer.edit.is_none());
-        assert!(!editing.read(cx).composer.queue_editing);
+        assert!(!editing.read(cx).composer().editing_queue());
         assert_eq!(
-            editing.read(cx).composer.attachments,
+            editing.read(cx).composer().attachments(),
             vec![Attachment::Group("draft scope".into())]
         );
     });
@@ -116,7 +116,7 @@ fn delete_edit_owner_then_review_does_not_keep_dangling_edit(cx: &mut TestAppCon
                 .any(|thread| thread.entity_id() == editing.entity_id())
         );
         assert_eq!(panel.current().unwrap().entity_id(), owner.entity_id());
-        assert!(!editing.read(cx).composer.queue_editing);
+        assert!(!editing.read(cx).composer().editing_queue());
     });
 }
 
@@ -126,11 +126,25 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
     new_chat(&f, cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     old.update(cx, |thread, cx| {
-        thread.last_model = Some("remembered model".into());
+        let option = acp::SessionConfigOption::select(
+            "model",
+            "Model",
+            "saved",
+            vec![acp::SessionConfigSelectOption::new(
+                "saved",
+                "remembered model",
+            )],
+        )
+        .category(acp::SessionConfigOptionCategory::Model);
+        report_control(
+            thread,
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![option])),
+            cx,
+        );
         thread.send("active".into(), cx);
-        thread.composer.attachments = vec![Attachment::Group("queued".into())];
+        thread.replace_composer_context(vec![Attachment::Group("queued".into())], cx);
         thread.send("queued prompt".into(), cx);
-        thread.composer.attachments = vec![Attachment::Group("default".into())];
+        thread.replace_composer_context(vec![Attachment::Group("default".into())], cx);
     });
     cx.run_until_parked();
     set_input(&f, "original draft", cx);
@@ -154,7 +168,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
                 .any(|thread| thread.entity_id() == old.entity_id())
         );
         assert_eq!(
-            current.read(cx).composer.attachments,
+            current.read(cx).composer().attachments(),
             vec![Attachment::Group("default".into())]
         );
         assert_eq!(
@@ -162,7 +176,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
             Some("remembered model")
         );
         assert_eq!(
-            current.read(cx).composer.queue[0].saved.text,
+            current.read(cx).composer().queue()[0].saved.text,
             "queued prompt"
         );
     });
@@ -174,11 +188,11 @@ fn editing_future_context_keeps_saved_defaults_and_active_grants(cx: &mut TestAp
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.composer.attachments.clear();
+        thread.clear_composer_context(cx);
         thread.send("active without terminal".into(), cx);
-        thread.composer.attachments = vec![Attachment::Terminal(f.terminal)];
+        thread.replace_composer_context(vec![Attachment::Terminal(f.terminal)], cx);
         thread.send("future with terminal".into(), cx);
-        thread.composer.attachments = vec![Attachment::Group("saved defaults".into())];
+        thread.replace_composer_context(vec![Attachment::Group("saved defaults".into())], cx);
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -240,12 +254,12 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
         assert!(
             labels
-                .label(&thread.read(cx).composer.queue[0].attachments[0])
+                .label(&thread.read(cx).composer().queue()[0].attachments[0])
                 .contains("unavailable")
         );
         assert!(
             labels
-                .label(&thread.read(cx).composer.queue[0].attachments[1])
+                .label(&thread.read(cx).composer().queue()[0].attachments[1])
                 .to_lowercase()
                 .contains("unavailable")
         );
@@ -261,7 +275,7 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
     .unwrap();
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        assert_eq!(thread.composer.queue[0].saved.text, "edited");
+        assert_eq!(thread.composer().queue()[0].saved.text, "edited");
         assert_eq!(thread.snapshot(cx).unwrap().queue[0].attachments, refs);
     });
     let disk = f.repository.chats();
@@ -281,7 +295,13 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
         thread.update(cx, |thread, cx| {
             thread.state.entries = vec![Entry::Agent("remember this context".into())];
             thread.fallback_history = true;
-            thread.state.commands = vec![acp::AvailableCommand::new("$skill:review", "Review")];
+            report_control(
+                thread,
+                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                    vec![acp::AvailableCommand::new("$skill:review", "Review")],
+                )),
+                cx,
+            );
             thread.send(input.into(), cx);
         });
         cx.run_until_parked();
@@ -353,19 +373,23 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
         image::RgbaImage::new(2, 2)
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
-        thread.composer.images =
-            vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()];
+        thread
+            .accept_composer_images(
+                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
+                cx,
+            )
+            .unwrap();
         thread.send("queued\n\"\\界".into(), cx);
         let first = thread.shared_snapshot(cx).unwrap();
         let second = thread.shared_snapshot(cx).unwrap();
         assert!(Arc::ptr_eq(&first.queue[0], &second.queue[0]));
         assert!(Arc::ptr_eq(
             &first.queue[0],
-            &thread.composer.queue[0].saved
+            &thread.composer().queue()[0].saved
         ));
         assert_eq!(
-            thread.composer.queue[0].encoded_len,
-            nocterm_ai::history::prompt_size(&thread.composer.queue[0].saved).unwrap()
+            thread.composer().queue()[0].encoded_len,
+            nocterm_ai::history::prompt_size(&thread.composer().queue()[0].saved).unwrap()
         );
     });
 }
@@ -493,8 +517,16 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
         let panel = f.panel.read(cx);
         assert!(!panel.preparing_images());
         assert_eq!(panel.input.read(cx).value().as_ref(), "second chat draft");
-        assert!(panel.current().unwrap().read(cx).composer.images.is_empty());
-        assert!(old.read(cx).composer.images.is_empty());
+        assert!(
+            panel
+                .current()
+                .unwrap()
+                .read(cx)
+                .composer()
+                .images()
+                .is_empty()
+        );
+        assert!(old.read(cx).composer().images().is_empty());
     });
     f.panel
         .update(cx, |panel, cx| panel.open_thread(old.entity_id(), cx));
@@ -513,8 +545,14 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.commands = vec![acp::AvailableCommand::new("обзор", "Review")];
-        thread.state.commands_revision += 1;
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("обзор", "Review"),
+            ])),
+            cx,
+        );
+
         cx.notify();
     });
     set_input(&f, "/обзор args", cx);
@@ -530,11 +568,13 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
         input.selected_range()
     });
     thread.update(cx, |thread, cx| {
-        thread
-            .state
-            .apply(acp::SessionUpdate::AvailableCommandsUpdate(
-                serde_json::from_value(serde_json::json!({"availableCommands":[]})).unwrap(),
-            ));
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                Vec::new(),
+            )),
+            cx,
+        );
         cx.notify();
     });
     cx.run_until_parked();
@@ -568,8 +608,12 @@ fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
         image::RgbaImage::new(2, 2)
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
-        thread.composer.images =
-            vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()];
+        thread
+            .accept_composer_images(
+                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
+                cx,
+            )
+            .unwrap();
         thread.send("queued image".into(), cx);
     });
     cx.run_until_parked();
@@ -589,8 +633,16 @@ fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
         assert!(panel.composer.edit.is_none());
         assert!(!panel.preparing_images());
         assert_eq!(panel.input.read(cx).value().as_ref(), "");
-        assert!(panel.current().unwrap().read(cx).composer.images.is_empty());
-        assert!(!owner.read(cx).composer.queue_editing);
+        assert!(
+            panel
+                .current()
+                .unwrap()
+                .read(cx)
+                .composer()
+                .images()
+                .is_empty()
+        );
+        assert!(!owner.read(cx).composer().editing_queue());
     });
 }
 
@@ -630,7 +682,7 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
         assert!(!panel.stream.pending());
         assert!(panel.stream_tick.is_none());
         assert!(panel.input.read(cx).value().is_empty());
-        assert!(!owner.read(cx).composer.queue_editing);
+        assert!(!owner.read(cx).composer().editing_queue());
     })
     .unwrap();
 }
@@ -642,12 +694,12 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
     let f = fixture(cx);
     new_chat(&f, cx);
     f.panel.update(cx, |panel, cx| panel.current().unwrap().update(cx, |thread, cx| {
-        thread.state.commands = (0..1000).map(|index| {
+        report_control(thread, acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new((0..1000).map(|index| {
             let mut value = serde_json::json!({"name":format!("skill{index:04}"), "description":"description ".repeat(1000)});
             if index % 2 == 1 { value["input"] = serde_json::json!({"hint":"Provide optional arguments"}); }
             serde_json::from_value(value).unwrap()
-        }).collect();
-        thread.state.commands_revision += 1;
+        }).collect())), cx);
+
         cx.notify();
     }));
     set_input(&f, "", cx);

@@ -5,8 +5,8 @@ fn queued(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) 
     cx.update(|cx| {
         thread
             .read(cx)
-            .composer
-            .queue
+            .composer()
+            .queue()
             .iter()
             .map(|prompt| prompt.saved.text.clone())
             .collect()
@@ -34,7 +34,7 @@ fn the_queue_removes_a_message_and_keeps_the_rest_in_order(cx: &mut TestAppConte
     });
     cx.run_until_parked();
     assert_eq!(queued(&thread, cx), ["first", "second", "third"]);
-    let second = cx.update(|cx| thread.read(cx).composer.queue[1].saved.id);
+    let second = cx.update(|cx| thread.read(cx).composer().queue()[1].saved.id);
 
     // The bar removes the next message.
     render(&f, cx);

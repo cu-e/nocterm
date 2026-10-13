@@ -62,12 +62,11 @@ impl AgentPanel {
     fn render_config_controls(
         &mut self,
         thread: &Entity<AgentThread>,
-        state: &ThreadState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let generating = thread.read(cx).lifecycle.generating();
         let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
-        for option in &state.config_options {
+        for option in &thread.read(cx).config_options() {
             let id = option.id.to_string();
             controls = controls.child(
                 self.menu_popover(
@@ -86,7 +85,9 @@ impl AgentPanel {
                 ),
             );
         }
-        if !state.config_overrides_modes() && state.modes.is_some() {
+        if !thread.read(cx).configuration().config_overrides_modes()
+            && thread.read(cx).configuration().modes().is_some()
+        {
             controls = controls.child(
                 self.menu_popover(
                     "mode-popover",
@@ -95,7 +96,7 @@ impl AgentPanel {
                         .ghost()
                         .small()
                         .max_w_full()
-                        .label(mode_label(state))
+                        .label(mode_label(thread.read(cx).configuration()))
                         .dropdown_caret(true)
                         .disabled(generating),
                     Anchor::BottomLeft,
@@ -113,7 +114,7 @@ impl AgentPanel {
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if thread.read(cx).composer.attachments.is_empty() {
+        if thread.read(cx).composer().attachments().is_empty() {
             return None;
         }
         let mut chips = h_flex()
@@ -123,7 +124,7 @@ impl AgentPanel {
             .gap_1()
             .flex_wrap()
             .items_start();
-        for attachment in &thread.read(cx).composer.attachments {
+        for attachment in thread.read(cx).composer().attachments() {
             let value = attachment.clone();
             let label = labels.label(attachment);
             let running = labels.connected(attachment);
@@ -158,8 +159,8 @@ impl AgentPanel {
     ) -> Option<AnyElement> {
         let previews = thread
             .read(cx)
-            .composer
-            .images
+            .composer()
+            .images()
             .iter()
             .map(|image| {
                 let key = (image.bytes().as_ptr() as usize, image.bytes().len(), false);
@@ -239,7 +240,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let context_tooltip = format!(
             "{} attached terminals · sent metadata {} B · terminal output {} B",
-            thread.read(cx).composer.attachments.len(),
+            thread.read(cx).composer().attachments().len(),
             thread.read(cx).context_bytes,
             thread.read(cx).tool_bytes
         );
@@ -248,7 +249,7 @@ impl AgentPanel {
             .info
             .as_ref()
             .is_some_and(|info| info.capabilities.prompt_capabilities.image);
-        let controls = self.render_config_controls(thread, state, cx);
+        let controls = self.render_config_controls(thread, cx);
         h_flex()
             .gap_1()
             .child(
@@ -283,7 +284,7 @@ impl AgentPanel {
     fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
         thread.read(cx).lifecycle.generating()
             && self.input.read(cx).value().trim().is_empty()
-            && thread.read(cx).composer.images.is_empty()
+            && thread.read(cx).composer().images().is_empty()
             && self.composer.edit.is_none()
     }
 
@@ -383,9 +384,7 @@ fn remove_image(index: usize, cx: &mut Context<AgentPanel>) -> Button {
         .on_click(cx.listener(move |this, _, _, cx| {
             if let Some(thread) = this.current() {
                 thread.update(cx, |thread, cx| {
-                    if index < thread.composer.images.len() {
-                        thread.composer.images.remove(index);
-                    }
+                    thread.remove_composer_image(index, cx);
                     cx.notify();
                 });
             }

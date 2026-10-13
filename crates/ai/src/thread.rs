@@ -16,14 +16,9 @@ pub struct ThreadState {
     /// is not known (chats saved before times were kept).
     pub times: Vec<u64>,
     pub plan: Option<acp::Plan>,
-    pub modes: Option<acp::SessionModeState>,
-    pub current_mode: Option<acp::SessionModeId>,
-    pub config_options: Vec<acp::SessionConfigOption>,
     pub usage: Option<acp::UsageUpdate>,
     /// The session's token totals as of the last finished turn.
     pub tokens: Option<acp::Usage>,
-    pub commands: Vec<acp::AvailableCommand>,
-    pub commands_revision: u64,
     pub title: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +46,6 @@ impl ThreadState {
         self.entries.truncate(len);
         self.times.truncate(len);
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn apply(&mut self, update: acp::SessionUpdate) -> ThreadChange {
         match update {
             acp::SessionUpdate::AgentMessageChunk(chunk) => {
@@ -112,19 +106,6 @@ impl ThreadState {
                 self.plan = Some(plan);
                 ThreadChange::Transcript
             }
-            acp::SessionUpdate::AvailableCommandsUpdate(update) => {
-                self.commands_revision = self.commands_revision.wrapping_add(1);
-                self.commands = update.available_commands;
-                ThreadChange::Controls
-            }
-            acp::SessionUpdate::CurrentModeUpdate(update) => {
-                self.current_mode = Some(update.current_mode_id);
-                ThreadChange::Controls
-            }
-            acp::SessionUpdate::ConfigOptionUpdate(update) => {
-                self.config_options = update.config_options;
-                ThreadChange::Controls
-            }
             acp::SessionUpdate::SessionInfoUpdate(update) => {
                 match update.title {
                     agent_client_protocol_schema::MaybeUndefined::Value(value) => {
@@ -170,19 +151,5 @@ impl ThreadState {
                 Entry::Agent(text) => found(text),
                 _ => false,
             })
-    }
-    pub fn config(
-        &self,
-        category: acp::SessionConfigOptionCategory,
-    ) -> Vec<&acp::SessionConfigOption> {
-        self.config_options
-            .iter()
-            .filter(|v| v.category.as_ref() == Some(&category))
-            .collect()
-    }
-    pub fn config_overrides_modes(&self) -> bool {
-        self.config_options
-            .iter()
-            .any(|v| v.category == Some(acp::SessionConfigOptionCategory::Mode))
     }
 }

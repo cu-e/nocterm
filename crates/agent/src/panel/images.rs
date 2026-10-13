@@ -1,9 +1,7 @@
 //! Image preparation runs outside the UI and belongs to one composer revision.
 use super::AgentPanel;
 use gpui_kit::{Context, PathPromptOptions};
-use nocterm_ai::images::{
-    ImageCollectionError, MAX_IMAGE_BYTES, PromptImage, PromptImageError, validate_collection,
-};
+use nocterm_ai::images::{ImageCollectionError, MAX_IMAGE_BYTES, PromptImage, PromptImageError};
 use nocterm_ui::ActiveAi as _;
 use std::{io::Read as _, path::PathBuf};
 
@@ -65,10 +63,10 @@ impl AgentPanel {
                     }
                     match result {
                         Ok(images) => {
-                            let mut collection = thread.composer.images.clone();
+                            let mut collection = thread.composer().images().to_vec();
                             collection.extend(images);
-                            match validate_collection(&collection) {
-                                Ok(()) => thread.composer.images = collection,
+                            match thread.accept_composer_images(collection, cx) {
+                                Ok(()) => {}
                                 Err(error) => panel.error = Some(error.to_string()),
                             }
                         }

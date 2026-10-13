@@ -24,15 +24,15 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                assert_eq!(thread.composer.queue.len(), 2);
-                let retained = thread.composer.queue[0].saved.id;
+                assert_eq!(thread.composer().queue().len(), 2);
+                let retained = thread.composer().queue()[0].saved.id;
                 thread.send_now(retained, cx);
                 thread.send("new first".into(), cx);
                 thread.send("new second".into(), cx);
                 thread.send("new third".into(), cx);
                 let ids = thread
-                    .composer
-                    .queue
+                    .composer()
+                    .queue()
                     .iter()
                     .map(|prompt| prompt.saved.id)
                     .collect::<Vec<_>>();
@@ -94,10 +94,16 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                thread.state.commands = vec![
-                    acp::AvailableCommand::new("review", "Review changes"),
-                    acp::AvailableCommand::new("rename", "Rename chat"),
-                ];
+                report_control(
+                    thread,
+                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                        vec![
+                            acp::AvailableCommand::new("review", "Review changes"),
+                            acp::AvailableCommand::new("rename", "Rename chat"),
+                        ],
+                    )),
+                    cx,
+                );
                 cx.notify();
             });
             panel
@@ -189,8 +195,8 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     cx.run_until_parked();
     thread.update(cx, |thread, _| {
         assert!(thread.ended());
-        assert!(thread.composer.queue_paused);
-        assert_eq!(thread.composer.queue[0].saved.text, "retained");
+        assert!(thread.composer().paused());
+        assert_eq!(thread.composer().queue()[0].saved.text, "retained");
     });
     // Nothing reconnects by itself.
     cx.run_until_parked();
@@ -200,15 +206,15 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
 
     // Sending reconnects the chat and goes on with its queue.
     thread.update(cx, |thread, cx| {
-        thread.send_now(thread.composer.queue[0].saved.id, cx);
+        thread.send_now(thread.composer().queue()[0].saved.id, cx);
         assert!(thread.submit("another".into(), None, cx).unwrap());
     });
     cx.run_until_parked();
     thread.update(cx, |thread, _| {
         assert!(!thread.ended());
         assert!(thread.lifecycle.generating());
-        assert_eq!(thread.composer.queue.len(), 1);
-        assert_eq!(thread.composer.queue[0].saved.text, "another");
+        assert_eq!(thread.composer().queue().len(), 1);
+        assert_eq!(thread.composer().queue()[0].saved.text, "another");
     });
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
@@ -301,7 +307,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     );
     complete_active(&f, cx);
     cx.update(|cx| {
-        assert!(thread.read(cx).composer.queue_paused);
+        assert!(thread.read(cx).composer().paused());
         assert!(thread.read(cx).status_error);
     });
     cx.update_window(f.handle, |_, window, cx| {
@@ -315,7 +321,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         1,
         "cancelling edit resumed a queue paused by storage failure"
     );
-    cx.update(|cx| assert_eq!(thread.read(cx).composer.queue.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer().queue().len(), 1));
 }
 
 #[gpui_kit::test]
@@ -348,7 +354,7 @@ fn cancelling_queue_edit_does_not_resume_after_explicit_stop(cx: &mut TestAppCon
         1,
         "cancelling edit resumed a queue explicitly stopped by the user"
     );
-    cx.update(|cx| assert_eq!(thread.read(cx).composer.queue.len(), 1));
+    cx.update(|cx| assert_eq!(thread.read(cx).composer().queue().len(), 1));
 }
 
 fn disk_chat(f: &Fixture, id: &str) -> nocterm_ai::history::SavedChat {
@@ -385,13 +391,8 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     new_chat(&f, cx);
     exchange(&f, "remember the first disk", "the first disk is full", cx);
     let saved = cx.update(|cx| {
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .read(cx)
-            .snapshot(cx)
-            .unwrap()
+        let thread = f.panel.read(cx).current().unwrap();
+        thread.read(cx).snapshot(cx).unwrap()
     });
     let id = saved.id.clone();
     f.commands
@@ -412,7 +413,13 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     let second = reopen(&f, fresh, cx);
     cx.update(|cx| assert!(second.read(cx).fallback_history));
     second.update(cx, |thread, cx| {
-        thread.state.commands = vec![acp::AvailableCommand::new("help", "Show help")];
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("help", "Show help"),
+            ])),
+            cx,
+        );
         thread.send("/help".into(), cx);
     });
     cx.run_until_parked();
@@ -484,7 +491,13 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
         "partial fork needs a fresh session"
     );
     fork.update(cx, |thread, cx| {
-        thread.state.commands = vec![acp::AvailableCommand::new("help", "Show help")];
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("help", "Show help"),
+            ])),
+            cx,
+        );
         thread.send("/help".into(), cx);
     });
     cx.run_until_parked();

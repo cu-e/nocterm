@@ -73,9 +73,11 @@ impl AgentThread {
             workdir: chat.workdir.unwrap_or_default(),
             fork: false,
         });
-        self.last_model = chat.model;
-        self.config_choices = chat.config;
-        self.mode_choice = chat.mode.map(acp::SessionModeId::new);
+        self.config.restore(
+            chat.config,
+            chat.mode.map(acp::SessionModeId::new),
+            chat.model,
+        );
     }
     /// A copy of this chat, to go on with separately. When opened, the copy
     /// continues in a copy of this chat's agent session.
@@ -95,8 +97,8 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
-        chat.config = self.config_choices.clone();
-        chat.mode = self.mode_choice.as_ref().map(ToString::to_string);
+        chat.config = self.config.choices().clone();
+        chat.mode = self.config.mode_choice().map(ToString::to_string);
         chat.pending_history = self.fallback_history || !whole;
         let restore = match (&self.session(), &self.restore) {
             (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
@@ -128,7 +130,7 @@ impl AgentThread {
         let mut thread = Self::restored(fork.chat, workspace, cx);
         thread.fallback_history = pending_history;
         thread.restore = fork.restore;
-        thread.composer.attachments = fork.attachments;
+        thread.composer.replace_context(fork.attachments);
         thread.status = "Forked chat".into();
         thread
     }
@@ -142,10 +144,7 @@ impl AgentThread {
     }
     /// The model of the last prompt, in this run or a saved one.
     pub(crate) fn model(&self) -> Option<String> {
-        self.last_prompt
-            .as_ref()
-            .and_then(|prompt| prompt.model.clone())
-            .or_else(|| self.last_model.clone())
+        self.config.model()
     }
     pub(crate) fn rename(&mut self, name: Option<String>, cx: &mut Context<Self>) {
         if self.is_archived() {
@@ -175,15 +174,15 @@ impl AgentThread {
         chat.title = self.state.title.clone();
         chat.name = self.name.clone();
         chat.pinned = self.pinned;
-        chat.draft = self.composer.draft.clone();
+        chat.draft = self.composer.draft().cloned();
         chat.attachments = self.stable_attachments(self.composer.default_attachments(), cx);
         chat.times = nocterm_ai::history::SavedChat::bounded_times(
             self.state.entries.len(),
             &self.state.times,
         );
         chat.model = self.model();
-        chat.config = self.config_choices.clone();
-        chat.mode = self.mode_choice.as_ref().map(ToString::to_string);
+        chat.config = self.config.choices().clone();
+        chat.mode = self.config.mode_choice().map(ToString::to_string);
         chat.pending_history = self.fallback_history;
         // Providers may not persist an empty session until its first prompt.
         if self.state.entries.is_empty() {
@@ -214,8 +213,8 @@ impl AgentThread {
         if !self.pinned
             && self.name.is_none()
             && self.state.entries.is_empty()
-            && self.composer.queue.is_empty()
-            && self.composer.draft.is_none()
+            && self.composer.queue().is_empty()
+            && self.composer.draft().is_none()
         {
             return None;
         }
@@ -225,7 +224,7 @@ impl AgentThread {
             metadata,
             queue: self
                 .composer
-                .queue
+                .queue()
                 .iter()
                 .map(|prompt| prompt.saved.clone())
                 .collect(),

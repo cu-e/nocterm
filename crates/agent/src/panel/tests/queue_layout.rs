@@ -16,7 +16,7 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.composer.attachments.clear();
+        thread.clear_composer_context(cx);
         thread.send("active".into(), cx);
         thread.send("short".into(), cx);
     });
@@ -56,7 +56,10 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
     .unwrap();
     // Removing an item also shrinks to the new intrinsic height.
     thread.update(cx, |thread, cx| {
-        thread.composer.queue.truncate(1);
+        let ids = thread.queued_prompt_ids().skip(1).collect::<Vec<_>>();
+        for id in ids {
+            thread.remove_queued(id, None, cx);
+        }
         cx.notify();
     });
     settle(&f, cx);
@@ -78,9 +81,13 @@ fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestApp
         image::RgbaImage::new(2, 2)
             .write_to(&mut png, image::ImageFormat::Png)
             .unwrap();
-        thread.composer.images =
-            vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()];
-        thread.composer.attachments = vec![Attachment::Group("Production servers".into())];
+        thread
+            .accept_composer_images(
+                vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()],
+                cx,
+            )
+            .unwrap();
+        thread.replace_composer_context(vec![Attachment::Group("Production servers".into())], cx);
         thread.send(
             "A long queued instruction that must wrap on this narrow chat panel. ".repeat(80),
             cx,

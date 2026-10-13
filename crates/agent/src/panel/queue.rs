@@ -129,9 +129,9 @@ impl AgentPanel {
                             .current()
                             .unwrap()
                             .read(cx)
-                            .composer
-                            .draft
-                            .clone()
+                            .composer()
+                            .draft()
+                            .cloned()
                             .unwrap_or_default();
                         panel.composer.loading = None;
                         panel
@@ -153,8 +153,8 @@ impl AgentPanel {
         };
         let Some(prompt) = thread
             .read(cx)
-            .composer
-            .queue
+            .composer()
+            .queue()
             .iter()
             .find(|prompt| prompt.saved.id == id)
             .cloned()
@@ -177,7 +177,7 @@ impl AgentPanel {
             preparation: None,
         });
         thread.update(cx, |thread, cx| {
-            thread.composer.begin_edit(Vec::new(), prompt.attachments);
+            thread.begin_composer_edit(Vec::new(), prompt.attachments, cx);
             cx.notify();
         });
         if !ready {
@@ -218,7 +218,10 @@ impl AgentPanel {
                         }
                         match result {
                             Ok(images) => {
-                                thread.composer.images = images;
+                                if let Err(error) = thread.accept_composer_images(images, cx) {
+                                    panel.error = Some(error.to_string());
+                                    return;
+                                }
                                 if let Some(edit) = &mut panel.composer.edit {
                                     edit.ready = true;
                                 }
@@ -269,11 +272,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if thread.read(cx).composer.queue.is_empty() {
+        if thread.read(cx).composer().queue().is_empty() {
             return None;
         }
         let count = thread.read(cx).queued_prompt_ids().count();
-        let first = thread.read(cx).composer.queue[0].saved.id;
+        let first = thread.read(cx).composer().queue()[0].saved.id;
         let measured = self
             .queue_heights
             .get(&thread.entity_id())
@@ -320,7 +323,7 @@ impl AgentPanel {
             .min_w_0()
             .gap_2()
             .p_2();
-        for prompt in thread.read(cx).composer.queue.clone() {
+        for prompt in thread.read(cx).composer().queue().to_vec() {
             rows = rows.child(self.queue_row(&prompt, labels, cx));
         }
         // Measure the actual laid-out rows, including wrapping and image previews.

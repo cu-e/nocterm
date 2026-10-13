@@ -58,9 +58,9 @@ impl AgentThread {
                 restore
             });
         self.lease.as_mut().expect("starting lease").workdir = Some(workdir.clone());
-        self.pending_controls.clear();
-        let executor = cx.background_executor().clone();
         let ticket = self.lifecycle.ticket();
+        self.config.opening_started(ticket);
+        let executor = cx.background_executor().clone();
         let servers = vec![server];
         let session_commands = commands.clone();
         let pending_restore = restore.clone();
@@ -121,14 +121,9 @@ impl AgentThread {
                     Ok(response) => {
                         // The agent's values for the new session; the chat's
                         // own configuration is given to it in `configure`.
-                        this.state.modes = response.modes;
-                        this.state.current_mode = None;
-                        this.state.config_options = response.config_options.unwrap_or_default();
+                        this.config.start_open(ticket, response.modes, response.config_options.unwrap_or_default());
                         let session = response.session_id;
-                        for (id, update) in std::mem::take(&mut this.pending_controls) {
-                            if id == session { this.state.apply(update); }
-                        }
-                        let reported = std::mem::take(&mut this.state.config_options);
+                        this.config.begin_reconciliation(&session, ticket);
                         this.lease.as_mut().expect("starting lease").session = Some(session);
                         this.restore = None;
                         this.fallback_history = this.fallback_history || (restored != Some(true) && !this.state.entries.is_empty());
@@ -138,7 +133,7 @@ impl AgentThread {
                             "Ready".into()
                         };
                         this.save(cx);
-                        this.configure(ticket, reported, Vec::new(), cx);
+                        this.configure(ticket, cx);
                     }
                     Err(nocterm_ai::AgentError::AuthRequired(message)) => {
                         this.require_authentication(&message, cx);
@@ -227,6 +222,232 @@ fn text_tail(fragments: &[&str], mut available: usize) -> String {
     }
     parts.reverse();
     parts.join("\n")
+}
+
+impl AgentThread {
+    pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
+        let state = crate::runtime::Runtime::global(cx).read(cx).favorites(cx);
+        self.config.preview(
+            state.choices(&self.agent_id),
+            state.options.get(&self.agent_id).map_or(&[], Vec::as_slice),
+        );
+    }
+    pub(crate) fn set_config(
+        &mut self,
+        id: acp::SessionConfigId,
+        value: acp::SessionConfigOptionValue,
+        cx: &mut Context<Self>,
+    ) {
+        if self.lifecycle.generating() || !cx.ai_enabled() {
+            return;
+        }
+        let choice = self.config.choose_option(&id, &value);
+        if !choice.accepted() {
+            return;
+        }
+        if choice.durable_changed() {
+            self.save(cx);
+        }
+        if let Some((option, choice)) = choice.remember() {
+            let agent = self.agent_id.clone();
+            cx.defer(move |cx| {
+                crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
+                    runtime.remember_choice(&agent, &option, &choice, cx)
+                });
+            });
+        }
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
+            return cx.notify();
+        };
+        if self.lifecycle.opening() {
+            return cx.notify();
+        }
+        let ticket = self.lifecycle.ticket();
+        self.config.bind_request(ticket);
+        let guard = self.hold_operation();
+        let future = cx.background_executor().spawn(async move {
+            let _guard = guard;
+            commands
+                .set_config_option(acp::SetSessionConfigOptionRequest::new(session, id, value))
+                .await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = future.await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
+                    return;
+                }
+                let Some(result) = this.config.accept_option_result(ticket, result) else {
+                    return;
+                };
+                match result {
+                    Ok(()) => {
+                        this.status_error = false;
+                        this.remember_options(cx);
+                    }
+                    Err(error) => {
+                        this.status = nocterm_ai::redact::redact(&error.to_string());
+                        this.status_error = true;
+                    }
+                }
+                this.sync_config(true, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
+        if self.lifecycle.generating() || !cx.ai_enabled() {
+            return;
+        }
+        if self.config.choose_mode(id.clone()) {
+            self.save(cx);
+        }
+        cx.notify();
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
+            return;
+        };
+        if self.lifecycle.opening() {
+            return;
+        }
+        let ticket = self.lifecycle.ticket();
+        self.config.bind_request(ticket);
+        let guard = self.hold_operation();
+        let future = cx.background_executor().spawn(async move {
+            let _guard = guard;
+            let result = commands
+                .set_mode(acp::SetSessionModeRequest::new(session, id.clone()))
+                .await;
+            (id, result)
+        });
+        cx.spawn(async move |this, cx| {
+            let (mode, result) = future.await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.lifecycle.session_current(ticket) || !cx.ai_enabled() {
+                    return;
+                }
+                let Some(result) = this.config.accept_mode_result(ticket, mode, result, false)
+                else {
+                    return;
+                };
+                match result {
+                    Ok(()) => this.status_error = false,
+                    Err(error) => {
+                        this.status = nocterm_ai::redact::redact(&error.to_string());
+                        this.status_error = true;
+                    }
+                }
+                this.sync_config(true, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    pub(super) fn configure(
+        &mut self,
+        ticket: nocterm_ai::session::Ticket,
+        cx: &mut Context<Self>,
+    ) {
+        use super::config::ConfigStep;
+        let step = self.config.next_request(ticket);
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
+            return;
+        };
+        let guard = self.hold_operation();
+        match step {
+            ConfigStep::Stale => {}
+            ConfigStep::Ready => self.configured(cx),
+            ConfigStep::SetOption(id, value) => {
+                let future = cx.background_executor().spawn(async move {
+                    let _guard = guard;
+                    commands
+                        .set_config_option(acp::SetSessionConfigOptionRequest::new(
+                            session,
+                            id,
+                            value.to_acp(),
+                        ))
+                        .await
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = future.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if !this.lifecycle.session_current(ticket)
+                            || !this.lifecycle.opening()
+                            || !cx.ai_enabled()
+                        {
+                            return;
+                        }
+                        let Some(result) = this.config.accept_option_result(ticket, result) else {
+                            return;
+                        };
+                        if let Err(error) = result {
+                            tracing::warn!(%error,"agent rejected a chosen configuration option");
+                            this.status = format!(
+                                "The agent kept its own setting: {}",
+                                nocterm_ai::redact::redact(&error.to_string())
+                            );
+                        }
+                        this.configure(ticket, cx);
+                    });
+                })
+                .detach();
+            }
+            ConfigStep::SetMode(mode) => {
+                let future = cx.background_executor().spawn(async move {
+                    let _guard = guard;
+                    let result = commands
+                        .set_mode(acp::SetSessionModeRequest::new(session, mode.clone()))
+                        .await;
+                    (mode, result)
+                });
+                cx.spawn(async move |this, cx| {
+                    let (mode, result) = future.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if !this.lifecycle.session_current(ticket)
+                            || !this.lifecycle.opening()
+                            || !cx.ai_enabled()
+                        {
+                            return;
+                        }
+                        let Some(result) =
+                            this.config.accept_mode_result(ticket, mode, result, true)
+                        else {
+                            return;
+                        };
+                        if let Err(error) = result {
+                            tracing::warn!(%error,"agent rejected the chat's mode");
+                        }
+                        this.configure(ticket, cx);
+                    });
+                })
+                .detach();
+            }
+        }
+    }
+    fn configured(&mut self, cx: &mut Context<Self>) {
+        self.lifecycle.opened();
+        self.sync_config(true, cx);
+        self.remember_options(cx);
+        self.dispatch_next(cx);
+        cx.notify();
+    }
+    pub(super) fn sync_config(&mut self, save: bool, cx: &mut Context<Self>) {
+        if self.config.sync_ready(self.lifecycle.phase()) && save {
+            self.save(cx);
+        }
+    }
+    fn remember_options(&self, cx: &mut Context<Self>) {
+        let (agent, options) = (self.agent_id.clone(), self.config.options().to_vec());
+        cx.defer(move |cx| {
+            crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
+                runtime.remember_options(&agent, &options, cx)
+            });
+        });
+    }
 }
 
 #[cfg(test)]

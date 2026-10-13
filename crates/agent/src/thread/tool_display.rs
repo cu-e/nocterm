@@ -199,7 +199,11 @@ impl AgentThread {
         self.tool_displays
             .prepare(self.lifecycle.turn(), self.state.entries.len());
         tool_display::strip_provider_meta(&mut update);
-        let change = self.state.apply(update);
+        let change = if self.config.report_control(&update) {
+            ThreadChange::Controls
+        } else {
+            self.state.apply(update)
+        };
         let changed = self.tool_displays.normalize(&mut self.state.entries);
         for index in changed {
             self.mark_dirty(index);

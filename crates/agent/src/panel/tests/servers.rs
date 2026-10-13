@@ -381,11 +381,11 @@ fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppCon
     *f.access.profile().borrow_mut() = Some("web".into());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let attachments = |cx: &mut gpui_kit::App| thread.read(cx).composer.attachments.clone();
+    let attachments = |cx: &mut gpui_kit::App| thread.read(cx).composer().attachments().to_vec();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.attach(Attachment::Terminal(f.terminal), cx);
-            assert!(thread.composer.attachments.is_empty());
+            assert!(thread.composer().attachments().is_empty());
         })
     });
     let terminal = format!("attach-{:?}", f.terminal);

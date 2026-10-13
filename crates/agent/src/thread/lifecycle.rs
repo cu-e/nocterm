@@ -99,13 +99,13 @@ impl AgentThread {
             return;
         }
         self.lifecycle.detach();
-        self.pending_controls.clear();
+        self.config.detached();
         for call in self.approvals.end_session() {
             self.finish(call, Err("Request cancelled.".into()));
         }
     }
     pub(crate) fn release_resources(&mut self, cx: &mut Context<Self>) {
-        self.composer.queue_paused = true;
+        self.composer.pause();
         self.cancel_pending();
         self.finalize_tool_displays();
         self.detach_session(cx);

@@ -63,7 +63,13 @@ fn usage_escape_precedes_slash_suggestions(cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                thread.state.commands = vec![acp::AvailableCommand::new("review", "Review")];
+                report_control(
+                    thread,
+                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                        vec![acp::AvailableCommand::new("review", "Review")],
+                    )),
+                    cx,
+                );
                 cx.notify();
             });
             panel

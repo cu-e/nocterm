@@ -41,15 +41,11 @@ pub(super) fn short_hover_label(text: &str) -> String {
     label
 }
 
-pub(super) fn mode_label(state: &nocterm_ai::thread::ThreadState) -> String {
+pub(super) fn mode_label(state: &crate::thread::ChatConfig) -> String {
     state
-        .modes
-        .as_ref()
+        .modes()
         .and_then(|modes| {
-            let selected = state
-                .current_mode
-                .as_ref()
-                .unwrap_or(&modes.current_mode_id);
+            let selected = state.current_mode().unwrap_or(&modes.current_mode_id);
             modes
                 .available_modes
                 .iter()

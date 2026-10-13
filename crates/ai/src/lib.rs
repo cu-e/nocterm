@@ -1,8 +1,9 @@
 //! Agent contracts, bounded context rules and legacy version-one history formats.
 //!
-//! Owns: configuration, session/tool rules, pure sandbox policy, bounded history codecs
-//! and capability/storage ports.
-//! Does not own: history/favorites files or persistence scheduling; repositories are adapters.
+//! Owns: configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
+//! bounded history codecs and capability/storage ports.
+//! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
+//! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: AgentConnector, ToolBridge,
 //! AgentStateRepository, ChatRepository, usage::AccountUsageSource,
 //! workspace::WorkdirResolver and sandbox::SandboxProbe.

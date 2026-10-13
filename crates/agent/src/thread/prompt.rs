@@ -1,4 +1,4 @@
-use super::{AgentThread, PromptMetadata, config_label};
+use super::AgentThread;
 use crate::runtime::Runtime;
 use gpui_kit::Context;
 use nocterm_ai::acp;
@@ -30,7 +30,7 @@ impl AgentThread {
         };
         // ACP adapters inspect the first block for slash commands; local
         // administrative commands may require a single text block.
-        let is_command = nocterm_ai::commands::invocation(&text, &self.state.commands).is_some();
+        let is_command = nocterm_ai::commands::invocation(&text, self.config.commands()).is_some();
         let context = (!is_command).then(|| {
             format!(
                 "{}\n{}",
@@ -56,15 +56,8 @@ impl AgentThread {
             content.push(acp::ContentBlock::Text(acp::TextContent::new(history)));
         }
         content.extend(visible);
-        self.last_prompt = Some(PromptMetadata {
-            model: self
-                .state
-                .config_options
-                .iter()
-                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
-                .map(config_label)
-                .filter(|model| !model.is_empty()),
-        });
+        self.config.bind_request(ticket);
+        self.config.prompt_started();
         self.status = "Working…".into();
         self.status_error = false;
         let future = cx

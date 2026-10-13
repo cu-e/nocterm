@@ -20,6 +20,7 @@ mod composer;
 mod config;
 pub(crate) use client::client;
 pub(crate) use composer::Composer;
+pub(crate) use config::ChatConfig;
 mod approval_inbox;
 mod background_open;
 mod bound_call;
@@ -84,10 +85,6 @@ impl SignInWait {
         self.prompts.clone()
     }
 }
-#[derive(Clone, Debug)]
-pub(crate) struct PromptMetadata {
-    pub model: Option<String>,
-}
 /// An agent session from a saved chat, to reopen on the next connection.
 #[derive(Clone, Debug)]
 pub(crate) struct Restore {
@@ -125,15 +122,13 @@ pub(crate) struct AgentThread {
     pub name: Option<String>,
     pub pinned: bool,
     /// The input state, kept apart from the conversation.
-    pub composer: Composer,
+    composer: Composer,
+    config: config::ChatConfig,
     draft_changed: bool,
     /// A snapshot was queued for history, or this chat was restored.
     history_queued: bool,
     draft_save: Option<Task<()>>,
     pub state: ThreadState,
-    pub last_prompt: Option<PromptMetadata>,
-    /// The model of a saved chat's last prompt.
-    pub last_model: Option<String>,
     pub status: String,
     pub status_error: bool,
     pub info: Option<AgentInfo>,
@@ -153,15 +148,6 @@ pub(crate) struct AgentThread {
     storage_dirty: std::collections::HashSet<usize>,
     storage_budget: nocterm_ai::history::HistoryBudget,
     pub fallback_history: bool,
-    pub pending_controls: Vec<(acp::SessionId, acp::SessionUpdate)>,
-    /// The chat's configuration (model, effort, mode, …): chosen before a
-    /// session opens or reported by an open one. Saved with the chat and
-    /// given to every session it opens, so it survives idle release,
-    /// failures and restarts.
-    pub config_choices: nocterm_ai::session_config::Choices,
-    /// The chat's mode, for agents that report modes apart from their
-    /// configuration options.
-    pub mode_choice: Option<acp::SessionModeId>,
     approvals: ApprovalInbox,
     pub context_bytes: usize,
     pub tool_bytes: usize,
@@ -238,8 +224,7 @@ impl AgentThread {
             history_queued: false,
             draft_save: None,
             state: Default::default(),
-            last_prompt: None,
-            last_model: None,
+            config: Default::default(),
             status: "Ready — send a message to start the agent".into(),
             status_error: false,
             info: None,
@@ -253,9 +238,6 @@ impl AgentThread {
             storage_dirty: Default::default(),
             storage_budget: Default::default(),
             fallback_history: false,
-            pending_controls: Vec::new(),
-            config_choices: Default::default(),
-            mode_choice: None,
             approvals: ApprovalInbox::default(),
             context_bytes: 0,
             tool_bytes: 0,
@@ -278,7 +260,7 @@ impl AgentThread {
         thread.name = summary.name.clone();
         thread.pinned = summary.pinned;
         thread.updated = summary.updated;
-        thread.last_model = summary.model.clone();
+        thread.config.saved_model(summary.model.clone());
         thread.status = "Saved chat".into();
         thread.archive = archive::Archive::archived(summary);
         thread
@@ -295,11 +277,20 @@ impl AgentThread {
     pub(crate) fn history_entries(&self) -> &[nocterm_ai::thread::Entry] {
         &self.state.entries
     }
+    pub(crate) fn composer(&self) -> &Composer {
+        &self.composer
+    }
+    pub(crate) fn configuration(&self) -> &config::ChatConfig {
+        &self.config
+    }
+    pub(crate) fn config_options(&self) -> Vec<acp::SessionConfigOption> {
+        self.config.preview_options(self.lifecycle.opening())
+    }
     pub(crate) fn draft_text(&self) -> Option<&str> {
-        self.composer.draft.as_deref()
+        self.composer.draft().map(String::as_str)
     }
     pub(crate) fn queued_prompt_ids(&self) -> impl ExactSizeIterator<Item = u64> + '_ {
-        self.composer.queue.iter().map(|prompt| prompt.saved.id)
+        self.composer.queue().iter().map(|prompt| prompt.saved.id)
     }
     pub(crate) fn queue_dispatchable(&self) -> bool {
         self.composer.dispatchable()
@@ -404,11 +395,11 @@ impl AgentThread {
             .max(self.storage_budget.resident_bytes())
             + self
                 .composer
-                .queue
+                .queue()
                 .iter()
                 .map(|prompt| prompt.memory_len)
                 .sum::<usize>()
-            + self.composer.draft.as_ref().map_or(0, String::len)
+            + self.composer.draft().map_or(0, String::len)
     }
     pub(crate) fn evict_history(&mut self, cx: &Context<Self>) -> bool {
         let gate = archive::EvictionGate::new(
@@ -459,7 +450,7 @@ impl AgentThread {
             self.persist(cx);
         }
         self.lifecycle.fail();
-        self.composer.queue_paused = true;
+        self.composer.pause();
         self.status = nocterm_ai::redact::redact(message);
         self.status_error = true;
         self.cancel_pending();
@@ -471,7 +462,7 @@ impl AgentThread {
     fn require_authentication(&mut self, message: &str, cx: &mut Context<Self>) {
         self.cancel_execution();
         self.finish_pending_tools();
-        self.composer.queue_paused = true;
+        self.composer.pause();
         self.lifecycle.require_sign_in();
         self.status = nocterm_ai::redact::redact(message);
         self.status_error = true;
@@ -602,7 +593,7 @@ impl AgentThread {
     /// prompt.
     pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
         self.cancel_execution();
-        self.composer.queue_paused = true;
+        self.composer.pause();
         self.finish_pending_tools();
         self.cancel_pending();
         if !self.lifecycle.stop() {
@@ -631,26 +622,16 @@ impl AgentThread {
         cx.notify();
     }
     pub(crate) fn attach(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
-        if let Some(index) = self
-            .composer
-            .attachments
-            .iter()
-            .position(|value| value == &attachment)
-        {
-            self.composer.attachments.remove(index);
-            if !self.composer.editing() {
-                if let Some(attached) = &mut self.prompt_attachments {
-                    attached.retain(|value| value != &attachment);
-                }
-                self.approvals.revoke_scope();
-                self.cancel_pending();
-                self.revoke_executions(cx);
-                if !self.lifecycle.generating() {
-                    self.prune_background(cx);
-                }
+        if self.composer.toggle_attachment(attachment.clone()) && !self.composer.editing() {
+            if let Some(attached) = &mut self.prompt_attachments {
+                attached.retain(|value| value != &attachment);
             }
-        } else {
-            self.composer.attachments.push(attachment);
+            self.approvals.revoke_scope();
+            self.cancel_pending();
+            self.revoke_executions(cx);
+            if !self.lifecycle.generating() {
+                self.prune_background(cx);
+            }
         }
         self.save(cx);
         cx.notify();

@@ -112,8 +112,8 @@ fn attach_menu_lists_servers_under_their_folders(cx: &mut TestAppContext) {
         assert!(
             thread
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .contains(&Attachment::Group("homelab".into()))
         );
     })
@@ -192,17 +192,22 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver());
-    new_chat(&f, cx);
-    cx.update(|cx| {
-        f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
-            thread.state.config_options = vec![acp::SessionConfigOption::select("model", "Model", "one", vec![
-                acp::SessionConfigSelectOption::new("one", "Very long selected model name that must fit the narrow panel"),
+    f.commands
+        .config
+        .set_options(vec![acp::SessionConfigOption::select(
+            "model",
+            "Model",
+            "one",
+            vec![
+                acp::SessionConfigSelectOption::new(
+                    "one",
+                    "Very long selected model name that must fit the narrow panel",
+                ),
                 acp::SessionConfigSelectOption::new("two", "Second"),
-            ])];
-            thread.state.modes = Some(serde_json::from_value(serde_json::json!({"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]})).unwrap());
-            cx.notify();
-        });
-    });
+            ],
+        )]);
+    f.commands.config.set_modes(serde_json::from_value(serde_json::json!({"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]})).unwrap());
+    new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let composer = window.find("agent-composer").bounds();
@@ -241,8 +246,8 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
                 .current()
                 .unwrap()
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .is_empty()
         );
         window.press("escape", cx);
@@ -401,8 +406,8 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                 .current()
                 .unwrap()
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .is_empty()
         );
     })

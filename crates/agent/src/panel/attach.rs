@@ -88,7 +88,11 @@ impl AgentPanel {
             .as_ref()
             .and_then(|info| info.profile.as_ref())
             .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
-        let explicit = thread.read(cx).composer.attachments.contains(&attachment);
+        let explicit = thread
+            .read(cx)
+            .composer()
+            .attachments()
+            .contains(&attachment);
         let covering = summary.and_then(|summary| covering(thread.read(cx), summary, &attachment));
         let selected = explicit || covering.is_some();
         let icon = summary.and_then(|summary| summary.icon.clone());
@@ -149,7 +153,11 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Group(group.to_owned());
-        let selected = thread.read(cx).composer.attachments.contains(&attachment);
+        let selected = thread
+            .read(cx)
+            .composer()
+            .attachments()
+            .contains(&attachment);
         menu_row(
             SharedString::from(format!("attach-group-{group}")),
             group.to_owned(),
@@ -178,7 +186,11 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Connection(summary.id.to_string());
-        let explicit = thread.read(cx).composer.attachments.contains(&attachment);
+        let explicit = thread
+            .read(cx)
+            .composer()
+            .attachments()
+            .contains(&attachment);
         let covering = covering(thread.read(cx), summary, &attachment);
         let selected = explicit || covering.is_some();
         let id = summary.id.to_string();
@@ -258,8 +270,8 @@ impl AgentPanel {
 /// click would only add a duplicate that outlives the broader attachment.
 fn covering(thread: &AgentThread, summary: &ConnectionSummary, own: &Attachment) -> Option<String> {
     thread
-        .composer
-        .attachments
+        .composer()
+        .attachments()
         .iter()
         .filter(|attachment| *attachment != own && attachment.covers_server(summary))
         .find_map(|attachment| match attachment {

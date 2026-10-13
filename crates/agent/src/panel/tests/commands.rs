@@ -5,7 +5,13 @@ fn commands(f: &Fixture, values: Vec<acp::AvailableCommand>, text: &str, cx: &mu
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                thread.state.commands = values;
+                report_control(
+                    thread,
+                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                        values,
+                    )),
+                    cx,
+                );
                 cx.notify();
             });
             panel
@@ -332,7 +338,13 @@ fn model_token_hover_opens_actual_model_picker(cx: &mut TestAppContext) {
                     ],
                 );
                 option.category = Some(acp::SessionConfigOptionCategory::Model);
-                thread.state.config_options = vec![option];
+                report_control(
+                    thread,
+                    acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
+                        option,
+                    ])),
+                    cx,
+                );
                 cx.notify();
             });
     });

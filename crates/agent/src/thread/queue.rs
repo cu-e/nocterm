@@ -116,7 +116,7 @@ impl AgentThread {
         if !cx.ai_enabled() || self.lifecycle.sign_in_required() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.composer.images.is_empty() {
+        if text.trim().is_empty() && self.composer.images().is_empty() {
             return Ok(false);
         }
         let id = replace.unwrap_or(self.composer.next_queue_id());
@@ -124,37 +124,33 @@ impl AgentThread {
             id,
             text,
             images: Vec::new(),
-            attachments: self.stable_attachments(&self.composer.attachments, cx),
+            attachments: self.stable_attachments(self.composer.attachments(), cx),
         };
         let mut saved = saved;
         let encoded_len = nocterm_ai::history::prompt_size(&saved)?
             + self
                 .composer
-                .images
+                .images()
                 .iter()
                 .map(|image| image.encoded_len())
                 .sum::<usize>()
-            + self.composer.images.len().saturating_sub(1);
+            + self.composer.images().len().saturating_sub(1);
         saved.images = self
             .composer
-            .images
+            .images()
             .iter()
             .map(|image| image.content())
             .collect();
-        let prompt =
-            QueuedPrompt::prepared(saved, self.composer.attachments.clone(), Some(encoded_len));
-        let mut queue = self.composer.queue.clone();
-        if let Some(id) = replace {
-            let Some(slot) = queue.iter_mut().find(|prompt| prompt.saved.id == id) else {
-                return Err(SubmitError::AlreadySent);
-            };
-            *slot = prompt;
-        } else {
-            queue.push(prompt);
-        }
+        let prompt = QueuedPrompt::prepared(
+            saved,
+            self.composer.attachments().to_vec(),
+            Some(encoded_len),
+        );
+        let candidate = self.composer.prepare_prompt_change(prompt, replace)?;
+        let queue = candidate.queue();
         if queue.len() > 1024
-            || self.composer.images.len() > 128
-            || saved_attachment_count(&queue) > 1024
+            || self.composer.images().len() > 128
+            || saved_attachment_count(queue) > 1024
         {
             return Err(SubmitError::TooMany);
         }
@@ -168,14 +164,14 @@ impl AgentThread {
             .validate_memory(&metadata, queue.iter().map(|prompt| prompt.memory_len))?;
         self.storage_budget
             .validate(&metadata, queue.iter().map(|prompt| prompt.encoded_len))?;
-        self.composer.accept(queue, replace.is_some());
+        self.composer.commit_prompt_change(candidate);
         if replace.is_none() {
             self.draft_save = None;
             self.draft_changed = false;
         }
         self.persist(cx);
         if !self.lifecycle.generating() && replace.is_none() {
-            self.composer.queue_paused = false;
+            self.composer.resume();
             self.dispatch_next(cx);
         }
         cx.notify();
@@ -230,7 +226,7 @@ impl AgentThread {
         if self.lifecycle.generating() {
             self.stop(cx);
         }
-        self.composer.queue_paused = false;
+        self.composer.resume();
         self.persist(cx);
         // When generating, only the old prompt's completion may dispatch.
         if !self.lifecycle.generating() {

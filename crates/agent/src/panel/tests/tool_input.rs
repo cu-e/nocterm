@@ -618,7 +618,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 respond,
             };
             thread.record_tool_display(&mut request, Some(&entry), cx);
-            thread.composer.attachments.clear();
+            thread.clear_composer_context(cx);
         })
     });
     directory.0.borrow_mut()[0].name = "Renamed".into();

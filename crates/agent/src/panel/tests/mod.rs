@@ -43,6 +43,8 @@ fn shutdown_runtime(cx: &mut TestAppContext) {
     });
     cx.foreground_executor().block_test(task);
 }
+mod config_responses;
+
 #[derive(Default)]
 struct Commands {
     sessions: AtomicU64,
@@ -65,9 +67,7 @@ struct Commands {
     /// The MCP servers each new session was given.
     servers: Mutex<Vec<Vec<acp::McpServer>>>,
     /// The configuration options every session reports.
-    config: Mutex<Vec<acp::SessionConfigOption>>,
-    /// Each configuration change asked for.
-    config_requests: Mutex<Vec<acp::SetSessionConfigOptionRequest>>,
+    config: config_responses::ConfigResponses,
 }
 impl AgentCommands for Commands {
     fn new_session(
@@ -79,7 +79,8 @@ impl AgentCommands for Commands {
         let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
         let auth_required = self.auth_required.load(Ordering::SeqCst);
-        let config = self.config.lock().unwrap().clone();
+        let config = self.config.options();
+        let modes = self.config.modes();
         async move {
             if let Some(gate) = gate {
                 let _ = gate.await;
@@ -88,7 +89,8 @@ impl AgentCommands for Commands {
                 Err(AgentError::AuthRequired("Sign in to continue".into()))
             } else {
                 Ok(acp::NewSessionResponse::new(format!("s{id}"))
-                    .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
+                    .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty()))
+                    .modes(modes))
             }
         }
         .boxed()
@@ -110,10 +112,12 @@ impl AgentCommands for Commands {
         } else {
             request.session_id
         };
-        let config = self.config.lock().unwrap().clone();
+        let config = self.config.options();
+        let modes = self.config.modes();
         async move {
             Ok(acp::NewSessionResponse::new(session)
-                .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty())))
+                .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty()))
+                .modes(modes))
         }
         .boxed()
     }
@@ -142,12 +146,7 @@ impl AgentCommands for Commands {
         &self,
         request: acp::SetSessionConfigOptionRequest,
     ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
-        let mut config = self.config.lock().unwrap();
-        if let Some(value) = nocterm_ai::session_config::ConfigValue::from_acp(&request.value) {
-            nocterm_ai::session_config::choose(&mut config, &request.config_id.0, &value);
-        }
-        let options = config.clone();
-        self.config_requests.lock().unwrap().push(request);
+        let options = self.config.choose(request);
         async move { Ok(options) }.boxed()
     }
     fn authenticate(&self, _: acp::AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
@@ -609,3 +608,15 @@ mod recovery;
 mod restoration_intersections;
 
 mod archive;
+
+fn report_control(
+    thread: &mut crate::thread::AgentThread,
+    update: acp::SessionUpdate,
+    cx: &mut Context<crate::thread::AgentThread>,
+) {
+    let session = thread
+        .session()
+        .clone()
+        .expect("fixture chat has an open agent session");
+    thread.session_update(&acp::SessionNotification::new(session, update), cx);
+}

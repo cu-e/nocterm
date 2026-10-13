@@ -37,7 +37,7 @@ fn choose_opus(thread: &Entity<AgentThread>, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 fn current_model(thread: &Entity<AgentThread>, cx: &mut TestAppContext) -> String {
-    cx.update(|cx| crate::thread::config_label(&thread.read(cx).state.config_options[0]))
+    cx.update(|cx| crate::thread::config_label(&thread.read(cx).config_options()[0]))
 }
 
 #[gpui_kit::test]
@@ -45,7 +45,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    *f.commands.config.lock().unwrap() = models();
+    f.commands.config.set_options(models());
     let thread = chat(&f, cx);
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
@@ -53,7 +53,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
     assert_eq!(current_model(&thread, cx), "Sonnet");
 
     choose_opus(&thread, cx);
-    assert_eq!(f.commands.config_requests.lock().unwrap().len(), 1);
+    assert_eq!(f.commands.config.requests().len(), 1);
     assert_eq!(current_model(&thread, cx), "Opus");
     exchange(&f, "hello", "Hi.", cx);
     cx.update(|cx| {
@@ -71,7 +71,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
 fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &mut TestAppContext) {
     let f = fixture(cx);
     lazy_start(cx);
-    *f.commands.config.lock().unwrap() = models();
+    f.commands.config.set_options(models());
     cx.update(|cx| {
         Runtime::global(cx).update(cx, |runtime, cx| {
             runtime.remember_options("codex", &models(), cx)
@@ -88,12 +88,12 @@ fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &m
 
     choose_opus(&thread, cx);
     assert_eq!(current_model(&thread, cx), "Opus");
-    assert!(f.commands.config_requests.lock().unwrap().is_empty());
+    assert!(f.commands.config.requests().is_empty());
     thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     complete_active(&f, cx);
-    let requests = f.commands.config_requests.lock().unwrap().clone();
+    let requests = f.commands.config.requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(&*requests[0].config_id.0, "model");
     cx.update(|cx| {
@@ -110,7 +110,7 @@ fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &m
     assert_eq!(current_model(&next, cx), "Opus");
     cx.update(|cx| {
         assert_eq!(
-            next.read(cx).config_choices.get("model"),
+            nocterm_ai::session_config::current(&next.read(cx).config_options()).get("model"),
             Some(&ConfigValue::Value("opus".into()))
         )
     });
@@ -152,7 +152,7 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
 #[gpui_kit::test]
 fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    *f.commands.config.lock().unwrap() = models();
+    f.commands.config.set_options(models());
     let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
     saved
         .entries
@@ -183,8 +183,8 @@ fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppC
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert!(thread.session().is_some());
-        assert!(thread.composer.queue_paused);
-        assert_eq!(thread.composer.queue.len(), 1);
+        assert!(thread.composer().paused());
+        assert_eq!(thread.composer().queue().len(), 1);
     });
     assert_eq!(current_model(&thread, cx), "Sonnet", "its pickers work");
     assert!(f.commands.prompts.lock().unwrap().is_empty());

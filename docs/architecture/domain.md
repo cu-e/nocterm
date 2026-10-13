@@ -173,3 +173,11 @@ AI workspace preparation is a pure `WorkdirResolver` contract with typed
 facts and produces ordered semantic mounts without native lookup or argv.
 `SandboxProbe` returns availability for presentation; that fact does not authorize
 a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapter.
+
+## Agent transcript and configuration rules
+
+`nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
+usage, token counts and title. Per-chat options, modes, command revisions and
+reconciliation belong to the feature's private `ChatConfig`. Existing
+`session_config` helpers retain pure choice and category rules; protocol-backed
+version-one values remain migration debt at their established seams.

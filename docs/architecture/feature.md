@@ -260,6 +260,19 @@ checks availability again rather than trusting the displayed result.
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
 from the conversation and the session ([ADR 0009](../adr/0009-thread-composer.md)).
+Its state is private. Prompt admission prepares a candidate queue, validates structural
+and storage budgets without mutation, then commits the queue, draft and image changes
+as one transition. Editing retains the original context until the edit ends.
+
+A private `ChatConfig` owns per-chat desired choices, reported options and modes,
+slash commands and their revision, prompt model labels and bounded pre-open controls.
+It accepts asynchronous replies only for its current session ticket. Opening reports
+retain desired choices until reconciliation finishes; each available choice is tried
+once per ticket and reevaluated after dependent option replies. Only matching-session
+pre-open controls are applied. The coordinator in `session.rs` performs requests and
+persistence effects, saving accepted choices before dispatch. Configuration is separate
+from the transcript reducer, and restart snapshots retain preview data while excluding
+pending controls and attempts ([ADR 0034](../adr/0034-chat-config-composer-owners.md)).
 
 Archived chat hydration belongs to a private feature `Archive` owner
 ([ADR0031](../adr/0031-archive-hydration-owner.md)). It queues typed open, fork,

@@ -80,8 +80,7 @@ impl AgentPanel {
                 .and_then(|thread| {
                     thread
                         .read(cx)
-                        .state
-                        .config_options
+                        .config_options()
                         .iter()
                         .find(|option| option.id.0.as_ref() == id)
                         .map(|option| option.name.clone())
@@ -134,7 +133,7 @@ impl AgentPanel {
             }
             Some(MenuKind::Config(id)) => {
                 if let Some(thread) = self.current() {
-                    let options = thread.read(cx).state.config_options.clone();
+                    let options = thread.read(cx).config_options().clone();
                     if let Some(option) = options.iter().find(|option| option.id.0.as_ref() == id) {
                         if option.category == Some(acp::SessionConfigOptionCategory::Model) {
                             menu = menu.child(Input::new(&self.search).small());
@@ -228,7 +227,7 @@ impl AgentPanel {
             }
             Some(MenuKind::Modes) => {
                 if let Some(thread) = self.current()
-                    && let Some(modes) = &thread.read(cx).state.modes
+                    && let Some(modes) = &thread.read(cx).configuration().modes()
                 {
                     for mode in &modes.available_modes {
                         let id = mode.id.clone();
@@ -241,9 +240,8 @@ impl AgentPanel {
                             .selected(
                                 thread
                                     .read(cx)
-                                    .state
-                                    .current_mode
-                                    .as_ref()
+                                    .configuration()
+                                    .current_mode()
                                     .unwrap_or(&modes.current_mode_id)
                                     == &id,
                             )

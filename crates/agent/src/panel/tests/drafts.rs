@@ -139,7 +139,12 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
     .unwrap();
-    cx.update(|cx| assert_eq!(thread.read(cx).composer.draft.as_deref(), Some("  ")));
+    cx.update(|cx| {
+        assert_eq!(
+            thread.read(cx).composer().draft().map(String::as_str),
+            Some("  ")
+        )
+    });
     set_input(&f, "kept when offline", cx);
     thread.update(cx, |thread, _| {
         thread
@@ -152,7 +157,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     .unwrap();
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).composer.draft.as_deref(),
+            thread.read(cx).composer().draft().map(String::as_str),
             Some("kept when offline")
         )
     });
@@ -167,7 +172,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).composer.draft.is_none());
+        assert!(thread.read(cx).composer().draft().is_none());
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
         assert_eq!(thread.read(cx).state.entries.len(), 1);
     });
@@ -186,14 +191,25 @@ fn rapid_new_chats_do_not_copy_the_previous_visible_text(cx: &mut TestAppContext
             panel.new_thread("codex".into(), window, cx);
             panel.new_thread("codex".into(), window, cx);
             assert_eq!(panel.threads.len(), 2);
-            assert!(panel.current().unwrap().read(cx).composer.draft.is_none());
+            assert!(
+                panel
+                    .current()
+                    .unwrap()
+                    .read(cx)
+                    .composer()
+                    .draft()
+                    .is_none()
+            );
         });
     })
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(f.panel.read(cx).input.read(cx).value().is_empty());
-        assert_eq!(first.read(cx).composer.draft.as_deref(), Some("owner A"));
+        assert_eq!(
+            first.read(cx).composer().draft().map(String::as_str),
+            Some("owner A")
+        );
     });
 }
 
@@ -219,10 +235,13 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            first.read(cx).composer.draft.as_deref(),
+            first.read(cx).composer().draft().map(String::as_str),
             Some("new user text")
         );
-        assert_eq!(second.read(cx).composer.draft.as_deref(), Some("B draft"));
+        assert_eq!(
+            second.read(cx).composer().draft().map(String::as_str),
+            Some("B draft")
+        );
         assert_eq!(
             f.panel.read(cx).input.read(cx).value().as_ref(),
             "new user text"
@@ -253,20 +272,31 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let text = "x".repeat(17 * 1024 * 1024);
     thread.update(cx, |thread, cx| {
-        thread
-            .lifecycle
-            .force_phase(nocterm_ai::session::SessionPhase::Prompting);
+        thread.send("active prompt".into(), cx);
         thread.set_draft(text.clone(), cx);
         assert!(matches!(thread.submit(text, None, cx), Ok(true)));
-        assert!(thread.composer.draft.is_none());
-        assert_eq!(thread.composer.queue.len(), 1);
+        assert!(thread.composer().draft().is_none());
+        assert_eq!(thread.composer().queue().len(), 1);
         // The accepted queued payload already uses over half of the budget.
         // A second payload must fail without removing its composer draft.
         let next = "y".repeat(17 * 1024 * 1024);
         thread.set_draft(next.clone(), cx);
+        thread.begin_composer_edit(Vec::new(), vec![Attachment::Group("editing".into())], cx);
+        let next_id = thread.composer().next_queue_id();
+        let queued = thread.composer().queue()[0].saved.clone();
+        let entries = thread.history_entries().len();
         assert!(thread.submit(next, None, cx).is_err());
-        assert!(thread.composer.draft.is_some());
-        assert_eq!(thread.composer.queue.len(), 1);
+        assert!(thread.composer().draft().is_some());
+        assert_eq!(thread.composer().queue().len(), 1);
+        assert!(Arc::ptr_eq(&thread.composer().queue()[0].saved, &queued));
+        assert_eq!(thread.composer().next_queue_id(), next_id);
+        assert_eq!(
+            thread.composer().attachments(),
+            [Attachment::Group("editing".into())]
+        );
+        assert!(thread.composer().editing());
+        assert_eq!(thread.history_entries().len(), entries);
+        thread.end_composer_edit(false, cx);
     });
 }
 

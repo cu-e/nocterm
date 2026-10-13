@@ -33,3 +33,4 @@ acceptance; a later record supersedes an earlier one.
 | [0031](0031-archive-hydration-owner.md) | Hydrated archive and history permit state belong to a single owner |
 | [0032](0032-narrow-terminal-ports.md) | Separate terminal ports bind approvals and secret answers to original Item/session/prompt epochs |
 | [0033](0033-native-agent-sandbox-capabilities.md) | Inject native workspace preparation and fail-closed sandbox launch capabilities |
+| [0034](0034-chat-config-composer-owners.md) | Per-chat configuration and composer transitions have private feature owners |

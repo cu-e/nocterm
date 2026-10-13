@@ -131,8 +131,8 @@ impl AgentPanel {
             thread
         });
         if let Some(id) = active {
-            thread.update(cx, |thread, _| {
-                thread.composer.attachments.push(Attachment::Terminal(id))
+            thread.update(cx, |thread, cx| {
+                thread.add_composer_attachment(Attachment::Terminal(id), cx)
             });
         }
         self.track(&thread, window, cx);

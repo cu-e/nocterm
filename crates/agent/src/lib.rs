@@ -1,6 +1,6 @@
 //! Agent chat presentation and session coordination through injected contracts.
 //!
-//! Owns: panel views, Composer, AgentThread coordination and the session-scoped
+//! Owns: panel views, private Composer and ChatConfig owners, AgentThread coordination and the session-scoped
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
@@ -15,6 +15,8 @@
 //! Archive delivery also validates document ownership and its local load generation;
 //! a literal pending draft supersedes the saved draft and its timestamp together.
 //! Terminal operation causes stay typed until tool transcripts and sign-in errors are presented.
+//! Configuration replies accept only their current session ticket; candidate prompt admission
+//! validates bounded payloads before committing draft, image and queue changes.
 
 mod panel;
 use nocterm_agent_runtime as runtime;

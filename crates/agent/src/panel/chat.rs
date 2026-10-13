@@ -22,9 +22,6 @@ impl AgentPanel {
         let model = &thread.read(cx).state;
         let count = model.entries.len();
         let state = nocterm_ai::thread::ThreadState {
-            config_options: model.config_options.clone(),
-            modes: model.modes.clone(),
-            current_mode: model.current_mode.clone(),
             plan: model.plan.clone(),
             usage: model.usage.clone(),
             ..Default::default()

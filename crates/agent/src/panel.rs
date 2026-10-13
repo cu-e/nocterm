@@ -542,10 +542,9 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(|this, _: &crate::ToggleModelPicker, _, cx| {
                 if let Some(thread) = this.current()
-                    && let Some(option) =
-                        thread.read(cx).state.config_options.iter().find(|option| {
-                            option.category == Some(acp::SessionConfigOptionCategory::Model)
-                        })
+                    && let Some(option) = thread.read(cx).config_options().iter().find(|option| {
+                        option.category == Some(acp::SessionConfigOptionCategory::Model)
+                    })
                 {
                     this.toggle_menu(MenuKind::Config(option.id.to_string()), cx);
                 }

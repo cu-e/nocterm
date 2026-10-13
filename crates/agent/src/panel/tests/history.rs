@@ -253,15 +253,18 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
-            assert!(thread.last_prompt.is_none());
+            assert!(thread.history_entries().is_empty());
             thread.send("  ".into(), cx);
-            assert!(thread.last_prompt.is_none());
-            let session = thread.lease.as_mut().unwrap().session.take();
+            assert!(thread.history_entries().is_empty());
+            thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
             thread.send("Queued before the session is ready".into(), cx);
-            assert_eq!(thread.composer.queue.len(), 1);
-            thread.composer.queue.clear();
-            assert!(thread.last_prompt.is_none());
-            thread.lease.as_mut().unwrap().session = session;
+            assert_eq!(thread.composer().queue().len(), 1);
+            let ids = thread.queued_prompt_ids().collect::<Vec<_>>();
+            for id in ids {
+                thread.remove_queued(id, None, cx);
+            }
+            assert!(thread.history_entries().is_empty());
+            thread.end_composer_edit(false, cx);
             let mut option = acp::SessionConfigOption::select(
                 "model",
                 "Agent model",
@@ -269,15 +272,23 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
                 vec![acp::SessionConfigSelectOption::new("first", "First model")],
             );
             option.category = Some(acp::SessionConfigOptionCategory::Model);
-            thread.state.config_options = vec![option];
+            report_control(
+                thread,
+                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![option])),
+                cx,
+            );
             thread.send("First request".into(), cx);
-            let prompt = thread.last_prompt.clone().unwrap();
-            assert_eq!(prompt.model.as_deref(), Some("First model"));
+            let model = thread.model();
+            assert_eq!(model.as_deref(), Some("First model"));
             assert_eq!(thread.state.entries.len(), 1);
-            thread.state.config_options.clear();
+            report_control(
+                thread,
+                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(Vec::new())),
+                cx,
+            );
             thread.send("Rejected while busy".into(), cx);
             assert_eq!(thread.state.entries.len(), 1);
-            assert_eq!(thread.last_prompt.as_ref().unwrap().model, prompt.model);
+            assert_eq!(thread.model(), model);
             thread.state.title = Some("Updated title".into());
             thread.stop(cx);
             thread.send("Rejected while stopping".into(), cx);
