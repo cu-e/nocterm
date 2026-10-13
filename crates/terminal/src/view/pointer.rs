@@ -175,7 +175,13 @@ impl PointerState {
         self.sync(host.terminal.read(cx), host.geometry);
         if self.selection.is_some() && event.button == MouseButton::Left {
             self.stop_selection();
-            if cx.setting::<nocterm_ui::TerminalSettings>().copy_on_select
+            if host
+                .terminal
+                .read(cx)
+                .installed()
+                .settings()
+                .setting::<nocterm_ui::TerminalSettings>(cx)
+                .copy_on_select
                 && let Some(text) = host.terminal.read(cx).emulator().selection_text()
             {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));

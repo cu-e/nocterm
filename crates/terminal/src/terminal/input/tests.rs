@@ -37,14 +37,19 @@ fn fixture_with_transport(
             nocterm_ui::SettingsStore::in_memory(settings),
             cx,
         );
-        crate::init(transport.clone(), &ui, cx);
         let local_transport = transport.clone();
-        crate::init_local(Arc::new(move |_| local_transport.clone()), cx);
+        let local_sessions = crate::LocalSessions::new(
+            Arc::new(move |_| local_transport.clone()),
+            "/bin/bash".into(),
+        );
+        let installed =
+            crate::install(crate::Deps::new(transport.clone(), local_sessions), &ui, cx);
         cx.new(|cx| {
             if local {
-                Terminal::new_local(cx)
+                Terminal::new_local(installed.clone(), cx)
             } else {
                 Terminal::new(
+                    installed.clone(),
                     SessionSpec {
                         profile: None,
                         options: Default::default(),

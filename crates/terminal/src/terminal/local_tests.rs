@@ -13,6 +13,25 @@ impl nocterm_session::Transport for FakeTransport {
     }
 }
 
+fn command_dependencies(cx: &mut TestAppContext) -> crate::Installed {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        let ui = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            SettingsStore::in_memory(Default::default()),
+            cx,
+        );
+        crate::install(
+            crate::Deps::new(
+                Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        )
+    })
+}
+
 #[gpui_kit::test]
 fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext) {
     use std::{cell::RefCell, rc::Rc};
@@ -22,13 +41,22 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
         gpui_kit::init(cx);
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
             cx,
         );
+        let installed = crate::install(
+            crate::Deps::new(
+                Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             Terminal::new_local_command(
+                installed.clone(),
                 nocterm_session::ShellLaunch {
                     program: Some("test-agent".into()),
                     args: vec!["--setup".into()],
@@ -63,19 +91,13 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
 #[gpui_kit::test]
 fn command_completion_reports_cancel_and_drop_cancels_receiver(cx: &mut TestAppContext) {
     use futures::channel::oneshot;
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
-            cx,
-        );
-    });
+    let installed = command_dependencies(cx);
     for disconnect in [true, false] {
         let (send, receive) = oneshot::channel();
         let terminal = cx.update(|cx| {
             cx.new(|cx| {
                 Terminal::new_local_command(
+                    installed.clone(),
                     nocterm_session::ShellLaunch::default(),
                     "Auth".into(),
                     Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),
@@ -110,16 +132,24 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
         settings.update::<nocterm_session::LocalShellSettings>(|section| {
             section.program = Some("/bin/bash".into())
         });
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
             cx,
         );
-        crate::init_local(
+        let local = crate::LocalSessions::new(
             Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            "/bin/bash".into(),
+        );
+        let installed = crate::install(
+            crate::Deps::new(
+                Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                local,
+            ),
+            &ui,
             cx,
         );
-        cx.new(Terminal::new_local)
+        cx.new(|cx| Terminal::new_local(installed, cx))
     });
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
@@ -135,12 +165,15 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
                 cx,
             );
             assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/egor")));
-            cx.update_setting::<nocterm_session::LocalShellSettings>(|s| {
-                s.program = Some("pwsh".into())
-            })
-            .now_or_never()
-            .unwrap()
-            .unwrap();
+            terminal
+                .installed()
+                .settings()
+                .update::<nocterm_session::LocalShellSettings>(cx, |s| {
+                    s.program = Some("pwsh".into())
+                })
+                .now_or_never()
+                .unwrap()
+                .unwrap();
             terminal
                 .change_directory(Path::new("/tmp/a' $(id)"), cx)
                 .unwrap();
@@ -188,16 +221,24 @@ fn directory_terminal(
             section.program = Some(program.into());
         });
         settings.update::<nocterm_ui::TerminalSettings>(|section| section.charset = charset);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(settings),
             cx,
         );
-        crate::init_local(
+        let local = crate::LocalSessions::new(
             Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            "/bin/bash".into(),
+        );
+        let installed = crate::install(
+            crate::Deps::new(
+                Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                local,
+            ),
+            &ui,
             cx,
         );
-        cx.new(Terminal::new_local)
+        cx.new(|cx| Terminal::new_local(installed, cx))
     });
     (terminal, driver)
 }
@@ -369,14 +410,7 @@ fn command_completion_effect_observes_closed_state_and_retired_prompt_authority(
     cx: &mut TestAppContext,
 ) {
     use std::{cell::RefCell, rc::Rc};
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
-            cx,
-        );
-    });
+    let installed = command_dependencies(cx);
     for disconnect in [false, true] {
         let weak: Rc<RefCell<Option<gpui_kit::WeakEntity<Terminal>>>> = Rc::default();
         let observed = Rc::new(RefCell::new(Vec::new()));
@@ -385,6 +419,7 @@ fn command_completion_effect_observes_closed_state_and_retired_prompt_authority(
         let terminal = cx.update(|cx| {
             cx.new(|cx| {
                 Terminal::new_local_command(
+                    installed.clone(),
                     nocterm_session::ShellLaunch::default(),
                     "Completion state".into(),
                     Arc::new(FakeTransport(Arc::new(Mutex::new(None)))),

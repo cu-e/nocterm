@@ -16,15 +16,16 @@ use nocterm_session::{
 use nocterm_session::{LocalShellSettings, SshSettings};
 #[cfg(test)]
 use nocterm_session::{Secret, Session};
+#[cfg(test)]
+use nocterm_ui::SettingsStore;
 use nocterm_ui::{CursorShape, TerminalSettings};
-use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
 };
 use nocterm_workspace::SessionSpec;
 
-use crate::{ActiveTransport, LocalTransportFactory};
+use crate::Installed;
 
 /// Where a terminal's session stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +62,7 @@ type CommandCompletion = Box<dyn FnOnce(CloseReason, &mut gpui_kit::App)>;
 
 /// A session and the screen it draws on.
 pub struct Terminal {
+    deps: Installed,
     lifecycle: lifecycle::SessionLifecycle,
     input: input::TerminalInput,
     recording: crate::OutputRecording,
@@ -73,12 +75,13 @@ impl EventEmitter<TerminalEvent> for Terminal {}
 
 impl Terminal {
     /// A terminal that starts connecting to `spec` at once.
-    pub fn new(spec: SessionSpec, cx: &mut Context<Self>) -> Self {
-        Self::new_kind(spec, false, None, None, cx)
+    pub fn new(deps: Installed, spec: SessionSpec, cx: &mut Context<Self>) -> Self {
+        Self::new_kind(deps, spec, false, None, None, cx)
     }
 
-    pub fn new_local(cx: &mut Context<Self>) -> Self {
+    pub fn new_local(deps: Installed, cx: &mut Context<Self>) -> Self {
         Self::new_kind(
+            deps,
             SessionSpec {
                 profile: None,
                 options: Default::default(),
@@ -96,6 +99,7 @@ impl Terminal {
     }
 
     pub fn new_local_command(
+        deps: Installed,
         launch: nocterm_session::ShellLaunch,
         title: SharedString,
         transport: Arc<dyn Transport>,
@@ -111,37 +115,63 @@ impl Terminal {
             launch: Some(launch),
             credential: None,
         };
-        Self::new_kind(spec, true, Some(transport), Some(Box::new(completion)), cx)
+        Self::new_kind(
+            deps,
+            spec,
+            true,
+            Some(transport),
+            Some(Box::new(completion)),
+            cx,
+        )
     }
 
     fn new_kind(
+        deps: Installed,
         spec: SessionSpec,
         local: bool,
         local_transport: Option<Arc<dyn Transport>>,
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
+        let options = emulator_options(deps.settings().setting::<nocterm_ui::TerminalSettings>(cx));
+        let weak = cx.entity().downgrade();
         let mut this = Self {
+            deps: deps.clone(),
             lifecycle: lifecycle::SessionLifecycle::new(
                 spec,
                 local,
                 local_transport,
                 command_completion,
             ),
-            input: input::TerminalInput::new(cx.setting::<nocterm_ui::TerminalSettings>().charset),
+            input: input::TerminalInput::new(
+                deps.settings()
+                    .setting::<nocterm_ui::TerminalSettings>(cx)
+                    .charset,
+            ),
             recording: crate::OutputRecording::default(),
             credentials: crate::credentials::CredentialState::default(),
             screen: presentation::TerminalScreen::new(options),
-            _settings: cx.observe_global::<SettingsStore>(|this, cx| {
-                let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
-                this.screen.apply_options(options);
-                this.refresh_find(cx);
-                this.emit_output(cx);
+            _settings: deps.settings().observe(cx, move |cx| {
+                if let Some(terminal) = weak.upgrade() {
+                    terminal.update(cx, |this, cx| {
+                        let options = emulator_options(
+                            this.deps
+                                .settings()
+                                .setting::<nocterm_ui::TerminalSettings>(cx),
+                        );
+                        this.screen.apply_options(options);
+                        this.refresh_find(cx);
+                        this.emit_output(cx);
+                    });
+                }
             }),
         };
         this.connect(cx);
         this
+    }
+
+    pub(crate) fn installed(&self) -> &Installed {
+        &self.deps
     }
 
     pub(crate) fn set_credential_id(&mut self, id: nocterm_session::CredentialId) {
@@ -210,7 +240,7 @@ impl Terminal {
                 .spec()
                 .options
                 .charset
-                .unwrap_or(cx.setting::<TerminalSettings>().charset),
+                .unwrap_or(self.deps.settings().setting::<TerminalSettings>(cx).charset),
         );
         let mut recording_options = self
             .lifecycle
@@ -218,28 +248,29 @@ impl Terminal {
             .options
             .logging
             .clone()
-            .unwrap_or_else(|| cx.setting::<nocterm_session::LoggingOptions>().clone());
+            .unwrap_or_else(|| {
+                self.deps
+                    .settings()
+                    .setting::<nocterm_session::LoggingOptions>(cx)
+                    .clone()
+            });
         if self.lifecycle.is_local() {
             recording_options.auto_start = false;
         }
         self.recording.set_options(recording_options);
         self.input.clear_errors();
         let launch = if self.lifecycle.is_local() {
-            self.lifecycle
-                .spec()
-                .launch
-                .clone()
-                .unwrap_or_else(|| shell_launch(cx.setting::<LocalShellSettings>()))
+            self.lifecycle.spec().launch.clone().unwrap_or_else(|| {
+                shell_launch(self.deps.settings().setting::<LocalShellSettings>(cx))
+            })
         } else {
-            self.lifecycle
-                .spec()
-                .launch
-                .clone()
-                .unwrap_or_else(|| shell_launch(&cx.setting::<SshSettings>().launch))
+            self.lifecycle.spec().launch.clone().unwrap_or_else(|| {
+                shell_launch(&self.deps.settings().setting::<SshSettings>(cx).launch)
+            })
         };
         let shell_program = launch.program.clone().unwrap_or_else(|| {
             if self.lifecycle.is_local() {
-                std::env::var(if cfg!(windows) { "COMSPEC" } else { "SHELL" }).unwrap_or_default()
+                self.deps.default_program().to_owned()
             } else {
                 String::new()
             }
@@ -248,12 +279,8 @@ impl Terminal {
             .set_shell(shell_program, self.lifecycle.is_local());
         let transport = match self.lifecycle.transport() {
             Some(transport) => Some(transport),
-            None if self.lifecycle.is_local() => cx
-                .try_global::<LocalTransportFactory>()
-                .map(|factory| (factory.0)(launch.clone())),
-            None => cx
-                .try_global::<ActiveTransport>()
-                .and_then(|t| t.transport.clone()),
+            None if self.lifecycle.is_local() => self.deps.local_transport(launch.clone()),
+            None => Some(self.deps.remote()),
         };
         let Some(transport) = transport else {
             self.set_status(
@@ -264,7 +291,7 @@ impl Terminal {
             );
             return;
         };
-        let ssh = cx.setting::<SshSettings>().clone();
+        let ssh = self.deps.settings().setting::<SshSettings>(cx).clone();
         let request = ConnectRequest {
             proxy: self
                 .lifecycle
@@ -282,7 +309,13 @@ impl Terminal {
                 .options
                 .term
                 .clone()
-                .unwrap_or_else(|| cx.setting::<TerminalSettings>().term.clone()),
+                .unwrap_or_else(|| {
+                    self.deps
+                        .settings()
+                        .setting::<TerminalSettings>(cx)
+                        .term
+                        .clone()
+                }),
             size: pty_size(self.emulator().size()),
             connect_timeout: Duration::from_secs(ssh.connect_timeout_secs.into()),
             keepalive_interval: Some(ssh.keepalive_interval_secs)
@@ -394,7 +427,11 @@ impl Terminal {
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
                     if text.len() <= 1024 * 1024
-                        && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                        && self
+                            .deps
+                            .settings()
+                            .setting::<nocterm_ui::TerminalSettings>(cx)
+                            .clipboard_write
                             == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                     {
                         cx.emit(TerminalEvent::ClipboardWrite(text));
@@ -454,10 +491,7 @@ impl Terminal {
         if !self.is_connected() {
             return;
         }
-        if let Some(registry) = cx
-            .try_global::<ActiveTransport>()
-            .and_then(|active| active.recording.clone())
-        {
+        if let Some(registry) = self.deps.recording() {
             self.recording.set_registry(registry);
         }
         if let Err(error) = self.recording.start(cx) {

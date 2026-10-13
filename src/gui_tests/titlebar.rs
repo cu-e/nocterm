@@ -117,16 +117,20 @@ fn titlebar_about_and_new_window_use_application_actions(cx: &mut TestAppContext
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn titlebar_commands_follow_bottom_screen_focus_while_find_remains_open(cx: &mut TestAppContext) {
-    let (handle, workspace, central, transport) = fixture(cx);
+    let (handle, workspace, central, transport) = fixture_with_theme_option(cx, false, None, true);
     let bottom = cx
         .update_window(handle, |_, window, cx| {
-            let local_transport = transport.clone();
-            nocterm_terminal::init_local(Arc::new(move |_| local_transport.clone()), cx);
-            let bottom = cx.new(|cx| TerminalView::new_local(window, cx));
             workspace.update(cx, |workspace, cx| {
-                workspace.set_local_terminal(bottom.clone(), window, cx);
+                workspace.toggle_local_terminal(window, cx);
             });
-            bottom
+            window.render_frame(cx);
+            workspace
+                .read(cx)
+                .command_item(window, cx)
+                .unwrap()
+                .view()
+                .downcast::<TerminalView>()
+                .unwrap()
         })
         .unwrap();
     cx.simulate_window_resize(
@@ -137,6 +141,12 @@ fn titlebar_commands_follow_bottom_screen_focus_while_find_remains_open(cx: &mut
     let grid_focus = bottom.read_with(cx, |bottom, cx| bottom.focus_handle(cx));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(bottom.read(cx).terminal().read(cx).is_local());
+        assert_ne!(bottom.entity_id(), central.entity_id());
+        assert_eq!(
+            workspace.read(cx).selected_local_terminal(cx),
+            Some(bottom.entity_id())
+        );
         assert!(grid_focus.is_focused(window));
         window
             .within("app-menu-bar")
@@ -319,6 +329,59 @@ fn new_windows_and_surviving_windows_share_the_bootstrapped_layout(cx: &mut Test
         assert!(workspace.read(cx).sides_swapped(cx));
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn surviving_and_new_windows_keep_the_installed_session_factory(cx: &mut TestAppContext) {
+    let (first, _, _, transport) = fixture(cx);
+    cx.update_window(first, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let second = cx.update(|cx| {
+        *cx.windows()
+            .iter()
+            .find(|window| **window != first)
+            .unwrap()
+    });
+    cx.update_window(first, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::CloseWindow), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(second, |_, window, cx| {
+        let workspace = window_workspace(window, cx);
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_session(spec("surviving.test"), window, cx)
+        });
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let third = cx.update(|cx| {
+        *cx.windows()
+            .iter()
+            .find(|window| **window != second)
+            .unwrap()
+    });
+    cx.update_window(third, |_, window, cx| {
+        let workspace = window_workspace(window, cx);
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_session(spec("new.test"), window, cx)
+        });
+    })
+    .unwrap();
+    emit(cx, &transport, 1, Event::Connected);
+    emit(cx, &transport, 2, Event::Connected);
+    for handle in [second, third] {
+        cx.update_window(handle, |_, window, cx| {
+            let workspace = window_workspace(window, cx);
+            assert!(workspace.read(cx).active_session(cx).unwrap().connected);
+        })
+        .unwrap();
+    }
+    assert_eq!(transport.drivers.lock().unwrap().len(), 3);
 }
 
 fn window_workspace(window: &gpui_kit::Window, cx: &gpui_kit::App) -> gpui_kit::Entity<Workspace> {

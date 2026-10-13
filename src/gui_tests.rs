@@ -76,7 +76,7 @@ fn fixture_with_vault(
         // The vault worker is a real thread; let its completions wake the test scheduler.
         cx.executor().allow_parking();
     }
-    fixture_with_theme_option(cx, vault_ready, None)
+    fixture_with_theme_option(cx, vault_ready, None, false)
 }
 
 fn fixture_with_themes(
@@ -88,13 +88,14 @@ fn fixture_with_themes(
     Entity<TerminalView>,
     Arc<MockTransport>,
 ) {
-    fixture_with_theme_option(cx, false, Some(themes))
+    fixture_with_theme_option(cx, false, Some(themes), false)
 }
 
 fn fixture_with_theme_option(
     cx: &mut TestAppContext,
     vault_ready: bool,
     themes: Option<Arc<nocterm_themes::test_support::InMemoryThemes>>,
+    with_local: bool,
 ) -> (
     AnyWindowHandle,
     Entity<Workspace>,
@@ -119,7 +120,18 @@ fn fixture_with_theme_option(
         let booted = boot_with_ports(
             directory,
             settings,
-            transport.clone(),
+            (
+                transport.clone(),
+                if with_local {
+                    let local = transport.clone();
+                    nocterm_terminal::LocalSessions::new(
+                        Arc::new(move |_| local.clone()),
+                        "/bin/bash".into(),
+                    )
+                } else {
+                    nocterm_terminal::LocalSessions::disabled("/bin/bash".into())
+                },
+            ),
             vault_ready,
             None,
             themes,
@@ -185,17 +197,30 @@ fn boot_with_files(
     files: Option<nocterm_files::Deps>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
-    boot_with_ports(directory, settings, transport, vault, files, None, cx)
+    boot_with_ports(
+        directory,
+        settings,
+        (
+            transport,
+            nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
+        ),
+        vault,
+        files,
+        None,
+        cx,
+    )
 }
 fn boot_with_ports(
     directory: tempfile::TempDir,
     settings: nocterm_settings::SettingsDocument,
-    transport: Arc<MockTransport>,
+    terminal: (Arc<MockTransport>, nocterm_terminal::LocalSessions),
     vault: bool,
     files: Option<nocterm_files::Deps>,
     themes: Option<crate::bootstrap::Themes>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    let (transport, local) = terminal;
+    let has_local_sessions = local.is_available();
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
         file: directory.path().join("vault.bin"),
@@ -221,7 +246,8 @@ fn boot_with_ports(
             persist: false,
             connections: crate::connection_setup::memory(),
             transport,
-            local: false,
+            local,
+            terminal_auth_factory: None,
             files,
             themes,
             agent: nocterm_agent::AgentServices {
@@ -254,6 +280,12 @@ fn boot_with_ports(
         },
         cx,
     );
+    if has_local_sessions {
+        nocterm_workspace::host::set_local_exec(
+            Arc::new(nocterm_session::testing::FakeExec::default()),
+            cx,
+        );
+    }
     cx.set_reduce_motion(true);
     booted
 }

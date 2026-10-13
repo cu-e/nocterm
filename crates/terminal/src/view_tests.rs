@@ -34,6 +34,12 @@ impl Transport for Scripted {
 pub(super) fn fixture(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
+    fixture_with_credentials(cx, None)
+}
+pub(super) fn fixture_with_credentials(
+    cx: &mut TestAppContext,
+    credentials: Option<crate::CredentialProvider>,
+) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
     let transport = Arc::new(Scripted::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -42,10 +48,18 @@ pub(super) fn fixture(
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init(transport.clone(), &ui, cx);
+        let mut deps = crate::Deps::new(
+            transport.clone(),
+            crate::LocalSessions::disabled("/bin/bash".into()),
+        );
+        if let Some(credentials) = credentials {
+            deps = deps.with_credentials(credentials);
+        }
+        let installed = crate::install(deps, &ui, cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 TerminalView::new(
+                    installed.clone(),
                     SessionSpec {
                         profile: None,
                         title: "test".into(),
@@ -348,12 +362,18 @@ fn osc52_requires_opt_in_and_focus_on_the_actual_terminal_screen(cx: &mut TestAp
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("original"));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| {
-            s.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
-        })
-        .now_or_never()
-        .unwrap()
-        .unwrap();
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| {
+                s.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
+            })
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     });
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("remote"));
@@ -388,12 +408,18 @@ fn osc52_cannot_write_from_a_focused_terminal_in_an_inactive_window(cx: &mut Tes
     }
     let (handle, view, transport) = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|settings| {
-            settings.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
-        })
-        .now_or_never()
-        .unwrap()
-        .unwrap();
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |settings| {
+                settings.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
+            })
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             window.activate_window();
             cx.new(|_| OtherWindow)
@@ -599,10 +625,10 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
 fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx: &mut TestAppContext,
 ) {
-    let (handle, view, _) = fixture(cx);
     let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
     store.fail_next(nocterm_session::testing::FakeCredentialError::NotFound);
-    cx.update(|cx| crate::init_credentials(store, |_, _, _| Task::ready(Ok(())), cx));
+    let provider = crate::CredentialProvider::new(store, |_, _, _| Task::ready(Ok(())));
+    let (handle, view, _) = fixture_with_credentials(cx, Some(provider));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
@@ -703,11 +729,17 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
     assert_role(Some(crate::highlighting::Role::Error), cx);
     let scans = view.read_with(cx, |view, _| view.painted_highlights().scan_count());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::AppearanceSettings>(|s| {
-            s.mode = nocterm_ui::AppearanceMode::Light;
-            s.detect_server_country = false;
-        })
-        .detach()
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::AppearanceSettings>(cx, |s| {
+                s.mode = nocterm_ui::AppearanceMode::Light;
+                s.detect_server_country = false;
+            })
+            .detach()
     });
     cx.run_until_parked();
     assert_role(Some(crate::highlighting::Role::Error), cx);
@@ -717,13 +749,25 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
     );
 
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = false)
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| s.semantic_highlighting = false)
             .detach()
     });
     cx.run_until_parked();
     assert_role(None, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = true)
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| s.semantic_highlighting = true)
             .detach()
     });
     cx.run_until_parked();

@@ -81,7 +81,8 @@ fn remote_shell_launch_override_controls_quote_style_for_local_source(cx: &mut T
                 program: Some("/usr/bin/pwsh".into()),
                 ..Default::default()
             });
-            cx.new(|cx| TerminalView::new(spec, window, cx))
+            let installed = view.read(cx).terminal().read(cx).installed().clone();
+            cx.new(|cx| TerminalView::new(installed, spec, window, cx))
         })
         .unwrap();
     emit(cx, &transport, 1, Event::Connected);
@@ -221,15 +222,17 @@ fn program_fixture(
     std::sync::Arc<nocterm_session::SessionDriver>,
 ) {
     use nocterm_workspace::{Host, HostKey, ProgramSpec, SessionContext};
-    let (handle, _, _) = fixture(cx);
+    let (handle, source, _) = fixture(cx);
     let host = std::sync::Arc::new(ProgramHost::default());
     let target = nocterm_session::Target::new("user", "host", 22);
     let program =
         nocterm_session::ExecRequest::new(engine).args(["exec", "-it", "container", "sh"]);
     let view = cx
         .update_window(handle, |_, window, cx| {
+            let installed = source.read(cx).terminal().read(cx).installed().clone();
             let terminal = cx.new(|cx| {
                 crate::Terminal::new_program(
+                    installed,
                     ProgramSpec {
                         title: "Container shell".into(),
                         host: Host {

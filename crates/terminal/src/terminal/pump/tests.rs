@@ -140,9 +140,17 @@ fn terminal(
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init(transport, &ui, cx);
+        let installed = crate::install(
+            crate::Deps::new(
+                transport,
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             Terminal::new(
+                installed.clone(),
                 nocterm_workspace::SessionSpec {
                     options: Default::default(),
                     title: "test".into(),

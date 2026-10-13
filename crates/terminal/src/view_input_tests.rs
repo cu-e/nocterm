@@ -112,7 +112,7 @@ fn advance(cx: &mut TestAppContext, millis: u64) {
 
 fn element(view: &Entity<TerminalView>, cx: &App) -> TerminalElement {
     let v = view.read(cx);
-    v.paint_element(view.clone(), TerminalStyle::current(cx), false)
+    v.paint_element(view.clone(), v.terminal_style(cx), false)
 }
 
 #[gpui_kit::test]
@@ -172,7 +172,7 @@ fn snapshot_cache_tracks_same_turn_selection_scroll_search_resize_and_palette(
             nocterm_vt::TermSize::new(40, 10, 7, 14)
         );
         view.update(cx, |v, cx| {
-            let mut style = TerminalStyle::current(cx);
+            let mut style = v.terminal_style(cx);
             style.foreground.r ^= 0xff;
             v.sync_palette(&style, cx);
         });

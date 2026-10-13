@@ -12,7 +12,7 @@
 //!   prompts and the session's status.
 //!
 //! The crate never names a transport. The application installs one with
-//! [`init`], and the workspace reaches this crate through [`open_session`],
+//! [`install`], and the workspace reaches this crate through [`open_session`],
 //! installed as its session opener, and [`open_program`], its program opener.
 //! Text conversion remains here; directory synchronization preserves session
 //! charset errors through the workspace LocalTerminal contract.
@@ -26,7 +26,7 @@
 //! Does not own: native transport, filesystem, vault or persistence execution.
 //! Ports: session transport and credential contracts; narrow workspace terminal capabilities.
 //! Settings: TerminalSettings plus SSH, local launch and recording defaults.
-//! Globals: existing transport, local factory and credential installation remain composition debt.
+//! Globals: none. Installed capabilities and the UiReady settings handle are explicit.
 //! Invariants: captured connection/prompt authority precedes effects; input is admitted
 //! exactly once before integration/lease changes; paint snapshots track presentation revisions.
 
@@ -38,38 +38,17 @@ mod recording;
 pub(crate) use recording::OutputRecording;
 pub use recording::RecordingStatus;
 
-#[derive(Clone, Default)]
-struct ActiveTransport {
-    transport: Option<Arc<dyn Transport>>,
-    recording: Option<Arc<nocterm_store::RecordingRegistry>>,
-}
-impl Global for ActiveTransport {}
-
-pub fn init_recording(
-    registry: std::sync::Arc<nocterm_store::RecordingRegistry>,
-    cx: &mut gpui_kit::App,
-) {
-    let mut active = cx
-        .try_global::<ActiveTransport>()
-        .cloned()
-        .unwrap_or_default();
-    active.recording = Some(registry);
-    cx.set_global(active);
-}
 mod element;
 mod highlighting;
-pub use credentials::{CredentialAssociationError, init_credentials};
+pub use credentials::CredentialAssociationError;
+mod installed;
+pub use installed::{CredentialProvider, Deps, Installed, LocalCommand, LocalSessions};
 mod integration;
 mod session_settings;
 mod terminal;
 mod view;
 
-use std::sync::Arc;
-
-use gpui_kit::{
-    Action as _, App, Context, Global, KeyBinding, NoAction, Unbind, Window, prelude::*,
-};
-use nocterm_session::{ShellLaunch, Transport};
+use gpui_kit::{Action as _, App, Context, KeyBinding, NoAction, Unbind, Window, prelude::*};
 use nocterm_workspace::{ProgramSpec, SessionSpec, Workspace};
 
 pub use terminal::{FindState, Status, Terminal, TerminalEvent};
@@ -103,72 +82,79 @@ pub const KEY_CONTEXT: &str = "Terminal";
 /// The screen itself; authentication inputs keep normal form navigation.
 pub(crate) const SCREEN_KEY_CONTEXT: &str = "TerminalScreen";
 
-type LocalFactory = Arc<dyn Fn(ShellLaunch) -> Arc<dyn Transport> + Send + Sync>;
-struct LocalTransportFactory(LocalFactory);
-impl Global for LocalTransportFactory {}
-
-/// Installs a platform local-session adapter without coupling this feature to it.
-pub fn init_local(factory: LocalFactory, cx: &mut App) {
-    cx.set_global(LocalTransportFactory(factory));
-}
-
 /// Opens a shell in the requested live workspace pane.
 pub fn open_local(
+    installed: &Installed,
     workspace: &mut Workspace,
     target: nocterm_workspace::LocalTerminalTarget,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let view = cx.new(|cx| TerminalView::new_local(window, cx));
+    let view = cx.new(|cx| TerminalView::new_local(installed.clone(), window, cx));
     workspace.add_local_terminal_at(view, target, window, cx);
 }
 
 /// Opens `spec` without a tab.
 pub fn open_background_session(
+    installed: &Installed,
     workspace: &mut Workspace,
     spec: SessionSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> gpui_kit::EntityId {
-    let view = cx.new(|cx| TerminalView::new(spec, window, cx));
+    let view = cx.new(|cx| TerminalView::new(installed.clone(), spec, window, cx));
     workspace.add_background_item(view, window, cx)
 }
 
 /// Opens a dedicated command tab without replacing the workspace's bottom shell.
 pub fn open_local_command(
+    installed: &Installed,
     workspace: &mut Workspace,
-    launch: ShellLaunch,
-    title: String,
-    transport: Arc<dyn Transport>,
-    completion: impl FnOnce(nocterm_session::CloseReason, &mut App) + 'static,
+    command: LocalCommand,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let (launch, title, transport, completion) = command.into_parts();
     let view = cx.new(|cx| {
-        TerminalView::new_local_command(launch, title, transport, completion, window, cx)
+        TerminalView::new_local_command(
+            installed.clone(),
+            launch,
+            title,
+            transport,
+            completion,
+            window,
+            cx,
+        )
     });
     workspace.add_item(view, window, cx);
 }
 
 /// Opens `spec`'s program in a new tab.
 pub fn open_program(
+    installed: &Installed,
     workspace: &mut Workspace,
     spec: ProgramSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let view = cx.new(|cx| {
-        let terminal = cx.new(|cx| Terminal::new_program(spec, cx));
+        let terminal = cx.new(|cx| Terminal::new_program(installed.clone(), spec, cx));
         TerminalView::with_terminal(terminal, window, cx)
     });
     workspace.add_item(view, window, cx);
 }
 
 /// Installs the transport terminals open their sessions with.
-pub fn init(transport: Arc<dyn Transport>, _: &nocterm_ui::UiReady, cx: &mut App) {
-    nocterm_ui::register_setting::<nocterm_session::LoggingOptions>(cx);
-    nocterm_ui::register_setting::<nocterm_session::SshSettings>(cx);
-    nocterm_ui::register_setting::<nocterm_session::LocalShellSettings>(cx);
+pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Installed {
+    ready
+        .settings()
+        .register::<nocterm_session::LoggingOptions>(cx);
+    ready
+        .settings()
+        .register::<nocterm_session::SshSettings>(cx);
+    ready
+        .settings()
+        .register::<nocterm_session::LocalShellSettings>(cx);
     // Keep inherited focus traversal and native Copy shortcuts off the screen.
     // Target only native Copy so explicit terminal actions retain precedence.
     cx.bind_keys([
@@ -180,16 +166,20 @@ pub fn init(transport: Arc<dyn Transport>, _: &nocterm_ui::UiReady, cx: &mut App
             Some(SCREEN_KEY_CONTEXT),
         ),
     ]);
-    let mut active = cx
-        .try_global::<ActiveTransport>()
-        .cloned()
-        .unwrap_or_default();
-    active.transport = Some(transport);
-    cx.set_global(active);
+    deps.install(ready.settings().clone())
+}
+
+/// Bind the same installed capabilities to each workspace window.
+pub fn register(installed: &Installed, workspace: &mut Workspace) {
+    workspace.set_session_factory(Factory {
+        installed: installed.clone(),
+    });
 }
 
 /// Opens every kind of tab as a terminal; the workspace's session factory.
-pub struct Factory;
+struct Factory {
+    installed: Installed,
+}
 
 impl nocterm_workspace::SessionFactory for Factory {
     fn open_session(
@@ -199,7 +189,7 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_session(workspace, spec, window, cx);
+        open_session(&self.installed, workspace, spec, window, cx);
     }
     fn open_background(
         &self,
@@ -208,7 +198,13 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<gpui_kit::EntityId> {
-        Some(open_background_session(workspace, spec, window, cx))
+        Some(open_background_session(
+            &self.installed,
+            workspace,
+            spec,
+            window,
+            cx,
+        ))
     }
     fn open_local(
         &self,
@@ -217,7 +213,7 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_local(workspace, target, window, cx);
+        open_local(&self.installed, workspace, target, window, cx);
     }
     fn open_program(
         &self,
@@ -226,17 +222,18 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_program(workspace, spec, window, cx);
+        open_program(&self.installed, workspace, spec, window, cx);
     }
 }
 
 /// Opens `spec` in a new terminal tab.
 pub fn open_session(
+    installed: &Installed,
     workspace: &mut Workspace,
     spec: SessionSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let view = cx.new(|cx| TerminalView::new(spec, window, cx));
+    let view = cx.new(|cx| TerminalView::new(installed.clone(), spec, window, cx));
     workspace.add_item(view, window, cx);
 }

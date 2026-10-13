@@ -24,6 +24,7 @@ pub(crate) struct PreparedApp {
     themes: bootstrap::Themes,
     transport: SshTransport,
     files: nocterm_files::Deps,
+    local: nocterm_terminal::LocalSessions,
 }
 impl PreparedApp {
     pub(crate) fn load() -> anyhow::Result<Self> {
@@ -58,6 +59,7 @@ impl PreparedApp {
             },
             transport,
             files: files_dependencies()?,
+            local: local_sessions(),
         })
     }
 
@@ -105,7 +107,8 @@ impl PreparedApp {
                 paths: self.paths,
                 persist: true,
                 transport: Arc::new(self.transport),
-                local: true,
+                local: self.local,
+                terminal_auth_factory: Some(agent_auth::opener),
                 files: self.files,
                 themes: Some(self.themes),
                 agent,
@@ -147,6 +150,20 @@ fn files_dependencies() -> anyhow::Result<nocterm_files::Deps> {
     ))
 }
 
+fn local_sessions() -> nocterm_terminal::LocalSessions {
+    let program = nocterm_local::default_shell();
+    let supplied = program.clone();
+    nocterm_terminal::LocalSessions::new(
+        Arc::new(move |mut launch| {
+            if launch.program.is_none() {
+                launch.program = Some(supplied.clone());
+            }
+            Arc::new(nocterm_local::LocalTransport(launch))
+        }),
+        program,
+    )
+}
+
 fn agent_services(
     paths: &Paths,
     executable: std::path::PathBuf,
@@ -155,7 +172,7 @@ fn agent_services(
     nocterm_agent::AgentServices {
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
-        terminal_auth: Some(Arc::new(agent_auth::open)),
+        terminal_auth: None,
         bridge: Arc::new(nocterm_acp::BridgeServer::new(
             paths.clone(),
             nocterm_acp::RelayCommand {

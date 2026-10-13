@@ -1,14 +1,15 @@
 //! The bridge between nocterm's look and the UI toolkit.
 //!
 //! Design tokens (`nocterm-design`) and user settings (`nocterm-settings`)
-//! know nothing about GPUI. This crate makes them application globals that
-//! every view reads ([`ActiveDesign`], [`SettingsExt`]), and projects them
-//! onto the component library's theme, so standard components follow the
-//! tokens without any view repeating a colour or a size.
+//! know nothing about GPUI. This crate exposes the installed settings handle
+//! and projects them onto the component library's theme. [`ActiveDesign`] and
+//! [`SettingsExt`] remain compatibility accessors for presentation callers; shared
+//! helpers also accept explicitly supplied settings.
 //!
 //! Owns: theme projections, shared assets/forms, settings compatibility access and layout values.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
-//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers.
+//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
+//! explicit settings-based terminal styling and the installed settings handle.
 //! Settings sections: appearance, terminal; init also registers ai.
 //! Globals: Design, SettingsStore, LayoutMemory, Notices.
 //! Imported themes use an explicit ThemeUi projection over ThemesHandle.

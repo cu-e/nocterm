@@ -76,3 +76,11 @@ AgentServices and passes it to each window's agent registration. Native startup
 uses agent-storage's NativeChatMetadata; fixtures supply shared deterministic
 metadata. Panel registration binds the capability to its originating weak
 workspace without a global lookup. See [ADR0040](../adr/0040-native-chat-metadata.md).
+
+Startup prepares the native local-session factory and default shell once before
+preference hydration. Bootstrap retains the actual Connections entity for saved
+credential association, composes vault credentials and recording before terminal
+installation, and binds the existing Send+Sync authentication factory to that
+installation. `Booted` shares it with every workspace window. Authentication tabs
+retain explicit isolated transports and once-only completion; no transport or
+credential compatibility global participates. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).

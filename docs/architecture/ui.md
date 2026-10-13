@@ -206,3 +206,8 @@ commands (`offered`), for the command palette and the keymap page alike.
 `nocterm-keymap-ui` is the Keymap settings page, a guest page like the vault's:
 a searchable table that records new shortcuts through a keystroke interceptor
 (so even bound keys are captured) and edits only through `nocterm-keymap`.
+
+`TerminalStyle::with_settings` projects an explicitly supplied terminal section
+using the same design and theme rules as `current`. Terminal views use the section
+from their model's installed SettingsHandle; the compatibility `current` helper
+remains available to other UI callers.

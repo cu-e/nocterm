@@ -3,7 +3,7 @@ use crate::credentials::fake::FakeStore;
 use futures::executor::block_on;
 use gpui_kit::{AppContext as _, TestAppContext};
 use nocterm_session::{Auth, Reply, SecretRequest, Target};
-use std::{cell::RefCell, rc::Rc};
+use std::sync::Mutex;
 
 fn prompt(request: SecretRequest) -> Prompt {
     let (reply, _answer) = Reply::channel();
@@ -23,16 +23,28 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
         },
         "stored account password",
     );
+    let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+    let _driver = transport.queue(None, None);
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init_credentials(store.clone(), |_, _, _| Task::ready(Ok(())), cx);
+        let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            )
+            .with_credentials(provider),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             Terminal::new(
+                installed.clone(),
                 SessionSpec {
                     profile: None,
                     options: Default::default(),
@@ -136,26 +148,34 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAppContext) {
     let store = Arc::new(FakeStore::unlocked());
-    let saved = Rc::new(RefCell::new(Vec::new()));
+    let saved = Arc::new(Mutex::new(Vec::new()));
     let sink = saved.clone();
     let target = Target::new("test", "test-host", 22);
+    let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+    let _driver = transport.queue(None, None);
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
             SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init_credentials(
-            store.clone(),
-            move |_, id, _| {
-                sink.borrow_mut().push(id);
-                Task::ready(Ok(()))
-            },
+        let provider = crate::CredentialProvider::new(store.clone(), move |_, id, _| {
+            sink.lock().unwrap().push(id);
+            Task::ready(Ok(()))
+        });
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            )
+            .with_credentials(provider),
+            &ui,
             cx,
         );
         cx.new(|cx| {
             Terminal::new(
+                installed.clone(),
                 SessionSpec {
                     profile: None,
                     options: Default::default(),
@@ -209,7 +229,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
             "saved account password".to_owned()
         )]
     );
-    assert_eq!(saved.borrow().len(), 1);
+    assert_eq!(saved.lock().unwrap().len(), 1);
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
             terminal.handle_event(

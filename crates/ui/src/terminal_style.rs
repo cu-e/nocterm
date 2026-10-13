@@ -28,8 +28,11 @@ pub struct TerminalStyle {
 
 impl TerminalStyle {
     pub fn current(cx: &App) -> Self {
+        Self::with_settings(cx.setting::<crate::TerminalSettings>(), cx)
+    }
+
+    pub fn with_settings(settings: &crate::TerminalSettings, cx: &App) -> Self {
         let tokens = cx.design();
-        let settings = cx.setting::<crate::TerminalSettings>();
         let theme = cx.theme();
         let colors = &tokens.palette(theme.is_dark()).terminal;
 
@@ -85,6 +88,29 @@ pub(crate) fn color(hsla: Hsla) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui_kit::test]
+    fn explicit_terminal_style_uses_the_supplied_settings_section(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(
+                crate::DesignTokens::builtin(),
+                crate::SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+            let supplied = crate::TerminalSettings {
+                font_size: Some(21.),
+                show_line_numbers: true,
+                ..Default::default()
+            };
+            let explicit = TerminalStyle::with_settings(&supplied, cx);
+            assert_eq!(explicit.font_size, px(21.));
+            assert!(explicit.show_line_numbers);
+            assert_ne!(explicit.font_size, TerminalStyle::current(cx).font_size);
+        });
+    }
 
     #[test]
     fn colours_survive_the_round_trip_through_gpui() {

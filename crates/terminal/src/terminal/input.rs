@@ -2,7 +2,6 @@
 use crate::file_drop::FileDropError;
 
 use super::{Terminal, TerminalEvent};
-use crate::credentials::ActiveCredentials;
 use gpui_kit::{App, Context};
 use nocterm_session::{HostKeyDecision, Prompt, Secret, SecretRequest};
 use nocterm_vt::encode_paste;
@@ -411,7 +410,9 @@ impl Terminal {
         self.credentials.clear();
     }
     pub fn vault_unlocked(&self, cx: &App) -> bool {
-        cx.try_global::<ActiveCredentials>()
+        let _ = cx;
+        self.deps
+            .credentials()
             .is_some_and(|provider| provider.store().is_available())
     }
     /// Whether unlocking the vault would answer the current prompt.
@@ -447,7 +448,7 @@ impl Terminal {
         let Some(id) = self.spec().credential else {
             return;
         };
-        let Some(provider) = cx.try_global::<ActiveCredentials>() else {
+        let Some(provider) = self.deps.credentials() else {
             return;
         };
         if !provider.store().is_available() {
@@ -535,7 +536,7 @@ impl Terminal {
         let Some((request, secret)) = self.credentials.take_candidate() else {
             return;
         };
-        let Some(provider) = cx.try_global::<ActiveCredentials>() else {
+        let Some(provider) = self.deps.credentials() else {
             return;
         };
         let saved = provider.association();

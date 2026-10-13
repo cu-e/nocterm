@@ -16,9 +16,17 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
         );
         let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
         transport.enqueue_session(session);
-        crate::init(transport, &ui, cx);
+        let installed = crate::install(
+            crate::Deps::new(
+                transport,
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             let mut terminal = Terminal::new(
+                installed.clone(),
                 SessionSpec {
                     profile: None,
                     options: Default::default(),
@@ -73,7 +81,6 @@ fn setup_recording_test(
         );
         let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
         transport.enqueue_session(session.clone());
-        crate::init(transport, &ui, cx);
         let log_factory = std::sync::Arc::new(
             nocterm_session::testing::recording::ScriptedOutputLogFactory::default(),
         );
@@ -99,9 +106,18 @@ fn setup_recording_test(
             ),
         );
         let registry = std::sync::Arc::new(nocterm_store::RecordingRegistry::new(log_factory));
-        crate::init_recording(registry, cx);
+        let installed = crate::install(
+            crate::Deps::new(
+                transport,
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            )
+            .with_recording(registry),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             Terminal::new(
+                installed.clone(),
                 SessionSpec {
                     profile: None,
                     options: Default::default(),

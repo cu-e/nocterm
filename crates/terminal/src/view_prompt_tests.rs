@@ -37,10 +37,18 @@ fn superseded_secret_recreates_masked_empty_field_and_clears_old_text(cx: &mut T
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init(transport.clone(), &ui, cx);
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        );
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let view = cx.new(|cx| {
                 TerminalView::new(
+                    installed.clone(),
                     SessionSpec {
                         profile: None,
                         options: Default::default(),
@@ -146,10 +154,18 @@ fn host_fixture(
             nocterm_ui::SettingsStore::in_memory(Default::default()),
             cx,
         );
-        crate::init(transport.clone(), &ui, cx);
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            &ui,
+            cx,
+        );
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 TerminalView::new(
+                    installed.clone(),
                     SessionSpec {
                         profile: None,
                         options: Default::default(),

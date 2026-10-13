@@ -343,7 +343,7 @@ fn capitalize(text: &str) -> String {
 impl Render for TerminalView {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = TerminalStyle::current(cx);
+        let style = self.terminal_style(cx);
         self.sync_palette(&style, cx);
         let background = nocterm_ui::hsla(style.background);
 

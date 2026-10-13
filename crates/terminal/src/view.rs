@@ -20,7 +20,7 @@ use gpui_kit::{
     rems,
 };
 use nocterm_session::{CloseReason, ConnectStage, HostKeyDecision, Prompt, Secret, SecretRequest};
-use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _, TerminalStyle};
+use nocterm_ui::{ActiveDesign as _, IconName, TerminalStyle};
 use nocterm_vt::{
     CellPoint, Frame, KeyPress, Modifiers, MouseEvent, MouseEventKind, Palette, Rgb, Scroll,
     SearchDirection, SelectionKind, encode_focus, encode_key, encode_mouse, encode_paste,
@@ -79,17 +79,23 @@ struct FindField {
 impl EventEmitter<ItemEvent> for TerminalView {}
 
 impl TerminalView {
-    pub fn new(spec: SessionSpec, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let terminal = cx.new(|cx| Terminal::new(spec, cx));
+    pub fn new(
+        deps: crate::Installed,
+        spec: SessionSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal = cx.new(|cx| Terminal::new(deps, spec, cx));
         Self::with_terminal(terminal, window, cx)
     }
 
-    pub fn new_local(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let terminal = cx.new(Terminal::new_local);
+    pub fn new_local(deps: crate::Installed, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let terminal = cx.new(|cx| Terminal::new_local(deps, cx));
         Self::with_terminal(terminal, window, cx)
     }
 
     pub fn new_local_command(
+        deps: crate::Installed,
         launch: nocterm_session::ShellLaunch,
         title: String,
         transport: std::sync::Arc<dyn nocterm_session::Transport>,
@@ -97,8 +103,9 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let terminal = cx
-            .new(|cx| Terminal::new_local_command(launch, title.into(), transport, completion, cx));
+        let terminal = cx.new(|cx| {
+            Terminal::new_local_command(deps, launch, title.into(), transport, completion, cx)
+        });
         Self::with_terminal(terminal, window, cx)
     }
 
@@ -108,18 +115,28 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let settings = terminal.read(cx).installed().settings().clone();
+        let weak = cx.entity().downgrade();
 
         let subscriptions = vec![
             cx.subscribe_in(&terminal, window, Self::on_terminal_event),
             cx.observe_keystrokes(Self::on_keyboard_binding),
-            cx.observe_global::<nocterm_ui::SettingsStore>(|this, cx| {
-                if !cx
-                    .setting::<nocterm_ui::TerminalSettings>()
-                    .semantic_highlighting
-                {
-                    this.cache.clear_highlights();
+            settings.observe(cx, move |cx| {
+                if let Some(view) = weak.upgrade() {
+                    view.update(cx, |this, cx| {
+                        if !this
+                            .terminal
+                            .read(cx)
+                            .installed()
+                            .settings()
+                            .setting::<nocterm_ui::TerminalSettings>(cx)
+                            .semantic_highlighting
+                        {
+                            this.cache.clear_highlights();
+                        }
+                        cx.notify();
+                    });
                 }
-                cx.notify();
             }),
             cx.on_focus_in(&focus_handle, window, |this, _, cx| {
                 this.focus_changed(true, cx)
@@ -158,6 +175,17 @@ impl TerminalView {
 
     pub(crate) fn painted_geometry(&self) -> Option<Geometry> {
         self.cache.geometry()
+    }
+
+    pub(crate) fn terminal_style(&self, cx: &App) -> TerminalStyle {
+        TerminalStyle::with_settings(
+            self.terminal
+                .read(cx)
+                .installed()
+                .settings()
+                .setting::<nocterm_ui::TerminalSettings>(cx),
+            cx,
+        )
     }
 
     pub(crate) fn paint_element(
@@ -207,7 +235,13 @@ impl TerminalView {
             TerminalEvent::ClipboardWrite(text) => {
                 if self.focus_handle.is_focused(window)
                     && cx.active_window() == Some(window.window_handle())
-                    && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                    && self
+                        .terminal
+                        .read(cx)
+                        .installed()
+                        .settings()
+                        .setting::<nocterm_ui::TerminalSettings>(cx)
+                        .clipboard_write
                         == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                 {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));

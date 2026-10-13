@@ -185,13 +185,21 @@ mod tests {
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
-            nocterm_ui::init(
+            let ui = nocterm_ui::init(
                 nocterm_ui::DesignTokens::builtin(),
                 nocterm_ui::SettingsStore::in_memory(Default::default()),
                 cx,
             );
+            let installed = crate::install(
+                crate::Deps::new(
+                    std::sync::Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                    crate::LocalSessions::disabled("/bin/bash".into()),
+                ),
+                &ui,
+                cx,
+            );
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| crate::TerminalView::new(spec.clone(), window, cx))
+                cx.new(|cx| crate::TerminalView::new(installed.clone(), spec.clone(), window, cx))
             })
             .unwrap()
         });
@@ -266,9 +274,9 @@ mod tests {
         })
         .unwrap();
         cx.read(|cx| {
-            let store = cx.global::<nocterm_ui::SettingsStore>();
+            let settings = terminal.read(cx).installed().settings().clone();
             assert_eq!(
-                store.revision(cx),
+                settings.revision(cx),
                 0,
                 "applying a session setting saved nothing"
             );

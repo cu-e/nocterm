@@ -359,3 +359,13 @@ identities with the feature OS glyph/color catalog. Release parsing and remote
 read/close work belong to domain rules and the native adapter. Probe-once and
 manual-icon precedence remain feature policy; fact publication race guards and
 compatibility globals remain existing lifecycle debt.
+
+Terminal models retain immutable `Installed` dependencies: remote transport,
+optional local-session factory, supplied default shell, optional credential
+provider and recording registry, and the actual `UiReady` settings handle.
+`install` requires complete providers; `register` installs a private factory in
+each workspace. Reconnects, background tabs and isolated command tabs use their
+original installation. Missing local providers produce the existing unavailable
+session result; explicit command and program transports take precedence. Model
+and view subscriptions observe published settings through weak entity handles,
+without discovering a settings or transport global. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).

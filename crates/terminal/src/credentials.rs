@@ -1,12 +1,13 @@
-//! Prompts answered from, and remembered in, a [`CredentialStore`].
-use gpui_kit::{App, Global, Task};
-use nocterm_session::{CredentialId, CredentialStore, Secret, SecretRequest};
-use nocterm_workspace::SessionSpec;
-use std::{rc::Rc, sync::Arc};
+//! Prompts answered from, and remembered in, a [`nocterm_session::CredentialStore`].
+use gpui_kit::Task;
+use nocterm_session::{Secret, SecretRequest};
+use std::sync::Arc;
 
 /// The credential is saved, but attaching its ID to connection history failed.
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialAssociationError {
+    #[error("connection history is unavailable for credential association")]
+    Unavailable,
     #[error("could not associate the saved credential: {0}")]
     Binding(#[source] Arc<dyn std::error::Error + Send + Sync>),
 }
@@ -14,41 +15,6 @@ impl CredentialAssociationError {
     pub fn binding(error: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Binding(Arc::new(error))
     }
-}
-
-pub(crate) type Saved = Rc<
-    dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), CredentialAssociationError>>,
->;
-pub(crate) struct ActiveCredentials {
-    store: Arc<dyn CredentialStore>,
-    saved: Saved,
-}
-impl Global for ActiveCredentials {}
-impl ActiveCredentials {
-    pub(crate) fn store(&self) -> &Arc<dyn CredentialStore> {
-        &self.store
-    }
-    pub(crate) fn association(&self) -> Saved {
-        self.saved.clone()
-    }
-}
-
-/// Composition-root callback associates an encrypted credential ID with saved
-/// connections/recent targets. It receives no plaintext secret.
-pub fn init_credentials(
-    store: Arc<dyn CredentialStore>,
-    on_saved: impl Fn(
-        &SessionSpec,
-        CredentialId,
-        &mut App,
-    ) -> Task<Result<(), CredentialAssociationError>>
-    + 'static,
-    cx: &mut App,
-) {
-    cx.set_global(ActiveCredentials {
-        store,
-        saved: Rc::new(on_saved),
-    });
 }
 
 #[derive(Default)]

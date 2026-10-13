@@ -17,7 +17,7 @@ impl Terminal {
 
     /// A tab running `spec`'s program over its host's own connection, or on
     /// this computer when the host has no session.
-    pub fn new_program(spec: ProgramSpec, cx: &mut Context<Self>) -> Self {
+    pub fn new_program(deps: crate::Installed, spec: ProgramSpec, cx: &mut Context<Self>) -> Self {
         let ProgramSpec {
             title,
             host,
@@ -46,7 +46,7 @@ impl Terminal {
             launch: Some(launch),
             credential: None,
         };
-        let mut terminal = Self::new_kind(spec, session.is_none(), Some(transport), None, cx);
+        let mut terminal = Self::new_kind(deps, spec, session.is_none(), Some(transport), None, cx);
         terminal.input.set_shell_syntax(shell_syntax);
         terminal
     }
