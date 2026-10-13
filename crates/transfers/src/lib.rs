@@ -6,6 +6,7 @@
 //! Settings section: none. Globals: none.
 //! Invariants: requests are bounded before admission; acknowledged bytes advance
 //! progress; completion requires discovery and workers to finish.
+//! Runtime diagnostics retain the original concrete cause through core shared error ownership.
 mod collision;
 mod limits;
 mod progress;

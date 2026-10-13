@@ -145,7 +145,7 @@ impl TransferRuntime {
             .checked_add(1)
             .ok_or(TransferError::SequenceExhausted)?;
         let mut bytes = [0; 16];
-        getrandom::fill(&mut bytes).map_err(|error| TransferError::Runtime(Arc::new(error)))?;
+        getrandom::fill(&mut bytes).map_err(TransferError::runtime)?;
         let id = TransferId::from_bytes(bytes)?;
         let batch = Arc::new(Batch::new(
             sequence,

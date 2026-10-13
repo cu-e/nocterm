@@ -1,4 +1,5 @@
 use crate::{LimitKind, Request, StreamLimits, TransferId};
+use nocterm_core::SharedCause;
 use nocterm_session::{
     FsError, Target,
     local_fs::{DurabilityWarning, LocalFsError},
@@ -102,8 +103,15 @@ pub enum TransferCause {
     #[error("File was published, but directory durability could not be confirmed: {0}")]
     Durability(#[source] DurabilityWarning),
     #[error("Transfer runtime failed: {0}")]
-    Runtime(#[source] Arc<dyn Error + Send + Sync>),
+    Runtime(#[source] SharedCause),
 }
+impl TransferCause {
+    /// Preserve the original runtime error and its concrete source classification.
+    pub fn runtime(error: impl Error + Send + Sync + 'static) -> Self {
+        Self::Runtime(SharedCause::new(error))
+    }
+}
+
 impl From<LocalFsError> for TransferCause {
     fn from(error: LocalFsError) -> Self {
         match error {

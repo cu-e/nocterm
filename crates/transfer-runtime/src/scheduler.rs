@@ -154,7 +154,7 @@ async fn run_batch(work: Work) {
         work.fail(
             None,
             TransferOperation::Discover,
-            TransferCause::Runtime(Arc::new(error)),
+            TransferCause::runtime(error),
         );
     }
 }

@@ -141,7 +141,10 @@ checked owners. Progress advances only for acknowledged bytes; terminal completi
 requires discovery and worker cleanup. Cancellation does not prematurely evict live
 batches. The optional dev-only `test-support` feature exposes an explicitly driven
 port fake, without scheduling or streaming. Execution belongs to the transfer
-adapter ([ADR 0018](../adr/0018-transfer-runtime-capabilities.md)).
+adapter ([ADR 0018](../adr/0018-transfer-runtime-capabilities.md)). Runtime errors
+use core shared cause ownership through domain constructors, so standard source
+traversal retains their original concrete classification. Snapshot clones retain
+the same diagnostic identity; adapter code gains no core dependency for construction.
 
 ## Vault
 

@@ -1,5 +1,6 @@
 use crate::{DownloadRequest, Progress, UploadRequest};
 use futures::future::BoxFuture;
+use nocterm_core::SharedCause;
 use nocterm_session::RemoteFs;
 use std::{error::Error, fmt, sync::Arc};
 
@@ -51,10 +52,17 @@ pub enum TransferError {
     #[error("Transfer admission sequence exhausted.")]
     SequenceExhausted,
     #[error("Transfer runtime failed: {0}")]
-    Runtime(#[source] Arc<dyn Error + Send + Sync>),
+    Runtime(#[source] SharedCause),
     #[error("Invalid transfer limit: {0}")]
     InvalidLimit(&'static str),
 }
+impl TransferError {
+    /// Preserve the original runtime error and its concrete source classification.
+    pub fn runtime(error: impl Error + Send + Sync + 'static) -> Self {
+        Self::Runtime(SharedCause::new(error))
+    }
+}
+
 pub trait TransferService: Send + Sync + 'static {
     fn enqueue(&self, request: UploadRequest) -> Result<TransferId, TransferError>;
     fn enqueue_download(&self, request: DownloadRequest) -> Result<TransferId, TransferError>;

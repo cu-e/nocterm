@@ -29,7 +29,7 @@ impl BlockingDispatcher {
             .clone()
             .acquire_owned()
             .await
-            .map_err(|error| TransferCause::Runtime(Arc::new(error)))?;
+            .map_err(TransferCause::runtime)?;
         cancel.check()?;
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -37,7 +37,7 @@ impl BlockingDispatcher {
             operation()
         })
         .await
-        .map_err(|error| TransferCause::Runtime(Arc::new(error)))?
+        .map_err(TransferCause::runtime)?
         .map_err(Into::into)
     }
     /// Cleanup also runs off executor threads, even after cancellation.

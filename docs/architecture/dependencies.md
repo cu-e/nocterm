@@ -41,7 +41,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-themes` | domain | `nocterm-design` | Pure Zed theme formats, palette mapping and catalog contracts. |
 | `nocterm-themes-registry` | adapter | `nocterm-core`, `nocterm-themes` | Bounded native theme discovery, registry and archive installation. |
 | `nocterm-transfer-runtime` | adapter | `nocterm-session`, `nocterm-transfers` | Bounded streaming transfers over injected filesystem capabilities. |
-| `nocterm-transfers` | domain | `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
+| `nocterm-transfers` | domain | `nocterm-core`, `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
 | `nocterm-ui` | ui | `nocterm-ai`, `nocterm-core`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-theme-service`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session` | Portable encrypted credential rules and lifecycle contracts. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
@@ -177,6 +177,7 @@ graph TD
     nocterm_themes_registry --> nocterm_themes
     nocterm_transfer_runtime --> nocterm_session
     nocterm_transfer_runtime --> nocterm_transfers
+    nocterm_transfers --> nocterm_core
     nocterm_transfers --> nocterm_session
     nocterm_ui --> nocterm_ai
     nocterm_ui --> nocterm_core

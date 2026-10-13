@@ -4,7 +4,8 @@ use nocterm_session::{
     testing::{FsOperation, Gate},
 };
 use nocterm_transfers::{
-    CollisionPolicy, TransferError, TransferService, TransferState, UploadRequest,
+    CollisionPolicy, TransferCause, TransferError, TransferOperation, TransferPath,
+    TransferService, TransferState, UploadRequest,
 };
 use std::sync::Arc;
 
@@ -154,6 +155,20 @@ fn failed_ack_is_typed_and_retry_keeps_target_destination_and_new_remote_port() 
     assert_eq!(failed.state, TransferState::Failed);
     assert_eq!(failed.sent_bytes, 0);
     assert_eq!(failed.errors.len(), 1);
+    let issue = &failed.errors[0];
+    assert_eq!(issue.operation(), TransferOperation::Write);
+    assert_eq!(
+        issue.path(),
+        Some(&TransferPath::Remote("/dest/file".into()))
+    );
+    assert!(
+        matches!(issue.cause(), TransferCause::Remote(FsError::PermissionDenied { path }) if path == "/dest/file")
+    );
+    assert_eq!(
+        failed.clone().errors[0],
+        *issue,
+        "snapshot cloning preserves the injected diagnostic identity"
+    );
     assert!(fixture.remote.bytes("/dest/file").is_err());
     let replacement = Arc::new(nocterm_session::testing::InMemoryFs::default());
     futures::executor::block_on(replacement.create_dir("/dest")).unwrap();

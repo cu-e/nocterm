@@ -66,7 +66,7 @@ impl FakeTransfers {
         let mut recordings = self
             .recordings
             .lock()
-            .map_err(|_| TransferError::Runtime(Arc::new(FakeTransferError::Poisoned)))?;
+            .map_err(|_| TransferError::runtime(FakeTransferError::Poisoned))?;
         if recordings.stopping {
             return Err(TransferError::ShuttingDown);
         }
@@ -116,7 +116,7 @@ impl TransferService for FakeTransfers {
         ] {
             self.advance(id, event).map_err(|error| match error {
                 FakeTransferError::Missing => TransferError::Missing,
-                error => TransferError::Runtime(Arc::new(error)),
+                error => TransferError::runtime(error),
             })?;
         }
         Ok(())
@@ -126,7 +126,7 @@ impl TransferService for FakeTransfers {
             let recordings = self
                 .recordings
                 .lock()
-                .map_err(|_| TransferError::Runtime(Arc::new(FakeTransferError::Poisoned)))?;
+                .map_err(|_| TransferError::runtime(FakeTransferError::Poisoned))?;
             let entry = recordings.entries.get(&id).ok_or(TransferError::Missing)?;
             if !entry.tracker.snapshot().state.finished() {
                 return Err(TransferError::NotRetryable);
@@ -139,7 +139,7 @@ impl TransferService for FakeTransfers {
         let result = self
             .recordings
             .lock()
-            .map_err(|_| TransferError::Runtime(Arc::new(FakeTransferError::Poisoned)))
+            .map_err(|_| TransferError::runtime(FakeTransferError::Poisoned))
             .map(|mut recordings| {
                 recordings.stopping = true;
                 for entry in recordings.entries.values_mut() {

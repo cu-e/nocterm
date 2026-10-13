@@ -1,7 +1,7 @@
 //! Pure transfer admission and progress rules, independent of any executor.
 use nocterm_session::{Target, testing::InMemoryFs};
 use nocterm_transfers::*;
-use std::{path::PathBuf, sync::Arc};
+use std::{error::Error as _, io, path::PathBuf, sync::Arc};
 
 fn request() -> Request {
     Request::Upload(UploadRequest {
@@ -81,4 +81,67 @@ fn production_limit_constructors_cannot_raise_caps() {
     assert!(DiscoveryLimits::with_walk_bounds(257, 1_000_000, 100_000, 8 * 1024 * 1024).is_err());
     assert!(QueueLimits::new(1, 1, 1, 1).is_ok());
     assert!(StreamLimits::new(1, 1, 1).is_ok());
+}
+
+#[test]
+fn runtime_admission_error_clones_share_the_original_nonclone_native_leaf() {
+    let error = TransferError::runtime(io::Error::new(
+        io::ErrorKind::NotFound,
+        "executor unavailable",
+    ));
+    let clone = error.clone();
+    assert!(matches!(&error, TransferError::Runtime(_)));
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    let copied = clone
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert!(std::ptr::eq(original, copied));
+    assert_eq!(original.kind(), io::ErrorKind::NotFound);
+    assert_eq!(
+        clone.to_string(),
+        "Transfer runtime failed: executor unavailable"
+    );
+}
+#[test]
+fn runtime_admission_retains_original_wrapper_before_its_deeper_cause() {
+    let backend = nocterm_core::PersistError::Io {
+        path: "transfer-state".into(),
+        source: io::Error::new(io::ErrorKind::StorageFull, "admission unavailable"),
+    };
+    let description = backend.to_string();
+    let error = TransferError::runtime(backend);
+    let clone = error.clone();
+    let original = error.source().unwrap().source().unwrap();
+    assert!(
+        original
+            .downcast_ref::<nocterm_core::PersistError>()
+            .is_some()
+    );
+    assert!(std::ptr::eq(
+        original,
+        clone.source().unwrap().source().unwrap()
+    ));
+    assert_eq!(
+        original
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .unwrap()
+            .kind(),
+        io::ErrorKind::StorageFull
+    );
+    assert_eq!(
+        error.to_string(),
+        format!("Transfer runtime failed: {description}")
+    );
 }

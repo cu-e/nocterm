@@ -1,7 +1,7 @@
 //! Pure transfer admission and progress rules, independent of any executor.
 use nocterm_session::{Target, testing::InMemoryFs};
 use nocterm_transfers::*;
-use std::{path::PathBuf, sync::Arc};
+use std::{error::Error as _, io, path::PathBuf, sync::Arc};
 
 fn request() -> Request {
     Request::Upload(UploadRequest {
@@ -142,4 +142,106 @@ fn directory_acknowledgements_remain_distinct_from_files_after_every_terminal_ou
             "terminal progress is immutable"
         );
     }
+}
+
+#[test]
+fn runtime_failure_snapshot_keeps_native_leaf_and_shared_notice_identity() {
+    let cause = TransferCause::runtime(io::Error::new(
+        io::ErrorKind::StorageFull,
+        "worker storage full",
+    ));
+    let anchor = cause.clone();
+    let original = anchor
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    let issue = TransferIssue::new(
+        Some(TransferPath::Remote("/dest/file".into())),
+        TransferOperation::Runtime,
+        cause,
+    );
+    let mut progress = tracker();
+    progress.apply(TransferEvent::DiscoveredFile { bytes: 32 });
+    progress.apply(TransferEvent::Acknowledged { bytes: 8 });
+    progress.apply(TransferEvent::FileFailed(issue.clone()));
+    progress.apply(TransferEvent::DiscoveryComplete);
+    progress.apply(TransferEvent::WorkersDrained);
+    let snapshot = progress.snapshot();
+    let cloned = snapshot.clone();
+    assert_eq!(snapshot.state, TransferState::Failed);
+    assert_eq!(snapshot.sent_bytes, 8);
+    assert_eq!(snapshot.total_bytes, 32);
+    assert_eq!(snapshot.failed_files, 1);
+    assert_eq!(snapshot.errors[0], issue);
+    assert_eq!(cloned.errors[0], issue);
+    assert_eq!(
+        issue.path(),
+        Some(&TransferPath::Remote("/dest/file".into()))
+    );
+    let cause = snapshot.errors[0].source().unwrap();
+    assert!(cause.downcast_ref::<TransferCause>().is_some());
+    let leaf = cause
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert!(std::ptr::eq(original, leaf));
+    assert_eq!(leaf.kind(), io::ErrorKind::StorageFull);
+    assert_eq!(
+        issue.to_string(),
+        "/dest/file: runtime: Transfer runtime failed: worker storage full"
+    );
+    progress.apply(TransferEvent::Acknowledged { bytes: 7 });
+    assert_eq!(
+        progress.snapshot(),
+        snapshot,
+        "terminal accounting is unchanged"
+    );
+}
+#[test]
+fn runtime_issue_retains_concrete_wrapper_before_its_native_child() {
+    let backend = nocterm_core::PersistError::Io {
+        path: "transfer-state".into(),
+        source: io::Error::new(io::ErrorKind::PermissionDenied, "worker refused"),
+    };
+    let description = backend.to_string();
+    let cause = TransferCause::runtime(backend);
+    let cloned = cause.clone();
+    let original = cause.source().unwrap().source().unwrap();
+    assert!(
+        original
+            .downcast_ref::<nocterm_core::PersistError>()
+            .is_some()
+    );
+    assert!(std::ptr::eq(
+        original,
+        cloned.source().unwrap().source().unwrap()
+    ));
+    let native = original
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert_eq!(native.kind(), io::ErrorKind::PermissionDenied);
+    let issue = TransferIssue::new(None, TransferOperation::Runtime, cloned);
+    assert_eq!(
+        issue.to_string(),
+        format!("runtime: Transfer runtime failed: {description}")
+    );
+    assert!(
+        issue
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<nocterm_core::PersistError>()
+            .is_some()
+    );
 }

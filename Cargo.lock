@@ -5461,6 +5461,7 @@ name = "nocterm-transfers"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "nocterm-core",
  "nocterm-session",
  "thiserror 2.0.21",
 ]
