@@ -33,3 +33,17 @@ settings reference does not list a section.
 
 `nocterm-design` owns typed visual tokens and theme overrides. These foundation
 crates have no UI or transport dependencies.
+
+## Shared concrete error causes
+
+`nocterm-core::SharedError<E>` retains one immutable Arc of a concrete error.
+Its manual Clone shares that allocation without requiring E to implement Clone.
+SharedCause erases the static type while preserving immutable downcasts. Both
+holders expose the original error as their next `Error::source()` frame, followed
+by that error's own causes; Display delegates to the original error. They perform
+no I/O, serialization or text conversion and expose no mutable access.
+
+Store's Edit and Backend causes use SharedCause, preserving semantic checked-edit
+conversion and backend diagnostics. AI's ImageCodecCause is an alias of the same
+holder. Other existing Arc source boundaries retain their current representation.
+See [ADR0046](../adr/0046-shared-concrete-error-causes.md).

@@ -75,7 +75,10 @@ async fn concurrent_stale_edits_rebase_on_persisted_state(cx: &mut gpui_kit::Tes
     });
     let two = model.update(cx, |model, cx| model.save(second, Some(original), cx));
     one.await.unwrap();
-    assert!(two.await.is_err());
+    assert!(matches!(
+        two.await,
+        Err(SnippetsError::Library(LibraryError::SaveConflict(_)))
+    ));
     assert_eq!(
         model.read_with(cx, |model, cx| model.library(cx).snippets.clone()),
         [first]

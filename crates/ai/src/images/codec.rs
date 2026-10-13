@@ -22,31 +22,8 @@ impl ImageFormat {
         }
     }
 }
-/// Cloneable native cause whose public source chain reaches the original error.
-#[derive(Clone, Debug)]
-pub struct ImageCodecCause {
-    inner: Arc<dyn std::error::Error + Send + Sync>,
-}
-impl ImageCodecCause {
-    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self {
-            inner: Arc::new(error),
-        }
-    }
-    pub fn downcast_ref<E: std::error::Error + 'static>(&self) -> Option<&E> {
-        self.inner.downcast_ref()
-    }
-}
-impl std::fmt::Display for ImageCodecCause {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.inner.as_ref(), f)
-    }
-}
-impl std::error::Error for ImageCodecCause {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.inner.as_ref())
-    }
-}
+/// Shared native cause whose source chain reaches the original concrete error.
+pub use nocterm_core::SharedCause as ImageCodecCause;
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ImageCodecError {
     #[error("Image source is empty or exceeds 5 MiB")]

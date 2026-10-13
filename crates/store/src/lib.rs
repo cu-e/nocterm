@@ -8,6 +8,7 @@
 //! Invariants: final work is immutable before App teardown; one disk gate orders
 //! normal and final writes; durable state advances only after successful writes;
 //! ready-key capacity bounds dispatch tokens and never drops accepted dirty keys.
+//! Edit/backend causes retain their concrete errors through core shared ownership.
 
 mod append;
 mod captured;

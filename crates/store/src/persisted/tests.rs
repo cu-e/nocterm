@@ -1,5 +1,6 @@
 use super::*;
 use gpui::{AppContext as _, TestAppContext};
+use std::error::Error as _;
 
 fn recording(writes: &Arc<Mutex<Vec<i32>>>) -> SnapshotWriter<i32> {
     let writes = writes.clone();
@@ -80,9 +81,10 @@ fn failed_optimistic_write_keeps_desired_and_retry_advances_durable(cx: &mut Tes
         let fail = *count == 1;
         Box::pin(async move {
             if fail {
-                Err(StoreError::backend(std::io::Error::from(
-                    std::io::ErrorKind::StorageFull,
-                )))
+                Err(StoreError::backend(nocterm_core::PersistError::Io {
+                    path: "state.toml".into(),
+                    source: std::io::Error::from(std::io::ErrorKind::StorageFull),
+                }))
             } else {
                 Ok(())
             }
@@ -92,7 +94,22 @@ fn failed_optimistic_write_keeps_desired_and_retry_advances_durable(cx: &mut Tes
     let receipt =
         cx.update(|cx| entity.update(cx, |state, cx| state.update(|v| *v = 1, cx).unwrap()));
     cx.run_until_parked();
-    assert!(futures::executor::block_on(receipt.wait()).is_err());
+    let error = futures::executor::block_on(receipt.wait()).unwrap_err();
+    let backend = error.source().unwrap().source().unwrap();
+    assert!(
+        backend
+            .downcast_ref::<nocterm_core::PersistError>()
+            .is_some()
+    );
+    assert_eq!(
+        backend
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::StorageFull
+    );
     cx.update(|cx| {
         assert_eq!(*entity.read(cx).visible(), 1);
         assert_eq!(*entity.read(cx).durable(), 0);
@@ -403,7 +420,13 @@ async fn rejected_checked_edits_discard_partial_changes_without_disk_work(cx: &m
             )
             .unwrap()
     });
-    assert!(matches!(rejected.wait().await, Err(StoreError::Edit(_))));
+    let error = rejected.wait().await.unwrap_err();
+    assert!(matches!(error, StoreError::Edit(_)));
+    let original = error.source().unwrap().source().unwrap();
+    assert_eq!(
+        original.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert!(writes.lock().unwrap().is_empty());
     let accepted = entity.update(cx, |state, cx| {
         state.update(|value| *value += 1, cx).unwrap()
@@ -442,6 +465,49 @@ async fn shutdown_rejected_checked_edits_never_write_the_original_snapshot(
     });
     let work = entity.update(cx, |state, _| state.capture_shutdown());
     cx.background_executor.spawn(work).await.unwrap();
-    assert!(matches!(rejected.wait().await, Err(StoreError::Edit(_))));
+    let error = rejected.wait().await.unwrap_err();
+    assert!(matches!(error, StoreError::Edit(_)));
+    let original = error.source().unwrap().source().unwrap();
+    assert_eq!(
+        original.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert_eq!(*calls.lock().unwrap(), 0);
+}
+
+#[gpui::test]
+async fn captured_backend_failure_retains_concrete_and_native_causes(cx: &mut TestAppContext) {
+    let writer: SnapshotWriter<i32> = Arc::new(|_| {
+        Box::pin(async {
+            Err(StoreError::backend(nocterm_core::PersistError::Io {
+                path: "captured.toml".into(),
+                source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            }))
+        })
+    });
+    let entity = cx.new(|_| Persisted::new(0, writer, Publication::Durable, 4));
+    let (receipt, work) = entity.update(cx, |state, cx| {
+        let receipt = state.update(|value| *value = 1, cx).unwrap();
+        (receipt, state.capture_shutdown())
+    });
+    drop(entity);
+    let error = cx.background_executor.spawn(work).await.unwrap_err();
+    let receipt_error = receipt.wait().await.unwrap_err();
+    let backend = error.source().unwrap().source().unwrap();
+    assert!(
+        backend
+            .downcast_ref::<nocterm_core::PersistError>()
+            .is_some()
+    );
+    let receipt_backend = receipt_error.source().unwrap().source().unwrap();
+    assert!(std::ptr::eq(backend, receipt_backend));
+    assert_eq!(
+        backend
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
 }

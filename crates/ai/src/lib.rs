@@ -10,6 +10,7 @@
 //! workspace::WorkdirResolver, sandbox::SandboxProbe and
 //! images::{ImageInspector, ImageThumbnailer}.
 //! Image preflight and encoded admission are pure; native decoding is injected.
+//! ImageCodecCause reuses core shared causes without exposing a native codec type.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
 //! Snapshot framing and transcript timestamps accept supplied identity/time.

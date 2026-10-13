@@ -41,16 +41,17 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
         })
         .await
         .unwrap();
-    assert!(
-        entity
-            .update(cx, |c, cx| c.save_profile_checked(
-                original.clone(),
-                Some(original.clone()),
-                cx
-            ))
-            .await
-            .is_err()
-    );
+    let rejected = entity
+        .update(cx, |c, cx| {
+            c.save_profile_checked(original.clone(), Some(original.clone()), cx)
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        rejected,
+        ConnectionsError::Profile(nocterm_connections_model::profiles::ProfileError::Conflict(id))
+            if id == original.id
+    ));
     assert_eq!(
         entity.read_with(cx, |c, cx| c
             .profiles(cx)

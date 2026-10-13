@@ -43,3 +43,4 @@ acceptance; a later record supersedes an earlier one.
 | [0042](0042-terminal-installed-dependencies.md) | Terminal sessions retain explicit installed providers and settings across windows |
 | [0043](0043-retained-connections-installation.md) | Connection views retain explicit owners, settings and subscription lifetimes |
 | [0044](0044-private-thread-coordination.md) | Private chat owners return named coordination effects |
+| [0046](0046-shared-concrete-error-causes.md) | Shared error causes retain the original concrete error in standard source chains |
