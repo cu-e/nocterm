@@ -4,6 +4,12 @@ use nocterm_session::{LaunchValidationError, Target, TextEncodingError};
 /// An optional operation refused by a terminal provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TerminalCapability {
+    #[error("This terminal does not support reading text.")]
+    TextRead,
+    #[error("This terminal does not support text input.")]
+    Input,
+    #[error("This terminal does not support sign-in prompts.")]
+    SignIn,
     #[error("This terminal does not support structured execution.")]
     StructuredExecution,
     #[error("This session does not support structured execution.")]
@@ -19,6 +25,10 @@ pub enum TerminalCapability {
 /// A terminal operation refused before submission, or rejected by its queue.
 #[derive(Debug, thiserror::Error)]
 pub enum TerminalError {
+    #[error("The terminal connection changed before this operation.")]
+    StaleSession,
+    #[error("The sign-in prompt changed before this answer.")]
+    StalePrompt,
     #[error("Terminal was closed.")]
     Gone,
     #[error("Terminal is unavailable or waiting for authentication.")]

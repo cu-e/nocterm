@@ -1,15 +1,17 @@
 //! Resolve the exact user-focused terminal again at click time.
 use super::SnippetsPanel;
 use gpui_kit::{App, Context, EntityId, Window};
-use nocterm_workspace::{TerminalAccess, TerminalInfo, TerminalStatus};
+use nocterm_workspace::{TerminalInfo, TerminalStatus, UserTerminalPaste};
 use std::rc::Rc;
 pub(super) struct RunTarget {
     pub(super) info: TerminalInfo,
     id: EntityId,
-    access: Rc<dyn TerminalAccess>,
+    paste: Rc<dyn UserTerminalPaste>,
 }
 #[derive(Debug, thiserror::Error)]
 pub(super) enum TargetError {
+    #[error("{0}")]
+    Terminal(#[from] nocterm_workspace::TerminalError),
     #[error("Workspace was closed.")]
     WorkspaceClosed,
     #[error("Open and focus a terminal to run this snippet.")]
@@ -54,10 +56,22 @@ impl SnippetsPanel {
         if entry.bottom && !workspace.local_terminal_is_visible(cx) {
             return Err(TargetError::LocalTerminalHidden);
         }
-        let info = entry.access.info(cx).ok_or(TargetError::TerminalClosed)?;
+        let info = entry
+            .capabilities
+            .state()
+            .info(cx)
+            .ok_or(TargetError::TerminalClosed)?;
         Ok(RunTarget {
             id: entry.item,
-            access: entry.access,
+            paste: entry
+                .capabilities
+                .paste()
+                .cloned()
+                .ok_or(TargetError::Terminal(
+                    nocterm_workspace::TerminalError::Unsupported(
+                        nocterm_workspace::TerminalCapability::Snippets,
+                    ),
+                ))?,
             info,
         })
     }
@@ -70,7 +84,7 @@ impl SnippetsPanel {
             if !Self::ready(&target.info) {
                 return Err(RunError::NotReady);
             }
-            target.access.paste_snippet(text, true, cx)?;
+            target.paste.paste(target.info.expected, text, true, cx)?;
             let focused = self
                 .workspace
                 .update(cx, |workspace, cx| {

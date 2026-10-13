@@ -1,10 +1,9 @@
 //! Allowlisted access to existing terminals. No authentication or launch data
 //! reaches agents; only the user answers a sign-in prompt.
-use crate::{TerminalCapability, TerminalError};
+use crate::TerminalError;
 
 use std::{
     path::PathBuf,
-    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -12,7 +11,7 @@ use std::{
 };
 
 use gpui_kit::{App, EntityId, SharedString};
-use nocterm_session::{HostExec, Session, Target};
+use nocterm_session::{HostExec, Secret, Session, Target};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalStatus {
@@ -37,6 +36,7 @@ pub struct TerminalInfo {
     pub dirty_input: bool,
     pub alt_screen: bool,
     pub generation: u64,
+    pub expected: ExpectedSession,
     /// The secret the session asks for, which the user can type outside the
     /// terminal. Host key questions stay in the terminal.
     pub sign_in: Option<SignInPrompt>,
@@ -44,6 +44,7 @@ pub struct TerminalInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignInPrompt {
+    pub token: UserPromptToken,
     /// What is asked, for example "Password for root@example.com".
     pub label: SharedString,
     /// The previous answer was wrong.
@@ -97,55 +98,112 @@ impl Drop for LiveCommandLease {
     }
 }
 
-/// Weak access, checked again for each operation and after user approval.
-pub trait TerminalAccess: 'static {
+/// Reads current state; observation itself grants no session authority.
+pub trait TerminalState: 'static {
     fn info(&self, cx: &App) -> Option<TerminalInfo>;
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, TerminalError>;
-    /// Rejects disconnected/authentication states and reports queue rejection.
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), TerminalError>;
-    /// Adds command-specific busy, dirty-input and alternate-screen guards.
-    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), TerminalError>;
-    /// The executor of the current connected, authenticated session.
-    fn executor(&self, _cx: &App) -> Result<Arc<dyn HostExec>, TerminalError> {
-        Err(TerminalError::Unsupported(
-            TerminalCapability::StructuredExecution,
-        ))
-    }
-    /// Claims terminal-owned live input before submitting a command.
-    fn begin_live_command(
+}
+pub trait TerminalTextSource: 'static {
+    fn read(
         &self,
+        expected: ExpectedSession,
+        request: TextRequest,
+        cx: &App,
+    ) -> Result<TerminalText, TerminalError>;
+}
+pub trait TerminalInput: 'static {
+    fn send_text(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), TerminalError>;
+}
+pub trait LiveCommands: 'static {
+    fn begin(
+        &self,
+        expected: ExpectedSession,
         command: &str,
         cx: &mut App,
-    ) -> Result<LiveCommandLease, TerminalError> {
-        let _ = (command, cx);
-        Err(TerminalError::Unsupported(TerminalCapability::LiveCommands))
-    }
-    /// A direct user paste, optionally followed by Enter, through the terminal's
-    /// native paste protocol. This is separate from agent command execution and
-    /// works without shell integration. Unsupported terminal providers refuse it.
-    fn paste_snippet(
+    ) -> Result<LiveCommandLease, TerminalError>;
+}
+pub trait TerminalExecution: 'static {
+    fn executor(
         &self,
-        _text: &str,
-        _execute: bool,
-        _cx: &mut App,
-    ) -> Result<(), TerminalError> {
-        Err(TerminalError::Unsupported(TerminalCapability::Snippets))
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<Arc<dyn HostExec>, TerminalError>;
+}
+pub trait SignInPrompts: 'static {
+    fn pending(&self, cx: &App) -> Option<SignInPrompt>;
+    fn answer(
+        &self,
+        token: UserPromptToken,
+        answer: Secret,
+        cx: &mut App,
+    ) -> Result<(), TerminalError>;
+}
+pub trait RemoteReconnect: 'static {
+    fn reconnect(
+        &self,
+        expected: ExpectedSession,
+        cx: &mut App,
+    ) -> Result<ExpectedSession, TerminalError>;
+}
+pub trait UserTerminalPaste: 'static {
+    fn paste(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        execute: bool,
+        cx: &mut App,
+    ) -> Result<(), TerminalError>;
+}
+
+/// The original workspace Item and its particular connection, never a screen generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExpectedSession {
+    item: EntityId,
+    epoch: u64,
+}
+impl ExpectedSession {
+    pub fn new(item: EntityId, epoch: u64) -> Self {
+        Self { item, epoch }
     }
-    /// Answers [`TerminalInfo::sign_in`] with what the user typed. Never
-    /// exposed to agent tools.
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), TerminalError>;
-    /// Connects a remote session that has closed again, in place. Does
-    /// nothing while it is still connecting or connected; local shells and
-    /// one-off commands refuse.
-    fn reconnect(&self, _cx: &mut App) -> Result<(), TerminalError> {
-        Err(TerminalError::Unsupported(TerminalCapability::Reconnect))
+    pub fn item(self) -> EntityId {
+        self.item
+    }
+    pub fn epoch(self) -> u64 {
+        self.epoch
     }
 }
+/// Binds a user's secret answer to both the connection and the specific prompt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserPromptToken {
+    expected: ExpectedSession,
+    prompt_epoch: u64,
+}
+impl UserPromptToken {
+    pub fn new(expected: ExpectedSession, prompt_epoch: u64) -> Self {
+        Self {
+            expected,
+            prompt_epoch,
+        }
+    }
+    pub fn expected(self) -> ExpectedSession {
+        self.expected
+    }
+    pub fn prompt_epoch(self) -> u64 {
+        self.prompt_epoch
+    }
+}
+
+mod capabilities;
+pub use capabilities::TerminalCapabilities;
 
 #[derive(Clone)]
 pub struct TerminalEntry {
     pub item: EntityId,
-    pub access: Rc<dyn TerminalAccess>,
+    pub capabilities: TerminalCapabilities,
     pub title: SharedString,
     pub active: bool,
     pub bottom: bool,

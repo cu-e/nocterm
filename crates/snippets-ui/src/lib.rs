@@ -2,7 +2,7 @@
 //!
 //! Owns: library installation, editor/panel presentation and identity generation.
 //! Does not own: checked record rules or ordered background write orchestration.
-//! Ports used: SnapshotWriter, TerminalAccess. Ports provided: sidebar panel.
+//! Ports used: SnapshotWriter, UserTerminalPaste. Ports provided: sidebar panel.
 //! Settings section: none. Globals: GlobalLibrary (temporary compatibility).
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.

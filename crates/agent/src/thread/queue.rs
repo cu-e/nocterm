@@ -89,7 +89,7 @@ impl AgentThread {
                 Attachment::Terminal(id) => terminals
                     .iter()
                     .find(|entry| entry.item == *id)
-                    .and_then(|entry| entry.access.info(cx))
+                    .and_then(|entry| entry.capabilities.state().info(cx))
                     .map(|info| match info.profile {
                         Some(id) => SavedAttachment::Connection(id.to_string()),
                         None => SavedAttachment::LocalTerminal(info.title.to_string()),

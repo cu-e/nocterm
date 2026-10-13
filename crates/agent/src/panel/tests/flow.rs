@@ -460,7 +460,7 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
 fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    *f.access.profile.borrow_mut() = Some("saved-server".into());
+    *f.access.profile().borrow_mut() = Some("saved-server".into());
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);

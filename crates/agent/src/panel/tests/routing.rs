@@ -151,7 +151,7 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     cx.run_until_parked();
     let answer = response.now_or_never().unwrap().unwrap().unwrap();
     assert_eq!(answer["completion"], "prompt_returned");
-    assert_eq!(f.access.sent.borrow().as_slice(), ["uptime"]);
+    assert_eq!(f.access.sent().borrow().as_slice(), ["uptime"]);
 }
 
 #[gpui_kit::test]
@@ -191,5 +191,5 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
         error.message(),
         "Terminal was detached or chat is unavailable. Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
     );
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }

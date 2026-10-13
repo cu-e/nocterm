@@ -17,8 +17,9 @@ use nocterm_ai::{
 
 use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{
-    Item, ItemEvent, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
-    Workspace,
+    ExpectedSession, Item, ItemEvent, LiveCommands, RemoteReconnect, SignInPrompts,
+    TerminalCapabilities, TerminalExecution, TerminalInfo, TerminalInput, TerminalState,
+    TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken, Workspace,
 };
 use std::{
     rc::Rc,
@@ -269,164 +270,9 @@ impl ToolBridge for Bridge {
         self.stops.fetch_add(1, Ordering::SeqCst);
     }
 }
-struct Access {
-    executor: std::cell::RefCell<Option<Arc<dyn nocterm_session::HostExec>>>,
-    lease: std::cell::RefCell<Option<Arc<AtomicBool>>>,
-    at_prompt: std::cell::Cell<bool>,
-    sent: std::cell::RefCell<Vec<String>>,
-    profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
-    /// Shared by the sessions of a test.
-    sign_in: Rc<SignIn>,
-    link: Link,
-}
-/// The connection of a remote session, which may drop.
-#[derive(Default)]
-struct Link {
-    remote: std::cell::Cell<bool>,
-    closed: std::cell::Cell<bool>,
-    /// Reconnecting fails, leaving it closed.
-    unreachable: std::cell::Cell<bool>,
-    reconnects: std::cell::Cell<usize>,
-}
-/// What the sessions of a test ask before they connect.
-#[derive(Default)]
-struct SignIn {
-    /// Their saved secret needs the vault.
-    vault_locked: std::cell::Cell<bool>,
-    /// They ask for a password nothing saved answers.
-    asks: std::cell::Cell<bool>,
-    answers: std::cell::RefCell<Vec<String>>,
-}
-impl TerminalAccess for Access {
-    fn info(&self, _: &App) -> Option<TerminalInfo> {
-        Some(TerminalInfo {
-            title: "Terminal".into(),
-            local: !self.link.remote.get(),
-            target: None,
-            profile: self.profile.borrow().clone(),
-            status: if self.link.closed.get() {
-                TerminalStatus::Closed
-            } else if self.sign_in.vault_locked.get() {
-                TerminalStatus::AwaitingVault
-            } else if self.sign_in.asks.get() {
-                TerminalStatus::AwaitingUser
-            } else {
-                TerminalStatus::Connected
-            },
-            cwd: None,
-            at_prompt: Some(self.at_prompt.get()),
-            dirty_input: false,
-            alt_screen: false,
-            generation: 1,
-            sign_in: (self.sign_in.vault_locked.get() || self.sign_in.asks.get()).then(|| {
-                nocterm_workspace::SignInPrompt {
-                    label: "Password for user@example.test".into(),
-                    retry: false,
-                    masked: true,
-                }
-            }),
-        })
-    }
-    fn read(
-        &self,
-        _: TextRequest,
-        _: &App,
-    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
-        Ok(TerminalText {
-            text: "output".into(),
-            first_line: 1,
-            next_line: 1,
-            truncated: false,
-            alt_screen: false,
-        })
-    }
-    fn send_text(&self, text: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
-        self.sent.borrow_mut().push(text.into());
-        Ok(())
-    }
-    fn run_command(
-        &self,
-        text: &str,
-        cx: &mut App,
-    ) -> Result<(), nocterm_workspace::TerminalError> {
-        self.send_text(text, cx)
-    }
-    fn executor(
-        &self,
-        _cx: &App,
-    ) -> Result<Arc<dyn nocterm_session::HostExec>, nocterm_workspace::TerminalError> {
-        if self.sign_in.asks.get() || self.sign_in.vault_locked.get() {
-            return Err(nocterm_workspace::TerminalError::Unavailable);
-        }
-        self.executor
-            .borrow()
-            .clone()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::StructuredExecution,
-            ))
-    }
-    fn begin_live_command(
-        &self,
-        command: &str,
-        cx: &mut App,
-    ) -> Result<nocterm_workspace::LiveCommandLease, nocterm_workspace::TerminalError> {
-        if self
-            .lease
-            .borrow()
-            .as_ref()
-            .is_some_and(|lease| lease.load(Ordering::Acquire))
-        {
-            return Err(nocterm_workspace::TerminalError::LiveCommandOwned);
-        }
-        self.run_command(command, cx)?;
-        let lease = Arc::new(AtomicBool::new(true));
-        *self.lease.borrow_mut() = Some(lease.clone());
-        Ok(nocterm_workspace::LiveCommandLease::new(lease, None))
-    }
-    fn answer_sign_in(
-        &self,
-        answer: String,
-        _: &mut App,
-    ) -> Result<(), nocterm_workspace::TerminalError> {
-        self.sign_in.answers.borrow_mut().push(answer);
-        self.sign_in.vault_locked.set(false);
-        self.sign_in.asks.set(false);
-        Ok(())
-    }
-    fn reconnect(&self, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
-        if !self.link.remote.get() {
-            return Err(nocterm_workspace::TerminalError::OnlyRemoteReconnect);
-        }
-        if self.link.closed.get() {
-            self.link.reconnects.set(self.link.reconnects.get() + 1);
-            self.link.closed.set(self.link.unreachable.get());
-        }
-        Ok(())
-    }
-}
-struct FakeTerminal {
-    access: Rc<Access>,
-    focus: FocusHandle,
-}
-impl EventEmitter<ItemEvent> for FakeTerminal {}
-impl Focusable for FakeTerminal {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for FakeTerminal {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        gpui_kit::div().size_full().track_focus(&self.focus)
-    }
-}
-impl Item for FakeTerminal {
-    fn tab_title(&self, _: &App) -> gpui_kit::SharedString {
-        "Terminal".into()
-    }
-    fn terminal_access(&self) -> Option<Rc<dyn TerminalAccess>> {
-        Some(self.access.clone())
-    }
-}
+mod terminal_fixture;
+use terminal_fixture::{Access, FakeTerminal, SignIn};
+
 struct Fixture {
     layout: nocterm_ui::LayoutHandle,
     handle: AnyWindowHandle,
@@ -488,15 +334,7 @@ fn fixture_with_width(
             rejection_sender,
         )
     };
-    let access = Rc::new(Access {
-        executor: Default::default(),
-        lease: Default::default(),
-        at_prompt: std::cell::Cell::new(true),
-        sent: Default::default(),
-        profile: Default::default(),
-        sign_in: Default::default(),
-        link: Default::default(),
-    });
+    let access = Access::new(None, Rc::default());
     let (handle, workspace, panel, terminal, ready, shutdown, layout) = cx.update(|cx| {
         gpui_kit::init(cx);
         let mut tokens = nocterm_ui::DesignTokens::builtin();
@@ -538,10 +376,7 @@ fn fixture_with_width(
                 cx.new(|cx| {
                     let mut workspace =
                         Workspace::new(nocterm_workspace::Deps::new(layout.clone()), window, cx);
-                    let item = cx.new(|cx| FakeTerminal {
-                        access: access.clone(),
-                        focus: cx.focus_handle(),
-                    });
+                    let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
                     terminal = Some(item.entity_id());
                     workspace.add_item(item, window, cx);
                     let owner = cx.entity().downgrade();

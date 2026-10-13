@@ -8,7 +8,8 @@
 //! Ports used: `SessionFactory`, `ConnectionDirectory`, `Item`, `Panel`,
 //! `RightPanel`, `LocalTerminal`; layout arrives as an explicit `LayoutHandle`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
-//! file drag contracts, and immutable tab/session observations.
+//! file drag contracts, immutable tab/session observations and separate state, text,
+//! input, live-command, execution, prompt, reconnect and user-paste ports.
 //! Settings section: none. Globals: legacy local execution in `host`.
 //! Invariants: one native dock is the placement authority; each registered tab
 //! owns its feature handle and subscriptions; cached session identity preserves
@@ -36,8 +37,8 @@ mod local_terminal;
 mod panel;
 mod right_panel;
 mod tab_groups;
-mod terminal_access;
 mod terminal_errors;
+mod terminal_ports;
 pub use terminal_errors::{OpenOnHostError, TerminalCapability, TerminalError};
 mod workspace;
 
@@ -49,9 +50,11 @@ pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
-pub use terminal_access::{
-    LiveCommandLease, SignInPrompt, TerminalAccess, TerminalEntry, TerminalInfo, TerminalStatus,
-    TerminalText, TextRequest,
+pub use terminal_ports::{
+    ExpectedSession, LiveCommandLease, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
+    TerminalCapabilities, TerminalEntry, TerminalExecution, TerminalInfo, TerminalInput,
+    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
+    UserTerminalPaste,
 };
 pub use workspace::{
     Deps, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace,

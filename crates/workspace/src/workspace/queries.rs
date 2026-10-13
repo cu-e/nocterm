@@ -134,7 +134,7 @@ impl Workspace {
             .filter(|id| terminals.iter().any(|entry| entry.item == *id))
             .or_else(|| {
                 self.active_item()
-                    .filter(|item| item.terminal_access(cx).is_some())
+                    .filter(|item| item.terminal_capabilities(cx).is_some())
                     .map(|item| item.item_id())
             })
     }

@@ -382,7 +382,7 @@ composer, history and usage card (`panel/*.rs`). Account usage is injected throu
 the user's logs.
 The composition root injects adapters through domain contracts. Features never
 import ACP adapters or the terminal/connections features; Workspace supplies
-neutral `TerminalAccess` and `ConnectionDirectory` contracts.
+neutral narrow terminal ports and `ConnectionDirectory` contracts.
 
 ACP carries chat messages and configuration. Nocterm enables the schema's
 unstable `session/fork` and end-of-turn token usage. It sends `session/resume`,

@@ -3,8 +3,9 @@
 //! Owns: panel views, Composer, AgentThread coordination and the session-scoped
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
+//! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
 //! Does not own: ACP transport, runtime connection admission or filesystem storage adapters.
-//! Ports used: AgentConnector, ToolBridge, TerminalAccess and ConnectionDirectory.
+//! Ports used: AgentConnector, ToolBridge, terminal ports and ConnectionDirectory.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.

@@ -372,7 +372,7 @@ pub(crate) fn probe_sessions(workspace: &Workspace, cx: &mut App) {
                 return None;
             }
             let fs = session.fs?;
-            let id = item.terminal_access(cx)?.info(cx)?.profile?;
+            let id = item.terminal_capabilities(cx)?.state().info(cx)?.profile?;
             let profile = connections
                 .read(cx)
                 .profiles(cx)

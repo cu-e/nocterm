@@ -42,7 +42,7 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
         assert!(window.try_find("agent-approvals").is_none());
     })
     .unwrap();
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
     assert!(futures::executor::block_on(rx).unwrap().is_err());
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -78,7 +78,7 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    *f.access.profile.borrow_mut() = Some("p1".into());
+    *f.access.profile().borrow_mut() = Some("p1".into());
     let summary: nocterm_workspace::ConnectionSummary = nocterm_workspace::ConnectionSummary {
         id: "p1".into(),
         name: "Server".into(),
@@ -226,7 +226,7 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
             .unwrap()
             .is_ok()
     );
-    assert_eq!(f.access.sent.borrow().len(), 1);
+    assert_eq!(f.access.sent().borrow().len(), 1);
     cx.update(|cx| {
         f.panel
             .read(cx)
@@ -461,7 +461,7 @@ fn obsolete_tool_card_cannot_approve_the_next_queued_request(cx: &mut TestAppCon
         })
     });
     assert!(second.try_recv().unwrap().is_none());
-    assert_eq!(f.access.sent.borrow().as_slice(), ["first"]);
+    assert_eq!(f.access.sent().borrow().as_slice(), ["first"]);
     click_tool(&f, "Deny", cx);
     assert!(
         second
@@ -492,10 +492,10 @@ fn obsolete_tool_card_stays_with_its_chat_after_switching_chats(cx: &mut TestApp
         })
     });
     assert!(second.try_recv().unwrap().is_none());
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
     click_tool(&f, "Allow once", cx);
     assert!(second.try_recv().unwrap().unwrap().is_ok());
-    assert_eq!(f.access.sent.borrow().as_slice(), ["current"]);
+    assert_eq!(f.access.sent().borrow().as_slice(), ["current"]);
 }
 
 #[gpui_kit::test]
@@ -510,12 +510,12 @@ fn terminal_grant_never_auto_approves_unsafe_input_and_expires_with_attachment_s
     assert!(approved.try_recv().unwrap().unwrap().is_ok());
     let mut automatic = input_request(&f, &owner, "automatic", cx);
     assert!(automatic.try_recv().unwrap().unwrap().is_ok());
-    f.access.at_prompt.set(false);
+    f.access.at_prompt().set(false);
     let mut unsafe_input = input_request(&f, &owner, "unsafe", cx);
     assert!(unsafe_input.try_recv().unwrap().is_none());
     click_tool(&f, "Deny", cx);
     assert!(unsafe_input.try_recv().unwrap().unwrap().is_err());
-    f.access.at_prompt.set(true);
+    f.access.at_prompt().set(true);
     cx.update(|cx| {
         owner.update(cx, |thread, cx| {
             thread.attach(Attachment::Terminal(f.terminal), cx);
@@ -527,7 +527,7 @@ fn terminal_grant_never_auto_approves_unsafe_input_and_expires_with_attachment_s
     click_tool(&f, "Allow once", cx);
     assert!(reattached.try_recv().unwrap().unwrap().is_ok());
     assert_eq!(
-        f.access.sent.borrow().as_slice(),
+        f.access.sent().borrow().as_slice(),
         ["grant", "automatic", "reattached"]
     );
 }
@@ -551,5 +551,66 @@ fn terminal_grant_expires_when_the_provider_session_is_released(cx: &mut TestApp
     assert!(after.try_recv().unwrap().is_none());
     click_tool(&f, "Deny", cx);
     assert!(after.try_recv().unwrap().unwrap().is_err());
-    assert_eq!(f.access.sent.borrow().as_slice(), ["before release"]);
+    assert_eq!(f.access.sent().borrow().as_slice(), ["before release"]);
+}
+
+#[gpui_kit::test]
+fn delayed_approval_cannot_submit_or_grant_a_replacement_connection(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let old = input_request(&f, &owner, "original", cx);
+    f.access.replace_connection();
+    click_tool(&f, "Allow input at an empty prompt", cx);
+    assert!(futures::executor::block_on(old).unwrap().is_err());
+    assert!(f.access.sent().borrow().is_empty());
+    let current = input_request(&f, &owner, "current", cx);
+    cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        assert_eq!(thread.read(cx).tool_cards().len(), 1);
+    });
+    click_tool(&f, "Allow once", cx);
+    assert!(futures::executor::block_on(current).unwrap().is_ok());
+    assert_eq!(*f.access.sent().borrow(), ["current"]);
+}
+
+#[gpui_kit::test]
+fn a_reconnect_waiter_never_dispatches_into_a_later_connection(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let mut pending = input_request(&f, &owner, "stale reconnect", cx);
+    click_tool(&f, "Allow once", cx);
+    assert_eq!(f.access.link().reconnects().get(), 1);
+    assert!(pending.try_recv().unwrap().is_none());
+    f.access.replace_connection();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(pending.try_recv().unwrap().unwrap().is_err());
+    assert!(f.access.sent().borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn terminal_calls_join_only_the_exact_accepted_reconnect_epoch(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let mut first = input_request(&f, &owner, "first", cx);
+    click_tool(&f, "Allow once", cx);
+    let mut second = input_request(&f, &owner, "second", cx);
+    click_tool(&f, "Allow once", cx);
+    assert_eq!(f.access.link().reconnects().get(), 1);
+    assert!(first.try_recv().unwrap().is_none());
+    assert!(second.try_recv().unwrap().is_none());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(first.try_recv().unwrap().unwrap().is_ok());
+    assert!(second.try_recv().unwrap().unwrap().is_ok());
+    assert_eq!(*f.access.sent().borrow(), ["first", "second"]);
 }

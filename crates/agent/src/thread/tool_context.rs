@@ -22,6 +22,12 @@ impl AgentThread {
             .collect()
     }
 
+    pub(super) fn server_is_attached(&self, profile: &str, cx: &App) -> bool {
+        self.attached_servers(cx)
+            .iter()
+            .any(|summary| summary.id.as_ref() == profile)
+    }
+
     fn attaches_server(&self, summary: &ConnectionSummary) -> bool {
         self.attachment_scope()
             .iter()
@@ -46,7 +52,7 @@ impl AgentThread {
             .terminals(cx)
             .into_iter()
             .filter_map(|entry| {
-                let info = entry.access.info(cx)?;
+                let info = entry.capabilities.state().info(cx)?;
                 let summary = info
                     .profile
                     .as_ref()
@@ -113,7 +119,8 @@ impl AgentThread {
             .into_iter()
             .filter(|(_, entry, _)| {
                 entry
-                    .access
+                    .capabilities
+                    .state()
                     .info(cx)
                     .is_some_and(|info| info.status != TerminalStatus::Closed)
             })

@@ -88,7 +88,7 @@ impl BackgroundSessions {
                 let item = entry.handle();
                 Some(crate::TerminalEntry {
                     item: item.item_id(),
-                    access: item.terminal_access(cx)?,
+                    capabilities: item.terminal_capabilities(cx)?,
                     title: item.tab_title(cx),
                     active: false,
                     bottom: false,

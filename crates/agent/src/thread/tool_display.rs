@@ -315,7 +315,7 @@ impl AgentThread {
         cx: &App,
     ) -> Option<String> {
         if let Some(entry) = entry {
-            let info = entry.access.info(cx)?;
+            let info = entry.capabilities.state().info(cx)?;
             if info.local {
                 return Some("This computer".into());
             }

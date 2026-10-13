@@ -626,7 +626,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
             .terminals(cx)
             .into_iter()
             .map(|entry| {
-                let info = entry.access.info(cx).unwrap();
+                let info = entry.capabilities.state().info(cx).unwrap();
                 TerminalDescriptor {
                     id: format!("{:?}", entry.item),
                     title: entry.title.to_string(),

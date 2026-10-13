@@ -21,8 +21,13 @@ mod config;
 pub(crate) use client::client;
 pub(crate) use composer::Composer;
 mod approval_inbox;
+mod background_open;
+mod bound_call;
+mod connection_wait;
 mod execution;
 mod permissions;
+mod reconnects;
+mod session_grants;
 use approval_inbox::ApprovalInbox;
 pub(crate) use approval_inbox::ToolApprovalCard;
 pub(crate) use permissions::PermissionCard;
@@ -54,10 +59,30 @@ pub(crate) enum Attachment {
 pub(crate) struct SignInWait {
     pub item: EntityId,
     pub title: gpui_kit::SharedString,
-    pub access: std::rc::Rc<dyn nocterm_workspace::TerminalAccess>,
+    prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
     pub prompt: nocterm_workspace::SignInPrompt,
     /// Unlocking the vault answers the prompt with a saved secret.
     pub vault: bool,
+}
+impl SignInWait {
+    pub(crate) fn new(
+        item: EntityId,
+        title: gpui_kit::SharedString,
+        prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
+        prompt: nocterm_workspace::SignInPrompt,
+        vault: bool,
+    ) -> Self {
+        Self {
+            item,
+            title,
+            prompts,
+            prompt,
+            vault,
+        }
+    }
+    pub(crate) fn prompts(&self) -> std::rc::Rc<dyn nocterm_workspace::SignInPrompts> {
+        self.prompts.clone()
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) struct PromptMetadata {
@@ -122,7 +147,7 @@ pub(crate) struct AgentThread {
     pub sign_ins: Vec<SignInWait>,
     /// Closed server terminals reconnecting for a tool call; calls that
     /// arrive meanwhile wait for the same connection.
-    pub(crate) reconnecting: std::collections::HashSet<EntityId>,
+    reconnecting: reconnects::Reconnects,
     pub prompt_attachments: Option<Vec<Attachment>>,
     pub dirty_rows: std::collections::HashSet<usize>,
     storage_dirty: std::collections::HashSet<usize>,

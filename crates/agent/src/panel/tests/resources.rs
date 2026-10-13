@@ -43,7 +43,7 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
         assert_eq!(first.read(cx).state.entries.len(), 1);
         assert!(f.panel.read(cx).current().unwrap().read(cx).lease.is_none());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
-        assert!(f.access.sent.borrow().is_empty());
+        assert!(f.access.sent().borrow().is_empty());
     });
 }
 #[gpui_kit::test]
@@ -118,7 +118,7 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
         assert_eq!(thread.read(cx).composer.queue.len(), 1);
         assert!(thread.read(cx).composer.queue_paused);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
-        assert!(f.access.sent.borrow().is_empty());
+        assert!(f.access.sent().borrow().is_empty());
     });
 }
 #[gpui_kit::test]
@@ -342,7 +342,7 @@ async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
         vec![acp::SessionId::new("s0")]
     );
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 #[gpui_kit::test]
@@ -489,7 +489,7 @@ fn releasing_acp_while_generating_does_not_interrupt_the_live_shell(cx: &mut Tes
         thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
     });
     cx.run_until_parked();
-    let command_owned = f.access.lease.borrow().as_ref().unwrap().clone();
+    let command_owned = f.access.lease().borrow().as_ref().unwrap().clone();
     assert!(command_owned.load(Ordering::Acquire));
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
@@ -497,7 +497,7 @@ fn releasing_acp_while_generating_does_not_interrupt_the_live_shell(cx: &mut Tes
         command_owned.load(Ordering::Acquire),
         "releasing ACP cancelled the live-shell lease"
     );
-    assert_eq!(*f.access.sent.borrow(), vec!["long-running-command"]);
+    assert_eq!(*f.access.sent().borrow(), vec!["long-running-command"]);
     cx.update(|cx| assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1));
 }
 
@@ -506,7 +506,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    f.access.at_prompt.set(false);
+    f.access.at_prompt().set(false);
     let (close, gate) = oneshot::channel();
     *f.commands.close_gate.lock().unwrap() = Some(gate);
     thread.update(cx, |thread, cx| {
@@ -537,7 +537,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         }
         assert!(
             f.access
-                .lease
+                .lease()
                 .borrow()
                 .as_ref()
                 .unwrap()
@@ -546,7 +546,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         thread.release_resources(cx);
         assert!(
             f.access
-                .lease
+                .lease()
                 .borrow()
                 .as_ref()
                 .unwrap()
@@ -558,7 +558,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
     tick(cx, 1);
     assert!(
         f.access
-            .lease
+            .lease()
             .borrow()
             .as_ref()
             .unwrap()
@@ -578,7 +578,7 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
     close.send(()).unwrap();
     cx.run_until_parked();
     assert_eq!(
-        *f.access.sent.borrow(),
+        *f.access.sent().borrow(),
         vec!["long-running-command".to_owned()]
     );
     cx.update(|cx| assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1));
@@ -757,7 +757,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
             "draft retained after idle"
         )
     });
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 mod durability;

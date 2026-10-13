@@ -108,7 +108,7 @@ fn request(terminal_id: &str) -> ExecCommand {
 fn setup(cx: &mut TestAppContext) -> (Fixture, Entity<AgentThread>, Arc<Programs>, String) {
     let f = fixture(cx);
     let programs = Arc::new(Programs::default());
-    *f.access.executor.borrow_mut() = Some(programs.clone());
+    *f.access.executor().borrow_mut() = Some(programs.clone());
     new_chat(&f, cx);
     let thread = current(&f, cx);
     let terminal = terminal_id(&thread, cx);
@@ -183,7 +183,7 @@ fn structured_requests_preserve_arguments_and_report_real_exit_with_redaction(
     assert!(!payload.to_string().contains("secret-value"));
     assert_eq!(payload["truncated"], false);
     assert!(
-        f.access.sent.borrow().is_empty(),
+        f.access.sent().borrow().is_empty(),
         "structured execution never types into the terminal"
     );
 }
@@ -242,7 +242,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         cx,
     );
     assert_eq!(cx.update(|cx| thread.read(cx).tool_cards().len()), 1);
-    f.access.sign_in.asks.set(true);
+    f.access.sign_in().asks().set(true);
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
@@ -256,8 +256,8 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
             .contains("authentication")
     );
     assert!(programs.requests.lock().unwrap().is_empty());
-    f.access.sign_in.asks.set(false);
-    f.access.executor.borrow_mut().take();
+    f.access.sign_in().asks().set(false);
+    f.access.executor().borrow_mut().take();
     let unsupported = result(submit(
         &f,
         &thread,
@@ -270,7 +270,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         "This terminal does not support structured execution."
     );
     assert!(programs.requests.lock().unwrap().is_empty());
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 #[gpui_kit::test]
@@ -400,7 +400,7 @@ fn releasing_acp_while_generating_preserves_document_owned_execution(cx: &mut Te
         !programs.closed(0),
         "releasing ACP cancelled a document-owned program"
     );
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
     programs.finish(0, b"finished after ACP close", 0, "");
     cx.run_until_parked();
 }
@@ -424,7 +424,7 @@ fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mu
     let (f, thread, programs, terminal) = setup(cx);
     let old = start(&f, &thread, &terminal, cx);
     let replacement = Arc::new(Programs::default());
-    *f.access.executor.borrow_mut() = Some(replacement.clone());
+    *f.access.executor().borrow_mut() = Some(replacement.clone());
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
     assert!(programs.closed(0));

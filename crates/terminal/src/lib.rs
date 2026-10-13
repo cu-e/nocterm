@@ -18,6 +18,8 @@
 //! charset errors through the workspace LocalTerminal contract.
 
 //! Input refusals preserve typed charset and queue errors through workspace contracts.
+//! Weak Item and model handles validate original connection and prompt tokens before
+//! input; replacement connections never inherit approval or sign-in authority.
 
 mod access;
 mod codec;

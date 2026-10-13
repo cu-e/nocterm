@@ -16,13 +16,21 @@ impl AgentThread {
     pub(super) fn execute_command(
         &mut self,
         entry: TerminalEntry,
+        expected: nocterm_workspace::ExpectedSession,
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
         let TerminalCall::ExecCommand(request) = &call.call else {
             return;
         };
-        let executor = match entry.access.executor(cx) {
+        let executor = match entry
+            .capabilities
+            .execution()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::StructuredExecution,
+            ))
+            .and_then(|port| port.executor(expected, cx))
+        {
             Ok(executor) => executor,
             Err(error) => {
                 self.finish(call, Err(error.to_string().into()));
@@ -180,7 +188,15 @@ impl AgentThread {
                 let current = resolved
                     .iter()
                     .find(|(candidate, _, _)| candidate == id)
-                    .and_then(|(_, entry, _)| entry.access.executor(cx).ok());
+                    .and_then(|(_, entry, _)| {
+                        entry.capabilities.state().info(cx).and_then(|info| {
+                            entry
+                                .capabilities
+                                .execution()?
+                                .executor(info.expected, cx)
+                                .ok()
+                        })
+                    });
                 (!current.is_some_and(|current| Arc::ptr_eq(&current, executor)))
                     .then_some(id.to_owned())
             })

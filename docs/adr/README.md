@@ -31,3 +31,4 @@ acceptance; a later record supersedes an earlier one.
 | [0028](0028-theme-library-boundary.md) | Pure theme domain model, adapter registry and theme service |
 | [0029](0029-output-recording-shared-driver.md) | Bounded append persistence and output recording |
 | [0031](0031-archive-hydration-owner.md) | Hydrated archive and history permit state belong to a single owner |
+| [0032](0032-narrow-terminal-ports.md) | Separate terminal ports bind approvals and secret answers to original Item/session/prompt epochs |

@@ -1,26 +1,46 @@
 use gpui_kit::{App, WeakEntity};
 use nocterm_session::{HostExec, Prompt, Secret};
 use nocterm_workspace::{
-    SignInPrompt, TerminalAccess, TerminalCapability, TerminalError, TerminalInfo, TerminalStatus,
-    TerminalText, TextRequest,
+    ExpectedSession, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
+    TerminalCapability, TerminalError, TerminalExecution, TerminalInfo, TerminalInput,
+    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
+    UserTerminalPaste,
 };
 use std::sync::Arc;
 
-use crate::{Status, Terminal, credentials::describe};
+use crate::{Status, Terminal, TerminalView, credentials::describe};
 
-pub(crate) struct Access(WeakEntity<Terminal>);
+pub(crate) struct Access {
+    owner: WeakEntity<TerminalView>,
+    terminal: WeakEntity<Terminal>,
+}
 
 impl Access {
-    pub(crate) fn new(terminal: WeakEntity<Terminal>) -> Self {
-        Self(terminal)
+    pub(crate) fn new(owner: WeakEntity<TerminalView>, terminal: WeakEntity<Terminal>) -> Self {
+        Self { owner, terminal }
+    }
+    fn item(&self) -> Result<gpui_kit::EntityId, TerminalError> {
+        self.owner
+            .upgrade()
+            .map(|owner| owner.entity_id())
+            .ok_or(TerminalError::Gone)
+    }
+    fn check(&self, expected: ExpectedSession, terminal: &Terminal) -> Result<(), TerminalError> {
+        if self.item()? != expected.item() || terminal.connection_epoch() != expected.epoch() {
+            return Err(TerminalError::StaleSession);
+        }
+        Ok(())
     }
 }
 
-impl TerminalAccess for Access {
+impl TerminalState for Access {
     fn info(&self, cx: &App) -> Option<TerminalInfo> {
-        let entity = self.0.upgrade()?;
+        let item = self.item().ok()?;
+        let entity = self.terminal.upgrade()?;
         let terminal = entity.read(cx);
+        let expected = ExpectedSession::new(item, terminal.connection_epoch());
         Some(TerminalInfo {
+            expected,
             title: terminal.spec().title.clone(),
             local: terminal.is_local(),
             target: (!terminal.is_local()).then(|| terminal.spec().target.clone()),
@@ -45,6 +65,7 @@ impl TerminalAccess for Access {
                 Some(Prompt::Secret { request, .. }) => {
                     let (label, retry, masked) = describe(request);
                     Some(SignInPrompt {
+                        token: UserPromptToken::new(expected, terminal.prompt_epoch()),
                         label: label.into(),
                         retry,
                         masked,
@@ -54,10 +75,19 @@ impl TerminalAccess for Access {
             },
         })
     }
+}
 
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, TerminalError> {
-        let entity = self.0.upgrade().ok_or(TerminalError::Gone)?;
+impl TerminalTextSource for Access {
+    fn read(
+        &self,
+        expected: ExpectedSession,
+        request: TextRequest,
+        cx: &App,
+    ) -> Result<TerminalText, TerminalError> {
+        self.item()?;
+        let entity = self.terminal.upgrade().ok_or(TerminalError::Gone)?;
         let terminal = entity.read(cx);
+        self.check(expected, terminal)?;
         if !terminal.is_connected() || terminal.prompt().is_some() {
             return Err(TerminalError::Unavailable);
         }
@@ -74,22 +104,35 @@ impl TerminalAccess for Access {
             alt_screen: tail.alt_screen,
         })
     }
+}
 
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), TerminalError> {
-        self.0
-            .update(cx, |terminal, cx| terminal.agent_send(text, false, cx))
+impl TerminalInput for Access {
+    fn send_text(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), TerminalError> {
+        self.item()?;
+        self.terminal
+            .update(cx, |terminal, cx| {
+                self.check(expected, terminal)?;
+                terminal.agent_send(text, false, cx)
+            })
             .map_err(|_| TerminalError::Gone)?
     }
+}
 
-    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), TerminalError> {
-        self.0
-            .update(cx, |terminal, cx| terminal.agent_send(command, true, cx))
-            .map_err(|_| TerminalError::Gone)?
-    }
-
-    fn executor(&self, cx: &App) -> Result<Arc<dyn HostExec>, TerminalError> {
-        let entity = self.0.upgrade().ok_or(TerminalError::Gone)?;
+impl TerminalExecution for Access {
+    fn executor(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<Arc<dyn HostExec>, TerminalError> {
+        self.item()?;
+        let entity = self.terminal.upgrade().ok_or(TerminalError::Gone)?;
         let terminal = entity.read(cx);
+        self.check(expected, terminal)?;
         if !terminal.is_connected() || terminal.prompt().is_some() || terminal.awaiting_vault() {
             return Err(TerminalError::Unavailable);
         }
@@ -97,45 +140,90 @@ impl TerminalAccess for Access {
             TerminalCapability::SessionExecution,
         ))
     }
+}
 
-    fn begin_live_command(
+impl LiveCommands for Access {
+    fn begin(
         &self,
+        expected: ExpectedSession,
         command: &str,
         cx: &mut App,
     ) -> Result<nocterm_workspace::LiveCommandLease, TerminalError> {
-        self.0
-            .update(cx, |terminal, cx| terminal.begin_live_command(command, cx))
-            .map_err(|_| TerminalError::Gone)?
-    }
-
-    fn paste_snippet(&self, text: &str, execute: bool, cx: &mut App) -> Result<(), TerminalError> {
-        self.0
-            .update(cx, |terminal, cx| terminal.paste_snippet(text, execute, cx))
-            .map_err(|_| TerminalError::Gone)?
-    }
-
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), TerminalError> {
-        self.0
+        self.item()?;
+        self.terminal
             .update(cx, |terminal, cx| {
+                self.check(expected, terminal)?;
+                terminal.begin_live_command(command, cx)
+            })
+            .map_err(|_| TerminalError::Gone)?
+    }
+}
+
+impl UserTerminalPaste for Access {
+    fn paste(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        execute: bool,
+        cx: &mut App,
+    ) -> Result<(), TerminalError> {
+        self.item()?;
+        self.terminal
+            .update(cx, |terminal, cx| {
+                self.check(expected, terminal)?;
+                terminal.paste_snippet(text, execute, cx)
+            })
+            .map_err(|_| TerminalError::Gone)?
+    }
+}
+
+impl SignInPrompts for Access {
+    fn pending(&self, cx: &App) -> Option<SignInPrompt> {
+        self.info(cx)?.sign_in
+    }
+    fn answer(
+        &self,
+        token: UserPromptToken,
+        answer: Secret,
+        cx: &mut App,
+    ) -> Result<(), TerminalError> {
+        self.item()?;
+        self.terminal
+            .update(cx, |terminal, cx| {
+                self.check(token.expected(), terminal)?;
+                if token.prompt_epoch() != terminal.prompt_epoch() {
+                    return Err(TerminalError::StalePrompt);
+                }
                 if !matches!(terminal.prompt(), Some(Prompt::Secret { .. })) {
                     return Err(TerminalError::SignInNoLongerRequested);
                 }
-                terminal.answer_secret_and_remember(Secret::new(answer), false, cx);
+                terminal.answer_secret_and_remember(answer, false, cx);
                 Ok(())
             })
             .map_err(|_| TerminalError::Gone)?
     }
+}
 
-    fn reconnect(&self, cx: &mut App) -> Result<(), TerminalError> {
-        self.0
+impl RemoteReconnect for Access {
+    fn reconnect(
+        &self,
+        expected: ExpectedSession,
+        cx: &mut App,
+    ) -> Result<ExpectedSession, TerminalError> {
+        self.item()?;
+        self.terminal
             .update(cx, |terminal, cx| {
+                self.check(expected, terminal)?;
                 if terminal.is_local() || terminal.is_command() {
                     return Err(TerminalError::OnlyRemoteReconnect);
                 }
                 if matches!(terminal.status(), Status::Closed(_)) {
                     terminal.reconnect(cx);
                 }
-                Ok(())
+                Ok(ExpectedSession::new(
+                    expected.item(),
+                    terminal.connection_epoch(),
+                ))
             })
             .map_err(|_| TerminalError::Gone)?
     }

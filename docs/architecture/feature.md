@@ -54,6 +54,17 @@ Agent observation retains terminal causes during asynchronous work until its too
 result. Snippet execution retains target selection and typed failures until the
 notice, and never retries a paste after submission if focusing its tab fails.
 
+Terminal implements separate workspace state, text, input, live command, execution,
+user sign-in, reconnect and snippet-paste ports through weak Item/model handles.
+Agent approvals capture the original session at intake; reusable grants expire on
+epoch changes. Reconnect waiters hold their accepted receipt and cannot follow a
+later replacement. User card callbacks retain the original prompt token and input;
+identical-looking replacement prompts receive a fresh empty field. Background opening
+checks live chat, registration and attachment authority before creating a session.
+Its private owner captures the original receipt through workspace independently of
+chat lifetime; failed handoff closes only that same still-background session, preserving
+replacement connections and tabs the user promoted.
+
 ## Terminal keyboard input
 
 The view forwards repeat and release events only for accepted terminal input,

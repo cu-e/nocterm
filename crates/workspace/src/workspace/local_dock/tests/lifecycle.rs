@@ -67,32 +67,16 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
 }
 
 struct Access;
-impl crate::TerminalAccess for Access {
+impl crate::TerminalState for Access {
     fn info(&self, _: &App) -> Option<crate::TerminalInfo> {
         None
-    }
-    fn read(
-        &self,
-        _: crate::TextRequest,
-        _: &App,
-    ) -> Result<crate::TerminalText, crate::TerminalError> {
-        Err(crate::TerminalError::Unavailable)
-    }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), crate::TerminalError> {
-        Err(crate::TerminalError::Unavailable)
-    }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), crate::TerminalError> {
-        Err(crate::TerminalError::Unavailable)
-    }
-    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), crate::TerminalError> {
-        Err(crate::TerminalError::Unavailable)
     }
 }
 
 struct AccessProbe {
     focus: FocusHandle,
     cwd: PathBuf,
-    access: Rc<dyn crate::TerminalAccess>,
+    access: Rc<dyn crate::TerminalState>,
 }
 impl EventEmitter<ItemEvent> for AccessProbe {}
 impl Focusable for AccessProbe {
@@ -109,8 +93,11 @@ impl Item for AccessProbe {
     fn tab_title(&self, _: &App) -> SharedString {
         self.cwd.display().to_string().into()
     }
-    fn terminal_access(&self) -> Option<Rc<dyn crate::TerminalAccess>> {
-        Some(self.access.clone())
+    fn terminal_capabilities(
+        &self,
+        _: gpui_kit::WeakEntity<Self>,
+    ) -> Option<crate::TerminalCapabilities> {
+        Some(crate::TerminalCapabilities::new(self.access.clone()))
     }
 }
 impl crate::LocalTerminal for AccessProbe {
@@ -170,7 +157,10 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
                         &b
                     };
                     assert_eq!(terminal.item, expected.entity_id());
-                    assert!(Rc::ptr_eq(&terminal.access, &expected.read(cx).access));
+                    assert!(Rc::ptr_eq(
+                        terminal.capabilities.state(),
+                        &expected.read(cx).access
+                    ));
                     assert!(terminal.bottom && !terminal.background);
                 }
                 assert!(workspace.focus_terminal(item.entity_id(), window, cx));

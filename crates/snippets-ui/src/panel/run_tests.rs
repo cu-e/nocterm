@@ -5,8 +5,8 @@ use gpui_kit::{
     point, px,
 };
 use nocterm_workspace::{
-    Item, ItemEvent, LocalTerminal, SignInPrompt, TerminalAccess, TerminalInfo, TerminalStatus,
-    TerminalText, TextRequest,
+    ExpectedSession, Item, ItemEvent, LocalTerminal, SignInPrompt, TerminalCapabilities,
+    TerminalInfo, TerminalState, TerminalStatus, UserPromptToken, UserTerminalPaste,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -87,6 +87,7 @@ impl Access {
     fn new(local: bool) -> Rc<Self> {
         Rc::new(Self {
             info: RefCell::new(Some(TerminalInfo {
+                expected: ExpectedSession::new(0u64.into(), 0),
                 title: if local { "Local" } else { "Remote" }.into(),
                 local,
                 target: None,
@@ -104,43 +105,35 @@ impl Access {
         })
     }
 }
-impl TerminalAccess for Access {
+impl TerminalState for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         self.info.borrow().clone()
     }
-    fn read(
+}
+impl UserTerminalPaste for Access {
+    fn paste(
         &self,
-        _: TextRequest,
-        _: &App,
-    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
-        Err(nocterm_workspace::TerminalError::Unavailable)
-    }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
-        panic!("Snippets must use the native paste contract")
-    }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
-        panic!("Snippets must preserve agent command guards")
-    }
-    fn paste_snippet(
-        &self,
+        expected: ExpectedSession,
         text: &str,
         execute: bool,
         _: &mut App,
     ) -> Result<(), nocterm_workspace::TerminalError> {
+        if self
+            .info
+            .borrow()
+            .as_ref()
+            .is_none_or(|info| info.expected != expected)
+        {
+            return Err(nocterm_workspace::TerminalError::StaleSession);
+        }
         if self.reject.get() {
             return Err(nocterm_workspace::TerminalError::PasteQueueRejected);
         }
         self.sent.borrow_mut().push((text.to_owned(), execute));
         Ok(())
     }
-    fn answer_sign_in(
-        &self,
-        _: String,
-        _: &mut App,
-    ) -> Result<(), nocterm_workspace::TerminalError> {
-        panic!("Snippets must never answer authentication")
-    }
 }
+
 struct Terminal {
     access: Rc<Access>,
     focus: FocusHandle,
@@ -160,8 +153,14 @@ impl Item for Terminal {
     fn tab_title(&self, _: &App) -> SharedString {
         "Terminal".into()
     }
-    fn terminal_access(&self) -> Option<Rc<dyn TerminalAccess>> {
-        Some(self.access.clone())
+    fn terminal_capabilities(
+        &self,
+        owner: gpui_kit::WeakEntity<Self>,
+    ) -> Option<TerminalCapabilities> {
+        if let Some(info) = self.access.info.borrow_mut().as_mut() {
+            info.expected = ExpectedSession::new(owner.entity_id(), info.expected.epoch());
+        }
+        Some(TerminalCapabilities::new(self.access.clone()).with_paste(self.access.clone()))
     }
 }
 impl LocalTerminal for Terminal {
@@ -429,6 +428,7 @@ fn run_refuses_authentication_alternate_closed_and_background_terminals(cx: &mut
             info.status = TerminalStatus::Connected;
             info.alt_screen = !authentication;
             info.sign_in = authentication.then(|| SignInPrompt {
+                token: UserPromptToken::new(info.expected, 0),
                 label: "Password".into(),
                 retry: false,
                 masked: true,

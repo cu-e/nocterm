@@ -1,15 +1,14 @@
 //! Session-scoped approval transitions. GPUI effects and tool execution stay in the coordinator.
 use super::permissions::{PermissionCard, PermissionGate, ProviderRequests};
-use nocterm_ai::{
-    ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, acp, approval::ApprovalGrants,
-};
+use super::{bound_call::BoundToolCall, session_grants::SessionGrants};
+use nocterm_ai::{ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, acp};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ApprovalToken(u64);
 
 struct PendingTool {
     token: ApprovalToken,
-    call: BridgeCall,
+    call: BoundToolCall,
 }
 
 pub(crate) struct ToolApprovalCard {
@@ -31,6 +30,7 @@ pub(super) struct ToolGate {
     registration: Option<u64>,
     attached: bool,
     unsafe_input: bool,
+    expected: Option<nocterm_workspace::ExpectedSession>,
 }
 impl ToolGate {
     pub(super) fn new(
@@ -38,12 +38,14 @@ impl ToolGate {
         registration: Option<u64>,
         attached: bool,
         unsafe_input: bool,
+        expected: Option<nocterm_workspace::ExpectedSession>,
     ) -> Self {
         Self {
             available,
             registration,
             attached,
             unsafe_input,
+            expected,
         }
     }
     fn accepts(&self, call: &BridgeCall) -> bool {
@@ -59,7 +61,7 @@ pub(super) enum ToolRejection {
 pub(super) enum ToolDecision {
     Respond(BridgeCall, ToolRejection),
     Queue,
-    Execute(BridgeCall),
+    Execute(BoundToolCall),
     Unchanged,
 }
 
@@ -68,7 +70,7 @@ pub(super) struct ApprovalInbox {
     providers: ProviderRequests,
     tools: Vec<PendingTool>,
     generation: u64,
-    grants: ApprovalGrants,
+    grants: SessionGrants,
 }
 impl ApprovalInbox {
     pub(super) fn receive_provider(
@@ -110,14 +112,15 @@ impl ApprovalInbox {
     }
     pub(super) fn receive_tool(
         &mut self,
-        call: BridgeCall,
+        call: BoundToolCall,
         gate: &ToolGate,
         policy: &ApprovalSettings,
     ) -> ToolDecision {
-        if !gate.accepts(&call) {
-            return ToolDecision::Respond(call, ToolRejection::Unavailable);
+        if !gate.accepts(call.call()) {
+            return ToolDecision::Respond(call.into_call(), ToolRejection::Unavailable);
         }
-        if self.grants.requires_approval(&call.call, policy) || gate.unsafe_input {
+        self.grants.observe(&call.call().call, gate.expected);
+        if self.grants.requires_approval(&call.call().call, policy) || gate.unsafe_input {
             self.generation = self.generation.wrapping_add(1);
             self.tools.push(PendingTool {
                 token: ApprovalToken(self.generation),
@@ -140,16 +143,17 @@ impl ApprovalInbox {
         };
         let call = self.tools.remove(index).call;
         if !allow {
-            return ToolDecision::Respond(call, ToolRejection::Denied);
+            return ToolDecision::Respond(call.into_call(), ToolRejection::Denied);
         }
-        if !gate.accepts(&call) || !gate.attached {
-            return ToolDecision::Respond(call, ToolRejection::Detached);
+        if !gate.accepts(call.call()) || !gate.attached || call.expected() != gate.expected {
+            return ToolDecision::Respond(call.into_call(), ToolRejection::Detached);
         }
+        self.grants.observe(&call.call().call, gate.expected);
         if grant
             && !gate.unsafe_input
-            && let Some(id) = call.call.target()
+            && let Some(id) = call.call().call.target()
         {
-            self.grants.grant(id, call.call.capability());
+            self.grants.grant(id, call.call().call.capability());
         }
         ToolDecision::Execute(call)
     }
@@ -157,13 +161,13 @@ impl ApprovalInbox {
         self.tools
             .iter()
             .find(|pending| pending.token == token)
-            .map(|pending| &pending.call.call)
+            .map(|pending| &pending.call.call().call)
     }
     pub(super) fn cancel_pending(&mut self) -> Vec<BridgeCall> {
         self.providers.clear();
         std::mem::take(&mut self.tools)
             .into_iter()
-            .map(|pending| pending.call)
+            .map(|pending| pending.call.into_call())
             .collect()
     }
     pub(super) fn revoke_scope(&mut self) {
@@ -187,7 +191,7 @@ impl ApprovalInbox {
             .iter()
             .map(|pending| ToolApprovalCard {
                 token: pending.token,
-                call: pending.call.call.clone(),
+                call: pending.call.call().call.clone(),
             })
             .collect()
     }

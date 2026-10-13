@@ -213,6 +213,10 @@ impl Terminal {
         self.prompt.as_ref()
     }
 
+    pub(crate) fn connection_epoch(&self) -> u64 {
+        self.connection_epoch
+    }
+
     pub(crate) fn prompt_epoch(&self) -> u64 {
         self.prompt_epoch
     }

@@ -72,7 +72,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
     let program = Arc::new(Program::default());
-    *f.access.executor.borrow_mut() = Some(program.clone());
+    *f.access.executor().borrow_mut() = Some(program.clone());
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.terminal_write = ApprovalPolicy::Allow;

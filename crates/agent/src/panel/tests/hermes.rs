@@ -42,7 +42,7 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
     let f = fixture(cx);
     f.bridge.next.store(3, Ordering::SeqCst);
     let program = Arc::new(Program::default());
-    *f.access.executor.borrow_mut() = Some(program.clone());
+    *f.access.executor().borrow_mut() = Some(program.clone());
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
             settings.approval.terminal_write = ApprovalPolicy::Allow;

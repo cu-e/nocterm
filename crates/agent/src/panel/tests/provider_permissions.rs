@@ -95,7 +95,7 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
         );
     });
     assert!(tool_response.try_recv().unwrap().is_none());
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 #[gpui_kit::test]

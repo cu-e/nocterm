@@ -326,7 +326,7 @@ impl Tabs {
     }
     pub(super) fn terminal(&self, id: EntityId, cx: &App) -> bool {
         self.entry(id)
-            .is_some_and(|entry| entry.handle.terminal_access(cx).is_some())
+            .is_some_and(|entry| entry.handle.terminal_capabilities(cx).is_some())
     }
     pub(super) fn foreground_terminals(&self, cx: &App) -> Vec<crate::TerminalEntry> {
         self.entries
@@ -334,7 +334,7 @@ impl Tabs {
             .filter_map(|entry| {
                 Some(crate::TerminalEntry {
                     item: entry.id(),
-                    access: entry.handle.terminal_access(cx)?,
+                    capabilities: entry.handle.terminal_capabilities(cx)?,
                     title: self.title(entry.id(), cx)?,
                     active: false,
                     bottom: self

@@ -12,11 +12,16 @@ use std::time::{Duration, Instant};
 use gpui_kit::{App, AppContext as _, AsyncApp, Context, EntityId, Task, WeakEntity};
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 use nocterm_ui::{ActiveAi as _, SettingsExt as _};
-use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
+use nocterm_workspace::{
+    ExpectedSession, TerminalCapability, TerminalEntry, TerminalError, TerminalStatus, TextRequest,
+};
 
 use super::{
     AgentThread, SignInWait,
     approval_inbox::{ApprovalToken, ToolDecision, ToolGate, ToolRejection},
+    background_open::BackgroundOpen,
+    bound_call::BoundToolCall,
+    connection_wait::ConnectionWaitError,
 };
 
 /// How long an agent waits for a background session to connect.
@@ -39,8 +44,9 @@ impl AgentThread {
             return;
         }
         let gate = self.tool_gate(&call.call, cx);
+        let expected = self.tool_expectation(&call.call, cx);
         let decision = self.approvals.receive_tool(
-            call,
+            BoundToolCall::new(call, expected),
             &gate,
             &cx.setting::<nocterm_ai::AiSettings>().approval,
         );
@@ -54,8 +60,16 @@ impl AgentThread {
         self.resolved(cx)
             .into_iter()
             .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
-            .and_then(|(_, entry, _)| entry.access.info(cx))
+            .and_then(|(_, entry, _)| entry.capabilities.state().info(cx))
             .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
+    }
+
+    fn tool_expectation(&mut self, call: &TerminalCall, cx: &App) -> Option<ExpectedSession> {
+        self.resolved(cx)
+            .into_iter()
+            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
+            .and_then(|(_, entry, _)| entry.capabilities.state().info(cx))
+            .map(|info| info.expected)
     }
 
     fn tool_gate(&mut self, call: &TerminalCall, cx: &App) -> ToolGate {
@@ -71,11 +85,13 @@ impl AgentThread {
             (None, None) => true,
         };
         let unsafe_input = self.unsafe_live_input(call, cx);
+        let expected = self.tool_expectation(call, cx);
         ToolGate::new(
             cx.ai_enabled() && self.lifecycle.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
             attached,
             unsafe_input,
+            expected,
         )
     }
 
@@ -113,31 +129,35 @@ impl AgentThread {
         cx.notify();
     }
 
-    fn execute_tool(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+    fn execute_tool(&mut self, call: BoundToolCall, cx: &mut Context<Self>) {
         self.execute_tool_with(call, true, cx);
     }
 
     /// Carries out `call`; with `reconnect`, a closed server terminal it
     /// needs is connected again first.
-    fn execute_tool_with(&mut self, call: BridgeCall, reconnect: bool, cx: &mut Context<Self>) {
-        // Always resolve again after approval: attachments, auth state and tab lifetime may have changed.
+    fn execute_tool_with(&mut self, bound: BoundToolCall, reconnect: bool, cx: &mut Context<Self>) {
+        let captured = bound.expected();
+        let call = bound.call();
         if !cx.ai_enabled()
             || !self.lifecycle.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
-            self.finish(call, Err("Chat is unavailable.".into()));
+            self.finish(bound.into_call(), Err("Chat is unavailable.".into()));
             return;
         }
         match &call.call {
             TerminalCall::ListTerminals => {
                 let payload = self.context(cx);
-                self.finish(call, Ok(serde_json::json!({"context":payload})));
+                self.finish(
+                    bound.into_call(),
+                    Ok(serde_json::json!({"context":payload})),
+                );
                 return;
             }
             TerminalCall::OpenTerminal(request) => {
                 let server = request.server_id.clone();
 
-                self.open_terminal(server, call, cx);
+                self.open_terminal(server, bound.into_call(), cx);
                 return;
             }
             _ => {}
@@ -148,28 +168,62 @@ impl AgentThread {
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
         else {
             self.finish_unreachable(
-                call,
+                bound.into_call(),
                 "Terminal is not attached or was closed. Call list_terminals for the current ones.",
             );
             return;
         };
+        let Some(expected) = captured else {
+            self.finish(
+                bound.into_call(),
+                Err(TerminalError::StaleSession.to_string().into()),
+            );
+            return;
+        };
+        if entry
+            .capabilities
+            .state()
+            .info(cx)
+            .is_none_or(|info| info.expected != expected)
+        {
+            self.finish(
+                bound.into_call(),
+                Err(TerminalError::StaleSession.to_string().into()),
+            );
+            return;
+        }
         if reconnect && self.needs_reconnect(&call.call, &entry, cx) {
-            self.reconnect_then_execute(call, &entry, cx);
+            self.reconnect_then_execute(bound, &entry, expected, cx);
             return;
         }
 
+        self.dispatch_tool(bound.into_call(), entry, expected, cx);
+    }
+
+    fn dispatch_tool(
+        &mut self,
+        call: BridgeCall,
+        entry: TerminalEntry,
+        expected: ExpectedSession,
+        cx: &mut Context<Self>,
+    ) {
         match &call.call {
             TerminalCall::ReadTerminal(request) => {
                 let result = entry
-                    .access
-                    .read(
-                        TextRequest {
-                            max_lines: request.lines.unwrap_or(200),
-                            max_bytes: 64 * 1024,
-                            since_line: request.since,
-                        },
-                        cx,
-                    )
+                    .capabilities
+                    .text()
+                    .ok_or(TerminalError::Unsupported(TerminalCapability::TextRead))
+                    .and_then(|port| {
+                        port.read(
+                            expected,
+                            TextRequest {
+                                max_lines: request.lines.unwrap_or(200),
+                                max_bytes: 64 * 1024,
+                                since_line: request.since,
+                            },
+                            cx,
+                        )
+                    })
                     .map(|tail| self.text_payload(tail, cx));
                 self.finish(call, result.map_err(|error| error.to_string().into()));
             }
@@ -180,16 +234,18 @@ impl AgentThread {
                     if request.press_enter { "\r" } else { "" }
                 );
                 let result = entry
-                    .access
-                    .send_text(&text, cx)
+                    .capabilities
+                    .input()
+                    .ok_or(TerminalError::Unsupported(TerminalCapability::Input))
+                    .and_then(|port| port.send_text(expected, &text, cx))
                     .map(|()| serde_json::json!({"accepted":true}));
                 self.finish(call, result.map_err(|error| error.to_string().into()));
             }
             TerminalCall::RunCommand(request) => {
                 let request = request.clone();
-                self.run_command(entry, request, call, cx);
+                self.run_command(entry, expected, request, call, cx);
             }
-            TerminalCall::ExecCommand(_) => self.execute_command(entry, call, cx),
+            TerminalCall::ExecCommand(_) => self.execute_command(entry, expected, call, cx),
             TerminalCall::ReadCommand(_) => self.read_command(call, cx),
             TerminalCall::CancelCommand(_) => self.cancel_command(call, cx),
             TerminalCall::ListTerminals | TerminalCall::OpenTerminal(_) => {}
@@ -225,11 +281,25 @@ impl AgentThread {
         // A session the chat opened before and lost is connected again
         // rather than left behind for another.
         if let Some(entry) = self.closed_background(summary.id.as_ref(), cx) {
-            let connected = self.reconnect(&entry, cx);
+            let Some(expected) = entry
+                .capabilities
+                .state()
+                .info(cx)
+                .map(|info| info.expected)
+            else {
+                self.finish_unreachable(call, "The terminal was closed.");
+                return;
+            };
+            let connected = self.reconnect(&entry, expected, cx);
             cx.spawn(async move |this, cx| {
                 let result = connected.await;
                 let _ = this.update(cx, |this, cx| {
-                    this.finish(call, result);
+                    this.finish(
+                        call,
+                        result
+                            .map(|(_, payload)| payload)
+                            .map_err(ConnectionWaitError::into_failure),
+                    );
                     cx.notify();
                 });
             })
@@ -245,33 +315,20 @@ impl AgentThread {
             self.finish_unreachable(call, "The workspace is unavailable.");
             return;
         };
-        let workspace = self.workspace.clone();
-        let profile = summary.id.to_string();
-        let ticket = self.lifecycle.ticket();
+        let opening = BackgroundOpen::new(
+            self.workspace.clone(),
+            window,
+            directory,
+            summary.id.to_string(),
+            self.lifecycle.ticket(),
+            self.registration().as_ref().map(|value| value.id),
+        );
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
-            let opened = cx
-                .update_window(window, |_, window, cx| {
-                    directory.open_background(&profile, &workspace, window, cx)
-                })
-                .ok()
-                .flatten();
-            let Some(item) = opened else {
-                let _ = this.update(cx, |this, cx| {
-                    this.finish_unreachable(call, "Could not open a session for this server.");
-                    cx.notify();
-                });
-                return;
-            };
-            let _ = this.update(cx, |this, _| this.background.push(item));
-            let result = wait_until_connected(&this, &workspace, window, item, ticket, cx).await;
-            if result.is_err() {
-                close_background(&workspace, window, item, cx);
-                let _ = this.update(cx, |this, _| this.background.retain(|id| *id != item));
-            }
+            let result = opening.open(&this, cx).await;
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result);
+                this.finish(call, result.map_err(ConnectionWaitError::into_failure));
                 cx.notify();
             });
         })
@@ -295,7 +352,8 @@ impl AgentThread {
         uses_session
             && (self.reconnecting.contains(&entry.item)
                 || entry
-                    .access
+                    .capabilities
+                    .state()
                     .info(cx)
                     .is_some_and(|info| !info.local && info.status == TerminalStatus::Closed))
     }
@@ -304,17 +362,20 @@ impl AgentThread {
     /// user's tab stays open if connecting fails.
     fn reconnect_then_execute(
         &mut self,
-        call: BridgeCall,
+        call: BoundToolCall,
         entry: &TerminalEntry,
+        expected: ExpectedSession,
         cx: &mut Context<Self>,
     ) {
-        let connected = self.reconnect(entry, cx);
+        let connected = self.reconnect(entry, expected, cx);
         cx.spawn(async move |this, cx| {
             let result = connected.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(_) => this.execute_tool_with(call, false, cx),
-                    Err(error) => this.finish(call, Err(error)),
+                    Ok((receipt, _)) => {
+                        this.execute_tool_with(call.reconnected(receipt), false, cx)
+                    }
+                    Err(error) => this.finish(call.into_call(), Err(error.into_failure())),
                 }
                 cx.notify();
             });
@@ -327,26 +388,49 @@ impl AgentThread {
     fn reconnect(
         &mut self,
         entry: &TerminalEntry,
+        expected: ExpectedSession,
         cx: &mut Context<Self>,
-    ) -> Task<Result<serde_json::Value, ToolFailure>> {
-        let item = entry.item;
+    ) -> Task<Result<(ExpectedSession, serde_json::Value), ConnectionWaitError>> {
         let Some(window) = self.window else {
-            return Task::ready(Err(unreachable("The workspace is unavailable.")));
+            return Task::ready(Err(ConnectionWaitError::WorkspaceClosed));
         };
-        if self.reconnecting.insert(item)
-            && let Err(error) = entry.access.reconnect(cx)
-        {
-            self.reconnecting.remove(&item);
-            return Task::ready(Err(unreachable(&error.to_string())));
-        }
+        let receipt = match self.reconnecting.receipt(expected) {
+            Some(receipt) => receipt,
+            None => {
+                let result = entry
+                    .capabilities
+                    .reconnect()
+                    .ok_or(TerminalError::Unsupported(TerminalCapability::Reconnect))
+                    .and_then(|port| port.reconnect(expected, cx));
+                match result {
+                    Ok(receipt) => {
+                        self.reconnecting.insert(receipt);
+                        receipt
+                    }
+                    Err(error) => return Task::ready(Err(ConnectionWaitError::Terminal(error))),
+                }
+            }
+        };
         let workspace = self.workspace.clone();
         let ticket = self.lifecycle.ticket();
+        let registration = self.registration().as_ref().map(|value| value.id);
         let guard = self.hold_operation();
         cx.spawn(async move |this, cx| {
             let _guard = guard;
-            let result = wait_until_connected(&this, &workspace, window, item, ticket, cx).await;
-            let _ = this.update(cx, |this, _| this.reconnecting.remove(&item));
-            result
+            let result = wait_until_connected(
+                &this,
+                &WaitTarget {
+                    workspace,
+                    window,
+                    expected: receipt,
+                    ticket,
+                    registration,
+                },
+                cx,
+            )
+            .await;
+            let _ = this.update(cx, |this, _| this.reconnecting.remove(receipt));
+            result.map(|payload| (receipt, payload))
         })
     }
 
@@ -362,7 +446,8 @@ impl AgentThread {
                         .as_ref()
                         .is_some_and(|connection| connection.id == profile)
                     && entry
-                        .access
+                        .capabilities
+                        .state()
                         .info(cx)
                         .is_some_and(|info| info.status == TerminalStatus::Closed)
             })
@@ -414,17 +499,48 @@ impl AgentThread {
     }
 }
 
-/// Waits for background session `item` to connect. A sign-in prompt moves it
-/// into a tab, so the user can answer it.
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
-async fn wait_until_connected(
-    this: &WeakEntity<AgentThread>,
-    workspace: &WeakEntity<nocterm_workspace::Workspace>,
+/// Authority held by one waiter, never inferred from a replacement session.
+pub(super) struct WaitTarget {
+    workspace: WeakEntity<nocterm_workspace::Workspace>,
     window: gpui_kit::AnyWindowHandle,
-    item: EntityId,
+    expected: ExpectedSession,
     ticket: nocterm_ai::session::Ticket,
+    registration: Option<u64>,
+}
+impl WaitTarget {
+    pub(super) fn new(
+        workspace: WeakEntity<nocterm_workspace::Workspace>,
+        window: gpui_kit::AnyWindowHandle,
+        expected: ExpectedSession,
+        ticket: nocterm_ai::session::Ticket,
+        registration: Option<u64>,
+    ) -> Self {
+        Self {
+            workspace,
+            window,
+            expected,
+            ticket,
+            registration,
+        }
+    }
+}
+/// Waits for the particular accepted session to connect.
+#[expect(clippy::too_many_lines, reason = "predates the limit")]
+pub(super) async fn wait_until_connected(
+    this: &WeakEntity<AgentThread>,
+    target: &WaitTarget,
     cx: &mut AsyncApp,
-) -> Result<serde_json::Value, ToolFailure> {
+) -> Result<serde_json::Value, ConnectionWaitError> {
+    let WaitTarget {
+        workspace,
+        window,
+        expected,
+        ticket,
+        registration,
+    } = target;
+    let (window, expected, ticket) = (*window, *expected, *ticket);
+    let registration = *registration;
+    let item = expected.item();
     let started = Instant::now();
     let mut shown = false;
     let mut waiting = false;
@@ -434,34 +550,41 @@ async fn wait_until_connected(
             .await;
         let step = this
             .update(cx, |this, cx| {
-                if !this.lifecycle.session_current(ticket)
+                if this.workspace.entity_id() != workspace.entity_id()
+                    || this.registration().as_ref().map(|value| value.id) != registration
+                    || !this.lifecycle.session_current(ticket)
                     || !this.lifecycle.accepts_updates()
                     || !cx.ai_enabled()
                 {
-                    return Err(ToolFailure::from(
-                        "The chat stopped before the server connected.",
-                    ));
+                    return Err(ConnectionWaitError::Stopped);
                 }
                 let entry = this
                     .resolved(cx)
                     .into_iter()
                     .find(|(_, entry, _)| entry.item == item);
                 let Some((_, entry, descriptor)) = entry else {
-                    return Err("The session was closed before it connected.".into());
+                    return Err(ConnectionWaitError::SessionClosed);
                 };
-                let info = entry.access.info(cx);
+                let info = entry.capabilities.state().info(cx);
+                if info.as_ref().is_none_or(|info| info.expected != expected) {
+                    return Err(ConnectionWaitError::Terminal(TerminalError::StaleSession));
+                }
                 let status = info.as_ref().map(|info| info.status);
                 // A password is asked in the chat; the session stays hidden.
                 let wait = info.and_then(|info| {
                     let vault = info.status == TerminalStatus::AwaitingVault;
                     let user = info.status == TerminalStatus::AwaitingUser;
-                    Some(SignInWait {
+                    let prompts = entry.capabilities.prompts()?.clone();
+                    let prompt = prompts
+                        .pending(cx)
+                        .filter(|prompt| prompt.token.expected() == expected && (vault || user))?;
+                    Some(SignInWait::new(
                         item,
-                        title: entry.title.clone(),
-                        access: entry.access.clone(),
-                        prompt: info.sign_in.filter(|_| vault || user)?,
+                        entry.title.clone(),
+                        prompts,
+                        prompt,
                         vault,
-                    })
+                    ))
                 });
                 let asking = wait.is_some();
                 let current = this.sign_ins.iter().position(|wait| wait.item == item);
@@ -485,7 +608,7 @@ async fn wait_until_connected(
                 }
                 Ok((status, asking, descriptor))
             })
-            .map_err(|_| ToolFailure::from("The chat was closed."));
+            .map_err(|_| ConnectionWaitError::ChatClosed);
         let step = match step {
             Ok(Ok(step)) => step,
             Ok(Err(error)) | Err(error) => break Err(error),
@@ -506,7 +629,7 @@ async fn wait_until_connected(
                 });
             }
             (Some(TerminalStatus::Closed) | None, _, _) => {
-                break Err(unreachable("Could not connect to the server."));
+                break Err(ConnectionWaitError::ConnectFailed);
             }
             _ => {}
         }
@@ -517,16 +640,17 @@ async fn wait_until_connected(
         };
         if started.elapsed() >= limit {
             break Err(if shown {
-                "The server is waiting for the user to sign in; ask them to finish signing in, then call list_terminals.".into()
+                ConnectionWaitError::VisiblePromptTimeout
             } else if waiting {
-                "The server is waiting for the user to sign in from the chat or unlock the vault; ask them to, then call open_terminal again.".into()
+                ConnectionWaitError::HiddenPromptTimeout
             } else {
-                unreachable("Connecting to the server timed out.")
+                ConnectionWaitError::Timeout
             });
         }
     };
     let _ = this.update(cx, |this, cx| {
-        this.sign_ins.retain(|wait| wait.item != item);
+        this.sign_ins
+            .retain(|wait| wait.item != item || wait.prompt.token.expected() != expected);
         cx.notify();
     });
     result
@@ -539,18 +663,4 @@ pub(super) fn unreachable(reason: &str) -> ToolFailure {
         "{reason} Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
     )
     .into()
-}
-
-fn close_background(
-    workspace: &WeakEntity<nocterm_workspace::Workspace>,
-    window: gpui_kit::AnyWindowHandle,
-    item: EntityId,
-    cx: &mut AsyncApp,
-) {
-    let workspace = workspace.clone();
-    let _ = cx.update_window(window, |_, window, cx| {
-        let _ = workspace.update(cx, |workspace, cx| {
-            workspace.close_background_session(item, window, cx)
-        });
-    });
 }

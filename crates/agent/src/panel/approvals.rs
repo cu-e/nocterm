@@ -25,7 +25,38 @@ use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
 pub(super) struct SignInInput {
     pub(super) input: Entity<InputState>,
     masked: bool,
+    token: nocterm_workspace::UserPromptToken,
     _submit: Subscription,
+}
+
+#[derive(Clone)]
+struct SignInSubmission {
+    thread: gpui_kit::WeakEntity<AgentThread>,
+    item: EntityId,
+    token: nocterm_workspace::UserPromptToken,
+    input: Entity<InputState>,
+    prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
+}
+fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
+    let heading = if wait.vault {
+        "Unlock the vault to sign in".to_owned()
+    } else if wait.prompt.retry {
+        format!("That was not accepted. Sign in to {} again", wait.title)
+    } else {
+        format!("Sign in to {}", wait.title)
+    };
+    let detail = if wait.vault {
+        format!(
+            "{} uses a password saved in the vault. Unlock it, or type the password here.",
+            wait.title
+        )
+    } else {
+        format!(
+            "{}. The agent continues once you are signed in.",
+            wait.prompt.label
+        )
+    };
+    (heading, detail)
 }
 
 impl AgentPanel {
@@ -98,33 +129,22 @@ impl AgentPanel {
     ) -> AnyElement {
         let wait = thread.read(cx).sign_ins[index].clone();
         let item = wait.item;
-        let input = self.sign_in_input(thread, item, wait.prompt.masked, window, cx);
-        let heading = if wait.vault {
-            "Unlock the vault to sign in".to_owned()
-        } else if wait.prompt.retry {
-            format!("That was not accepted. Sign in to {} again", wait.title)
-        } else {
-            format!("Sign in to {}", wait.title)
-        };
-        let detail = if wait.vault {
-            format!(
-                "{} uses a password saved in the vault. Unlock it, or type the password here.",
-                wait.title
-            )
-        } else {
-            format!(
-                "{}. The agent continues once you are signed in.",
-                wait.prompt.label
-            )
-        };
-        let field = Input::new(&input).small();
+        let input = self.sign_in_input(thread, &wait, window, cx);
+        let (heading, detail) = sign_in_text(&wait);
+        let field = Input::new(&input).id(("sign-in-input", index)).small();
         let field = if wait.prompt.masked {
             field.mask_toggle()
         } else {
             field
         };
         let panel = cx.weak_entity();
-        let weak_thread = thread.downgrade();
+        let submission = SignInSubmission {
+            thread: thread.downgrade(),
+            item,
+            token: wait.prompt.token,
+            input: input.clone(),
+            prompts: wait.prompts(),
+        };
         card(cx)
             .child(
                 div()
@@ -169,7 +189,7 @@ impl AgentPanel {
                             .label("Sign in")
                             .on_click(move |_, window, cx| {
                                 let _ = panel.update(cx, |panel, cx| {
-                                    panel.submit_sign_in(&weak_thread, item, window, cx)
+                                    panel.submit_sign_in(&submission, window, cx)
                                 });
                             }),
                     ),
@@ -180,25 +200,37 @@ impl AgentPanel {
     fn sign_in_input(
         &mut self,
         thread: &Entity<AgentThread>,
-        item: EntityId,
-        masked: bool,
+        wait: &crate::thread::SignInWait,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<InputState> {
+        let (item, masked, token) = (wait.item, wait.prompt.masked, wait.prompt.token);
         if let Some(field) = self.sign_in_inputs.get(&item)
             && field.masked == masked
+            && field.token == token
         {
             return field.input.clone();
+        }
+        if let Some(obsolete) = self.sign_in_inputs.remove(&item) {
+            obsolete
+                .input
+                .update(cx, |input, cx| input.set_value("", window, cx));
         }
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(masked)
                 .placeholder(if masked { "Password" } else { "Answer" })
         });
-        let weak_thread = thread.downgrade();
+        let submission = SignInSubmission {
+            thread: thread.downgrade(),
+            item,
+            token,
+            input: input.clone(),
+            prompts: wait.prompts(),
+        };
         let submit = cx.subscribe_in(&input, window, move |this, _, event, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
-                this.submit_sign_in(&weak_thread, item, window, cx);
+                this.submit_sign_in(&submission, window, cx);
             }
         });
         self.sign_in_inputs.insert(
@@ -206,6 +238,7 @@ impl AgentPanel {
             SignInInput {
                 input: input.clone(),
                 masked,
+                token,
                 _submit: submit,
             },
         );
@@ -214,31 +247,33 @@ impl AgentPanel {
 
     /// Answers the session's prompt with what the user typed. The card goes
     /// away when the session stops asking.
-    pub(super) fn submit_sign_in(
+    fn submit_sign_in(
         &mut self,
-        thread: &gpui_kit::WeakEntity<AgentThread>,
-        item: EntityId,
+        submission: &SignInSubmission,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(field) = self.sign_in_inputs.get(&item) else {
-            return;
-        };
-        let answer = field.input.read(cx).value().to_string();
+        let answer = submission.input.read(cx).value().to_string();
         if answer.is_empty() {
             return;
         }
-        field
+        submission
             .input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        let access = thread.upgrade().and_then(|thread| {
-            let thread = thread.read(cx);
-            let wait = thread.sign_ins.iter().find(|wait| wait.item == item)?;
-            Some(wait.access.clone())
-        });
-        if let Some(access) = access
-            && let Err(error) = access.answer_sign_in(answer, cx)
-        {
+        let current =
+            submission.thread.upgrade().is_some_and(|thread| {
+                thread.read(cx).sign_ins.iter().any(|wait| {
+                    wait.item == submission.item && wait.prompt.token == submission.token
+                })
+            });
+        let result = if current {
+            submission
+                .prompts
+                .answer(submission.token, nocterm_session::Secret::new(answer), cx)
+        } else {
+            Err(nocterm_workspace::TerminalError::StalePrompt)
+        };
+        if let Err(error) = result {
             self.error = Some(error.to_string());
         }
         cx.notify();

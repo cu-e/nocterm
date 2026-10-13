@@ -37,18 +37,28 @@ impl AgentThread {
     pub(super) fn run_command(
         &mut self,
         entry: TerminalEntry,
+        expected: nocterm_workspace::ExpectedSession,
         request: nocterm_ai::RunCommand,
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let before = entry.access.read(
-            TextRequest {
-                max_lines: 2000,
-                max_bytes: 64 * 1024,
-                since_line: None,
-            },
-            cx,
-        );
+        let before = entry
+            .capabilities
+            .text()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::TextRead,
+            ))
+            .and_then(|port| {
+                port.read(
+                    expected,
+                    TextRequest {
+                        max_lines: 2000,
+                        max_bytes: 64 * 1024,
+                        since_line: None,
+                    },
+                    cx,
+                )
+            });
         let since = match before {
             Ok(before) => before.next_line,
             Err(error) => {
@@ -56,7 +66,14 @@ impl AgentThread {
                 return;
             }
         };
-        let lease = match entry.access.begin_live_command(&request.command, cx) {
+        let lease = match entry
+            .capabilities
+            .live()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::LiveCommands,
+            ))
+            .and_then(|port| port.begin(expected, &request.command, cx))
+        {
             Ok(lease) => Arc::new(lease),
             Err(error) => {
                 self.finish(call, Err(error.to_string().into()));
@@ -91,9 +108,15 @@ impl AgentThread {
                         .find(|(value, _, _)| *value == id)
                         .ok_or(TerminalOperationError::Detached)?;
                     let info = entry
-                        .access
+                        .capabilities
+                        .state()
                         .info(cx)
                         .ok_or(nocterm_workspace::TerminalError::Gone)?;
+                    if info.expected != expected {
+                        return Err(TerminalOperationError::Terminal(
+                            nocterm_workspace::TerminalError::StaleSession,
+                        ));
+                    }
                     if info.status != TerminalStatus::Connected {
                         return Err(TerminalOperationError::Disconnected);
                     }
@@ -113,14 +136,21 @@ impl AgentThread {
                     let Some(reason) = reason else {
                         return Ok(None);
                     };
-                    let tail = entry.access.read(
-                        TextRequest {
-                            max_lines: 2000,
-                            max_bytes: 64 * 1024,
-                            since_line: Some(since),
-                        },
-                        cx,
-                    )?;
+                    let tail = entry
+                        .capabilities
+                        .text()
+                        .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                            nocterm_workspace::TerminalCapability::TextRead,
+                        ))?
+                        .read(
+                            expected,
+                            TextRequest {
+                                max_lines: 2000,
+                                max_bytes: 64 * 1024,
+                                since_line: Some(since),
+                            },
+                            cx,
+                        )?;
                     let mut payload = this.text_payload(tail, cx);
                     payload["completion"] = serde_json::json!(reason);
                     payload["exit_status"] = serde_json::Value::Null;

@@ -60,7 +60,7 @@ impl AgentPanel {
                     servers::ServerRow::Folder(group) => self.folder_row(group, &thread, cx),
                     servers::ServerRow::Server { summary, nested } => {
                         let online = terminals.iter().any(|entry| {
-                            entry.access.info(cx).is_some_and(|info| {
+                            entry.capabilities.state().info(cx).is_some_and(|info| {
                                 info.profile.as_ref() == Some(&summary.id)
                                     && info.status != TerminalStatus::Closed
                             })
@@ -82,7 +82,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let attachment = Attachment::Terminal(entry.item);
-        let info = entry.access.info(cx);
+        let info = entry.capabilities.state().info(cx);
         // A saved server's session is attached through the server as well.
         let summary = info
             .as_ref()

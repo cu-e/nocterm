@@ -133,7 +133,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
 ) {
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
-    *f.access.executor.borrow_mut() =
+    *f.access.executor().borrow_mut() =
         Some(Arc::new(super::provider_intersections::Program::default()));
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| {

@@ -112,10 +112,17 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
-`TerminalAccess` operations return `TerminalError`, retaining charset sources and
+The narrow terminal ports return `TerminalError`, retaining charset sources and
 concrete capability, prompt, ownership and queue refusals. `open_on_host` returns
 `OpenOnHostError`, retaining launch validation and identifying a missing connected
 session. Consumers format these causes at notices or agent transcript boundaries.
+
+The Item supplies an immutable `TerminalCapabilities` record with a required state
+port and independent optional operations. `ExpectedSession` binds calls to the
+workspace Item and connection epoch. `UserPromptToken` also binds the exact secret
+prompt. Unsupported operations refuse explicitly; replacement sessions cannot
+inherit queued approvals, grants or prompt answers. Reconnect returns its accepted
+epoch so every waiter can reject an unrelated subsequent replacement.
 
 ## Tab groups
 

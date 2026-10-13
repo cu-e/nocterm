@@ -1,8 +1,8 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use gpui_kit::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Window,
+    SharedString, WeakEntity, Window,
 };
 use nocterm_session::{HostExec, RemoteFs, Target};
 use nocterm_ui::IconName;
@@ -28,7 +28,10 @@ pub trait Item: Render + Focusable + EventEmitter<ItemEvent> {
         None
     }
 
-    fn terminal_access(&self) -> Option<Rc<dyn crate::TerminalAccess>> {
+    fn terminal_capabilities(
+        &self,
+        _owner: WeakEntity<Self>,
+    ) -> Option<crate::TerminalCapabilities> {
         None
     }
 
@@ -115,7 +118,7 @@ fn same_handle<T: ?Sized>(left: &Option<Arc<T>>, right: &Option<Arc<T>>) -> bool
 /// An [`Item`] of any type, as the workspace holds it.
 pub trait ItemHandle: 'static {
     fn item_id(&self) -> EntityId;
-    fn terminal_access(&self, cx: &App) -> Option<Rc<dyn crate::TerminalAccess>>;
+    fn terminal_capabilities(&self, cx: &App) -> Option<crate::TerminalCapabilities>;
     fn view(&self) -> AnyView;
     fn tab_title(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, cx: &App) -> IconName;
@@ -127,8 +130,8 @@ pub trait ItemHandle: 'static {
 }
 
 impl<T: Item> ItemHandle for Entity<T> {
-    fn terminal_access(&self, cx: &App) -> Option<Rc<dyn crate::TerminalAccess>> {
-        self.read(cx).terminal_access()
+    fn terminal_capabilities(&self, cx: &App) -> Option<crate::TerminalCapabilities> {
+        self.read(cx).terminal_capabilities(self.downgrade())
     }
     fn item_id(&self) -> EntityId {
         self.entity_id()

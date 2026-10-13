@@ -506,7 +506,7 @@ struct ConnectedAccess {
     base: Rc<Access>,
     target: std::cell::RefCell<nocterm_session::Target>,
 }
-impl TerminalAccess for ConnectedAccess {
+impl TerminalState for ConnectedAccess {
     fn info(&self, cx: &App) -> Option<TerminalInfo> {
         let mut info = self.base.info(cx)?;
         info.local = false;
@@ -514,29 +514,38 @@ impl TerminalAccess for ConnectedAccess {
         info.target = Some(self.target.borrow().clone());
         Some(info)
     }
+}
+impl TerminalTextSource for ConnectedAccess {
     fn read(
         &self,
+        expected: ExpectedSession,
         request: TextRequest,
         cx: &App,
     ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
-        self.base.read(request, cx)
+        self.base.read(expected, request, cx)
     }
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
-        self.base.send_text(text, cx)
-    }
-    fn run_command(
+}
+impl TerminalInput for ConnectedAccess {
+    fn send_text(
         &self,
+        expected: ExpectedSession,
         text: &str,
         cx: &mut App,
     ) -> Result<(), nocterm_workspace::TerminalError> {
-        self.base.run_command(text, cx)
+        self.base.send_text(expected, text, cx)
     }
-    fn answer_sign_in(
+}
+impl SignInPrompts for ConnectedAccess {
+    fn pending(&self, cx: &App) -> Option<nocterm_workspace::SignInPrompt> {
+        self.info(cx)?.sign_in
+    }
+    fn answer(
         &self,
-        answer: String,
+        token: UserPromptToken,
+        answer: nocterm_session::Secret,
         cx: &mut App,
     ) -> Result<(), nocterm_workspace::TerminalError> {
-        self.base.answer_sign_in(answer, cx)
+        self.base.answer(token, answer, cx)
     }
 }
 
@@ -557,7 +566,10 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     });
     let entry = nocterm_workspace::TerminalEntry {
         item: f.terminal,
-        access: access.clone(),
+        capabilities: TerminalCapabilities::new(access.clone())
+            .with_text(access.clone())
+            .with_input(access.clone())
+            .with_prompts(access.clone()),
         title: "Production".into(),
         active: true,
         bottom: false,
