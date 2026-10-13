@@ -105,7 +105,11 @@ fn a_message_being_edited_cannot_be_removed(cx: &mut TestAppContext) {
 fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
     lazy_start(cx);
-    let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-00000000006e".into(),
+        1,
+    );
     saved.queue.push(nocterm_ai::history::SavedPrompt {
         id: 4,
         text: "never sent".into(),

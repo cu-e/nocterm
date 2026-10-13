@@ -2,6 +2,7 @@
 use super::*;
 use nocterm_ai::{
     history::{SavedChat, SavedPrompt},
+    metadata::ChatMetadataSource as _,
     thread::Entry,
 };
 pub(super) fn archived(
@@ -38,8 +39,9 @@ fn enter_literal(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
 }
-fn saved() -> SavedChat {
-    let mut chat = SavedChat::new("codex".into());
+fn saved(f: &Fixture) -> SavedChat {
+    let identity = f._directory.metadata.new_identity();
+    let mut chat = SavedChat::for_identity("codex".into(), identity.id, identity.created);
     chat.entries.push(Entry::Agent("historic answer".into()));
     chat
 }
@@ -49,7 +51,7 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
 ) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.draft = Some("literal draft".into());
     chat.queue.push(SavedPrompt {
         id: 8,
@@ -94,7 +96,7 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
 fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     thread.update(cx, |thread, cx| {
         thread.rename(Some("New name".into()), cx);
@@ -112,7 +114,7 @@ fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
 fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
@@ -161,7 +163,7 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
         .detach();
     });
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.workdir = Some(a.clone());
     chat.session_id = Some("previous-session".into());
     let thread = archived(&f, &chat, cx);
@@ -196,7 +198,7 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
     cx.run_until_parked();
     let mut chats = Vec::new();
     for index in 0..15 {
-        let mut chat = saved();
+        let mut chat = saved(&f);
         chat.updated = index;
         chat.entries = (0..2000).map(|_| Entry::Agent("row".into())).collect();
         chats.push(chat);
@@ -266,7 +268,7 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
     let f = fixture(cx);
     lazy_start(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.updated = 1;
     chat.draft = Some("old saved draft".into());
     let thread = archived(&f, &chat, cx);
@@ -276,12 +278,13 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
+    f._directory.metadata.timestamp_is(2);
     enter_literal(&f, "new literal\ndraft", cx);
     cx.run_until_parked();
     let edited_at = cx.update(|cx| {
         let thread = thread.read(cx);
         assert!(thread.is_archived());
-        assert!(thread.updated_at() > chat.updated);
+        assert_eq!(thread.updated_at(), 2);
         thread.updated_at()
     });
     let _ = blocked.send(Ok(()));
@@ -302,7 +305,7 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
 fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.queue.push(SavedPrompt {
         id: 3,
         text: "queued request".into(),
@@ -336,7 +339,7 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
 fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.name = Some("original name".into());
     chat.queue.push(SavedPrompt {
         id: 4,
@@ -366,7 +369,7 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
     let resolver = workspace_resolver();
     let f = fixture_with_width(cx, 26., usage_source(), resolver.clone(), image_deps());
     cx.run_until_parked();
-    let mut invalid = saved();
+    let mut invalid = saved(&f);
     invalid.session_id = Some("old-session".into());
     let removed = f._directory.path().join("removed-project");
     resolver.supply(
@@ -382,7 +385,7 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     cx.update(|cx| assert!(thread.read(cx).has_status_error()));
-    let mut legacy = saved();
+    let mut legacy = saved(&f);
     legacy.session_id = Some("old-without-directory".into());
     let thread = archived(&f, &legacy, cx);
     f.panel
@@ -406,7 +409,7 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
 fn failed_hydration_retries_with_only_new_metadata_intentions(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     f.repository.fail_next(
         nocterm_ai::testing::StorageOperation::Load(chat.id.clone()),
@@ -430,7 +433,7 @@ fn failed_hydration_retries_with_only_new_metadata_intentions(cx: &mut TestAppCo
 fn deferred_fork_uses_original_chat_and_row_after_active_chat_changes(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.name = Some("original source".into());
     chat.entries.push(Entry::Agent("later answer".into()));
     let source = archived(&f, &chat, cx);
@@ -463,7 +466,7 @@ fn deferred_fork_uses_original_chat_and_row_after_active_chat_changes(cx: &mut T
 fn deleted_source_does_not_fork_after_deferred_hydration(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
@@ -487,7 +490,7 @@ fn deleted_source_does_not_fork_after_deferred_hydration(cx: &mut TestAppContext
 fn clearing_native_input_while_hydration_waits_wins_over_saved_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.draft = Some("old persisted draft".into());
     let source = archived(&f, &chat, cx);
     let blocked = f
@@ -516,7 +519,7 @@ fn hydration_observer_can_rename_then_delete_without_reentering_owner_borrow(
 ) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let panel = f.panel.clone();
     let window = f.handle;
@@ -548,7 +551,7 @@ fn hydration_observer_can_rename_then_delete_without_reentering_owner_borrow(
 fn closed_original_window_does_not_fork_after_hydration(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved();
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
@@ -575,7 +578,7 @@ fn closed_original_window_does_not_fork_after_hydration(cx: &mut TestAppContext)
 fn blocked_open_applies_metadata_intentions_once_before_warm_connection(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let mut chat = saved();
+    let mut chat = saved(&f);
     chat.queue.push(SavedPrompt {
         id: 9,
         text: "held queue".into(),

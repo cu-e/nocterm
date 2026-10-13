@@ -9,7 +9,7 @@ use nocterm_ai::{
     thread::Entry,
 };
 fn chat() -> SavedChat {
-    let mut chat = SavedChat::new("codex".into());
+    let mut chat = SavedChat::for_identity("codex".into(), uuid::Uuid::new_v4().to_string(), 1);
     chat.entries.push(Entry::User(vec![acp::ContentBlock::Text(
         acp::TextContent::new("first message"),
     )]));

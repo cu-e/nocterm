@@ -206,10 +206,10 @@ impl AgentThread {
         let change = if self.config.report_control(&update) {
             ThreadChange::Controls
         } else {
-            self.state.apply_transcript(update, nocterm_ai::time::now())
+            self.state.apply_transcript(update, self.host.timestamp())
         };
         let patches = self.tool_displays.normalize(self.state.entries());
-        self.state.patch_tool_rows(patches, nocterm_ai::time::now());
+        self.state.patch_tool_rows(patches, self.host.timestamp());
         change
     }
 
@@ -309,7 +309,7 @@ impl AgentThread {
 
     fn normalize_tool_displays(&mut self) {
         let patches = self.tool_displays.normalize(self.state.entries());
-        self.state.patch_tool_rows(patches, nocterm_ai::time::now());
+        self.state.patch_tool_rows(patches, self.host.timestamp());
     }
 
     fn tool_destination(

@@ -153,7 +153,11 @@ async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAp
 fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
     f.commands.config.set_options(models());
-    let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-000000000071".into(),
+        1,
+    );
     saved
         .entries
         .push(nocterm_ai::thread::Entry::Agent("earlier answer".into()));

@@ -165,7 +165,9 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
                     let mut workspace =
                         Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| AgentPanel::new(owner, image_deps(), window, cx));
+                    let view = cx.new(|cx| {
+                        AgentPanel::new(f._directory.host(owner), image_deps(), window, cx)
+                    });
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
                     workspace.toggle_right_panel(window, cx);
@@ -607,4 +609,69 @@ fn a_permission_no_thread_takes_is_cancelled(cx: &mut TestAppContext) {
         futures::executor::block_on(answer).unwrap(),
         acp::RequestPermissionOutcome::Cancelled
     );
+}
+
+#[gpui_kit::test]
+fn new_chat_fork_and_durable_edits_use_supplied_identity_and_time(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    lazy_start(cx);
+    f._directory.metadata.timestamp_is(1000);
+    new_chat(&f, cx);
+    let original = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    cx.update(|cx| {
+        assert_eq!(
+            original.read(cx).chat_id(),
+            "00000000-0000-4000-8000-000000000001"
+        );
+        assert_eq!(original.read(cx).updated_at(), 1000);
+    });
+    f._directory.metadata.timestamp_is(2000);
+    original.update(cx, |thread, cx| {
+        thread.rename(Some("supplied metadata edit".into()), cx)
+    });
+    cx.update(|cx| assert_eq!(original.read(cx).updated_at(), 2000));
+    f._directory.metadata.timestamp_is(3000);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.fork_thread(original.entity_id(), window, cx)
+        });
+    })
+    .unwrap();
+    cx.update(|cx| {
+        let fork = f.panel.read(cx).current().unwrap();
+        assert_eq!(
+            fork.read(cx).chat_id(),
+            "00000000-0000-4000-8000-000000000002"
+        );
+        assert_eq!(fork.read(cx).updated_at(), 3000);
+        assert_eq!(original.read(cx).updated_at(), 2000);
+    });
+}
+
+#[gpui_kit::test]
+fn snapshot_capture_and_rejected_queue_budget_do_not_acquire_native_metadata(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    lazy_start(cx);
+    f._directory.metadata.timestamp_is(1234);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        thread.rename(Some("snapshot candidate".into()), cx);
+        let calls = f._directory.metadata.requests();
+        let id = thread.chat_id().to_owned();
+        let updated = thread.updated_at();
+        let _ = thread.shared_snapshot(cx);
+        let _ = thread.flush_snapshot(cx);
+        let _ = thread.capture_pending(cx);
+        let _ = thread.capture_pending(cx);
+        assert_eq!(f._directory.metadata.requests(), calls);
+        let too_large = "x".repeat(nocterm_ai::history::MAX_FILE_BYTES as usize + 1);
+        assert!(thread.submit(too_large, None, cx).is_err());
+        assert!(thread.queued_prompt_ids().next().is_none());
+        assert_eq!(thread.chat_id(), id);
+        assert_eq!(thread.updated_at(), updated);
+        assert_eq!(f._directory.metadata.requests(), calls);
+    });
 }

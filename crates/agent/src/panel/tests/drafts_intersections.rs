@@ -96,7 +96,11 @@ fn adopt(f: &mut Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAp
 #[gpui_kit::test]
 fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-00000000006b".into(),
+        1,
+    );
     let id = saved.id.clone();
     saved.draft = Some("saved text".into());
     adopt(&mut f, saved, cx);
@@ -120,7 +124,11 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = nocterm_ai::history::SavedChat::new("removed-provider".into());
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+        "removed-provider".into(),
+        "00000000-0000-4000-8000-00000000006c".into(),
+        1,
+    );
     let id = saved.id.clone();
     saved.draft = Some("previous text".into());
     adopt(&mut f, saved, cx);

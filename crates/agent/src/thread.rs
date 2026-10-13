@@ -1,8 +1,6 @@
 use crate::runtime::{Runtime, SessionLease};
 use futures::FutureExt as _;
-use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, WeakEntity, Window,
-};
+use gpui_kit::{AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Task, Window};
 use nocterm_ai::{
     AgentInfo, acp,
     context::OpaqueIds,
@@ -10,7 +8,6 @@ use nocterm_ai::{
     thread::ThreadState,
 };
 use nocterm_ui::ActiveAi as _;
-use nocterm_workspace::Workspace;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 pub(crate) mod archive;
@@ -120,7 +117,7 @@ pub(crate) struct AgentThread {
     pub status: String,
     pub status_error: bool,
     pub info: Option<AgentInfo>,
-    pub workspace: WeakEntity<Workspace>,
+    host: crate::chat_host::ChatHost,
     /// The window of the panel showing this chat; background sessions open
     /// there.
     pub window: Option<AnyWindowHandle>,
@@ -147,10 +144,11 @@ pub(crate) struct AgentThread {
 impl AgentThread {
     fn from_document(
         state: document::ChatDocument,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let authority = workspace
+        let authority = host
+            .workspace()
             .upgrade()
             .map(|workspace| cx.subscribe(&workspace, |this, _, _, cx| this.revoke_executions(cx)));
         let id = cx.entity_id();
@@ -172,7 +170,7 @@ impl AgentThread {
                 });
             });
             if let Some(window) = this.window {
-                let workspace = this.workspace.clone();
+                let workspace = this.host.workspace().clone();
                 let background = std::mem::take(&mut this.background);
                 cx.defer(move |cx| {
                     for item in background {
@@ -199,7 +197,7 @@ impl AgentThread {
             status: "Ready — send a message to start the agent".into(),
             status_error: false,
             info: None,
-            workspace,
+            host,
             window: None,
             background: Vec::new(),
             sign_ins: Vec::new(),
@@ -219,19 +217,19 @@ impl AgentThread {
     }
     pub(crate) fn new(
         agent_id: String,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let chat = nocterm_ai::history::SavedChat::new(agent_id);
+        let chat = host.new_chat(agent_id);
         Self::from_document(
             document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
-            workspace,
+            host,
             cx,
         )
     }
     pub(crate) fn archived(
         summary: nocterm_ai::history::ChatSummary,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut state = document::ChatDocument::new(
@@ -240,7 +238,7 @@ impl AgentThread {
             summary.updated,
         );
         state.archived_clean(&summary);
-        let mut thread = Self::from_document(state, workspace, cx);
+        let mut thread = Self::from_document(state, host, cx);
         thread.config.saved_model(summary.model.clone());
         thread.status = "Saved chat".into();
         thread.archive = archive::Archive::archived(summary);
@@ -494,7 +492,7 @@ impl AgentThread {
                 else {
                     return;
                 };
-                let completion = opener(self.workspace.clone(), request, window, cx);
+                let completion = opener(self.host.workspace().clone(), request, window, cx);
                 async move {
                     completion
                         .await
@@ -555,7 +553,7 @@ impl AgentThread {
     }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();
-        self.state.finish_pending_tools(nocterm_ai::time::now());
+        self.state.finish_pending_tools(self.host.timestamp());
     }
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.

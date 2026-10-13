@@ -36,7 +36,7 @@ impl BackgroundOpen {
         }
     }
     fn authorize(&self, thread: &AgentThread, cx: &App) -> Result<(), ConnectionWaitError> {
-        if thread.workspace.entity_id() != self.workspace.entity_id()
+        if thread.host.workspace().entity_id() != self.workspace.entity_id()
             || thread.registration().as_ref().map(|value| value.id) != self.registration
             || !thread.lifecycle.session_current(self.ticket)
             || !thread.lifecycle.accepts_updates()

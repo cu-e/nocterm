@@ -189,7 +189,7 @@ impl ChatDocument {
         update: acp::SessionUpdate,
         now: u64,
     ) -> ThreadChange {
-        let (change, semantic) = self.transcript.apply(update);
+        let (change, semantic) = self.transcript.apply(update, now);
         if semantic {
             self.changed(now, false);
         }
@@ -201,7 +201,7 @@ impl ChatDocument {
         now: u64,
         input: &Inputs<'_>,
     ) {
-        self.transcript.append_user(content);
+        self.transcript.append_user(content, now);
         self.persistence.remember_inputs(input);
         self.mark_row(self.entries().len() - 1);
         self.changed(now, false);

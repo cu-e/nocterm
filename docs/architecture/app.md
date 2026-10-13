@@ -70,3 +70,9 @@ scripted AI codec. Image ports are not discovered through globals or Runtime.
 Prepared connection observation dependencies include an explicit remote OS detector:
 startup supplies `NativeOsDetector`; memory composition supplies an inert detector
 that performs no remote acquisition. Bootstrap consumes the prepared collaborators.
+
+Booted retains the explicitly supplied chat metadata capability before consuming
+AgentServices and passes it to each window's agent registration. Native startup
+uses agent-storage's NativeChatMetadata; fixtures supply shared deterministic
+metadata. Panel registration binds the capability to its originating weak
+workspace without a global lookup. See [ADR0040](../adr/0040-native-chat-metadata.md).

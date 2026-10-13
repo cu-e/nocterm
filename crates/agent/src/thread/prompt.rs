@@ -52,7 +52,7 @@ impl AgentThread {
             super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
         self.state
-            .append_user(visible.clone(), nocterm_ai::time::now(), &input);
+            .append_user(visible.clone(), self.host.timestamp(), &input);
         self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
         let mut content = Vec::new();
@@ -103,8 +103,7 @@ impl AgentThread {
                             format!("{:?}", response.stop_reason)
                         };
                         if !is_command && completed {
-                            this.state
-                                .set_pending_history(false, nocterm_ai::time::now());
+                            this.state.set_pending_history(false, this.host.timestamp());
                             this.persist(cx);
                         }
                         this.dispatch_next(cx);

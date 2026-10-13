@@ -153,6 +153,7 @@ fn agent_services(
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
+        metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
         terminal_auth: Some(Arc::new(agent_auth::open)),
         bridge: Arc::new(nocterm_acp::BridgeServer::new(

@@ -25,7 +25,11 @@ fn adopt_json(
 }
 
 fn saved_chat(f: &Fixture, history: bool) -> SavedChat {
-    let mut chat = SavedChat::new("codex".into());
+    let mut chat = SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-000000000070".into(),
+        1,
+    );
     chat.session_id = Some("unpersisted-rollout".into());
     chat.workdir = Some(f._directory.path().join("work"));
     chat.draft = Some("new submission".into());

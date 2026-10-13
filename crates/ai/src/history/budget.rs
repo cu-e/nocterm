@@ -131,7 +131,11 @@ mod tests {
     #[test]
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn bounded_wire_and_cached_budget_match_actual_acp_json_and_exact_limit() {
-        let mut chat = SavedChat::new("agent\"\\\n界".into());
+        let mut chat = SavedChat::for_identity(
+            "agent\"\\\n界".into(),
+            "00000000-0000-4000-8000-000000000064".into(),
+            1,
+        );
         chat.title = Some("title\u{0}\n".into());
         chat.name = Some("name".into());
         chat.session_id = Some("session".into());

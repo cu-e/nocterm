@@ -126,7 +126,7 @@ impl AgentThread {
                         this.config.begin_reconciliation(&session, ticket);
                         this.lease.as_mut().expect("starting lease").session = Some(session);
                         this.restore = None;
-                        this.state.set_pending_history(this.state.pending_history() || (restored != Some(true) && !this.state.entries().is_empty()), nocterm_ai::time::now());
+                        this.state.set_pending_history(this.state.pending_history() || (restored != Some(true) && !this.state.entries().is_empty()), this.host.timestamp());
                         this.status = if this.state.pending_history() {
                             "Reconnected in a new session. Saved conversation will accompany the next message.".into()
                         } else {

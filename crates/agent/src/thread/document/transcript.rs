@@ -34,9 +34,9 @@ impl Transcript {
     pub(super) fn state(&self) -> &ThreadState {
         &self.state
     }
-    pub(super) fn apply(&mut self, update: acp::SessionUpdate) -> (ThreadChange, bool) {
+    pub(super) fn apply(&mut self, update: acp::SessionUpdate, now: u64) -> (ThreadChange, bool) {
         let semantic = self.changes_saved(&update);
-        (self.state.apply(update), semantic)
+        (self.state.apply(update, now), semantic)
     }
     fn changes_saved(&self, update: &acp::SessionUpdate) -> bool {
         match update {
@@ -53,8 +53,8 @@ impl Transcript {
             _ => false,
         }
     }
-    pub(super) fn append_user(&mut self, content: Vec<acp::ContentBlock>) {
-        self.state.push_user(content);
+    pub(super) fn append_user(&mut self, content: Vec<acp::ContentBlock>, now: u64) {
+        self.state.push_user(content, now);
     }
     pub(super) fn tokens(&mut self, usage: Option<acp::Usage>) {
         self.state.tokens = usage;

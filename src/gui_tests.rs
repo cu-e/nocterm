@@ -225,6 +225,7 @@ fn boot_with_ports(
             files,
             themes,
             agent: nocterm_agent::AgentServices {
+                metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
                     paths.clone(),

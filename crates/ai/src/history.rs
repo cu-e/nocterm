@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{acp, thread::Entry, time::now};
+use crate::{acp, thread::Entry};
 
 mod budget;
 mod catalog;
@@ -128,11 +128,6 @@ pub struct SavedChat {
 }
 
 impl SavedChat {
-    /// A new, empty chat with `agent_id`.
-    pub fn new(agent_id: String) -> Self {
-        Self::for_identity(agent_id, uuid::Uuid::new_v4().to_string(), now())
-    }
-
     /// An empty framing value for an already allocated identity and supplied timestamp.
     pub fn for_identity(agent_id: String, id: String, updated: u64) -> Self {
         Self {

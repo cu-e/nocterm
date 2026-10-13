@@ -29,13 +29,13 @@ pub enum ThreadChange {
     Ignored,
 }
 impl ThreadState {
-    pub fn push_user(&mut self, content: Vec<acp::ContentBlock>) {
-        self.push(Entry::User(content));
+    pub fn push_user(&mut self, content: Vec<acp::ContentBlock>, now: u64) {
+        self.push(Entry::User(content), now);
     }
-    fn push(&mut self, entry: Entry) {
+    fn push(&mut self, entry: Entry, now: u64) {
         self.times.resize(self.entries.len(), 0);
         self.entries.push(entry);
-        self.times.push(crate::time::now());
+        self.times.push(now);
     }
     /// When entry `index` began, if known.
     pub fn time(&self, index: usize) -> Option<u64> {
@@ -46,26 +46,26 @@ impl ThreadState {
         self.entries.truncate(len);
         self.times.truncate(len);
     }
-    pub fn apply(&mut self, update: acp::SessionUpdate) -> ThreadChange {
+    pub fn apply(&mut self, update: acp::SessionUpdate, now: u64) -> ThreadChange {
         match update {
             acp::SessionUpdate::AgentMessageChunk(chunk) => {
-                self.chunk(chunk.content, false);
+                self.chunk(chunk.content, false, now);
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::AgentThoughtChunk(chunk) => {
-                self.chunk(chunk.content, true);
+                self.chunk(chunk.content, true, now);
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(Entry::User(parts)) = self.entries.last_mut() {
                     parts.push(chunk.content);
                 } else {
-                    self.push_user(vec![chunk.content]);
+                    self.push_user(vec![chunk.content], now);
                 }
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::ToolCall(call) => {
-                self.push(Entry::Tool(call));
+                self.push(Entry::Tool(call), now);
                 ThreadChange::Transcript
             }
             acp::SessionUpdate::ToolCallUpdate(update) => {
@@ -123,20 +123,23 @@ impl ThreadState {
             _ => ThreadChange::Ignored,
         }
     }
-    fn chunk(&mut self, content: acp::ContentBlock, thought: bool) {
+    fn chunk(&mut self, content: acp::ContentBlock, thought: bool, now: u64) {
         if let acp::ContentBlock::Text(text) = content {
             match (self.entries.last_mut(), thought) {
                 (Some(Entry::Agent(value)), false) | (Some(Entry::Thought(value)), true) => {
                     value.push_str(&text.text)
                 }
-                _ => self.push(if thought {
-                    Entry::Thought(text.text)
-                } else {
-                    Entry::Agent(text.text)
-                }),
+                _ => self.push(
+                    if thought {
+                        Entry::Thought(text.text)
+                    } else {
+                        Entry::Agent(text.text)
+                    },
+                    now,
+                ),
             }
         } else {
-            self.push(Entry::Content(content));
+            self.push(Entry::Content(content), now);
         }
     }
     /// Whether the chat's title or any message mentions `query`, ignoring

@@ -293,9 +293,13 @@ The document compares affected saved rows before mutation. Only the codec's boun
 transcript window is durable; normalization supplies concrete patches to the existing
 tool-display metadata key. Literal drafts and queued payloads share their immutable
 storage while metadata projections retain no second transcript/media baseline.
-Snapshot framing uses the existing identity and timestamp. The legacy transcript
-reducer still supplies native timestamps for new rows; version-one protocol-backed
-history and genuine new-ID allocation retain their established boundaries.
+Snapshot framing uses the existing identity and timestamp. The transcript reducer
+receives timestamps from its coordinator. Each panel
+and chat retains explicit host collaborators through ChatHost, including a
+ChatMetadataSource injected by root and shared by all windows. New/fork identities
+and timestamps are supplied to pure document transitions; version-one
+protocol-backed history retains its current representation
+([ADR0040](../adr/0040-native-chat-metadata.md)).
 
 Deferred normal offers coalesce while preserving an immutable candidate and its
 semantic revision. Capture offers pending work without consuming it. Admission to

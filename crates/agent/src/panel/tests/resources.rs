@@ -266,7 +266,9 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
                     let mut workspace =
                         Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| AgentPanel::new(owner, image_deps(), window, cx));
+                    let view = cx.new(|cx| {
+                        AgentPanel::new(f._directory.host(owner), image_deps(), window, cx)
+                    });
                     workspace.set_right_panel(view.clone(), window, cx);
                     panel = Some(view);
                     workspace

@@ -1,7 +1,6 @@
 //! Replacement processes transfer durable meaning without allocating a new chat identity.
 use super::{AgentThread, Composer, Restore};
-use gpui_kit::{Context, WeakEntity};
-use nocterm_workspace::Workspace;
+use gpui_kit::Context;
 pub(crate) struct RestartData {
     document: super::document::DocumentRestart,
     config: super::config::RestartConfig,
@@ -24,11 +23,11 @@ impl AgentThread {
     }
     pub(crate) fn restarted(
         data: RestartData,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
         let state = super::document::ChatDocument::restarted(data.document);
-        let mut thread = Self::from_document(state, workspace, cx);
+        let mut thread = Self::from_document(state, host, cx);
         thread.config.hydrate_restart(data.config);
         thread.composer = data.composer;
         thread.restore = data.restore;

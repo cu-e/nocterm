@@ -1,7 +1,6 @@
 //! A chat as saved in the history: restoring, forking, naming and saving.
-use gpui_kit::{Context, WeakEntity};
+use gpui_kit::Context;
 use nocterm_ai::{acp, thread::ThreadState};
-use nocterm_workspace::Workspace;
 
 use super::{AgentThread, Composer, Fork, Restore};
 use crate::runtime::Runtime;
@@ -10,7 +9,7 @@ impl AgentThread {
     /// A restored document connects when shown with warm start enabled.
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut thread = Self::from_document(
@@ -19,7 +18,7 @@ impl AgentThread {
                 chat.id.clone(),
                 chat.updated,
             ),
-            workspace,
+            host,
             cx,
         );
         thread.restore_content(chat);
@@ -90,7 +89,7 @@ impl AgentThread {
     /// starts a new session, since the agent cannot forget the rest.
     pub(crate) fn fork_at(&self, len: usize) -> Fork {
         let whole = len >= self.state.entries().len();
-        let mut chat = nocterm_ai::history::SavedChat::new(self.state.agent_id().to_owned());
+        let mut chat = self.host.new_chat(self.state.agent_id().to_owned());
         let mut state = self.state.transcript().clone();
         state.truncate(len);
         chat.entries = state.entries;
@@ -123,15 +122,15 @@ impl AgentThread {
     /// The chat `fork` made, connected only when work is submitted.
     pub(crate) fn forked(
         fork: Fork,
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
         let pending_history =
             fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
-        let mut thread = Self::restored(fork.chat, workspace, cx);
+        let mut thread = Self::restored(fork.chat, host, cx);
         thread
             .state
-            .set_pending_history(pending_history, nocterm_ai::time::now());
+            .set_pending_history(pending_history, thread.host.timestamp());
         thread.restore = fork.restore;
         thread.composer.replace_context(fork.attachments);
         thread.establish_clean_document_inputs(cx);
@@ -156,7 +155,7 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Rename { name }, cx);
             return;
         }
-        if self.state.rename(name, nocterm_ai::time::now()) {
+        if self.state.rename(name, self.host.timestamp()) {
             self.save(cx);
         }
         cx.notify();
@@ -166,7 +165,7 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Pin { pinned }, cx);
             return;
         }
-        if self.state.pin(pinned, nocterm_ai::time::now()) {
+        if self.state.pin(pinned, self.host.timestamp()) {
             self.save(cx);
         }
         cx.notify();
@@ -216,7 +215,7 @@ impl AgentThread {
         let resume = self.persistent_resume();
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
         self.state
-            .accept_inputs(&input, nocterm_ai::time::now(), draft)
+            .accept_inputs(&input, self.host.timestamp(), draft)
     }
     pub(super) fn establish_clean_document_inputs(&mut self, cx: &gpui_kit::App) {
         let attachments = self.stable_attachments(self.composer.default_attachments(), cx);

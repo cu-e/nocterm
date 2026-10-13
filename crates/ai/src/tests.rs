@@ -75,16 +75,19 @@ fn reducer_merges_chunks_and_keeps_message_boundaries() {
     for text in ["hello ", "world"] {
         s.apply(update(
             json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}),
-        ));
+        ), 1);
     }
     assert!(matches!(&s.entries[0],Entry::Agent(v) if v=="hello world"));
-    s.push_user(vec![acp::ContentBlock::Text(acp::TextContent::new("next"))]);
+    s.push_user(
+        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
+        1,
+    );
     s.apply(update(
         json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}),
-    ));
+    ), 1);
     s.apply(update(
         json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"response"}}),
-    ));
+    ), 1);
     assert_eq!(s.entries.len(), 4);
 }
 #[test]
@@ -98,16 +101,17 @@ fn reducer_handles_transcript_metadata_usage_and_tool_replacement() {
         json!({"sessionUpdate":"usage_update","used":50,"size":100}),
         json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"user"}}),
     ] {
-        assert_ne!(s.apply(update(value)), ThreadChange::Ignored);
+        assert_ne!(s.apply(update(value), 1), ThreadChange::Ignored);
     }
     assert!(
         matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==acp::ToolCallStatus::Completed)
     );
     assert_eq!(s.title.as_deref(), Some("A title"));
     assert_eq!(s.usage.as_ref().unwrap().used, 50);
-    s.apply(update(
-        json!({"sessionUpdate":"session_info_update","title":null}),
-    ));
+    s.apply(
+        update(json!({"sessionUpdate":"session_info_update","title":null})),
+        1,
+    );
     assert!(s.title.is_none());
 }
 #[test]
@@ -300,7 +304,7 @@ fn redacts_quoted_credential_assignments() {
 #[test]
 fn image_chunks_are_retained() {
     let mut state = ThreadState::default();
-    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})));
+    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})), 1);
     assert!(matches!(
         state.entries.last(),
         Some(Entry::Content(acp::ContentBlock::Image(_)))
@@ -473,4 +477,27 @@ fn tool_failures_carry_text_and_are_redacted_in_the_result_payload() {
     let wire = tool_result(json!(1), Err(failure));
     assert_eq!(wire["result"]["isError"], json!(true));
     assert!(!wire.to_string().contains("marker-secret"));
+}
+
+#[test]
+fn reducer_uses_supplied_timestamps_and_preserves_the_first_chunk_time() {
+    let mut state = ThreadState::default();
+    state.apply(
+        update(
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first"}}),
+        ),
+        10,
+    );
+    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second"}})), 20);
+    state.push_user(
+        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
+        30,
+    );
+    assert_eq!(state.time(0), Some(10));
+    assert_eq!(state.time(1), Some(30));
+    state.apply(
+        update(json!({"sessionUpdate":"session_info_update","title":"Title"})),
+        40,
+    );
+    assert_eq!(state.times, [10, 30]);
 }

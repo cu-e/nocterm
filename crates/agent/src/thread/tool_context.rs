@@ -9,7 +9,7 @@ use nocterm_workspace::{ConnectionSummary, TerminalEntry, TerminalStatus};
 impl AgentThread {
     /// Saved servers this chat is attached to, directly or by folder.
     fn attached_servers(&self, cx: &App) -> Vec<ConnectionSummary> {
-        let Some(workspace) = self.workspace.upgrade() else {
+        let Some(workspace) = self.host.workspace().upgrade() else {
             return Vec::new();
         };
         workspace
@@ -40,7 +40,7 @@ impl AgentThread {
         &mut self,
         cx: &App,
     ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
-        let Some(workspace) = self.workspace.upgrade() else {
+        let Some(workspace) = self.host.workspace().upgrade() else {
             return Vec::new();
         };
         let workspace = workspace.read(cx);

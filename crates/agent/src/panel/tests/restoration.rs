@@ -27,7 +27,11 @@ fn adopt_saved(
 }
 
 fn empty_chat(f: &Fixture) -> SavedChat {
-    let mut chat = SavedChat::new("codex".into());
+    let mut chat = SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-00000000006f".into(),
+        1,
+    );
     chat.session_id = Some("never-persisted-provider-session".into());
     chat.workdir = Some(f._directory.path().join("work"));
     chat.draft = Some("literal unsent text".into());

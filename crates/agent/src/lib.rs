@@ -7,7 +7,8 @@
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
 //! Does not own: ACP transport, connection admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, terminal ports,
-//! ConnectionDirectory, ImageInspector and ImageThumbnailer through ImageDeps.
+//! ConnectionDirectory, ImageInspector and ImageThumbnailer through ImageDeps,
+//! and explicit ChatMetadataSource retained with each window collaborator.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
@@ -23,6 +24,7 @@
 //! content fingerprint. Deferred offers remain pending until shared-writer admission;
 //! old publication failures cannot pause a newer desired document.
 
+mod chat_host;
 mod image_deps;
 mod panel;
 pub use image_deps::ImageDeps;
@@ -63,6 +65,7 @@ pub type TerminalAuthOpener = Arc<
 
 /// What the host provides to the agents.
 pub struct AgentServices {
+    pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: runtime::AgentStorage,
@@ -142,11 +145,13 @@ gpui_kit::actions!(
 pub fn register(
     workspace: &mut nocterm_workspace::Workspace,
     images: ImageDeps,
+    metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) {
     let owner = cx.entity().downgrade();
-    let panel = cx.new(|panel_cx| panel::AgentPanel::new(owner, images, window, panel_cx));
+    let host = chat_host::ChatHost::new(owner, metadata);
+    let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, images, window, panel_cx));
     workspace.set_right_panel(panel, window, cx);
     workspace.set_right_panel_available(nocterm_ui::ActiveAi::ai_enabled(&**cx), window, cx);
 }

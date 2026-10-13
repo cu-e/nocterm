@@ -74,7 +74,8 @@ impl AgentThread {
         cx: &App,
     ) -> Vec<SavedAttachment> {
         let terminals = self
-            .workspace
+            .host
+            .workspace()
             .upgrade()
             .map(|workspace| workspace.read(cx).terminals(cx))
             .unwrap_or_default();

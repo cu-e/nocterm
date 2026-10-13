@@ -308,7 +308,8 @@ impl AgentThread {
         }
         let (Some(window), Some(directory)) = (
             self.window,
-            self.workspace
+            self.host
+                .workspace()
                 .upgrade()
                 .and_then(|workspace| workspace.read(cx).connection_directory()),
         ) else {
@@ -316,7 +317,7 @@ impl AgentThread {
             return;
         };
         let opening = BackgroundOpen::new(
-            self.workspace.clone(),
+            self.host.workspace().clone(),
             window,
             directory,
             summary.id.to_string(),
@@ -411,7 +412,7 @@ impl AgentThread {
                 }
             }
         };
-        let workspace = self.workspace.clone();
+        let workspace = self.host.workspace().clone();
         let ticket = self.lifecycle.ticket();
         let registration = self.registration().as_ref().map(|value| value.id);
         let guard = self.hold_operation();
@@ -467,7 +468,7 @@ impl AgentThread {
             .partition(|id| resolved.contains(id));
         self.background = keep;
         if let Some(window) = self.window {
-            let workspace = self.workspace.clone();
+            let workspace = self.host.workspace().clone();
             cx.defer(move |cx| {
                 for item in close {
                     let _ = cx.update_window(window, |_, window, cx| {
@@ -550,7 +551,7 @@ pub(super) async fn wait_until_connected(
             .await;
         let step = this
             .update(cx, |this, cx| {
-                if this.workspace.entity_id() != workspace.entity_id()
+                if this.host.workspace().entity_id() != workspace.entity_id()
                     || this.registration().as_ref().map(|value| value.id) != registration
                     || !this.lifecycle.session_current(ticket)
                     || !this.lifecycle.accepts_updates()

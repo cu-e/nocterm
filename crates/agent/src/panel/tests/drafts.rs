@@ -85,7 +85,11 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
 #[gpui_kit::test]
 fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let chat = nocterm_ai::history::SavedChat::new("codex".into());
+    let chat = nocterm_ai::history::SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-00000000006a".into(),
+        1,
+    );
     let mut value = serde_json::to_value(chat).unwrap();
     value["draft"] = serde_json::json!("restored\ntext");
     let chat = serde_json::from_value(value).unwrap();

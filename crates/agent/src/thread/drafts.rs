@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 impl AgentThread {
     pub(crate) fn set_draft(&mut self, text: String, cx: &mut Context<Self>) {
         if self.is_archived() {
-            let now = nocterm_ai::time::now();
+            let now = self.host.timestamp();
             if self.archive.edit_draft(text, now) {
                 self.state.edited_archived_draft(now);
                 cx.notify();

@@ -226,7 +226,11 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         SavedAttachment::LocalTerminal("old shell".into()),
         SavedAttachment::Connection("deleted remote".into()),
     ];
-    let mut saved = SavedChat::new("codex".into());
+    let mut saved = SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-000000000069".into(),
+        1,
+    );
     saved.attachments = refs.clone();
     saved.queue = vec![SavedPrompt {
         id: 1,
@@ -234,8 +238,9 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         images: Vec::new(),
         attachments: refs.clone(),
     }];
-    let thread =
-        cx.new(|cx| crate::thread::AgentThread::restored(saved, f.workspace.downgrade(), cx));
+    let thread = cx.new(|cx| {
+        crate::thread::AgentThread::restored(saved, f._directory.host(f.workspace.downgrade()), cx)
+    });
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.track(&thread, window, cx);

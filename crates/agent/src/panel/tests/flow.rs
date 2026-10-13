@@ -241,8 +241,13 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
             .update(cx, |thread, cx| thread.release_resources(cx));
     });
     cx.run_until_parked();
-    let thread = cx
-        .new(|cx| crate::thread::AgentThread::restored(saved.clone(), f.workspace.downgrade(), cx));
+    let thread = cx.new(|cx| {
+        crate::thread::AgentThread::restored(
+            saved.clone(),
+            f._directory.host(f.workspace.downgrade()),
+            cx,
+        )
+    });
     f.commands
         .restore_errors
         .lock()
@@ -361,8 +366,13 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
             .update(cx, |thread, cx| thread.release_resources(cx));
     });
     cx.run_until_parked();
-    let thread = cx
-        .new(|cx| crate::thread::AgentThread::restored(saved.clone(), f.workspace.downgrade(), cx));
+    let thread = cx.new(|cx| {
+        crate::thread::AgentThread::restored(
+            saved.clone(),
+            f._directory.host(f.workspace.downgrade()),
+            cx,
+        )
+    });
     f.commands
         .restore_errors
         .lock()

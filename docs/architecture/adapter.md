@@ -171,3 +171,8 @@ Its 16-KiB release reads use bounded chunks and explicit best-effort close on ev
 opened-reader result. Cancellation releases handles through Drop. Unknown native
 failures retain typed sources, and inert composition issues no remote requests.
 See [ADR 0039](../adr/0039-remote-os-observation-boundary.md).
+
+Native chat identity and timestamp facts are supplied by agent-storage's
+NativeChatMetadata through AI's ChatMetadataSource. New document allocation
+combines one native UUID with its creation timestamp; snapshots and imports
+supply their existing identity and time without consulting the adapter.

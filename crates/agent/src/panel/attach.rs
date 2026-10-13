@@ -32,7 +32,8 @@ use crate::thread::{AgentThread, Attachment};
 
 impl AgentPanel {
     pub(super) fn render_attach_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let (Some(thread), Some(workspace)) = (self.current(), self.workspace.upgrade()) else {
+        let (Some(thread), Some(workspace)) = (self.current(), self.host.workspace().upgrade())
+        else {
             return div().into_any_element();
         };
         let directory = workspace.read(cx).connection_directory();
@@ -123,7 +124,7 @@ impl AgentPanel {
         });
         let mut line = h_flex().w_full().gap_1().child(row);
         if entry.background {
-            let workspace = self.workspace.clone();
+            let workspace = self.host.workspace().clone();
             line = line.child(
                 Button::new(SharedString::from(format!("show-background-{item:?}")))
                     .custom(menu_variant(cx))
@@ -195,7 +196,7 @@ impl AgentPanel {
         let selected = explicit || covering.is_some();
         let id = summary.id.to_string();
         let directory = directory.clone();
-        let workspace = self.workspace.clone();
+        let workspace = self.host.workspace().clone();
         // Indented with padding, not margin: a margin beside a full width
         // pushed the open button past the menu's edge.
         let line = h_flex()

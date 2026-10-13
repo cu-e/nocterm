@@ -163,9 +163,10 @@ survives later failure or cancellation without advancing file or byte counters.
 validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
-Existing SavedChat/SharedChat ACP payloads remain protocol migration debt, as do
-separate clock/entropy responsibilities. New storage
-contracts use the existing typed records without adding protocol-specific fields.
+Existing SavedChat/SharedChat ACP payloads remain protocol migration debt.
+Chat identity allocation and wall-clock observations are supplied through the
+ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
+([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records without adding protocol-specific fields.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
@@ -189,9 +190,9 @@ version-one values remain migration debt at their established seams.
 
 Version-one `SavedChat::for_identity` constructs framing from supplied values without
 allocating a replacement UUID or querying time. Its saved-window boundary is shared
-with feature semantic comparisons. Genuine new/fork allocation and the legacy
-transcript reducer still use the existing UUID/clock paths; the history wire format
-and protocol-backed records retain their current representation.
+with feature semantic comparisons. Genuine new/fork allocation uses the injected
+native ChatMetadataSource. The transcript reducer receives the same timestamp as the accepted document transition;
+the history wire format and protocol-backed records retain their current representation.
 
 ## Agent image contracts
 

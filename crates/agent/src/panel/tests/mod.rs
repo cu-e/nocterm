@@ -274,6 +274,19 @@ impl ToolBridge for Bridge {
 mod terminal_fixture;
 use terminal_fixture::{Access, FakeTerminal, SignIn};
 
+struct HostEnvironment {
+    directory: tempfile::TempDir,
+    metadata: Arc<nocterm_ai::testing::ScriptedChatMetadata>,
+}
+impl HostEnvironment {
+    fn path(&self) -> &std::path::Path {
+        self.directory.path()
+    }
+    fn host(&self, workspace: gpui_kit::WeakEntity<Workspace>) -> crate::chat_host::ChatHost {
+        crate::chat_host::ChatHost::new(workspace, self.metadata.clone())
+    }
+}
+
 struct Fixture {
     layout: nocterm_ui::LayoutHandle,
     handle: AnyWindowHandle,
@@ -288,7 +301,7 @@ struct Fixture {
     /// Tool calls as the terminal bridge delivers them.
     calls: async_channel::Sender<BridgeCall>,
     rejections: async_channel::Sender<nocterm_ai::BridgeRejection>,
-    _directory: tempfile::TempDir,
+    _directory: HostEnvironment,
     repository: Arc<nocterm_ai::testing::InMemoryAgentRepository>,
     ready: nocterm_ui::UiReady,
     shutdown: nocterm_store::ShutdownCoordinator,
@@ -310,7 +323,10 @@ fn fixture_with_width(
     workdir_resolver: Arc<nocterm_ai::testing::ScriptedWorkdirResolver>,
     images: crate::ImageDeps,
 ) -> Fixture {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = HostEnvironment {
+        directory: tempfile::tempdir().unwrap(),
+        metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
+    };
     let repository = Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
     let (commands, bridge, connector, events, sender, rejection_sender) = {
         let commands = Arc::new(Commands::default());
@@ -354,6 +370,7 @@ fn fixture_with_width(
         let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
         crate::init(
             AgentServices {
+                metadata: directory.metadata.clone(),
                 terminal_auth: None,
                 private_dirs: Vec::new(),
                 shared_dirs: Vec::new(),
@@ -387,7 +404,8 @@ fn fixture_with_width(
                     terminal = Some(item.entity_id());
                     workspace.add_item(item, window, cx);
                     let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| AgentPanel::new(owner, images, window, cx));
+                    let view =
+                        cx.new(|cx| AgentPanel::new(directory.host(owner), images, window, cx));
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
                     workspace.toggle_right_panel(window, cx);
@@ -427,6 +445,7 @@ fn fixture_with_width(
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
+        metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),
         bridge: f.bridge.clone(),
         storage: runtime::AgentStorage::prepared(
@@ -458,8 +477,14 @@ fn install_fixture(
     });
     let panel = cx
         .update_window(f.handle, |_, window, cx| {
-            let panel =
-                cx.new(|cx| AgentPanel::new(f.workspace.downgrade(), image_deps(), window, cx));
+            let panel = cx.new(|cx| {
+                AgentPanel::new(
+                    f._directory.host(f.workspace.downgrade()),
+                    image_deps(),
+                    window,
+                    cx,
+                )
+            });
             f.workspace.update(cx, |workspace, cx| {
                 workspace.set_right_panel(panel.clone(), window, cx)
             });

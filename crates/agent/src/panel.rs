@@ -1,7 +1,7 @@
 use crate::{runtime::Runtime, thread::AgentThread};
 use gpui_kit::{
     Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
-    Task, TestSupportExt as _, WeakEntity, Window,
+    Task, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use nocterm_ai::acp;
 use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
-use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, Workspace, WorkspaceEvent};
+use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
 use std::{
     collections::{HashMap, HashSet},
     time::Duration,
@@ -58,7 +58,7 @@ enum MenuKind {
 pub(crate) struct AgentPanel {
     image_cache: image_pipeline::ImagePipeline,
     focus: FocusHandle,
-    workspace: WeakEntity<Workspace>,
+    host: crate::chat_host::ChatHost,
     threads: Vec<Entity<AgentThread>>,
     active: Option<usize>,
     /// Whether the history column is beside the chat; it starts open.
@@ -100,7 +100,7 @@ impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
-        workspace: WeakEntity<Workspace>,
+        host: crate::chat_host::ChatHost,
         images: crate::ImageDeps,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -158,7 +158,7 @@ impl AgentPanel {
             if !enabled {
                 this.clear_chats(window, cx);
             }
-            let workspace = this.workspace.clone();
+            let workspace = this.host.workspace().clone();
             window.defer(cx, move |window, cx| {
                 let _ = workspace.update(cx, |workspace, cx| {
                     workspace.set_right_panel_available(enabled, window, cx)
@@ -166,7 +166,7 @@ impl AgentPanel {
             });
             cx.notify();
         });
-        let workspace_observer = workspace.upgrade().map(|workspace| {
+        let workspace_observer = host.workspace().upgrade().map(|workspace| {
             cx.subscribe_in(
                 &workspace,
                 window,
@@ -178,7 +178,8 @@ impl AgentPanel {
                     | WorkspaceEvent::ConnectionsChanged => cx.notify(),
                     WorkspaceEvent::RightPanelVisibilityChanged => {
                         if !this
-                            .workspace
+                            .host
+                            .workspace()
                             .upgrade()
                             .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
                         {
@@ -219,7 +220,7 @@ impl AgentPanel {
             image_cache: image_pipeline::ImagePipeline::new(images),
             sign_in_inputs: HashMap::new(),
             focus: cx.focus_handle(),
-            workspace,
+            host,
             threads: Vec::new(),
             active: None,
             history: true,
@@ -357,10 +358,11 @@ impl AgentPanel {
                 .current()
                 .is_none_or(|thread| !thread.read(cx).has_pending_approvals())
                 || self
-                    .workspace
+                    .host
+                    .workspace()
                     .upgrade()
                     .is_none_or(|workspace| !workspace.read(cx).right_panel_is_open()));
-        let _ = self.workspace.update(cx, |workspace, cx| {
+        let _ = self.host.workspace().update(cx, |workspace, cx| {
             workspace.set_right_panel_attention(attention, cx)
         });
         let requests = needs_notice.then(|| {
@@ -383,7 +385,7 @@ impl AgentPanel {
             return;
         }
         let panel = cx.weak_entity();
-        let workspace = self.workspace.clone();
+        let workspace = self.host.workspace().clone();
         nocterm_ui::notice::warning_action(
             window,
             cx,

@@ -39,3 +39,4 @@ acceptance; a later record supersedes an earlier one.
 | [0037](0037-chat-document-semantic-revisions.md) | Durable chat revisions, pending candidates and capture have separate ownership |
 | [0038](0038-private-terminal-state-owners.md) | Private terminal state owners commit input and presentation after captured session admission |
 | [0039](0039-remote-os-observation-boundary.md) | Remote OS observation uses checked identities and an injected bounded adapter |
+| [0040](0040-native-chat-metadata.md) | Native chat identity and timestamps use explicit host capabilities |

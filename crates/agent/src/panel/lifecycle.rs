@@ -147,18 +147,19 @@ impl AgentPanel {
         Runtime::global(cx).update(cx, |runtime, cx| runtime.set_last_agent(&id, cx));
         self.leave_composer(cx);
         let active = self
-            .workspace
+            .host
+            .workspace()
             .upgrade()
             .and_then(|workspace| workspace.read(cx).active_terminal(cx));
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
         let thread = cx.new(|cx| match start {
             ThreadStart::New(id) => {
-                let mut thread = AgentThread::new(id, self.workspace.clone(), cx);
+                let mut thread = AgentThread::new(id, self.host.clone(), cx);
                 thread.preview_config(cx);
                 thread
             }
-            ThreadStart::Restart(data) => AgentThread::restarted(*data, self.workspace.clone(), cx),
+            ThreadStart::Restart(data) => AgentThread::restarted(*data, self.host.clone(), cx),
         });
         if !restarting && let Some(id) = active {
             thread.update(cx, |thread, cx| {
@@ -217,7 +218,7 @@ impl AgentPanel {
         let mut restored = Vec::new();
         if let Some(chats) = chats {
             for chat in chats.into_iter().rev() {
-                let thread = cx.new(|cx| AgentThread::restored(chat, self.workspace.clone(), cx));
+                let thread = cx.new(|cx| AgentThread::restored(chat, self.host.clone(), cx));
                 self.track(&thread, window, cx);
                 restored.push(thread);
             }
@@ -232,8 +233,7 @@ impl AgentPanel {
                 {
                     continue;
                 }
-                let thread =
-                    cx.new(|cx| AgentThread::archived(summary, self.workspace.clone(), cx));
+                let thread = cx.new(|cx| AgentThread::archived(summary, self.host.clone(), cx));
                 self.track(&thread, window, cx);
                 restored.push(thread);
             }

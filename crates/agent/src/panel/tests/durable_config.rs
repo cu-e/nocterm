@@ -106,7 +106,11 @@ fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) 
             runtime.remember_options("codex", &models(), cx)
         })
     });
-    let mut saved = nocterm_ai::history::SavedChat::new("codex".into());
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-00000000006d".into(),
+        1,
+    );
     saved
         .entries
         .push(nocterm_ai::thread::Entry::Agent("earlier answer".into()));

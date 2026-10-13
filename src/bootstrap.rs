@@ -50,6 +50,7 @@ pub(crate) struct VaultSetup {
 pub(crate) struct Booted {
     settings_ui: nocterm_settings_ui::Deps,
     images: nocterm_agent::ImageDeps,
+    metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
     pub(crate) themes: nocterm_ui::ThemeUi,
@@ -83,6 +84,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         vault,
         connections,
     } = services;
+    let metadata = agent.metadata.clone();
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
     let base = tokens.clone();
@@ -132,6 +134,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let booted = Booted {
         settings_ui,
         images,
+        metadata,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -228,7 +231,13 @@ pub(crate) fn build_workspace(
     nocterm_snippets_ui::register(workspace, window, cx);
     nocterm_containers_ui::register(workspace, window, cx);
     nocterm_monitor_ui::register(workspace, window, cx);
-    nocterm_agent::register(workspace, booted.images.clone(), window, cx);
+    nocterm_agent::register(
+        workspace,
+        booted.images.clone(),
+        booted.metadata.clone(),
+        window,
+        cx,
+    );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(vault) = vault
         && cx

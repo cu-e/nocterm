@@ -168,8 +168,8 @@ impl AgentPanel {
             Some(last) => source.read(cx).fork_at(last + 1),
             None => source.read(cx).fork(),
         };
-        let workspace = self.workspace.clone();
-        let thread = cx.new(|cx| AgentThread::forked(fork, workspace, cx));
+        let host = self.host.clone();
+        let thread = cx.new(|cx| AgentThread::forked(fork, host, cx));
         thread.update(cx, |thread, cx| thread.persist(cx));
         self.track(&thread, window, cx);
         let id = thread.entity_id();
@@ -337,7 +337,7 @@ impl AgentPanel {
             "No requests yet".to_owned()
         } else {
             relative_prompt_time(Some(Duration::from_secs(
-                nocterm_ai::time::now().saturating_sub(chat.updated_at()),
+                self.host.timestamp().saturating_sub(chat.updated_at()),
             )))
         };
         let model = chat.model().unwrap_or_default();

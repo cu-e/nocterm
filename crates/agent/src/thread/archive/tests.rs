@@ -4,7 +4,11 @@ use futures::FutureExt as _;
 use nocterm_ai::{history::HistoryGate, session::SessionState};
 
 fn saved() -> SavedChat {
-    SavedChat::new("codex".into())
+    SavedChat::for_identity(
+        "codex".into(),
+        "00000000-0000-4000-8000-000000000067".into(),
+        1,
+    )
 }
 fn permit(gate: &HistoryGate) -> HistoryPermit {
     gate.acquire()

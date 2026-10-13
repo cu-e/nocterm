@@ -99,7 +99,7 @@ impl AgentPanel {
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
         }
-        let labels = super::attachments::AttachmentLabels::new(&self.workspace, cx);
+        let labels = super::attachments::AttachmentLabels::new(self.host.workspace(), cx);
         let composer = self.render_composer(&thread, &state, &labels, cx);
         body = body
             .when(

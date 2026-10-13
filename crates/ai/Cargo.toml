@@ -21,7 +21,7 @@ base64.workspace = true
 regex.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
+uuid = { version = "1", default-features = false }
 [dev-dependencies]
 tempfile.workspace = true
 [lints]
