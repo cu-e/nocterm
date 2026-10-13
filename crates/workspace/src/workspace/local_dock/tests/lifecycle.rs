@@ -71,17 +71,21 @@ impl crate::TerminalAccess for Access {
     fn info(&self, _: &App) -> Option<crate::TerminalInfo> {
         None
     }
-    fn read(&self, _: crate::TextRequest, _: &App) -> Result<crate::TerminalText, String> {
-        Err("unused access operation".into())
+    fn read(
+        &self,
+        _: crate::TextRequest,
+        _: &App,
+    ) -> Result<crate::TerminalText, crate::TerminalError> {
+        Err(crate::TerminalError::Unavailable)
     }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
+    fn send_text(&self, _: &str, _: &mut App) -> Result<(), crate::TerminalError> {
+        Err(crate::TerminalError::Unavailable)
     }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
+    fn run_command(&self, _: &str, _: &mut App) -> Result<(), crate::TerminalError> {
+        Err(crate::TerminalError::Unavailable)
     }
-    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
+    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), crate::TerminalError> {
+        Err(crate::TerminalError::Unavailable)
     }
 }
 

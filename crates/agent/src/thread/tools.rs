@@ -171,7 +171,7 @@ impl AgentThread {
                         cx,
                     )
                     .map(|tail| self.text_payload(tail, cx));
-                self.finish(call, result.map_err(Into::into));
+                self.finish(call, result.map_err(|error| error.to_string().into()));
             }
             TerminalCall::SendInput(request) => {
                 let text = format!(
@@ -183,7 +183,7 @@ impl AgentThread {
                     .access
                     .send_text(&text, cx)
                     .map(|()| serde_json::json!({"accepted":true}));
-                self.finish(call, result.map_err(Into::into));
+                self.finish(call, result.map_err(|error| error.to_string().into()));
             }
             TerminalCall::RunCommand(request) => {
                 let request = request.clone();
@@ -337,7 +337,7 @@ impl AgentThread {
             && let Err(error) = entry.access.reconnect(cx)
         {
             self.reconnecting.remove(&item);
-            return Task::ready(Err(unreachable(&error)));
+            return Task::ready(Err(unreachable(&error.to_string())));
         }
         let workspace = self.workspace.clone();
         let ticket = self.lifecycle.ticket();

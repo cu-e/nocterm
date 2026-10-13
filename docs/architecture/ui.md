@@ -112,6 +112,11 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
+`TerminalAccess` operations return `TerminalError`, retaining charset sources and
+concrete capability, prompt, ownership and queue refusals. `open_on_host` returns
+`OpenOnHostError`, retaining launch validation and identifying a missing connected
+session. Consumers format these causes at notices or agent transcript boundaries.
+
 ## Tab groups
 
 Tabs can be grouped. Groups are workspace state the dock knows nothing of:
@@ -164,8 +169,8 @@ The explicitly injected `ShutdownCoordinator` captures layout before background
 drain and shares one deadline across its registered participants (ADR 0013).
 Settings also uses `nocterm-store`, with durable publication rather than optimistic
 layout projection. Bootstrap registers both settings and layout with the same
-coordinator alongside snippets and connection state; agent and recording writers
-still retain their own quit handlers.
+coordinator alongside snippets, connection state, agent documents and output
+recording.
 The workspace body lays out only its visible columns —
 sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
 the left — with one resize state per arrangement, and remembers widths per

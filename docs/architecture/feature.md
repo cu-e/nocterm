@@ -47,6 +47,13 @@ Session Settings reuses the validated session options editor for transient
 overrides. Safe reconnect retires the previous session, event pump, prompts and
 remote filesystem before starting a new epoch.
 
+Terminal input preserves typed charset failures and distinct command, snippet,
+live ownership and queue refusals through the workspace seam. Explorer path drops
+use a private `FileDropError`; validation precedes one native paste submission.
+Agent observation retains terminal causes during asynchronous work until its tool
+result. Snippet execution retains target selection and typed failures until the
+notice, and never retries a paste after submission if focusing its tab fails.
+
 ## Terminal keyboard input
 
 The view forwards repeat and release events only for accepted terminal input,

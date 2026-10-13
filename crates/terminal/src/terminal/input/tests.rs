@@ -120,7 +120,9 @@ fn user_paste_rejects_unavailable_authentication_alt_screen_and_invalid_text(
                 .is_err()
         );
         terminal.codec = crate::codec::TextCodec::new(Charset::Windows1251);
-        assert!(terminal.paste_snippet("echo 🙂", true, cx).is_err());
+        let error = terminal.paste_snippet("echo 🙂", true, cx).unwrap_err();
+        assert!(matches!(&error, TerminalError::Encoding(source) if source.charset() == Charset::Windows1251));
+        assert!(std::error::Error::source(&error).is_some());
     });
     assert!(driver.next_command().now_or_never().is_none());
 }
@@ -136,6 +138,7 @@ fn rejected_queue_does_not_submit_a_partial_snippet(cx: &mut TestAppContext) {
             terminal
                 .paste_snippet("echo must-not-arrive", true, cx)
                 .unwrap_err()
+                .to_string()
                 .contains("queue")
         );
         accepted
@@ -214,6 +217,7 @@ fn explorer_paste_reports_queue_and_charset_rejection_without_partial_input(
             terminal
                 .paste_paths("'/valid path'", cx)
                 .unwrap_err()
+                .to_string()
                 .contains("queue")
         );
     });
@@ -270,4 +274,66 @@ fn reconnect_revokes_live_lease_and_clears_prompt_evidence(cx: &mut TestAppConte
             Some(Command::Input(_))
         ));
     });
+}
+
+#[gpui_kit::test]
+fn typed_agent_refusals_never_submit_control_characters_or_oversized_input(
+    cx: &mut TestAppContext,
+) {
+    let (terminal, driver) = fixture(cx, false);
+    terminal.update(cx, |terminal, cx| {
+        terminal.advance_output(b"\x1b]133;A\x07", cx);
+        for text in ["echo\0bad", "echo\nbad", "echo\rbad"] {
+            assert!(matches!(
+                terminal.agent_send(text, true, cx),
+                Err(TerminalError::CommandControlCharacters)
+            ));
+        }
+        assert!(matches!(
+            terminal.agent_send(&"x".repeat(16 * 1024 + 1), false, cx),
+            Err(TerminalError::InputTooLarge)
+        ));
+        terminal.advance_output(b"\x1b[?1049h", cx);
+        assert!(matches!(
+            terminal.begin_live_command("echo one", cx),
+            Err(TerminalError::CommandPromptUnavailable)
+        ));
+    });
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn dropping_live_observation_does_not_interrupt_the_held_session(cx: &mut TestAppContext) {
+    let (terminal, driver) = fixture(cx, false);
+    terminal.update(cx, |terminal, cx| {
+        terminal.advance_output(b"\x1b]133;A\x07", cx);
+        let lease = terminal.begin_live_command("sleep 10", cx).unwrap();
+        assert_eq!(sent(&driver), b"sleep 10\r");
+        drop(lease);
+    });
+    assert!(driver.next_command().now_or_never().is_none());
+}
+
+#[gpui_kit::test]
+fn snippet_limit_exceeds_agent_limit_and_both_accept_their_exact_boundary(cx: &mut TestAppContext) {
+    let (terminal, driver) = fixture(cx, false);
+    let agent = "x".repeat(16 * 1024);
+    let snippet = "x".repeat(256 * 1024);
+    terminal.update(cx, |terminal, cx| {
+        terminal.agent_send(&agent, false, cx).unwrap();
+    });
+    assert_eq!(sent(&driver), agent.as_bytes());
+    terminal.update(cx, |terminal, cx| {
+        terminal.paste_snippet(&snippet, false, cx).unwrap();
+        assert!(matches!(
+            terminal.agent_send(&snippet, false, cx),
+            Err(TerminalError::InputTooLarge)
+        ));
+        assert!(matches!(
+            terminal.paste_snippet(&format!("{snippet}x"), false, cx),
+            Err(TerminalError::SnippetTooLarge)
+        ));
+    });
+    assert_eq!(sent(&driver), snippet.as_bytes());
+    assert!(driver.next_command().now_or_never().is_none());
 }

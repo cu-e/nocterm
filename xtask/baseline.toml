@@ -106,7 +106,6 @@ nocterm-ui = 5
 "nocterm_monitor_ui::model::Plan" = 2
 "nocterm_settings_ui::field::Field" = 3
 "nocterm_snippets_ui::panel::run::RunTarget" = 1
-"nocterm_terminal::access::Access" = 1
 "nocterm_terminal::credentials::CredentialState" = 2
 "nocterm_terminal::element::Geometry" = 5
 "nocterm_terminal::element::TerminalElement" = 12
@@ -123,8 +122,6 @@ nocterm-ui = 5
 "nocterm_ui::layout::LayoutMemory::init" = 1
 
 [string_errors]
-nocterm-terminal = 15
-nocterm-workspace = 9
 
 [struct_fields]
 "nocterm_agent::panel::AgentPanel" = 34

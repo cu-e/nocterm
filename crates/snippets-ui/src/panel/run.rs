@@ -22,6 +22,20 @@ pub(super) enum TargetError {
     TerminalClosed,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum RunError {
+    #[error("{0}")]
+    Target(#[from] TargetError),
+    #[error("{0}")]
+    Terminal(#[from] nocterm_workspace::TerminalError),
+    #[error(
+        "The selected terminal is disconnected, waiting for authentication, or in an alternate screen."
+    )]
+    NotReady,
+    #[error("The snippet was sent, but its terminal is no longer visible.")]
+    SentButNoLongerVisible,
+}
+
 impl SnippetsPanel {
     pub(super) fn target(&self, cx: &App) -> Result<RunTarget, TargetError> {
         let workspace = self
@@ -51,15 +65,10 @@ impl SnippetsPanel {
         info.status == TerminalStatus::Connected && info.sign_in.is_none() && !info.alt_screen
     }
     pub(super) fn run(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let result = self
-            .target(cx)
-            .map_err(|e| e.to_string())
-            .and_then(|target| {
+        let result = (|| -> Result<(), RunError> {
+            let target = self.target(cx)?;
             if !Self::ready(&target.info) {
-                return Err(
-                    "The selected terminal is disconnected, waiting for authentication, or in an alternate screen."
-                        .into(),
-                );
+                return Err(RunError::NotReady);
             }
             target.access.paste_snippet(text, true, cx)?;
             let focused = self
@@ -69,12 +78,18 @@ impl SnippetsPanel {
                 })
                 .unwrap_or(false);
             if !focused {
-                return Err("The snippet was sent, but its terminal is no longer visible.".into());
+                return Err(RunError::SentButNoLongerVisible);
             }
             Ok(())
-        });
+        })();
         if let Err(error) = result {
-            nocterm_ui::notice::error(window, cx, "snippet-run", "Could not run snippet", error);
+            nocterm_ui::notice::error(
+                window,
+                cx,
+                "snippet-run",
+                "Could not run snippet",
+                error.to_string(),
+            );
         }
     }
 }

@@ -144,7 +144,7 @@ impl TerminalView {
 
 impl Item for TerminalView {
     fn terminal_access(&self) -> Option<std::rc::Rc<dyn nocterm_workspace::TerminalAccess>> {
-        Some(std::rc::Rc::new(crate::access::Access(
+        Some(std::rc::Rc::new(crate::access::Access::new(
             self.terminal.downgrade(),
         )))
     }

@@ -25,7 +25,7 @@ impl AgentThread {
         let executor = match entry.access.executor(cx) {
             Ok(executor) => executor,
             Err(error) => {
-                self.finish(call, Err(error.into()));
+                self.finish(call, Err(error.to_string().into()));
                 return;
             }
         };

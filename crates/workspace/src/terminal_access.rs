@@ -1,5 +1,7 @@
 //! Allowlisted access to existing terminals. No authentication or launch data
 //! reaches agents; only the user answers a sign-in prompt.
+use crate::{TerminalCapability, TerminalError};
+
 use std::{
     path::PathBuf,
     rc::Rc,
@@ -98,34 +100,45 @@ impl Drop for LiveCommandLease {
 /// Weak access, checked again for each operation and after user approval.
 pub trait TerminalAccess: 'static {
     fn info(&self, cx: &App) -> Option<TerminalInfo>;
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, String>;
+    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, TerminalError>;
     /// Rejects disconnected/authentication states and reports queue rejection.
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String>;
+    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), TerminalError>;
     /// Adds command-specific busy, dirty-input and alternate-screen guards.
-    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String>;
+    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), TerminalError>;
     /// The executor of the current connected, authenticated session.
-    fn executor(&self, _cx: &App) -> Result<Arc<dyn HostExec>, String> {
-        Err("This terminal does not support structured execution.".into())
+    fn executor(&self, _cx: &App) -> Result<Arc<dyn HostExec>, TerminalError> {
+        Err(TerminalError::Unsupported(
+            TerminalCapability::StructuredExecution,
+        ))
     }
     /// Claims terminal-owned live input before submitting a command.
-    fn begin_live_command(&self, command: &str, cx: &mut App) -> Result<LiveCommandLease, String> {
+    fn begin_live_command(
+        &self,
+        command: &str,
+        cx: &mut App,
+    ) -> Result<LiveCommandLease, TerminalError> {
         let _ = (command, cx);
-        Err("This terminal does not support owned live commands.".into())
+        Err(TerminalError::Unsupported(TerminalCapability::LiveCommands))
     }
     /// A direct user paste, optionally followed by Enter, through the terminal's
     /// native paste protocol. This is separate from agent command execution and
     /// works without shell integration. Unsupported terminal providers refuse it.
-    fn paste_snippet(&self, _text: &str, _execute: bool, _cx: &mut App) -> Result<(), String> {
-        Err("This terminal does not support snippets.".into())
+    fn paste_snippet(
+        &self,
+        _text: &str,
+        _execute: bool,
+        _cx: &mut App,
+    ) -> Result<(), TerminalError> {
+        Err(TerminalError::Unsupported(TerminalCapability::Snippets))
     }
     /// Answers [`TerminalInfo::sign_in`] with what the user typed. Never
     /// exposed to agent tools.
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String>;
+    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), TerminalError>;
     /// Connects a remote session that has closed again, in place. Does
     /// nothing while it is still connecting or connected; local shells and
     /// one-off commands refuse.
-    fn reconnect(&self, _cx: &mut App) -> Result<(), String> {
-        Err("This terminal cannot reconnect.".into())
+    fn reconnect(&self, _cx: &mut App) -> Result<(), TerminalError> {
+        Err(TerminalError::Unsupported(TerminalCapability::Reconnect))
     }
 }
 

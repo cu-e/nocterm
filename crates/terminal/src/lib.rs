@@ -17,9 +17,12 @@
 //! Text conversion remains here; directory synchronization preserves session
 //! charset errors through the workspace LocalTerminal contract.
 
+//! Input refusals preserve typed charset and queue errors through workspace contracts.
+
 mod access;
 mod codec;
 mod credentials;
+mod file_drop;
 mod recording;
 pub(crate) use recording::OutputRecording;
 pub use recording::RecordingStatus;

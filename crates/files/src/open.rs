@@ -180,7 +180,7 @@ fn open_remote(
         return;
     };
     let title = format!("{} {}", opener.program, path::file_name(file));
-    // The legacy workspace boundary is converted only at the display surface.
+    // Format the typed workspace refusal only at the display surface.
     let result = workspace.update(cx, |workspace, cx| {
         workspace.open_on_host(
             host,

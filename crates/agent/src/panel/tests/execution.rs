@@ -265,7 +265,10 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         true,
         cx,
     ));
-    assert!(unsupported.unwrap_err().message().contains("unsupported"));
+    assert_eq!(
+        unsupported.unwrap_err().message(),
+        "This terminal does not support structured execution."
+    );
     assert!(programs.requests.lock().unwrap().is_empty());
     assert!(f.access.sent.borrow().is_empty());
 }

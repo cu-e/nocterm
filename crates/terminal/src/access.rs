@@ -1,13 +1,20 @@
 use gpui_kit::{App, WeakEntity};
 use nocterm_session::{HostExec, Prompt, Secret};
 use nocterm_workspace::{
-    SignInPrompt, TerminalAccess, TerminalInfo, TerminalStatus, TerminalText, TextRequest,
+    SignInPrompt, TerminalAccess, TerminalCapability, TerminalError, TerminalInfo, TerminalStatus,
+    TerminalText, TextRequest,
 };
 use std::sync::Arc;
 
 use crate::{Status, Terminal, credentials::describe};
 
-pub(crate) struct Access(pub WeakEntity<Terminal>);
+pub(crate) struct Access(WeakEntity<Terminal>);
+
+impl Access {
+    pub(crate) fn new(terminal: WeakEntity<Terminal>) -> Self {
+        Self(terminal)
+    }
+}
 
 impl TerminalAccess for Access {
     fn info(&self, cx: &App) -> Option<TerminalInfo> {
@@ -48,11 +55,11 @@ impl TerminalAccess for Access {
         })
     }
 
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, String> {
-        let entity = self.0.upgrade().ok_or("Terminal was closed.")?;
+    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, TerminalError> {
+        let entity = self.0.upgrade().ok_or(TerminalError::Gone)?;
         let terminal = entity.read(cx);
         if !terminal.is_connected() || terminal.prompt().is_some() {
-            return Err("Terminal is unavailable or waiting for authentication.".into());
+            return Err(TerminalError::Unavailable);
         }
         let tail = terminal.emulator().text(nocterm_vt::TextQuery {
             max_lines: request.max_lines.min(2000),
@@ -68,68 +75,68 @@ impl TerminalAccess for Access {
         })
     }
 
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String> {
+    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), TerminalError> {
         self.0
             .update(cx, |terminal, cx| terminal.agent_send(text, false, cx))
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 
-    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), String> {
+    fn run_command(&self, command: &str, cx: &mut App) -> Result<(), TerminalError> {
         self.0
             .update(cx, |terminal, cx| terminal.agent_send(command, true, cx))
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 
-    fn executor(&self, cx: &App) -> Result<Arc<dyn HostExec>, String> {
-        let entity = self.0.upgrade().ok_or("Terminal was closed.")?;
+    fn executor(&self, cx: &App) -> Result<Arc<dyn HostExec>, TerminalError> {
+        let entity = self.0.upgrade().ok_or(TerminalError::Gone)?;
         let terminal = entity.read(cx);
         if !terminal.is_connected() || terminal.prompt().is_some() || terminal.awaiting_vault() {
-            return Err("Terminal is unavailable or waiting for authentication.".into());
+            return Err(TerminalError::Unavailable);
         }
-        terminal
-            .agent_executor()
-            .ok_or_else(|| "This session does not support structured execution.".into())
+        terminal.agent_executor().ok_or(TerminalError::Unsupported(
+            TerminalCapability::SessionExecution,
+        ))
     }
 
     fn begin_live_command(
         &self,
         command: &str,
         cx: &mut App,
-    ) -> Result<nocterm_workspace::LiveCommandLease, String> {
+    ) -> Result<nocterm_workspace::LiveCommandLease, TerminalError> {
         self.0
             .update(cx, |terminal, cx| terminal.begin_live_command(command, cx))
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 
-    fn paste_snippet(&self, text: &str, execute: bool, cx: &mut App) -> Result<(), String> {
+    fn paste_snippet(&self, text: &str, execute: bool, cx: &mut App) -> Result<(), TerminalError> {
         self.0
             .update(cx, |terminal, cx| terminal.paste_snippet(text, execute, cx))
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String> {
+    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), TerminalError> {
         self.0
             .update(cx, |terminal, cx| {
                 if !matches!(terminal.prompt(), Some(Prompt::Secret { .. })) {
-                    return Err("The session no longer asks to sign in.".to_owned());
+                    return Err(TerminalError::SignInNoLongerRequested);
                 }
                 terminal.answer_secret_and_remember(Secret::new(answer), false, cx);
                 Ok(())
             })
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 
-    fn reconnect(&self, cx: &mut App) -> Result<(), String> {
+    fn reconnect(&self, cx: &mut App) -> Result<(), TerminalError> {
         self.0
             .update(cx, |terminal, cx| {
                 if terminal.is_local() || terminal.is_command() {
-                    return Err("Only a remote session can reconnect.".to_owned());
+                    return Err(TerminalError::OnlyRemoteReconnect);
                 }
                 if matches!(terminal.status(), Status::Closed(_)) {
                     terminal.reconnect(cx);
                 }
                 Ok(())
             })
-            .map_err(|_| "Terminal was closed.".to_owned())?
+            .map_err(|_| TerminalError::Gone)?
     }
 }

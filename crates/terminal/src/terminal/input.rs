@@ -1,8 +1,10 @@
 //! User snippet pasting and guarded agent input share transport encoding.
+use crate::file_drop::FileDropError;
+
 use super::{Terminal, TerminalEvent};
 use gpui_kit::Context;
 use nocterm_vt::encode_paste;
-use nocterm_workspace::{LiveCommandLease, LocalDirectoryError};
+use nocterm_workspace::{LiveCommandLease, LocalDirectoryError, TerminalError};
 use std::{
     path::Path,
     sync::{
@@ -91,16 +93,16 @@ impl Terminal {
         text: &str,
         command: bool,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TerminalError> {
         if !self.is_connected() || self.prompt.is_some() {
-            return Err("Terminal is unavailable or waiting for authentication.".into());
+            return Err(TerminalError::Unavailable);
         }
         if text.len() > 16 * 1024 {
-            return Err("Terminal input exceeds 16 KiB.".into());
+            return Err(TerminalError::InputTooLarge);
         }
         if command {
             if text.contains(['\0', '\r', '\n']) {
-                return Err("Run one command without control characters.".into());
+                return Err(TerminalError::CommandControlCharacters);
             }
             let integration = self.integration.borrow();
             if self.emulator.modes().alt_screen
@@ -108,26 +110,23 @@ impl Terminal {
                 || !integration.at_prompt
                 || integration.dirty_input
             {
-                return Err(
-                    "The terminal is busy, has unfinished input, or is in an alternate screen."
-                        .into(),
-                );
+                return Err(TerminalError::CommandPromptUnavailable);
             }
         }
         if self.agent_input.borrow().active() && !self.agent_input.borrow().submitting {
-            return Err("Another chat is observing a command in this terminal.".into());
+            return Err(TerminalError::LiveCommandOwned);
         }
         let text = if command {
             format!("{text}\r")
         } else {
             text.to_owned()
         };
-        let bytes = self.codec.encode(&text).map_err(|e| e.to_string())?;
+        let bytes = self.codec.encode(&text)?;
         self.agent_input.borrow_mut().submitting = true;
         let accepted = self.send(bytes);
         self.agent_input.borrow_mut().submitting = false;
         if !accepted {
-            return Err("Terminal input queue rejected the input.".into());
+            return Err(TerminalError::InputQueueRejected);
         }
         cx.emit(TerminalEvent::Changed);
         Ok(())
@@ -143,9 +142,9 @@ impl Terminal {
         &mut self,
         command: &str,
         cx: &mut Context<Self>,
-    ) -> Result<LiveCommandLease, String> {
+    ) -> Result<LiveCommandLease, TerminalError> {
         if self.agent_input.borrow().active() {
-            return Err("Another chat is observing a command in this terminal.".into());
+            return Err(TerminalError::LiveCommandOwned);
         }
         self.agent_send(command, true, cx)?;
         let active = Arc::new(AtomicBool::new(true));
@@ -207,21 +206,21 @@ impl Terminal {
         text: &str,
         execute: bool,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TerminalError> {
         if !self.is_connected() || self.prompt.is_some() || self.awaiting_vault() {
-            return Err("Terminal is unavailable or waiting for authentication.".into());
+            return Err(TerminalError::Unavailable);
         }
         if self.emulator.modes().alt_screen {
-            return Err("Leave the alternate screen before running a snippet.".into());
+            return Err(TerminalError::SnippetAlternateScreen);
         }
         if text.trim().is_empty() {
-            return Err("Snippet content is empty.".into());
+            return Err(TerminalError::EmptySnippet);
         }
         if text.len() > 256 * 1024 {
-            return Err("Snippet content exceeds 256 KiB.".into());
+            return Err(TerminalError::SnippetTooLarge);
         }
         if text.contains(['\0', '\x1b']) {
-            return Err("Snippet content contains NUL or Escape control characters.".into());
+            return Err(TerminalError::SnippetControlCharacters);
         }
         let text = if execute {
             text.trim_end_matches(['\r', '\n'])
@@ -232,14 +231,19 @@ impl Terminal {
     }
 
     /// Explorer drops follow native paste, including programs in the alternate screen.
-    pub(crate) fn paste_paths(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
+    pub(crate) fn paste_paths(
+        &mut self,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), FileDropError> {
         if !self.is_connected() || self.prompt.is_some() || self.awaiting_vault() {
-            return Err("Connect and finish authentication before dropping paths.".into());
+            return Err(FileDropError::NotConnected);
         }
         if text.is_empty() || text.len() > 256 * 1024 || text.chars().any(char::is_control) {
-            return Err("The selected paths cannot be inserted safely.".into());
+            return Err(FileDropError::UnsafeSelection);
         }
         self.send_paste(text, false, cx)
+            .map_err(FileDropError::from)
     }
 
     fn send_paste(
@@ -247,17 +251,16 @@ impl Terminal {
         text: &str,
         execute: bool,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TerminalError> {
         let mut paste = encode_paste(text, self.emulator.modes());
         // Enter must follow the bracketed-paste closing marker, never occur inside it.
         if execute {
             paste.push(b'\r');
         }
-        let text =
-            std::str::from_utf8(&paste).map_err(|_| "Paste could not be encoded as text.")?;
-        let bytes = self.codec.encode(text).map_err(|e| e.to_string())?;
+        let text = std::str::from_utf8(&paste)?;
+        let bytes = self.codec.encode(text)?;
         if !self.send(bytes) {
-            return Err("Terminal input queue rejected the paste. Wait and retry.".into());
+            return Err(TerminalError::PasteQueueRejected);
         }
         cx.emit(TerminalEvent::Changed);
         Ok(())

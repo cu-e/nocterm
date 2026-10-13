@@ -108,23 +108,36 @@ impl TerminalAccess for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         self.info.borrow().clone()
     }
-    fn read(&self, _: TextRequest, _: &App) -> Result<TerminalText, String> {
-        Err("Unused by snippets".into())
+    fn read(
+        &self,
+        _: TextRequest,
+        _: &App,
+    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
+        Err(nocterm_workspace::TerminalError::Unavailable)
     }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), String> {
+    fn send_text(&self, _: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
         panic!("Snippets must use the native paste contract")
     }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), String> {
+    fn run_command(&self, _: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
         panic!("Snippets must preserve agent command guards")
     }
-    fn paste_snippet(&self, text: &str, execute: bool, _: &mut App) -> Result<(), String> {
+    fn paste_snippet(
+        &self,
+        text: &str,
+        execute: bool,
+        _: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         if self.reject.get() {
-            return Err("Input queue rejected the snippet".into());
+            return Err(nocterm_workspace::TerminalError::PasteQueueRejected);
         }
         self.sent.borrow_mut().push((text.to_owned(), execute));
         Ok(())
     }
-    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), String> {
+    fn answer_sign_in(
+        &self,
+        _: String,
+        _: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         panic!("Snippets must never answer authentication")
     }
 }

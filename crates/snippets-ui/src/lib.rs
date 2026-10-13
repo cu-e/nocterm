@@ -6,6 +6,8 @@
 //! Settings section: none. Globals: GlobalLibrary (temporary compatibility).
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.
+//! Snippet submission keeps target and terminal refusals typed until notice presentation.
+
 mod editor;
 mod model;
 mod panel;

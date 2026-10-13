@@ -239,7 +239,7 @@ impl AgentPanel {
         if let Some(access) = access
             && let Err(error) = access.answer_sign_in(answer, cx)
         {
-            self.error = Some(error);
+            self.error = Some(error.to_string());
         }
         cx.notify();
     }

@@ -8,6 +8,30 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[derive(Debug, thiserror::Error)]
+enum TerminalOperationError {
+    #[error("{0}")]
+    Terminal(#[from] nocterm_workspace::TerminalError),
+    #[error("Live command ownership was revoked by user input or reconnection.")]
+    Revoked,
+    #[error("Command observation cancelled.")]
+    Cancelled,
+    #[error("Terminal was detached or closed.")]
+    Detached,
+    #[error("Terminal is no longer connected.")]
+    Disconnected,
+    #[error("Chat was closed.")]
+    ChatClosed,
+}
+impl TerminalOperationError {
+    fn into_failure(self) -> nocterm_ai::ToolFailure {
+        match self {
+            Self::Detached | Self::Disconnected => unreachable(&self.to_string()),
+            _ => self.to_string().into(),
+        }
+    }
+}
+
 impl AgentThread {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn run_command(
@@ -28,14 +52,14 @@ impl AgentThread {
         let since = match before {
             Ok(before) => before.next_line,
             Err(error) => {
-                self.finish(call, Err(error.into()));
+                self.finish(call, Err(error.to_string().into()));
                 return;
             }
         };
         let lease = match entry.access.begin_live_command(&request.command, cx) {
             Ok(lease) => Arc::new(lease),
             Err(error) => {
-                self.finish(call, Err(error.into()));
+                self.finish(call, Err(error.to_string().into()));
                 return;
             }
         };
@@ -56,22 +80,22 @@ impl AgentThread {
                     .await;
                 let step = this.update(cx, |this, cx| {
                     if !lease.is_active() {
-                        return Err(
-                            "Live command ownership was revoked by user input or reconnection."
-                                .into(),
-                        );
+                        return Err(TerminalOperationError::Revoked);
                     }
                     if !this.lifecycle.accepts_updates() || !cx.ai_enabled() {
-                        return Err("Command observation cancelled.".into());
+                        return Err(TerminalOperationError::Cancelled);
                     }
                     let (_, entry, _) = this
                         .resolved(cx)
                         .into_iter()
                         .find(|(value, _, _)| *value == id)
-                        .ok_or_else(|| unreachable("Terminal was detached or closed."))?;
-                    let info = entry.access.info(cx).ok_or("Terminal was closed.")?;
+                        .ok_or(TerminalOperationError::Detached)?;
+                    let info = entry
+                        .access
+                        .info(cx)
+                        .ok_or(nocterm_workspace::TerminalError::Gone)?;
                     if info.status != TerminalStatus::Connected {
-                        return Err(unreachable("Terminal is no longer connected."));
+                        return Err(TerminalOperationError::Disconnected);
                     }
                     if generation != Some(info.generation) {
                         generation = Some(info.generation);
@@ -107,7 +131,7 @@ impl AgentThread {
                     Ok(Ok(Some(result))) => break Ok(result),
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => break Err(error),
-                    Err(_) => break Err("Chat was closed.".into()),
+                    Err(_) => break Err(TerminalOperationError::ChatClosed),
                 }
             };
             let _ = this.update(cx, |this, _| {
@@ -121,7 +145,7 @@ impl AgentThread {
             });
             drop(lease);
             let _ = this.update(cx, |this, cx| {
-                this.finish(call, result);
+                this.finish(call, result.map_err(TerminalOperationError::into_failure));
                 cx.notify();
             });
         })

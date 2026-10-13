@@ -12,6 +12,8 @@
 //! choice revalidates current session, registration and attachment authority.
 //! Archive delivery also validates document ownership and its local load generation;
 //! a literal pending draft supersedes the saved draft and its timestamp together.
+//! Terminal operation causes stay typed until tool transcripts and sign-in errors are presented.
+
 mod panel;
 use nocterm_agent_runtime as runtime;
 mod thread;

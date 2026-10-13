@@ -23,6 +23,8 @@
 //! commands through [`Workspace::register_action`], and session opening through
 //! [`SessionFactory`]. [`WorkspaceEvent`] reports observable shell changes.
 
+//! Terminal operations report typed refusals and program opening retains launch validation causes.
+
 mod actions;
 pub mod command_palette;
 mod connection_directory;
@@ -35,6 +37,8 @@ mod panel;
 mod right_panel;
 mod tab_groups;
 mod terminal_access;
+mod terminal_errors;
+pub use terminal_errors::{OpenOnHostError, TerminalCapability, TerminalError};
 mod workspace;
 
 pub use actions::*;

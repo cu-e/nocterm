@@ -264,13 +264,14 @@ impl Workspace {
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::OpenOnHostError> {
         // Published snapshots choose the tab, the active one first; only the
         // chosen tabs are asked how they were opened.
-        let spec = self
-            .tabs
-            .session_spec_for(target, cx)
-            .ok_or_else(|| format!("No connected session to {target} is open."))?;
+        let spec = self.tabs.session_spec_for(target, cx).ok_or_else(|| {
+            crate::OpenOnHostError::NoConnectedSession {
+                target: target.clone(),
+            }
+        })?;
         let env = spec
             .launch
             .as_ref()
@@ -283,7 +284,7 @@ impl Workspace {
             env,
             integration: false,
         };
-        launch.validate().map_err(|error| error.to_string())?;
+        launch.validate()?;
         let spec = super::SessionSpec {
             title,
             launch: Some(launch),

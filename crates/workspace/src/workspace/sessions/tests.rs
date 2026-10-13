@@ -13,6 +13,19 @@ struct Remote {
     spec: SessionSpec,
     connected: bool,
 }
+impl Remote {
+    fn new(
+        spec: SessionSpec,
+        connected: bool,
+        cx: &mut Context<Workspace>,
+    ) -> gpui_kit::Entity<Self> {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle(),
+            spec,
+            connected,
+        })
+    }
+}
 impl EventEmitter<ItemEvent> for Remote {}
 impl Focusable for Remote {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -69,22 +82,32 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
     });
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            let offline = cx.new(|cx| Remote {
-                focus: cx.focus_handle(),
-                spec: spec.clone(),
-                connected: false,
-            });
+            let offline = Remote::new(spec.clone(), false, cx);
             workspace.add_item(offline, window, cx);
             let error = workspace
                 .open_on_host(&target, "nano".into(), vec![], None, "x".into(), window, cx)
                 .unwrap_err();
-            assert!(error.contains("No connected session"), "{error}");
-            let online = cx.new(|cx| Remote {
-                focus: cx.focus_handle(),
-                spec: spec.clone(),
-                connected: true,
-            });
+            assert!(matches!(
+                error,
+                crate::OpenOnHostError::NoConnectedSession { .. }
+            ));
+            assert!(opened.borrow().is_empty());
+            let online = Remote::new(spec.clone(), true, cx);
             workspace.add_item(online, window, cx);
+            let error = workspace
+                .open_on_host(
+                    &target,
+                    "bad\0program".into(),
+                    vec![],
+                    None,
+                    "x".into(),
+                    window,
+                    cx,
+                )
+                .unwrap_err();
+            assert!(matches!(&error, crate::OpenOnHostError::InvalidLaunch(_)));
+            assert!(std::error::Error::source(&error).is_some());
+            assert!(opened.borrow().is_empty());
             workspace
                 .open_on_host(
                     &target,

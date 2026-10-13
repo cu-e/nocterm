@@ -327,7 +327,11 @@ impl TerminalAccess for Access {
             }),
         })
     }
-    fn read(&self, _: TextRequest, _: &App) -> Result<TerminalText, String> {
+    fn read(
+        &self,
+        _: TextRequest,
+        _: &App,
+    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
         Ok(TerminalText {
             text: "output".into(),
             first_line: 1,
@@ -336,49 +340,62 @@ impl TerminalAccess for Access {
             alt_screen: false,
         })
     }
-    fn send_text(&self, text: &str, _: &mut App) -> Result<(), String> {
+    fn send_text(&self, text: &str, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
         self.sent.borrow_mut().push(text.into());
         Ok(())
     }
-    fn run_command(&self, text: &str, cx: &mut App) -> Result<(), String> {
+    fn run_command(
+        &self,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         self.send_text(text, cx)
     }
-    fn executor(&self, _cx: &App) -> Result<Arc<dyn nocterm_session::HostExec>, String> {
+    fn executor(
+        &self,
+        _cx: &App,
+    ) -> Result<Arc<dyn nocterm_session::HostExec>, nocterm_workspace::TerminalError> {
         if self.sign_in.asks.get() || self.sign_in.vault_locked.get() {
-            return Err("Terminal is waiting for authentication.".into());
+            return Err(nocterm_workspace::TerminalError::Unavailable);
         }
         self.executor
             .borrow()
             .clone()
-            .ok_or_else(|| "Structured execution unsupported.".into())
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::StructuredExecution,
+            ))
     }
     fn begin_live_command(
         &self,
         command: &str,
         cx: &mut App,
-    ) -> Result<nocterm_workspace::LiveCommandLease, String> {
+    ) -> Result<nocterm_workspace::LiveCommandLease, nocterm_workspace::TerminalError> {
         if self
             .lease
             .borrow()
             .as_ref()
             .is_some_and(|lease| lease.load(Ordering::Acquire))
         {
-            return Err("Another chat owns this terminal.".into());
+            return Err(nocterm_workspace::TerminalError::LiveCommandOwned);
         }
         self.run_command(command, cx)?;
         let lease = Arc::new(AtomicBool::new(true));
         *self.lease.borrow_mut() = Some(lease.clone());
         Ok(nocterm_workspace::LiveCommandLease::new(lease, None))
     }
-    fn answer_sign_in(&self, answer: String, _: &mut App) -> Result<(), String> {
+    fn answer_sign_in(
+        &self,
+        answer: String,
+        _: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         self.sign_in.answers.borrow_mut().push(answer);
         self.sign_in.vault_locked.set(false);
         self.sign_in.asks.set(false);
         Ok(())
     }
-    fn reconnect(&self, _: &mut App) -> Result<(), String> {
+    fn reconnect(&self, _: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
         if !self.link.remote.get() {
-            return Err("Only a remote session can reconnect.".into());
+            return Err(nocterm_workspace::TerminalError::OnlyRemoteReconnect);
         }
         if self.link.closed.get() {
             self.link.reconnects.set(self.link.reconnects.get() + 1);

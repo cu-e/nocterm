@@ -514,16 +514,28 @@ impl TerminalAccess for ConnectedAccess {
         info.target = Some(self.target.borrow().clone());
         Some(info)
     }
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, String> {
+    fn read(
+        &self,
+        request: TextRequest,
+        cx: &App,
+    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
         self.base.read(request, cx)
     }
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String> {
+    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), nocterm_workspace::TerminalError> {
         self.base.send_text(text, cx)
     }
-    fn run_command(&self, text: &str, cx: &mut App) -> Result<(), String> {
+    fn run_command(
+        &self,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         self.base.run_command(text, cx)
     }
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String> {
+    fn answer_sign_in(
+        &self,
+        answer: String,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
         self.base.answer_sign_in(answer, cx)
     }
 }

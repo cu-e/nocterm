@@ -1,5 +1,6 @@
 //! Clipboard and Explorer drops share native terminal paste encoding.
 use super::*;
+use crate::file_drop::FileDropError;
 use nocterm_workspace::FileDrag;
 
 impl TerminalView {
@@ -38,7 +39,7 @@ impl TerminalView {
                     )
                 })
             } else {
-                Err("Connect and finish authentication before dropping paths.".into())
+                Err(FileDropError::NotConnected)
             };
         match result {
             Ok(text) => {
@@ -48,7 +49,7 @@ impl TerminalView {
                         emulator.scroll(Scroll::Bottom);
                         emulator.clear_selection();
                     });
-                    Ok::<_, String>(())
+                    Ok::<_, FileDropError>(())
                 });
                 if let Err(error) = result {
                     nocterm_ui::notice::warning(
@@ -56,7 +57,7 @@ impl TerminalView {
                         cx,
                         "terminal-file-drop",
                         "Could not insert file paths",
-                        error,
+                        error.to_string(),
                     );
                 } else {
                     window.focus(&self.focus_handle, cx);
@@ -68,20 +69,20 @@ impl TerminalView {
                 cx,
                 "terminal-file-drop",
                 "Could not insert file paths",
-                error,
+                error.to_string(),
             ),
         }
     }
 }
 
-fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, String> {
+fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, FileDropError> {
     match files {
         FileDrag::Local(paths) => paths
             .iter()
             .map(|path| {
                 path.to_str()
                     .map(str::to_owned)
-                    .ok_or_else(|| "This path cannot be represented as terminal text.".into())
+                    .ok_or(FileDropError::NonUtf8Path)
             })
             .collect(),
         FileDrag::Remote(files) => Ok(files.sources.clone()),
@@ -89,7 +90,7 @@ fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, String> {
 }
 
 #[cfg(test)]
-fn quote_paths(paths: &[String], program: &str, local: bool) -> Result<String, String> {
+fn quote_paths(paths: &[String], program: &str, local: bool) -> Result<String, FileDropError> {
     quote_paths_with_syntax(paths, program, local, None)
 }
 
@@ -98,9 +99,9 @@ fn quote_paths_with_syntax(
     program: &str,
     local: bool,
     syntax: Option<nocterm_workspace::ShellSyntax>,
-) -> Result<String, String> {
+) -> Result<String, FileDropError> {
     if paths.is_empty() {
-        return Err("No file paths were selected.".into());
+        return Err(FileDropError::EmptySelection);
     }
     let executable = program
         .rsplit(['/', '\\'])
@@ -118,13 +119,13 @@ fn quote_paths_with_syntax(
         // transport defaults to /bin/sh when SHELL is unavailable.
         || (stem.is_empty() && (!local || !cfg!(windows)));
     if !powershell && !posix && syntax != Some(nocterm_workspace::ShellSyntax::Posix) {
-        return Err("Path insertion needs a supported POSIX shell or PowerShell.".into());
+        return Err(FileDropError::UnsupportedShell);
     }
     let mut length = 0usize;
     let mut quoted = Vec::with_capacity(paths.len());
     for path in paths {
         if path.chars().any(char::is_control) {
-            return Err("Paths containing control characters cannot be inserted safely.".into());
+            return Err(FileDropError::ControlCharacters);
         }
         let argument = if powershell {
             nocterm_session::quote_powershell(path)
@@ -133,7 +134,7 @@ fn quote_paths_with_syntax(
         };
         length = length.saturating_add(argument.len() + 1);
         if length > 256 * 1024 {
-            return Err("The selected paths exceed 256 KiB; select fewer items.".into());
+            return Err(FileDropError::TooLarge);
         }
         quoted.push(argument);
     }
