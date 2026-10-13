@@ -17,6 +17,9 @@ must be trusted; these helpers do not pin ancestors against mutation. Publicatio
 commits at rename; a later directory-sync failure is best effort and cannot report
 an already-published snapshot as rejected. TOML saves intentionally resolve existing
 configuration symlinks, while private data and backups replace their final symlink.
+PersistError retains owned boxed TOML parse/serialization errors; standard source
+traversal exposes the original concrete codec error directly. Serialization refusal
+leaves the previous configuration untouched, including comment-preserving saves.
 See [private file publication](../adr/0015-private-file-publication.md).
 `nocterm-settings` owns the settings mechanism, not their schema: the
 `SettingsSection` trait, a document that reads each top-level table on its own
@@ -32,7 +35,9 @@ settings reference does not list a section.
 ## Design tokens
 
 `nocterm-design` owns typed visual tokens and theme overrides. These foundation
-crates have no UI or transport dependencies.
+crates have no UI or transport dependencies. TokenError preserves its owned boxed
+TOML parser and exposes that concrete error directly through standard source
+traversal; semantic invalid-token diagnostics have no native source.
 
 ## Shared concrete error causes
 

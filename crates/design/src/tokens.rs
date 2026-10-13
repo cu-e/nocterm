@@ -17,12 +17,33 @@ use crate::Color;
 const BUILTIN: &str = include_str!("../tokens/default.toml");
 
 /// A token file is malformed or holds a value nocterm cannot render with.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum TokenError {
-    #[error("invalid design tokens: {0}")]
-    Parse(#[from] Box<toml::de::Error>),
-    #[error("invalid design token `{token}`: {reason}")]
+    Parse(Box<toml::de::Error>),
     Invalid { token: &'static str, reason: String },
+}
+impl fmt::Display for TokenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(source) => write!(formatter, "invalid design tokens: {source}"),
+            Self::Invalid { token, reason } => {
+                write!(formatter, "invalid design token `{token}`: {reason}")
+            }
+        }
+    }
+}
+impl std::error::Error for TokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(source) => Some(source.as_ref()),
+            Self::Invalid { .. } => None,
+        }
+    }
+}
+impl From<Box<toml::de::Error>> for TokenError {
+    fn from(source: Box<toml::de::Error>) -> Self {
+        Self::Parse(source)
+    }
 }
 
 /// Everything that determines how nocterm looks.
@@ -514,6 +535,7 @@ fn merge(base: &mut toml::Table, overlay: toml::Table) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error as _;
 
     #[test]
     fn builtin_tokens_are_valid() {
@@ -588,6 +610,20 @@ mod tests {
         let error = DesignTokens::with_overrides("[layout]\nsidebar_widht = 20.0\n").unwrap_err();
 
         assert!(error.to_string().contains("sidebar_widht"), "{error}");
+        let TokenError::Parse(source) = &error else {
+            panic!("a rejected TOML token must retain its parser classification");
+        };
+        let native = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, source.as_ref()));
+        assert!(native.source().is_none(), "the codec exposes a leaf error");
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {native}")
+        );
     }
 
     #[test]
@@ -595,6 +631,20 @@ mod tests {
         let error = DesignTokens::with_overrides("[dark.ui]\nbackground = \"blue\"\n").unwrap_err();
 
         assert!(error.to_string().contains("blue"), "{error}");
+        let TokenError::Parse(source) = &error else {
+            panic!("a rejected TOML token must retain its parser classification");
+        };
+        let native = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, source.as_ref()));
+        assert!(native.source().is_none(), "the codec exposes a leaf error");
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {native}")
+        );
     }
 
     #[test]
@@ -611,6 +661,36 @@ mod tests {
             error.to_string().contains("terminal_line_height"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn boxed_parse_conversion_retains_original_codec_allocation_and_display() {
+        let native = Box::new(toml::from_str::<toml::Table>("name = ").unwrap_err());
+        let original = native.as_ref() as *const toml::de::Error;
+        let description = native.to_string();
+        let error = TokenError::from(native);
+        assert!(matches!(&error, TokenError::Parse(_)));
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(source, original));
+        assert!(source.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {description}")
+        );
+        let invalid =
+            DesignTokens::with_overrides("[layout]\nsidebar_width = 500.0\n").unwrap_err();
+        assert!(matches!(
+            &invalid,
+            TokenError::Invalid {
+                token: "layout.sidebar_width",
+                ..
+            }
+        ));
+        assert!(invalid.source().is_none());
     }
 
     #[test]

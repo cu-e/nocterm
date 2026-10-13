@@ -5,7 +5,7 @@
 //! intact.
 
 use std::{
-    fs, io,
+    fmt, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -20,20 +20,39 @@ pub use shutdown::{ShutdownDeadline, WriteGate};
 pub use queue::{InFlight, Rejected, WriteQueue, Writing};
 
 /// A file could not be read, understood or written.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum PersistError {
-    #[error("{}: {source}", path.display())]
-    Io { path: PathBuf, source: io::Error },
-    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
     Parse {
         path: PathBuf,
         source: Box<toml::de::Error>,
     },
-    #[error("{}: {source}", path.display())]
     Serialize {
         path: PathBuf,
         source: Box<toml::ser::Error>,
     },
+}
+
+impl fmt::Display for PersistError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
+            Self::Parse { path, source } => write!(formatter, "{}: {source}", path.display()),
+            Self::Serialize { path, source } => write!(formatter, "{}: {source}", path.display()),
+        }
+    }
+}
+impl std::error::Error for PersistError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source.as_ref()),
+            Self::Serialize { source, .. } => Some(source.as_ref()),
+        }
+    }
 }
 
 impl PersistError {
@@ -174,6 +193,7 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
+    use std::error::Error as _;
 
     use super::*;
 
@@ -229,6 +249,23 @@ mod tests {
         let error = load::<Sample>(&path).unwrap_err();
 
         assert!(error.to_string().contains("broken.toml"), "{error}");
+        let PersistError::Parse {
+            path: reported,
+            source,
+        } = &error
+        else {
+            panic!("malformed TOML must remain a parse error");
+        };
+        assert_eq!(reported, &path);
+        let native = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, source.as_ref()));
+        assert!(native.source().is_none(), "the codec exposes a leaf error");
+        assert_eq!(error.to_string(), format!("{}: {native}", path.display()));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "name = ");
     }
 
     #[test]
@@ -385,5 +422,50 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(load::<Sample>(&real).unwrap(), Some(sample()));
+    }
+    #[test]
+    fn failed_serialization_retains_codec_source_and_previous_configuration() {
+        for preserving in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("sample.toml");
+            save(&path, &sample()).unwrap();
+            let before = fs::read(&path).unwrap();
+            let error = if preserving {
+                save_preserving(&path, &42_i32)
+            } else {
+                save(&path, &42_i32)
+            }
+            .unwrap_err();
+            let PersistError::Serialize {
+                path: reported,
+                source,
+            } = &error
+            else {
+                panic!("a root scalar must remain a serialization error");
+            };
+            let native = error
+                .source()
+                .unwrap()
+                .downcast_ref::<toml::ser::Error>()
+                .unwrap();
+            assert!(std::ptr::eq(native, source.as_ref()));
+            assert!(native.source().is_none(), "the codec exposes a leaf error");
+            assert_eq!(reported, &path);
+            assert_eq!(error.to_string(), format!("{}: {native}", path.display()));
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
+    }
+    #[test]
+    fn loading_a_directory_retains_the_original_native_io_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = load::<Sample>(directory.path()).unwrap_err();
+        let PersistError::Io { path, source } = &error else {
+            panic!("a directory read refusal must remain an I/O error");
+        };
+        let native = error.source().unwrap().downcast_ref::<io::Error>().unwrap();
+        assert!(std::ptr::eq(native, source));
+        assert_eq!(path, directory.path());
+        assert_eq!(error.to_string(), format!("{}: {native}", path.display()));
     }
 }
