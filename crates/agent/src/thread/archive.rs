@@ -1,4 +1,5 @@
 //! Owns hydration generations, queued intentions, draft overlays and delivery permits.
+pub(in crate::thread) mod load_operation;
 use crate::panel::AgentPanel;
 use gpui_kit::{AnyWindowHandle, EntityId, WeakEntity};
 use nocterm_ai::{

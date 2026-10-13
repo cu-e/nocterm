@@ -157,3 +157,30 @@ fn after_an_agent_crash_one_failed_resume_is_enough(cx: &mut TestAppContext) {
     assert_eq!(f.commands.restores.lock().unwrap().len(), 2);
     cx.update(|cx| assert!(thread.read(cx).session_generating()));
 }
+
+#[gpui_kit::test]
+fn release_changes_notice_text_and_activation_clears_its_error_emphasis(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    lazy_start(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        thread.fail("Agent unavailable", cx);
+        assert!(thread.has_status_error());
+        thread.release_resources(cx);
+        assert_eq!(
+            thread.status(),
+            "Agent resources released. Conversation retained."
+        );
+        assert!(
+            thread.has_status_error(),
+            "a text-only notice retains the failure emphasis"
+        );
+        thread.request_activation(cx);
+        assert_eq!(thread.status(), "Waiting for an agent slot…");
+        assert!(!thread.has_status_error());
+        thread.set_shown(false, cx);
+        assert!(thread.status().is_empty());
+        assert!(!thread.is_leased());
+    });
+}

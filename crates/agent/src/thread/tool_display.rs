@@ -1,15 +1,12 @@
 //! Reconciles the ACP activity stream with the requests our bridge executed.
 //! Neither provider titles nor today's attachment list establishes a destination.
-use gpui_kit::{App, Context};
+#[cfg(test)]
+use nocterm_ai::TerminalCall;
 use nocterm_ai::{
-    BridgeCall, BridgeRejection, TerminalCall, ToolFailure, acp,
-    thread::{Entry, ThreadChange},
+    ToolFailure, acp,
+    thread::Entry,
     tool_display::{self, ToolDisplay},
 };
-use nocterm_ui::{ActiveAi as _, SettingsExt as _};
-use nocterm_workspace::TerminalEntry;
-
-use super::AgentThread;
 
 #[derive(Default)]
 pub(super) struct ToolDisplays {
@@ -43,6 +40,25 @@ impl Record {
 }
 
 impl ToolDisplays {
+    pub(super) fn finish(
+        &mut self,
+        token: Option<(u64, u64)>,
+        result: Result<serde_json::Value, ToolFailure>,
+    ) {
+        let Some((turn, id)) = token else {
+            return;
+        };
+        if self.turn != Some(turn) {
+            return;
+        }
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.id == id && !record.ambiguous)
+        {
+            record.display.finish(result);
+        }
+    }
     pub(super) fn finalize(&mut self, turn: u64) {
         if self.turn != Some(turn) {
             return;
@@ -189,155 +205,6 @@ impl ToolDisplays {
     fn record(&mut self, server: String, request: &TerminalCall, display: ToolDisplay) {
         let (tool, arguments) = tool_display::request(request);
         self.record_raw(server, (tool.into(), arguments), display);
-    }
-
-    pub(super) fn finish(
-        &mut self,
-        token: Option<(u64, u64)>,
-        result: Result<serde_json::Value, ToolFailure>,
-    ) {
-        let Some((turn, id)) = token else {
-            return;
-        };
-        if self.turn != Some(turn) {
-            return;
-        }
-        if let Some(record) = self
-            .records
-            .iter_mut()
-            .find(|record| record.id == id && !record.ambiguous)
-        {
-            record.display.finish(result);
-        }
-    }
-}
-
-impl AgentThread {
-    pub(crate) fn apply_presented_update(
-        &mut self,
-        mut update: acp::SessionUpdate,
-    ) -> ThreadChange {
-        self.tools
-            .prepare_displays(self.session.turn(), self.state.entries().len());
-        tool_display::strip_provider_meta(&mut update);
-        let change = if self.config.report_control(&update) {
-            ThreadChange::Controls
-        } else {
-            self.state.apply_transcript(update, self.host.timestamp())
-        };
-        let patches = self.tools.normalize_displays(self.state.entries());
-        self.state.patch_tool_rows(patches, self.host.timestamp());
-        change
-    }
-
-    pub(crate) fn record_tool_display(
-        &mut self,
-        call: &mut BridgeCall,
-        provided_entry: Option<&TerminalEntry>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(registration) = &self.registration() else {
-            return;
-        };
-        let server = tool_display::bridge_server_name(registration.id);
-        let (tool, normalized) = tool_display::request(&call.call);
-        let arguments = call.arguments.clone().unwrap_or(normalized);
-        let entry = self
-            .resolved(cx)
-            .into_iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
-            .map(|(_, entry, _)| entry);
-        let destination = self.tool_destination(&call.call, provided_entry.or(entry.as_ref()), cx);
-        let mut display = ToolDisplay::requested(tool.into(), arguments.clone());
-        display.destination = destination.map(|text| nocterm_ai::redact::redact(&text));
-        if cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .redact_secrets
-        {
-            display.redact();
-        }
-        self.tools
-            .prepare_displays(self.session.turn(), self.state.entries().len());
-        call.display_token = self
-            .tools
-            .record_display(server, (tool.into(), arguments), display)
-            .map(|id| (self.session.turn(), id));
-        self.normalize_tool_displays();
-        cx.notify();
-    }
-
-    pub(crate) fn record_rejected_tool(
-        &mut self,
-        rejected: BridgeRejection,
-        cx: &mut Context<Self>,
-    ) {
-        if !cx.ai_enabled()
-            || !self.session.accepts_updates()
-            || self.session.stopped()
-            || self.registration().as_ref().map(|value| value.id) != Some(rejected.registration_id)
-        {
-            return;
-        }
-        let server = tool_display::bridge_server_name(rejected.registration_id);
-        let mut display = ToolDisplay::requested(rejected.tool.clone(), rejected.arguments.clone());
-        display.finish(Err(rejected.error.into()));
-        if cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .redact_secrets
-        {
-            display.redact();
-        }
-        self.tools
-            .prepare_displays(self.session.turn(), self.state.entries().len());
-        self.tools
-            .record_display(server, (rejected.tool, rejected.arguments), display);
-        self.normalize_tool_displays();
-        cx.notify();
-    }
-
-    /// Every response while the chat exists passes through its recorded result.
-    pub(super) fn finish(
-        &mut self,
-        call: BridgeCall,
-        result: Result<serde_json::Value, ToolFailure>,
-    ) {
-        self.tools
-            .finish_display(call.display_token, result.clone());
-        self.normalize_tool_displays();
-        let _ = call.respond.send(result);
-    }
-
-    pub(super) fn finalize_tool_displays(&mut self) {
-        self.tools.finalize_displays(self.session.turn());
-        self.normalize_tool_displays();
-    }
-
-    fn normalize_tool_displays(&mut self) {
-        let patches = self.tools.normalize_displays(self.state.entries());
-        self.state.patch_tool_rows(patches, self.host.timestamp());
-    }
-
-    fn tool_destination(
-        &mut self,
-        request: &TerminalCall,
-        entry: Option<&TerminalEntry>,
-        cx: &App,
-    ) -> Option<String> {
-        if let Some(entry) = entry {
-            let info = entry.capabilities.state().info(cx)?;
-            if info.local {
-                return Some("This computer".into());
-            }
-            let target = info.target?;
-            return Some(format!("{} · {target}", entry.title));
-        }
-        let server = request.server_id()?;
-        self.offline_servers(cx)
-            .into_iter()
-            .find(|(descriptor, _)| descriptor.server_id == server)
-            .map(|(descriptor, summary)| format!("{} · {}", descriptor.name, summary.target))
     }
 }
 

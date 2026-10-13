@@ -1,16 +1,27 @@
 use crate::runtime::Runtime;
+use crate::runtime::SessionLease;
+use approval_inbox::ToolGate;
 use futures::FutureExt as _;
-use gpui_kit::{AnyWindowHandle, AppContext as _, Context, EntityId, Subscription, Window};
-use nocterm_ai::{AgentInfo, acp, session::SessionPhase, thread::ThreadState};
-use nocterm_ui::ActiveAi as _;
+use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, EntityId, Window};
+use nocterm_ai::context::{ServerDescriptor, TerminalDescriptor};
+use nocterm_ai::{
+    AgentCommands, AgentInfo, AiSettings, BridgeRegistration, TerminalCall, acp,
+    session::SessionPhase, thread::ThreadState,
+};
+use nocterm_ui::{ActiveAi as _, SettingsExt as _};
+use nocterm_workspace::{ConnectionSummary, ExpectedSession, TerminalEntry};
+use session_driver::OperationGuard;
 use std::{path::PathBuf, sync::Arc};
 
 pub(crate) mod archive;
 mod attachments;
+mod bindings;
 mod client;
+mod client_port;
 mod composer;
 mod config;
-pub(crate) use client::client;
+mod notice;
+pub(crate) use client_port::client;
 pub(crate) use composer::Composer;
 pub(crate) use config::ChatConfig;
 mod approval_inbox;
@@ -23,11 +34,9 @@ mod reconnects;
 mod session_grants;
 pub(crate) use approval_inbox::ToolApprovalCard;
 pub(crate) use permissions::PermissionCard;
-mod prompt;
 mod queue;
 mod tool_display;
 pub(crate) use queue::QueuedPrompt;
-mod lifecycle;
 mod live;
 mod restart;
 mod session_driver;
@@ -36,9 +45,7 @@ pub(crate) use restart::RestartData;
 mod document;
 mod saved;
 mod session;
-mod tool_context;
 mod tools;
-mod updates;
 #[cfg(test)]
 pub(crate) use saved::chat_title;
 
@@ -102,56 +109,286 @@ pub(crate) struct AgentThread {
     composer: Composer,
     config: config::ChatConfig,
     state: document::ChatDocument,
-    status: String,
-    status_error: bool,
+    notice: notice::ThreadNotice,
     host: crate::chat_host::ChatHost,
-    window: Option<AnyWindowHandle>,
-    _release: Subscription,
-    _workspace_authority: Option<Subscription>,
+    bindings: bindings::ThreadBindings,
 }
 
 impl AgentThread {
+    pub(super) fn on_reconnect_wait_finished(&mut self, receipt: ExpectedSession) {
+        self.tools.finish_reconnect(receipt);
+    }
+
+    pub(super) fn forget_background_open(&mut self, item: EntityId) {
+        self.tools.forget_opened(item);
+    }
+
+    pub(super) fn on_connection_wait_complete(
+        &mut self,
+        expected: ExpectedSession,
+        cx: &mut Context<Self>,
+    ) {
+        self.tools.clear_wait(expected);
+        cx.notify();
+    }
+
+    /// Ends background sessions this chat opened that it can no longer use.
+    pub(crate) fn prune_background(&mut self, cx: &mut Context<Self>) {
+        let resolved: Vec<EntityId> = self
+            .resolved(cx)
+            .into_iter()
+            .map(|(_, entry, _)| entry.item)
+            .collect();
+        let close = self.tools.prune_background(&resolved);
+        if let Some(window) = self.bindings.window() {
+            let workspace = self.host.workspace().clone();
+            cx.defer(move |cx| {
+                for item in close {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.close_background_session(item, window, cx)
+                        });
+                    });
+                }
+            });
+        }
+    }
+
+    fn tool_gate(&mut self, call: &TerminalCall, cx: &App) -> ToolGate {
+        let resolved = self.resolved(cx);
+        let offline = if call.terminal_id().is_none() && call.server_id().is_some() {
+            self.offline_servers(cx)
+        } else {
+            Vec::new()
+        };
+        ToolGate::from_context(
+            call,
+            cx.ai_enabled() && self.session.accepts_updates(),
+            self.registration().as_ref().map(|value| value.id),
+            &resolved,
+            &offline,
+            cx,
+        )
+    }
+
+    pub(crate) fn unsafe_live_input(&mut self, call: &TerminalCall, cx: &App) -> bool {
+        if !matches!(call, TerminalCall::SendInput(_)) {
+            return false;
+        }
+        self.resolved(cx)
+            .into_iter()
+            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
+            .and_then(|(_, entry, _)| entry.capabilities.state().info(cx))
+            .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
+    }
+
+    pub(crate) fn tool_cards(&self) -> Vec<ToolApprovalCard> {
+        self.tools.approval_tool_cards()
+    }
+
+    pub(crate) fn permission_cards(&self) -> Vec<PermissionCard> {
+        self.tools.approval_permission_cards()
+    }
+
+    pub(crate) fn approval_notice_generation(&self) -> u64 {
+        self.tools.approval_generation()
+    }
+
+    pub(crate) fn has_pending_approvals(&self) -> bool {
+        self.tools.approval_pending()
+    }
+
+    pub(crate) fn describe_target(&mut self, call: &TerminalCall, cx: &App) -> String {
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        self.tools
+            .describe_target(call, &input, self.composer.default_attachments(), cx)
+    }
+
+    pub(crate) fn context(&mut self, cx: &App) -> String {
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        self.tools
+            .context(&input, self.composer.default_attachments(), cx)
+    }
+
+    pub(crate) fn offline_servers(
+        &mut self,
+        cx: &App,
+    ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        self.tools
+            .offline_servers(&input, self.composer.default_attachments(), cx)
+    }
+
+    pub(crate) fn resolved(
+        &mut self,
+        cx: &App,
+    ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        self.tools
+            .resolved(&input, self.composer.default_attachments(), cx)
+    }
+
+    pub(super) fn server_is_attached(&self, profile: &str, cx: &App) -> bool {
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        input.summaries().iter().any(|summary| {
+            summary.id.as_ref() == profile
+                && self
+                    .attachment_scope()
+                    .iter()
+                    .any(|attachment| attachment.covers_server(summary))
+        })
+    }
+
+    pub(crate) fn begin_lease(&mut self, lease: SessionLease) {
+        self.session.accept_lease(lease);
+    }
+
+    pub(crate) fn release_resources(&mut self, cx: &mut Context<Self>) {
+        self.composer.pause();
+        self.cancel_pending();
+        self.finalize_tool_displays();
+        self.detach_session(cx);
+        self.session.release();
+        self.notice
+            .present("Agent resources released. Conversation retained.".into());
+        cx.notify();
+    }
+
+    /// Detaches ACP without touching background terminals, execution jobs or shell leases.
+    pub(crate) fn detach_session(&mut self, cx: &mut Context<Self>) {
+        self.session.import_restore(self.restore_descriptor());
+        self.finish_pending_tools();
+        self.save(cx);
+        // Dropping the lease releases the connection.
+        if !self.session.release_lease() {
+            return;
+        }
+        self.session.detach();
+        self.config.detached();
+        for call in self.tools.approval_end_session() {
+            self.finish(call, Err("Request cancelled.".into()));
+        }
+    }
+
+    /// With warm start on, a shown chat connects at once, so its model and
+    /// options can be chosen before the first message. A chat opened from
+    /// the history connects too once it is loaded; its restored queue stays
+    /// paused until the user sends. A failed chat waits for the next
+    /// message, so a broken agent is not restarted on every visit, and a
+    /// chat that cannot save waits until it can.
+    pub(crate) fn warm(&mut self, cx: &mut Context<Self>) {
+        if self.session.shown()
+            && !self.is_archived()
+            && self.state.persistence_error().is_none()
+            && cx.ai_enabled()
+            && cx.setting::<AiSettings>().sessions.warm_start
+            && self.session.phase() == SessionPhase::Detached
+        {
+            self.request_activation(cx);
+        }
+    }
+
+    /// A panel starts or stops showing the chat. A chat hidden before it
+    /// was admitted gives up its place unless it has messages to send.
+    pub(crate) fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.session.set_shown(shown);
+        if shown {
+            self.warm(cx);
+        } else if !self.composer.dispatchable() && self.session.withdraw_if_idle() {
+            self.notice.clear_text();
+            cx.notify();
+        }
+    }
+
+    /// Asks the runtime for a connection. A failed chat recovers this way.
+    pub(crate) fn request_activation(&mut self, cx: &mut Context<Self>) {
+        if self.is_archived() || self.session.leased() || !self.session.queue_activation() {
+            return;
+        }
+        self.notice.clear_error();
+        self.notice.present("Waiting for an agent slot…".into());
+        let owner = self::client(&cx.entity());
+        cx.defer(move |cx| {
+            Runtime::global(cx).update(cx, |runtime, cx| runtime.request_activation(owner, cx));
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn session_busy(&self) -> bool {
+        self.session.busy() || self.tools.busy() || self.composer.dispatchable()
+    }
+
+    pub(crate) fn hold_operation(&self) -> OperationGuard {
+        self.session.hold_operation()
+    }
+
+    pub(crate) fn connection_key(&self) -> Option<u64> {
+        self.session.connection_key()
+    }
+
+    pub(crate) fn session_workdir(&self) -> &Option<PathBuf> {
+        self.session.workdir()
+    }
+
+    pub(crate) fn registration(&self) -> &Option<BridgeRegistration> {
+        self.session.registration()
+    }
+
+    pub(crate) fn commands(&self) -> &Option<Arc<dyn AgentCommands>> {
+        self.session.commands()
+    }
+
+    pub(crate) fn session(&self) -> &Option<acp::SessionId> {
+        self.session.session()
+    }
+
+    fn on_release(&mut self, id: EntityId, cx: &mut gpui_kit::App) {
+        self.cancel_pending();
+        self.finalize_tool_displays();
+        let snapshot = cx.ai_enabled().then(|| self.capture_pending(cx)).flatten();
+        self.cancel_execution();
+        // The lease releases its connection when it is dropped.
+        self.session.release_lease();
+        cx.defer(move |cx| {
+            Runtime::global(cx).update(cx, |runtime, cx| {
+                if let Some((chat, revision)) = snapshot
+                    && let Err(error) = runtime.save_chat(chat, id, revision, cx)
+                {
+                    tracing::warn!(%error,"released chat admission failed");
+                }
+                runtime.unregister_document(id, cx);
+            });
+        });
+        if let Some(window) = self.bindings.window() {
+            let workspace = self.host.workspace().clone();
+            let background = self.tools.take_close_effects();
+            cx.defer(move |cx| {
+                for item in background {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            workspace.close_background_session(item, window, cx)
+                        });
+                    });
+                }
+            });
+        }
+    }
+    fn on_workspace_authority_changed(&mut self, cx: &gpui_kit::App) {
+        self.revoke_executions(cx);
+    }
+
     fn from_document(
         state: document::ChatDocument,
         host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let authority = host
-            .workspace()
-            .upgrade()
-            .map(|workspace| cx.subscribe(&workspace, |this, _, _, cx| this.revoke_executions(cx)));
-        let id = cx.entity_id();
-        let release = cx.on_release(move |this, cx| {
-            this.cancel_pending();
-            this.finalize_tool_displays();
-            let snapshot = cx.ai_enabled().then(|| this.capture_pending(cx)).flatten();
-            this.cancel_execution();
-            // The lease releases its connection when it is dropped.
-            this.session.release_lease();
-            cx.defer(move |cx| {
-                Runtime::global(cx).update(cx, |runtime, cx| {
-                    if let Some((chat, revision)) = snapshot
-                        && let Err(error) = runtime.save_chat(chat, id, revision, cx)
-                    {
-                        tracing::warn!(%error,"released chat admission failed");
-                    }
-                    runtime.unregister_document(id, cx);
-                });
-            });
-            if let Some(window) = this.window {
-                let workspace = this.host.workspace().clone();
-                let background = this.tools.take_close_effects();
-                cx.defer(move |cx| {
-                    for item in background {
-                        let _ = cx.update_window(window, |_, window, cx| {
-                            let _ = workspace.update(cx, |workspace, cx| {
-                                workspace.close_background_session(item, window, cx)
-                            });
-                        });
-                    }
-                });
-            }
+        let authority = host.workspace().upgrade().map(|workspace| {
+            cx.subscribe(&workspace, |this, _, _, cx| {
+                this.on_workspace_authority_changed(cx)
+            })
         });
+        let id = cx.entity_id();
+        let release = cx.on_release(move |this, cx| this.on_release(id, cx));
         Self {
             session: Default::default(),
             tools: Default::default(),
@@ -159,12 +396,9 @@ impl AgentThread {
             composer: Default::default(),
             state,
             config: Default::default(),
-            status: "Ready — send a message to start the agent".into(),
-            status_error: false,
+            notice: Default::default(),
             host,
-            window: None,
-            _release: release,
-            _workspace_authority: authority,
+            bindings: bindings::ThreadBindings::new(release, authority),
         }
     }
     pub(crate) fn new(
@@ -192,7 +426,7 @@ impl AgentThread {
         state.archived_clean(&summary);
         let mut thread = Self::from_document(state, host, cx);
         thread.config.saved_model(summary.model.clone());
-        thread.status = "Saved chat".into();
+        thread.notice.present("Saved chat".into());
         thread.archive = archive::Archive::archived(summary);
         thread
     }
@@ -242,13 +476,13 @@ impl AgentThread {
         self.state.updated()
     }
     pub(crate) fn status(&self) -> String {
-        self.status.clone()
+        self.notice.text()
     }
     pub(crate) fn bind_window(&mut self, window: AnyWindowHandle) {
-        self.window = Some(window);
+        self.bindings.bind_window(window);
     }
     pub(crate) fn window(&self) -> Option<AnyWindowHandle> {
-        self.window
+        self.bindings.window()
     }
     #[cfg(test)]
     pub(crate) fn is_shown(&self) -> bool {
@@ -317,125 +551,9 @@ impl AgentThread {
         self.session.session_current(ticket)
     }
     pub(crate) fn has_status_error(&self) -> bool {
-        self.status_error
+        self.notice.is_error()
     }
-    pub(crate) fn release_history_delivery(&mut self) {
-        self.archive.release_delivery_permit();
-    }
-    pub(crate) fn load_archive(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
-        let request = self.archive.request(intent, self.session.ticket());
-        let archive::RequestOutcome::Start {
-            load_id,
-            ticket,
-            chat_id,
-        } = request
-        else {
-            if let archive::RequestOutcome::RunNow(intent) = request {
-                self.apply_archive_intent(intent, cx);
-            }
-            return;
-        };
-        self.status = "Loading saved chat…".into();
-        let reader = Runtime::global(cx).read(cx).history_reader();
-        let loading = cx
-            .background_executor()
-            .spawn(async move { reader.load(chat_id).await });
-        cx.spawn(async move |this, cx| {
-            let (result, permit) = loading.await;
-            let _ = this.update(cx, |this, cx| {
-                let current = this.session.session_current(ticket)
-                    && cx.ai_enabled()
-                    && Runtime::global(cx)
-                        .read(cx)
-                        .document_is_current(this.state.chat_id(), cx.entity_id());
-                match this.archive.accept(load_id, current, result, permit) {
-                    archive::LoadOutcome::Stale => return,
-                    archive::LoadOutcome::Failed(error) => {
-                        this.status = format!("Could not load saved chat: {error}");
-                        this.status_error = true;
-                    }
-                    archive::LoadOutcome::Hydrate {
-                        chat,
-                        overlay,
-                        intents,
-                    } => {
-                        this.restore_content_with_overlay(*chat, overlay);
-                        this.preview_config(cx);
-                        if this.state.draft_changed() {
-                            this.save(cx);
-                        }
-                        for intent in intents {
-                            this.apply_archive_intent(intent, cx);
-                        }
-                        this.warm(cx);
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-    fn apply_archive_intent(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
-        match intent {
-            archive::ArchiveIntent::Rename { name } => self.rename(name, cx),
-            archive::ArchiveIntent::Pin { pinned } => self.set_pinned(pinned, cx),
-            archive::ArchiveIntent::Open {
-                panel,
-                source,
-                revision,
-            } => cx.defer(move |cx| {
-                let _ = panel.update(cx, |panel, cx| panel.archive_opened(source, revision, cx));
-            }),
-            archive::ArchiveIntent::Fork {
-                panel,
-                source,
-                window,
-                last,
-            } => cx.defer(move |cx| {
-                let _ = window.update(cx, |_, window, cx| {
-                    let _ = panel.update(cx, |panel, cx| {
-                        panel.fork_loaded_archive(source, last, window, cx)
-                    });
-                });
-            }),
-        }
-    }
-    pub(crate) fn resident_history_bytes(&self) -> usize {
-        if self.is_archived() {
-            return 0;
-        }
-        self.archive
-            .resident_bytes()
-            .max(self.state.resident_bytes())
-            + self
-                .composer
-                .queue()
-                .iter()
-                .map(|prompt| prompt.memory_len)
-                .sum::<usize>()
-            + self.composer.draft().map_or(0, String::len)
-    }
-    pub(crate) fn evict_history(&mut self, cx: &Context<Self>) -> bool {
-        let gate = archive::EvictionGate::new(
-            !self.session.leased(),
-            !self.session_busy(),
-            self.state.desired_revision() == self.state.published_revision(),
-            !self.state.draft_changed(),
-            self.state.persistence_error().is_none(),
-            self.state.history_present(),
-        );
-        let mut summary = nocterm_ai::history::ChatSummary::from_chat(&self.history_metadata(cx));
-        summary.title = Some(self.title());
-        summary.has_content = !self.state.entries().is_empty() || !self.composer.is_empty();
-        if !self.archive.request_evict(gate, summary) {
-            return false;
-        }
-        self.state.evict_clean();
-        self.composer = Default::default();
-        self.tools.clear_displays();
-        true
-    }
+
     /// The session ended with an error; the next message reconnects.
     pub(crate) fn ended(&self) -> bool {
         self.session.failed()
@@ -463,8 +581,8 @@ impl AgentThread {
         }
         self.session.fail();
         self.composer.pause();
-        self.status = nocterm_ai::redact::redact(message);
-        self.status_error = true;
+        self.notice.present(nocterm_ai::redact::redact(message));
+        self.notice.mark_error();
         self.cancel_pending();
         // A grant belongs to this session; a restarted chat asks again.
         self.tools.approval_revoke_scope();
@@ -476,8 +594,8 @@ impl AgentThread {
         self.finish_pending_tools();
         self.composer.pause();
         self.session.require_sign_in();
-        self.status = nocterm_ai::redact::redact(message);
-        self.status_error = true;
+        self.notice.present(nocterm_ai::redact::redact(message));
+        self.notice.mark_error();
         self.cancel_pending();
         cx.notify();
     }
@@ -530,8 +648,8 @@ impl AgentThread {
             _ => return,
         };
         self.session.begin_sign_in();
-        self.status = "Signing in…".into();
-        self.status_error = false;
+        self.notice.present("Signing in…".into());
+        self.notice.clear_error();
         let authority = self.session.authority();
         let operation = session_driver::authentication_operation::AuthenticationOperation::new(
             authority,
@@ -562,9 +680,9 @@ impl AgentThread {
         self.session.finish_sign_in(result.is_ok(), has_session);
         match result {
             Ok(()) => {
-                self.status_error = false;
+                self.notice.clear_error();
                 if has_session {
-                    self.status = "Ready".into();
+                    self.notice.present("Ready".into());
                     cx.notify();
                 } else if let (Some(info), Some(workdir)) =
                     (self.session.info().cloned(), self.session_workdir().clone())
@@ -573,8 +691,9 @@ impl AgentThread {
                 }
             }
             Err(error) => {
-                self.status = nocterm_ai::redact::redact(&error.to_string());
-                self.status_error = true;
+                self.notice
+                    .present(nocterm_ai::redact::redact(&error.to_string()));
+                self.notice.mark_error();
                 cx.notify();
             }
         }
@@ -611,7 +730,7 @@ impl AgentThread {
         if let (Some(commands), Some(session)) = (&self.commands(), &self.session()) {
             commands.cancel(session.clone());
         }
-        self.status = "Stopping…".into();
+        self.notice.present("Stopping…".into());
         let operation =
             session_driver::cancel_operation::CancelOperation::new(self.session.authority());
         cx.spawn(async move |this, cx| {
@@ -635,20 +754,6 @@ impl AgentThread {
                 cx,
             );
         }
-    }
-    pub(crate) fn attach(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
-        if self.composer.toggle_attachment(attachment.clone()) && !self.composer.editing() {
-            self.tools.detach_attachment(&attachment);
-            self.tools.approval_revoke_scope();
-            self.cancel_pending();
-            self.revoke_executions(cx);
-            if !self.session.generating() {
-                self.prune_background(cx);
-            }
-        }
-        self.accept_document_inputs(cx, false);
-        self.save(cx);
-        cx.notify();
     }
 }
 
@@ -681,5 +786,3 @@ pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
         _ => String::new(),
     }
 }
-
-mod drafts;

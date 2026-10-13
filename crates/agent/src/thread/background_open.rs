@@ -2,10 +2,9 @@
 use super::{
     AgentThread,
     connection_wait::ConnectionWaitError,
-    tools::{WaitTarget, wait_until_connected},
+    connection_wait::{ConnectionWaitOperation, WaitTarget},
 };
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, AsyncApp, WeakEntity};
-use nocterm_ui::ActiveAi as _;
 use nocterm_workspace::{ConnectionDirectory, ExpectedSession, Workspace};
 use std::rc::Rc;
 
@@ -18,6 +17,19 @@ pub(super) struct BackgroundOpen {
     registration: Option<u64>,
 }
 impl BackgroundOpen {
+    pub(super) fn workspace(&self) -> &WeakEntity<Workspace> {
+        &self.workspace
+    }
+    pub(super) fn ticket(&self) -> nocterm_ai::session::Ticket {
+        self.ticket
+    }
+    pub(super) fn registration(&self) -> Option<u64> {
+        self.registration
+    }
+    pub(super) fn profile(&self) -> &str {
+        &self.profile
+    }
+
     pub(super) fn new(
         workspace: WeakEntity<Workspace>,
         window: AnyWindowHandle,
@@ -35,20 +47,7 @@ impl BackgroundOpen {
             registration,
         }
     }
-    fn authorize(&self, thread: &AgentThread, cx: &App) -> Result<(), ConnectionWaitError> {
-        if thread.host.workspace().entity_id() != self.workspace.entity_id()
-            || thread.registration().as_ref().map(|value| value.id) != self.registration
-            || !thread.session.session_current(self.ticket)
-            || !thread.session.accepts_updates()
-            || !cx.ai_enabled()
-        {
-            return Err(ConnectionWaitError::Stopped);
-        }
-        if !thread.server_is_attached(&self.profile, cx) {
-            return Err(ConnectionWaitError::Detached);
-        }
-        Ok(())
-    }
+
     pub(super) async fn open(
         &self,
         thread: &WeakEntity<AgentThread>,
@@ -57,31 +56,26 @@ impl BackgroundOpen {
         let opened = self.create(thread, cx)?;
         let registered = thread
             .update(cx, |thread, cx| {
-                self.authorize(thread, cx)?;
-                thread.tools.remember_opened(opened.item);
-                Ok(())
+                thread.accept_background_open(self, opened.item, cx)
             })
             .map_err(|_| ConnectionWaitError::ChatClosed);
         let result = match (registered, opened.expected) {
             (Ok(Ok(())), Some(expected)) => {
-                wait_until_connected(
-                    thread,
-                    &WaitTarget::new(
-                        self.workspace.clone(),
-                        self.window,
-                        expected,
-                        self.ticket,
-                        self.registration,
-                    ),
-                    cx,
-                )
+                ConnectionWaitOperation::new(WaitTarget::new(
+                    self.workspace.clone(),
+                    self.window,
+                    expected,
+                    self.ticket,
+                    self.registration,
+                ))
+                .run(thread, cx)
                 .await
             }
             (Ok(Err(error)) | Err(error), _) => Err(error),
             (Ok(Ok(())), None) => Err(ConnectionWaitError::SessionClosed),
         };
         if result.is_err() && opened.close_if_original(&self.workspace, self.window, cx) {
-            let _ = thread.update(cx, |thread, _| thread.tools.forget_opened(opened.item));
+            let _ = thread.update(cx, |thread, _| thread.forget_background_open(opened.item));
         }
         result
     }
@@ -93,7 +87,15 @@ impl BackgroundOpen {
         cx.update_window(self.window, |_, window, cx| {
             // Validate immediately before creation in the same application transaction.
             thread
-                .update(cx, |thread, cx| self.authorize(thread, cx))
+                .update(cx, |thread, cx| {
+                    thread.authorize_background_open(
+                        &self.workspace,
+                        self.ticket,
+                        self.registration,
+                        &self.profile,
+                        cx,
+                    )
+                })
                 .map_err(|_| ConnectionWaitError::ChatClosed)??;
             let item = self
                 .directory

@@ -1,11 +1,476 @@
 //! A chat as saved in the history: restoring, forking, naming and saving.
-use gpui_kit::Context;
+use gpui_kit::{App, Context};
 use nocterm_ai::{acp, thread::ThreadState};
+use std::{sync::Arc, time::Duration};
 
-use super::{AgentThread, Composer, Fork, Restore};
+use super::{AgentThread, Attachment, Composer, Fork, RestartData, Restore, archive};
 use crate::runtime::Runtime;
+use nocterm_ui::ActiveAi as _;
 
 impl AgentThread {
+    pub(crate) fn send_now(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.composer.move_to_front(id) {
+            return;
+        }
+        if self.session.generating() {
+            self.stop(cx);
+        }
+        self.composer.resume();
+        self.accept_document_inputs(cx, false);
+        self.persist(cx);
+        // When generating, only the old prompt's completion may dispatch.
+        if !self.session.generating() {
+            self.dispatch_next(cx);
+        }
+        cx.notify();
+    }
+
+    /// Drops the queued prompt `id` without sending it. A prompt being
+    /// edited stays until its edit ends.
+    pub(crate) fn remove_queued(&mut self, id: u64, editing: Option<u64>, cx: &mut Context<Self>) {
+        if editing == Some(id) || !self.composer.remove(id) {
+            return;
+        }
+        // A chat left with nothing else has no snapshot of its own; its file
+        // must still lose the prompt, or it comes back on the next start.
+        self.accept_document_inputs(cx, false);
+        self.persist(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn end_composer_edit(&mut self, resume: bool, cx: &mut Context<Self>) {
+        self.composer.end_edit();
+        if resume {
+            self.dispatch_next(cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn attachment_scope(&self) -> &[Attachment] {
+        self.tools
+            .attachment_scope(self.composer.default_attachments())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_queue(&mut self, cx: &mut Context<Self>) {
+        self.composer.pause();
+        cx.notify();
+    }
+
+    pub(crate) fn begin_composer_edit(
+        &mut self,
+        images: Vec<nocterm_ai::images::PromptImage>,
+        attachments: Vec<Attachment>,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.begin_edit(images, attachments);
+        cx.notify();
+    }
+
+    pub(crate) fn remove_composer_image(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.composer.remove_image(index) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn accept_composer_images(
+        &mut self,
+        images: Vec<nocterm_ai::images::PromptImage>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), nocterm_ai::images::ImageCollectionError> {
+        self.composer.replace_images(images)?;
+        cx.notify();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_composer_context(&mut self, cx: &mut Context<Self>) {
+        self.replace_composer_context(Vec::new(), cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_composer_context(
+        &mut self,
+        values: Vec<Attachment>,
+        cx: &mut Context<Self>,
+    ) {
+        let old = self.composer.attachments().to_vec();
+        for value in old {
+            if !values.contains(&value) {
+                self.attach(value, cx);
+            }
+        }
+        for value in values {
+            if !self.composer.attachments().contains(&value) {
+                self.attach(value, cx);
+            }
+        }
+    }
+
+    pub(crate) fn add_composer_attachment(
+        &mut self,
+        attachment: Attachment,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.add_attachment_if_absent(attachment);
+        cx.notify();
+    }
+
+    pub(super) fn configured(&mut self, cx: &mut Context<Self>) {
+        self.session.opened();
+        self.sync_config(true, cx);
+        self.remember_options(cx);
+        self.dispatch_next(cx);
+        cx.notify();
+    }
+
+    pub(super) fn remember_options(&self, cx: &mut Context<Self>) {
+        let (agent, options) = (
+            self.state.agent_id().to_owned(),
+            self.config.options().to_vec(),
+        );
+        cx.defer(move |cx| {
+            crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
+                runtime.remember_options(&agent, &options, cx)
+            });
+        });
+    }
+
+    pub(super) fn sync_config(&mut self, save: bool, cx: &mut Context<Self>) {
+        if self.config.sync_ready(self.session.phase()) && save {
+            self.accept_document_inputs(cx, false);
+            self.save(cx);
+        }
+    }
+
+    pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
+        if self.session.generating() || !cx.ai_enabled() {
+            return;
+        }
+        if self.config.choose_mode(id.clone()) {
+            self.accept_document_inputs(cx, false);
+            self.save(cx);
+        }
+        cx.notify();
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
+            return;
+        };
+        if self.session.opening() {
+            return;
+        }
+        let ticket = self.session.ticket();
+        self.config.bind_request(ticket);
+        self.start_configuration(
+            ticket,
+            false,
+            commands,
+            session,
+            super::config::operation::ConfigurationRequest::Mode(id),
+            cx,
+        );
+    }
+
+    pub(crate) fn set_config(
+        &mut self,
+        id: acp::SessionConfigId,
+        value: acp::SessionConfigOptionValue,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session.generating() || !cx.ai_enabled() {
+            return;
+        }
+        let choice = self.config.choose_option(&id, &value);
+        if !choice.accepted() {
+            return;
+        }
+        if choice.durable_changed() {
+            self.accept_document_inputs(cx, false);
+            self.save(cx);
+        }
+        if let Some((option, choice)) = choice.remember() {
+            let agent = self.state.agent_id().to_owned();
+            cx.defer(move |cx| {
+                crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
+                    runtime.remember_choice(&agent, &option, &choice, cx)
+                });
+            });
+        }
+        let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
+        else {
+            return cx.notify();
+        };
+        if self.session.opening() {
+            return cx.notify();
+        }
+        let ticket = self.session.ticket();
+        self.config.bind_request(ticket);
+        self.start_configuration(
+            ticket,
+            false,
+            commands,
+            session,
+            super::config::operation::ConfigurationRequest::Option(id, value),
+            cx,
+        );
+        cx.notify();
+    }
+
+    pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
+        let state = crate::runtime::Runtime::global(cx).read(cx).favorites(cx);
+        self.config.preview(
+            state.choices(self.state.agent_id()),
+            state
+                .options
+                .get(self.state.agent_id())
+                .map_or(&[], Vec::as_slice),
+        );
+        self.establish_clean_document_inputs(cx);
+    }
+
+    pub(crate) fn restore_descriptor(&self) -> Option<Restore> {
+        self.session.restore_descriptor()
+    }
+
+    pub(crate) fn restarted(
+        data: RestartData,
+        host: crate::chat_host::ChatHost,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (document, config, composer, restore) = data.into_parts();
+        let state = super::document::ChatDocument::restarted(document);
+        let mut thread = Self::from_document(state, host, cx);
+        thread.config.hydrate_restart(config);
+        thread.composer = composer;
+        thread.session.import_restore(restore);
+        thread
+    }
+
+    pub(crate) fn restart_data(&self) -> RestartData {
+        RestartData::new(
+            self.state.restart_snapshot(),
+            self.config.restart_snapshot(),
+            self.composer.restarted(),
+            self.restore_descriptor(),
+        )
+    }
+
+    pub(crate) fn capture_pending(
+        &mut self,
+        cx: &App,
+    ) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
+        self.state.cancel_debounce();
+        if !self.state.needs_candidate() {
+            return self.state.existing_offer();
+        }
+        if self.is_archived() {
+            let snapshot = self
+                .archive
+                .draft_patch(self.state.chat_id(), self.state.agent_id())
+                .map(|metadata| {
+                    Arc::new(nocterm_ai::history::SharedChat {
+                        metadata,
+                        queue: Vec::new(),
+                    })
+                })?;
+            return self.state.capture_patch(snapshot);
+        }
+        let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
+        let resume = self.persistent_resume();
+        let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
+        self.state.propose_candidate(&input)
+    }
+
+    pub(crate) fn flush_snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
+        if self.state.clean() {
+            return None;
+        }
+        if let Some(snapshot) = self.state.current_snapshot() {
+            return Some(snapshot);
+        }
+        if self.is_archived() {
+            return self
+                .archive
+                .draft_patch(self.state.chat_id(), self.state.agent_id())
+                .map(|metadata| {
+                    Arc::new(nocterm_ai::history::SharedChat {
+                        metadata,
+                        queue: Vec::new(),
+                    })
+                });
+        }
+        self.shared_snapshot(cx).or_else(|| {
+            self.state.history_present().then(|| {
+                Arc::new(nocterm_ai::history::SharedChat {
+                    metadata: self.history_metadata(cx),
+                    queue: Vec::new(),
+                })
+            })
+        })
+    }
+
+    pub(crate) fn flush_draft(&mut self, cx: &mut Context<Self>) {
+        if self.state.draft_changed() {
+            self.save(cx);
+        }
+    }
+
+    pub(crate) fn set_draft(&mut self, text: String, cx: &mut Context<Self>) {
+        if self.is_archived() {
+            let now = self.host.timestamp();
+            if self.archive.edit_draft(text, now) {
+                self.state.edited_archived_draft(now);
+                cx.notify();
+            }
+            return;
+        }
+        if !self.composer.set_draft(text) {
+            return;
+        }
+        self.accept_document_inputs(cx, true);
+        if !self.state.has_debounce() {
+            let task = cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(300))
+                    .await;
+                let _ = this.update(cx, |this, cx| this.save(cx));
+            });
+            self.state.replace_debounce(task);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn evict_history(&mut self, cx: &Context<Self>) -> bool {
+        let gate = archive::EvictionGate::new(
+            !self.session.leased(),
+            !self.session_busy(),
+            self.state.desired_revision() == self.state.published_revision(),
+            !self.state.draft_changed(),
+            self.state.persistence_error().is_none(),
+            self.state.history_present(),
+        );
+        let mut summary = nocterm_ai::history::ChatSummary::from_chat(&self.history_metadata(cx));
+        summary.title = Some(self.title());
+        summary.has_content = !self.state.entries().is_empty() || !self.composer.is_empty();
+        if !self.archive.request_evict(gate, summary) {
+            return false;
+        }
+        self.state.evict_clean();
+        self.composer = Default::default();
+        self.tools.clear_displays();
+        true
+    }
+
+    pub(crate) fn resident_history_bytes(&self) -> usize {
+        if self.is_archived() {
+            return 0;
+        }
+        self.archive
+            .resident_bytes()
+            .max(self.state.resident_bytes())
+            + self
+                .composer
+                .queue()
+                .iter()
+                .map(|prompt| prompt.memory_len)
+                .sum::<usize>()
+            + self.composer.draft().map_or(0, String::len)
+    }
+
+    fn apply_archive_intent(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
+        match intent {
+            archive::ArchiveIntent::Rename { name } => self.rename(name, cx),
+            archive::ArchiveIntent::Pin { pinned } => self.set_pinned(pinned, cx),
+            archive::ArchiveIntent::Open {
+                panel,
+                source,
+                revision,
+            } => cx.defer(move |cx| {
+                let _ = panel.update(cx, |panel, cx| panel.archive_opened(source, revision, cx));
+            }),
+            archive::ArchiveIntent::Fork {
+                panel,
+                source,
+                window,
+                last,
+            } => cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.fork_loaded_archive(source, last, window, cx)
+                    });
+                });
+            }),
+        }
+    }
+
+    fn on_archive_loaded(
+        &mut self,
+        completion: archive::load_operation::LoadCompletion,
+        cx: &mut Context<Self>,
+    ) {
+        let (load_id, ticket, result, permit) = completion.into_parts();
+
+        let current = self.session.session_current(ticket)
+            && cx.ai_enabled()
+            && Runtime::global(cx)
+                .read(cx)
+                .document_is_current(self.state.chat_id(), cx.entity_id());
+        match self.archive.accept(load_id, current, result, permit) {
+            archive::LoadOutcome::Stale => return,
+            archive::LoadOutcome::Failed(error) => {
+                self.notice
+                    .present(format!("Could not load saved chat: {error}"));
+                self.notice.mark_error();
+            }
+            archive::LoadOutcome::Hydrate {
+                chat,
+                overlay,
+                intents,
+            } => {
+                self.restore_content_with_overlay(*chat, overlay);
+                self.preview_config(cx);
+                if self.state.draft_changed() {
+                    self.save(cx);
+                }
+                for intent in intents {
+                    self.apply_archive_intent(intent, cx);
+                }
+                self.warm(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn load_archive(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
+        let request = self.archive.request(intent, self.session.ticket());
+        let archive::RequestOutcome::Start {
+            load_id,
+            ticket,
+            chat_id,
+        } = request
+        else {
+            if let archive::RequestOutcome::RunNow(intent) = request {
+                self.apply_archive_intent(intent, cx);
+            }
+            return;
+        };
+        self.notice.present("Loading saved chat…".into());
+        let reader = Runtime::global(cx).read(cx).history_reader();
+        let operation =
+            archive::load_operation::LoadOperation::new(load_id, ticket, chat_id, reader);
+        let loading = cx.background_executor().spawn(operation.run());
+        cx.spawn(async move |this, cx| {
+            let completion = loading.await;
+            let _ = this.update(cx, |this, cx| this.on_archive_loaded(completion, cx));
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn release_history_delivery(&mut self) {
+        self.archive.release_delivery_permit();
+    }
+
     /// A restored document connects when shown with warm start enabled.
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
@@ -46,7 +511,7 @@ impl AgentThread {
         } else {
             self.state.imported_clean(&mut chat, pending_history);
         }
-        self.status = "Saved chat".into();
+        self.notice.present("Saved chat".into());
         let queue = chat
             .queue
             .into_iter()
@@ -136,7 +601,7 @@ impl AgentThread {
         thread.composer.replace_context(fork.attachments);
         thread.establish_clean_document_inputs(cx);
         thread.state.fork_created();
-        thread.status = "Forked chat".into();
+        thread.notice.present("Forked chat".into());
         thread
     }
     /// The chat's name: the user's, else the agent's title, else the start of

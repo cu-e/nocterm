@@ -33,6 +33,46 @@ pub(super) struct ToolGate {
     expected: Option<nocterm_workspace::ExpectedSession>,
 }
 impl ToolGate {
+    pub(super) fn from_context(
+        call: &TerminalCall,
+        available: bool,
+        registration: Option<u64>,
+        resolved: &[(
+            String,
+            nocterm_workspace::TerminalEntry,
+            nocterm_ai::context::TerminalDescriptor,
+        )],
+        offline: &[(
+            nocterm_ai::context::ServerDescriptor,
+            nocterm_workspace::ConnectionSummary,
+        )],
+        cx: &gpui_kit::App,
+    ) -> Self {
+        let attached = match (call.terminal_id(), call.server_id()) {
+            (Some(id), _) => resolved.iter().any(|(candidate, _, _)| candidate == id),
+            (None, Some(id)) => offline.iter().any(|(server, _)| server.server_id == id),
+            (None, None) => true,
+        };
+        let info = resolved
+            .iter()
+            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
+            .and_then(|(_, entry, _)| entry.capabilities.state().info(cx));
+        let unsafe_input = matches!(call, TerminalCall::SendInput(_))
+            && info.as_ref().is_none_or(|info| {
+                info.at_prompt != Some(true) || info.dirty_input || info.alt_screen
+            });
+        Self::new(
+            available,
+            registration,
+            attached,
+            unsafe_input,
+            info.map(|info| info.expected),
+        )
+    }
+    pub(super) fn expected(&self) -> Option<nocterm_workspace::ExpectedSession> {
+        self.expected
+    }
+
     pub(super) fn new(
         available: bool,
         registration: Option<u64>,

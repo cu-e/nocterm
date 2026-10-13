@@ -3,6 +3,8 @@
 //! Owns: panel views, private Composer/ChatConfig/ChatDocument owners, AgentThread
 //! coordination, private SessionDriver and ToolRuntime owners, and the session-scoped
 //! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
+//! ThreadNotice owns status/error presentation; ThreadBindings retains the window/subscriptions.
+//! Finite operations return named completions and original-authority polling projections.
 //! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
 //! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
 //! Does not own: ACP transport, connection admission, filesystem storage or image decoding.

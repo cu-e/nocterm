@@ -13,7 +13,11 @@ use nocterm_ai::{
 use nocterm_workspace::{ExpectedSession, LiveCommandLease};
 use std::sync::Arc;
 mod command_jobs;
+pub(in crate::thread) mod dispatch;
 mod live_observations;
+pub(in crate::thread) mod presentation;
+pub(in crate::thread) mod reconnect_operation;
+pub(in crate::thread) mod resolution;
 mod terminal_sessions;
 mod turn_context;
 use command_jobs::CommandJobs;
@@ -31,6 +35,133 @@ pub(super) struct ToolRuntime {
     displays: super::tool_display::ToolDisplays,
 }
 impl ToolRuntime {
+    pub(super) fn revoke_replaced_executors(
+        &mut self,
+        current: &[(String, Option<Arc<dyn nocterm_session::HostExec>>)],
+        attached: &[String],
+    ) {
+        self.live.revoke_detached(attached);
+        self.commands.revoke_replaced(current);
+    }
+
+    pub(super) fn prepare_open(
+        &mut self,
+        server: &str,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui_kit::App,
+    ) -> resolution::OpenSelection {
+        use resolution::OpenSelection;
+        let summary = self
+            .turn
+            .offline_servers(input, defaults, cx)
+            .into_iter()
+            .find(|(descriptor, _)| descriptor.server_id == server)
+            .map(|(_, summary)| summary);
+        let Some(summary) = summary else {
+            let open =
+                self.turn
+                    .resolved(input, defaults, cx)
+                    .into_iter()
+                    .find(|(_, _, descriptor)| {
+                        descriptor.connection.as_ref().is_some_and(|connection| {
+                            self.turn.resolve_server(server) == Some(connection.id.as_str())
+                        })
+                    });
+            return match open {
+                Some((_, _, descriptor)) => {
+                    OpenSelection::Respond(serde_json::json!({"terminal": descriptor}))
+                }
+                None => OpenSelection::Unknown,
+            };
+        };
+        let background = self.terminals.background();
+        let closed =
+            self.turn
+                .resolved(input, defaults, cx)
+                .into_iter()
+                .find(|(_, entry, descriptor)| {
+                    background.contains(&entry.item)
+                        && descriptor
+                            .connection
+                            .as_ref()
+                            .is_some_and(|connection| connection.id == summary.id.as_ref())
+                        && entry.capabilities.state().info(cx).is_some_and(|info| {
+                            info.status == nocterm_workspace::TerminalStatus::Closed
+                        })
+                });
+        if let Some((_, entry, _)) = closed {
+            return match entry
+                .capabilities
+                .state()
+                .info(cx)
+                .map(|info| info.expected)
+            {
+                Some(expected) => OpenSelection::Reconnect(entry, expected),
+                None => OpenSelection::Closed,
+            };
+        }
+        OpenSelection::Create(summary)
+    }
+
+    pub(super) fn dispatch(
+        &mut self,
+        call: BridgeCall,
+        entry: nocterm_workspace::TerminalEntry,
+        expected: ExpectedSession,
+        redact: bool,
+        cx: &mut gpui_kit::App,
+    ) -> dispatch::DispatchAction {
+        let action = dispatch::TerminalDispatch::new(call, entry, expected).prepare(redact, cx);
+        if let dispatch::DispatchAction::Respond(_, _, bytes) = &action {
+            self.turn.account_outcome(*bytes);
+        }
+        action
+    }
+
+    pub(super) fn resolved(
+        &mut self,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui_kit::App,
+    ) -> Vec<(
+        String,
+        nocterm_workspace::TerminalEntry,
+        nocterm_ai::context::TerminalDescriptor,
+    )> {
+        self.turn.resolved(input, defaults, cx)
+    }
+
+    pub(super) fn offline_servers(
+        &mut self,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui_kit::App,
+    ) -> Vec<(
+        nocterm_ai::context::ServerDescriptor,
+        nocterm_workspace::ConnectionSummary,
+    )> {
+        self.turn.offline_servers(input, defaults, cx)
+    }
+
+    pub(super) fn context(
+        &mut self,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui_kit::App,
+    ) -> String {
+        self.turn.context(input, defaults, cx)
+    }
+    pub(super) fn describe_target(
+        &mut self,
+        call: &TerminalCall,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui_kit::App,
+    ) -> String {
+        self.turn.describe_target(call, input, defaults, cx)
+    }
+
     pub(super) fn busy(&self) -> bool {
         self.approvals.pending() || self.commands.active().next().is_some() || self.live.active()
     }
@@ -50,12 +181,15 @@ impl ToolRuntime {
     pub(super) fn detach_attachment(&mut self, attachment: &Attachment) {
         self.turn.detach_attachment(attachment);
     }
+    #[cfg(test)]
     pub(super) fn terminal_id(&mut self, key: &str) -> String {
         self.turn.terminal_id(key)
     }
+    #[cfg(test)]
     pub(super) fn server_id(&mut self, key: &str) -> String {
         self.turn.server_id(key)
     }
+    #[cfg(test)]
     pub(super) fn resolve_server(&self, key: &str) -> Option<&str> {
         self.turn.resolve_server(key)
     }
@@ -68,6 +202,7 @@ impl ToolRuntime {
     pub(super) fn usage(&self) -> (usize, usize) {
         self.turn.usage()
     }
+    #[cfg(test)]
     pub(super) fn background(&self) -> &[EntityId] {
         self.terminals.background()
     }
@@ -113,9 +248,7 @@ impl ToolRuntime {
     pub(super) fn live_empty(&self) -> bool {
         self.live.empty()
     }
-    pub(super) fn revoke_detached_live(&mut self, attached: &[String]) {
-        self.live.revoke_detached(attached);
-    }
+
     pub(super) fn cancel_execution(&mut self) {
         self.commands.cancel_all();
         self.live.cancel_all();
@@ -148,9 +281,7 @@ impl ToolRuntime {
     ) -> Result<CommandSnapshot, ToolFailure> {
         self.commands.cancel(id, terminal)
     }
-    pub(super) fn revoke_command_terminal(&self, id: &str) {
-        self.commands.revoke_terminal(id);
-    }
+
     pub(super) fn has_watch(&self) -> bool {
         self.commands.has_watch()
     }

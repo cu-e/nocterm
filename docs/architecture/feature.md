@@ -288,6 +288,15 @@ prompt epoch, reconnect cleanup retains its original receipt, and background cle
 preserves terminals promoted into ordinary tabs. Existing document, configuration,
 composer and archive owners remain separate from these responsibilities.
 
+`ThreadNotice` owns status text and failure emphasis, while `ThreadBindings` retains
+the originating window and subscription lifetimes. Four `AgentThread` coordinator
+files route lifecycle, incoming events/completions, durable input/history actions
+and outgoing dispatch. Finite operations own captured request authority, timing
+and delivery state; weak chat updates invoke named probes or completions rather
+than leaf algorithms. Turn context consumes supplied workspace observations;
+native terminal dispatch uses the original accepted capability and session.
+See [ADR 0044](../adr/0044-private-thread-coordination.md).
+
 A private `ChatConfig` owns per-chat desired choices, reported options and modes,
 slash commands and their revision, prompt model labels and bounded pre-open controls.
 It accepts asynchronous replies only for its current session ticket. Opening reports

@@ -1,6 +1,7 @@
 //! What the user is composing, apart from the conversation it goes into: the
 //! unsent draft, the context and images for the next prompt, and the queue of
 //! prompts waiting their turn.
+pub(in crate::thread) mod prompt_preparation;
 use super::{Attachment, queue::QueuedPrompt};
 use nocterm_ai::images::PromptImage;
 
@@ -47,6 +48,40 @@ impl PromptCandidate {
     }
 }
 impl Composer {
+    pub(super) fn prepare_submission(
+        &self,
+        text: String,
+        replace: Option<u64>,
+        attachments: Vec<nocterm_ai::history::SavedAttachment>,
+    ) -> Result<PromptCandidate, super::queue::SubmitError> {
+        let mut saved = nocterm_ai::history::SavedPrompt {
+            id: replace.unwrap_or(self.next_queue_id()),
+            text,
+            images: Vec::new(),
+            attachments,
+        };
+        let encoded_len = nocterm_ai::history::prompt_size(&saved)?
+            + self
+                .images()
+                .iter()
+                .map(|image| image.encoded_len())
+                .sum::<usize>()
+            + self.images().len().saturating_sub(1);
+        saved.images = self.images().iter().map(|image| image.content()).collect();
+        let prompt = QueuedPrompt::prepared(saved, self.attachments().to_vec(), Some(encoded_len));
+        let candidate = self.prepare_prompt_change(prompt, replace)?;
+        let attachment_count = candidate
+            .queue()
+            .iter()
+            .map(|prompt| prompt.saved.attachments.len())
+            .max()
+            .unwrap_or(0);
+        if candidate.queue().len() > 1024 || self.images().len() > 128 || attachment_count > 1024 {
+            return Err(super::queue::SubmitError::TooMany);
+        }
+        Ok(candidate)
+    }
+
     pub(crate) fn draft(&self) -> Option<&String> {
         self.draft.as_deref()
     }

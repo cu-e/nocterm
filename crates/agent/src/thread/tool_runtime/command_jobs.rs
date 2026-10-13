@@ -20,6 +20,24 @@ impl CommandStart {
     }
 }
 impl CommandJobs {
+    pub(super) fn revoke_replaced(&self, current: &[(String, Option<Arc<dyn HostExec>>)]) {
+        let revoked = self
+            .jobs
+            .active()
+            .filter_map(|(id, executor)| {
+                let replacement = current
+                    .iter()
+                    .find(|(candidate, _)| candidate == id)
+                    .and_then(|(_, executor)| executor.as_ref());
+                (!replacement.is_some_and(|replacement| Arc::ptr_eq(replacement, executor)))
+                    .then_some(id.to_owned())
+            })
+            .collect::<Vec<_>>();
+        for id in revoked {
+            self.jobs.cancel_terminal(&id);
+        }
+    }
+
     pub(super) fn start(
         &mut self,
         terminal: String,
@@ -48,9 +66,7 @@ impl CommandJobs {
     pub(super) fn active(&self) -> impl Iterator<Item = (&str, &Arc<dyn HostExec>)> {
         self.jobs.active()
     }
-    pub(super) fn revoke_terminal(&self, id: &str) {
-        self.jobs.cancel_terminal(id);
-    }
+
     pub(super) fn cancel_all(&mut self) {
         self.watch = None;
         self.jobs.cancel_all();

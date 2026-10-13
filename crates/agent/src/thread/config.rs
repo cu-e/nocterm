@@ -1,4 +1,5 @@
 //! Feature-owned chat configuration; legacy wire values remain at existing seams.
+pub(in crate::thread) mod operation;
 use nocterm_ai::{
     AgentError, acp,
     session::{SessionPhase, Ticket},

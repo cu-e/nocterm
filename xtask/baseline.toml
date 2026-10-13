@@ -3,7 +3,7 @@
 [complexity_expects]
 nocterm = 4
 nocterm-acp = 7
-nocterm-agent = 23
+nocterm-agent = 21
 nocterm-ai = 2
 nocterm-connections = 5
 nocterm-design = 1
@@ -49,7 +49,6 @@ nocterm-ui = 5
 
 [impl_spread]
 "nocterm_agent::panel::AgentPanel" = 18
-"nocterm_agent::thread::AgentThread" = 16
 "nocterm_vt::emulator::Emulator" = 5
 
 [pub_fields]

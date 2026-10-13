@@ -1,15 +1,15 @@
 //! Observation of commands typed into the live shell; no guessed exit status.
-use super::{AgentThread, tools::unreachable};
-use gpui_kit::Context;
+use super::{AgentThread, session_driver::OperationGuard, tools::unreachable};
+use gpui_kit::{App, AsyncApp, WeakEntity};
 use nocterm_ai::BridgeCall;
-use nocterm_ui::ActiveAi as _;
+
 use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
 #[derive(Debug, thiserror::Error)]
-enum TerminalOperationError {
+pub(super) enum TerminalOperationError {
     #[error("{0}")]
     Terminal(#[from] nocterm_workspace::TerminalError),
     #[error("Live command ownership was revoked by user input or reconnection.")]
@@ -24,7 +24,7 @@ enum TerminalOperationError {
     ChatClosed,
 }
 impl TerminalOperationError {
-    fn into_failure(self) -> nocterm_ai::ToolFailure {
+    pub(super) fn into_failure(self) -> nocterm_ai::ToolFailure {
         match self {
             Self::Detached | Self::Disconnected => unreachable(&self.to_string()),
             _ => self.to_string().into(),
@@ -32,147 +32,165 @@ impl TerminalOperationError {
     }
 }
 
-impl AgentThread {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(super) fn run_command(
-        &mut self,
+/// A live observation owns its cursor, timing and original lease, not the chat.
+pub(super) struct LiveCommandOperation {
+    id: String,
+    expected: nocterm_workspace::ExpectedSession,
+    lease: Arc<nocterm_workspace::LiveCommandLease>,
+    since: u64,
+    timeout: Duration,
+    idle: Duration,
+    started: Instant,
+    changed: Instant,
+    generation: Option<u64>,
+    guard: Option<OperationGuard>,
+}
+impl LiveCommandOperation {
+    pub(super) fn acquire(
         entry: TerminalEntry,
         expected: nocterm_workspace::ExpectedSession,
         request: nocterm_ai::RunCommand,
-        call: BridgeCall,
-        cx: &mut Context<Self>,
-    ) {
-        let before = entry
+        cx: &mut App,
+    ) -> Result<Self, TerminalOperationError> {
+        let since = entry
             .capabilities
             .text()
             .ok_or(nocterm_workspace::TerminalError::Unsupported(
                 nocterm_workspace::TerminalCapability::TextRead,
-            ))
-            .and_then(|port| {
-                port.read(
-                    expected,
-                    TextRequest {
-                        max_lines: 2000,
-                        max_bytes: 64 * 1024,
-                        since_line: None,
-                    },
-                    cx,
-                )
-            });
-        let since = match before {
-            Ok(before) => before.next_line,
-            Err(error) => {
-                self.finish(call, Err(error.to_string().into()));
-                return;
-            }
-        };
-        let lease = match entry
-            .capabilities
-            .live()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::LiveCommands,
-            ))
-            .and_then(|port| port.begin(expected, &request.command, cx))
-        {
-            Ok(lease) => Arc::new(lease),
-            Err(error) => {
-                self.finish(call, Err(error.to_string().into()));
-                return;
-            }
-        };
-        self.tools
-            .install_live(request.terminal_id.clone(), lease.clone());
-        let id = request.terminal_id.clone();
-        let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
-        let idle = Duration::from_millis(request.idle_ms.unwrap_or(1000));
-        let guard = self.hold_operation();
-        cx.spawn(async move |this, cx| {
-            let _guard = guard;
-            let started = Instant::now();
-            let mut changed = started;
-            let mut generation = None;
-            let result = loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                let step = this.update(cx, |this, cx| {
-                    if !lease.is_active() {
-                        return Err(TerminalOperationError::Revoked);
-                    }
-                    if !this.session.accepts_updates() || !cx.ai_enabled() {
-                        return Err(TerminalOperationError::Cancelled);
-                    }
-                    let (_, entry, _) = this
-                        .resolved(cx)
-                        .into_iter()
-                        .find(|(value, _, _)| *value == id)
-                        .ok_or(TerminalOperationError::Detached)?;
-                    let info = entry
-                        .capabilities
-                        .state()
-                        .info(cx)
-                        .ok_or(nocterm_workspace::TerminalError::Gone)?;
-                    if info.expected != expected {
-                        return Err(TerminalOperationError::Terminal(
-                            nocterm_workspace::TerminalError::StaleSession,
-                        ));
-                    }
-                    if info.status != TerminalStatus::Connected {
-                        return Err(TerminalOperationError::Disconnected);
-                    }
-                    if generation != Some(info.generation) {
-                        generation = Some(info.generation);
-                        changed = Instant::now();
-                    }
-                    let reason = if info.at_prompt == Some(true) {
-                        Some("prompt_returned")
-                    } else if started.elapsed() >= timeout {
-                        Some("timeout")
-                    } else if changed.elapsed() >= idle {
-                        Some("output_idle")
-                    } else {
-                        None
-                    };
-                    let Some(reason) = reason else {
-                        return Ok(None);
-                    };
-                    let tail = entry
-                        .capabilities
-                        .text()
-                        .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                            nocterm_workspace::TerminalCapability::TextRead,
-                        ))?
-                        .read(
-                            expected,
-                            TextRequest {
-                                max_lines: 2000,
-                                max_bytes: 64 * 1024,
-                                since_line: Some(since),
-                            },
-                            cx,
-                        )?;
-                    let mut payload = this.text_payload(tail, cx);
-                    payload["completion"] = serde_json::json!(reason);
-                    payload["exit_status"] = serde_json::Value::Null;
-                    payload["completed"] = serde_json::json!(reason == "prompt_returned");
-                    Ok(Some(payload))
-                });
-                match step {
-                    Ok(Ok(Some(result))) => break Ok(result),
-                    Ok(Ok(None)) => {}
-                    Ok(Err(error)) => break Err(error),
-                    Err(_) => break Err(TerminalOperationError::ChatClosed),
-                }
-            };
-            let _ = this.update(cx, |this, _| {
-                this.tools.finish_live_if_same(&id, &lease);
-            });
-            drop(lease);
-            let _ = this.update(cx, |this, cx| {
-                this.finish(call, result.map_err(TerminalOperationError::into_failure));
-                cx.notify();
-            });
+            ))?
+            .read(
+                expected,
+                TextRequest {
+                    max_lines: 2000,
+                    max_bytes: 64 * 1024,
+                    since_line: None,
+                },
+                cx,
+            )?
+            .next_line;
+        let lease = Arc::new(
+            entry
+                .capabilities
+                .live()
+                .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                    nocterm_workspace::TerminalCapability::LiveCommands,
+                ))?
+                .begin(expected, &request.command, cx)?,
+        );
+        let started = Instant::now();
+        Ok(Self {
+            id: request.terminal_id,
+            expected,
+            lease,
+            since,
+            timeout: Duration::from_millis(request.timeout_ms.unwrap_or(30_000)),
+            idle: Duration::from_millis(request.idle_ms.unwrap_or(1000)),
+            started,
+            changed: started,
+            generation: None,
+            guard: None,
         })
-        .detach();
+    }
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(super) fn lease(&self) -> Arc<nocterm_workspace::LiveCommandLease> {
+        self.lease.clone()
+    }
+    pub(super) fn hold(&mut self, guard: OperationGuard) {
+        self.guard = Some(guard);
+    }
+    pub(super) fn check_active(&self, available: bool) -> Result<(), TerminalOperationError> {
+        if !self.lease.is_active() {
+            return Err(TerminalOperationError::Revoked);
+        }
+        if !available {
+            return Err(TerminalOperationError::Cancelled);
+        }
+        Ok(())
+    }
+    pub(super) fn poll(
+        &mut self,
+        entry: Option<TerminalEntry>,
+        redact: bool,
+        cx: &App,
+    ) -> Result<Option<(serde_json::Value, usize)>, TerminalOperationError> {
+        let entry = entry.ok_or(TerminalOperationError::Detached)?;
+        let info = entry
+            .capabilities
+            .state()
+            .info(cx)
+            .ok_or(nocterm_workspace::TerminalError::Gone)?;
+        if info.expected != self.expected {
+            return Err(nocterm_workspace::TerminalError::StaleSession.into());
+        }
+        if info.status != TerminalStatus::Connected {
+            return Err(TerminalOperationError::Disconnected);
+        }
+        if self.generation != Some(info.generation) {
+            self.generation = Some(info.generation);
+            self.changed = Instant::now();
+        }
+        let reason = if info.at_prompt == Some(true) {
+            Some("prompt_returned")
+        } else if self.started.elapsed() >= self.timeout {
+            Some("timeout")
+        } else if self.changed.elapsed() >= self.idle {
+            Some("output_idle")
+        } else {
+            None
+        };
+        let Some(reason) = reason else {
+            return Ok(None);
+        };
+        let tail = entry
+            .capabilities
+            .text()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::TextRead,
+            ))?
+            .read(
+                self.expected,
+                TextRequest {
+                    max_lines: 2000,
+                    max_bytes: 64 * 1024,
+                    since_line: Some(self.since),
+                },
+                cx,
+            )?;
+        let (mut payload, bytes) = super::tool_runtime::presentation::text_payload(tail, redact);
+        payload["completion"] = serde_json::json!(reason);
+        payload["exit_status"] = serde_json::Value::Null;
+        payload["completed"] = serde_json::json!(reason == "prompt_returned");
+        Ok(Some((payload, bytes)))
+    }
+    pub(super) async fn run(
+        mut self,
+        call: BridgeCall,
+        thread: &WeakEntity<AgentThread>,
+        cx: &mut AsyncApp,
+    ) {
+        self.started = Instant::now();
+        self.changed = self.started;
+        let result = loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            match thread.update(cx, |thread, cx| thread.poll_live_command(&mut self, cx)) {
+                Ok(Ok(Some(payload))) => break Ok(payload),
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => break Err(error),
+                Err(_) => break Err(TerminalOperationError::ChatClosed),
+            }
+        };
+        let Self {
+            id,
+            lease,
+            guard: _guard,
+            ..
+        } = self;
+        let _ = thread.update(cx, |thread, cx| {
+            thread.on_live_command_complete(id, lease, call, result, cx)
+        });
     }
 }
