@@ -1,6 +1,5 @@
 //! Prepared documents and injected collaborators, installed without foreground native acquisition.
 use crate::{Connections, ObservationDeps, ServerFacts};
-use gpui_kit::{App, Entity};
 use nocterm_connections_model::{
     draft::EditorDefaults,
     facts::Known,
@@ -9,7 +8,7 @@ use nocterm_connections_model::{
     repository::LoadedConnections,
     value_ports::{ConnectionClock, ProfileIds, SuppliedValues},
 };
-use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
+use nocterm_store::SnapshotWriter;
 use std::sync::Arc;
 #[derive(Clone)]
 pub struct EditorInputs {
@@ -78,11 +77,7 @@ impl PreparedConnections {
             observations: ObservationDeps::offline(),
         }
     }
-    pub(crate) fn install(
-        self,
-        shutdown: &ShutdownCoordinator,
-        cx: &mut App,
-    ) -> Result<Entity<Connections>, StoreError> {
+    pub(crate) fn into_owners(self) -> (Connections, ServerFacts) {
         let profiles = self.documents.profiles;
         let recents = self.documents.recents;
         let (connections, facts) = match self.writers {
@@ -103,8 +98,6 @@ impl PreparedConnections {
                 ServerFacts::in_memory(self.observations),
             ),
         };
-        let connections = connections.install(shutdown, cx)?;
-        facts.install(shutdown, cx)?;
-        Ok(connections)
+        (connections, facts)
     }
 }

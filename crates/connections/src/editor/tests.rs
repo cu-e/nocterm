@@ -1,4 +1,5 @@
 use super::*;
+use crate::Connections;
 use gpui_kit::px;
 use gpui_kit::{TestAppContext, base::actions::Confirm, test::TestWindowExt as _};
 use nocterm_session::Auth;
@@ -7,15 +8,9 @@ use std::path::{Path, PathBuf};
 
 #[gpui_kit::test]
 fn dialog_focus_accepts_typing_and_enter_opens_exactly_once(cx: &mut TestAppContext) {
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        );
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
     })
     .unwrap();
@@ -31,7 +26,7 @@ fn dialog_focus_accepts_typing_and_enter_opens_exactly_once(cx: &mut TestAppCont
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles(cx).iter().count(),
+            installed.connections().read(cx).profiles(cx).iter().count(),
             1
         );
         assert_eq!(
@@ -46,15 +41,9 @@ fn dialog_focus_accepts_typing_and_enter_opens_exactly_once(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestAppContext) {
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        );
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
         window.dispatch_action(Box::new(Confirm { secondary: false }), cx);
     })
@@ -65,7 +54,7 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
         assert!(window.try_find("dialog").is_some());
         assert!(opened.borrow().is_empty());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles(cx).iter().count(),
+            installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
         window.input("valid.test", cx);
@@ -77,7 +66,7 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles(cx).iter().count(),
+            installed.connections().read(cx).profiles(cx).iter().count(),
             1
         );
         assert_eq!(opened.borrow().len(), 1);
@@ -88,15 +77,9 @@ fn dialog_confirm_keeps_invalid_form_open_then_saves_valid_form(cx: &mut TestApp
 // Drive the native controls rather than reading or mutating editor fields.
 #[gpui_kit::test]
 fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut TestAppContext) {
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        );
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
         window.input("draft.test", cx);
         window.scroll(
@@ -147,7 +130,7 @@ fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        let connections = Connections::global(cx);
+        let connections = installed.connections();
         let profile = connections.read(cx).profiles(cx).iter().next().unwrap();
         assert_eq!(profile.target.host, "draft.test");
         assert_eq!(profile.description, "first line\nsecond line");
@@ -163,16 +146,10 @@ fn sections_keep_drafts_and_multiline_description_enter_does_not_submit(cx: &mut
 
 #[gpui_kit::test]
 fn hidden_missing_key_opens_authentication_and_focuses_native_input(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = crate::test_support::workspace(cx);
+    let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
     cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(560.)));
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        );
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
         window.input("valid.test", cx);
         window.click("editor-section-authentication", cx);
@@ -204,7 +181,7 @@ fn hidden_missing_key_opens_authentication_and_focuses_native_input(cx: &mut Tes
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        let connections = Connections::global(cx);
+        let connections = installed.connections();
         assert_eq!(
             connections
                 .read(cx)
@@ -223,16 +200,10 @@ fn hidden_missing_key_opens_authentication_and_focuses_native_input(cx: &mut Tes
 
 #[gpui_kit::test]
 fn minimum_window_keeps_footer_in_view_for_every_section(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = crate::test_support::workspace(cx);
+    let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
     cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(400.)));
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        )
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx)
     })
     .unwrap();
     for (_, id, _) in EditorSection::ALL {
@@ -285,11 +256,11 @@ fn conflicting_profiles() -> (Profile, Profile) {
 
 fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
     use futures::FutureExt as _;
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(400.)));
     let (original, mut latest) = conflicting_profiles();
     cx.update_window(handle, |_, window, cx| {
-        Connections::global(cx).update(cx, |connections, cx| {
+        installed.connections().update(cx, |connections, cx| {
             connections
                 .save_profile(original.clone(), cx)
                 .now_or_never()
@@ -297,7 +268,7 @@ fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
                 .unwrap();
         });
         open_editor(
-            Connections::global(cx),
+            installed.clone(),
             Some(original.clone()),
             workspace.downgrade(),
             window,
@@ -306,7 +277,7 @@ fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
         window.render_frame(cx);
         window.press("ctrl-a", cx);
         window.input("Unsaved stale draft", cx);
-        Connections::global(cx).update(cx, |connections, cx| {
+        installed.connections().update(cx, |connections, cx| {
             connections
                 .save_profile(latest.clone(), cx)
                 .now_or_never()
@@ -347,7 +318,7 @@ fn reload_conflict_then_finish(cx: &mut TestAppContext, save: bool) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        let connections = Connections::global(cx);
+        let connections = installed.connections();
         let stored = connections.read(cx).profiles(cx).get(original.id).unwrap();
         if save {
             latest.name = "Saved after reload".into();
@@ -370,12 +341,12 @@ fn conflict_reload_then_save_uses_latest_revision_and_leaves_no_old_editor(
 
 #[gpui_kit::test]
 fn hidden_invalid_session_options_open_the_session_section(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = crate::test_support::workspace(cx);
+    let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
     let mut profile = build(&fields("valid.test"), AuthKind::Auto).unwrap();
     profile.options.term = Some("invalid TERM".into());
     cx.update_window(handle, |_, window, cx| {
         open_editor(
-            Connections::global(cx),
+            installed.clone(),
             Some(profile),
             workspace.downgrade(),
             window,
@@ -391,7 +362,7 @@ fn hidden_invalid_session_options_open_the_session_section(cx: &mut TestAppConte
         assert!(window.try_find("session-term").is_some());
         assert!(window.try_find("dialog").is_some());
         assert_eq!(
-            Connections::global(cx).read(cx).profiles(cx).iter().count(),
+            installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
     })
@@ -399,15 +370,9 @@ fn hidden_invalid_session_options_open_the_session_section(cx: &mut TestAppConte
 }
 #[gpui_kit::test]
 fn hidden_invalid_credential_focuses_credential_and_keeps_draft(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = crate::test_support::workspace(cx);
+    let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
-        open_editor(
-            Connections::global(cx),
-            None,
-            workspace.downgrade(),
-            window,
-            cx,
-        );
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
         window.input("valid.test", cx);
         window.click("editor-section-authentication", cx);
@@ -435,7 +400,7 @@ fn hidden_invalid_credential_focuses_credential_and_keeps_draft(cx: &mut TestApp
             "not-an-id"
         );
         assert_eq!(
-            Connections::global(cx).read(cx).profiles(cx).iter().count(),
+            installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
         window.press("ctrl-a", cx);
@@ -447,7 +412,7 @@ fn hidden_invalid_credential_focuses_credential_and_keeps_draft(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        let connections = Connections::global(cx);
+        let connections = installed.connections();
         assert_eq!(
             connections
                 .read(cx)
@@ -615,16 +580,18 @@ fn mistakes_are_explained() {
 #[gpui_kit::test]
 fn new_connection_uses_supplied_user_and_identifier_source(cx: &mut TestAppContext) {
     use nocterm_connections_model::draft::EditorDefaults;
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     let inputs = crate::PreparedConnections::memory(EditorDefaults {
         user: Some("supplied-user".into()),
         home: None,
     });
-    let connections = cx.update(|cx| {
-        crate::init(inputs, &nocterm_store::ShutdownCoordinator::default(), cx).unwrap()
+    let installed = cx.update(|cx| {
+        let (connections, facts) = inputs.into_owners();
+        crate::test_support::install_owners(connections, facts, installed.settings().clone(), cx)
     });
+    let connections = installed.connections().clone();
     cx.update_window(handle, |_, window, cx| {
-        open_editor(connections.clone(), None, workspace.downgrade(), window, cx);
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
         window.render_frame(cx);
         window.input("supplied.test", cx);
         window.press("enter", cx);
@@ -650,7 +617,7 @@ fn creating_a_profile_preserves_seeded_profiles_with_memory_or_writer_backends(
     cx: &mut TestAppContext,
 ) {
     for writer_backed in [false, true] {
-        let (handle, workspace, _) = crate::test_support::workspace(cx);
+        let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
         let mut bytes = [0; 16];
         bytes[15] = 1;
         let saved = build_profile(
@@ -663,8 +630,8 @@ fn creating_a_profile_preserves_seeded_profiles_with_memory_or_writer_backends(
         .unwrap();
         let mut profiles = nocterm_connections_model::profiles::Profiles::default();
         profiles.upsert(saved.clone());
-        let connections = cx.new(|_| {
-            if writer_backed {
+        let installed = cx.update(|cx| {
+            let owner = if writer_backed {
                 Connections::with_backends(
                     profiles,
                     Default::default(),
@@ -673,10 +640,12 @@ fn creating_a_profile_preserves_seeded_profiles_with_memory_or_writer_backends(
                 )
             } else {
                 Connections::with_documents(profiles, Default::default())
-            }
+            };
+            crate::test_support::install_model(owner, &installed, cx)
         });
+        let connections = installed.connections().clone();
         cx.update_window(handle, |_, window, cx| {
-            open_editor(connections.clone(), None, workspace.downgrade(), window, cx);
+            open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
             window.render_frame(cx);
             window.input("new.test", cx);
             window.click("editor-field-User", cx);

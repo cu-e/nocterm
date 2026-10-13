@@ -30,7 +30,6 @@ nocterm-workspace = 4
 [global_reads]
 nocterm = 3
 nocterm-agent-runtime = 1
-nocterm-connections = 2
 nocterm-keymap = 2
 nocterm-settings-ui = 2
 nocterm-snippets-ui = 1
@@ -40,8 +39,6 @@ nocterm-ui = 5
 "nocterm::application::ApplicationState" = 1
 "nocterm_agent::TerminalAuth" = 1
 "nocterm_agent_runtime::RuntimeGlobal" = 1
-"nocterm_connections::facts::GlobalServerFacts" = 1
-"nocterm_connections::model::GlobalConnections" = 1
 "nocterm_keymap::Keymap" = 1
 "nocterm_snippets_ui::model::GlobalLibrary" = 1
 "nocterm_ui::design::Design" = 1

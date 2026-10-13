@@ -1,6 +1,6 @@
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task, WeakEntity, Window};
+use gpui_kit::{App, AppContext as _, Context, Entity, Task};
 use nocterm_session::{Auth, CredentialId, Target};
-use nocterm_workspace::{SessionSpec, Workspace};
+use nocterm_workspace::SessionSpec;
 
 use nocterm_connections_model::profiles::{Profile, ProfileId, Profiles, Recent, Recents};
 
@@ -26,9 +26,6 @@ pub struct Connections {
     inputs: EditorInputs,
     clock: Arc<dyn ConnectionClock>,
 }
-struct GlobalConnections(Entity<Connections>);
-impl Global for GlobalConnections {}
-
 impl Connections {
     pub fn prepared(
         profiles: Profiles,
@@ -120,22 +117,10 @@ impl Connections {
             self
         }))
     }
-    pub(crate) fn install(
-        self,
-        shutdown: &nocterm_store::ShutdownCoordinator,
-        cx: &mut App,
-    ) -> Result<Entity<Self>, nocterm_store::StoreError> {
-        let entity = self.into_entity(shutdown, cx)?;
-        cx.set_global(GlobalConnections(entity.clone()));
-        Ok(entity)
-    }
     fn observe(&self, cx: &mut Context<Self>) {
         if let Some(installed) = self.state.installed() {
             installed.observe(cx);
         }
-    }
-    pub fn global(cx: &App) -> Entity<Connections> {
-        cx.global::<GlobalConnections>().0.clone()
     }
     pub fn profiles<'a>(&'a self, cx: &'a App) -> &'a Profiles {
         self.state.profiles(cx)
@@ -309,46 +294,6 @@ impl Connections {
         }
         self.state.installed().unwrap().record(recent, cx);
     }
-    pub fn spec_for_recent(&self, recent: &Recent, cx: &App) -> SessionSpec {
-        match recent.profile.and_then(|id| self.profiles(cx).get(id)) {
-            Some(profile) => spec_for_profile(profile),
-            None => SessionSpec {
-                profile: None,
-                options: recent.options.clone(),
-                title: recent.target.to_string().into(),
-                target: recent.target.clone(),
-                auth: recent.auth.clone(),
-                credential: recent.credential,
-                launch: recent.launch.clone(),
-            },
-        }
-    }
-}
-
-pub fn spec_for_profile(profile: &Profile) -> SessionSpec {
-    SessionSpec {
-        profile: Some(profile.id.to_string().into()),
-        options: profile.options.clone(),
-        title: profile.name.clone().into(),
-        target: profile.target.clone(),
-        auth: profile.auth.clone(),
-        credential: profile.credential,
-        launch: profile.launch.clone(),
-    }
-}
-
-/// Opens `spec` in a new tab and remembers it among the recent connections.
-pub fn connect(
-    workspace: &WeakEntity<Workspace>,
-    spec: SessionSpec,
-    profile: Option<ProfileId>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    Connections::global(cx).update(cx, |connections, cx| {
-        connections.record_use(&spec, profile, cx);
-    });
-    let _ = workspace.update(cx, |workspace, cx| workspace.open_session(spec, window, cx));
 }
 
 #[cfg(test)]

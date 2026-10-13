@@ -4,31 +4,49 @@ use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, Workspace};
 
 use std::collections::HashSet;
 
-use crate::{Connections, ServerFacts, connect, spec_for_profile};
+use crate::{Installed, ServerFacts, connect, spec_for_profile};
 
-pub(crate) struct Directory;
-
-impl ConnectionDirectory for Directory {
-    fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
-        let facts = ServerFacts::global(cx).read(cx);
-        Connections::global(cx)
+pub(crate) struct Directory {
+    installed: Installed,
+}
+impl Directory {
+    pub(crate) fn new(installed: Installed) -> Self {
+        Self { installed }
+    }
+    fn profile(&self, id: &str, cx: &App) -> Option<Profile> {
+        self.installed
+            .connections()
             .read(cx)
             .profiles(cx)
             .iter()
-            .map(|profile| summary(profile, facts, cx))
+            .find(|profile| profile.id.to_string() == id)
+            .cloned()
+    }
+}
+
+impl ConnectionDirectory for Directory {
+    fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
+        let facts = self.installed.facts().read(cx);
+        self.installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .iter()
+            .map(|profile| summary(profile, facts, self.installed.detecting_country(cx), cx))
             .collect()
     }
 
     fn recent_connections(&self, cx: &App) -> Vec<ConnectionSummary> {
-        let connections = Connections::global(cx).read(cx);
-        let facts = ServerFacts::global(cx).read(cx);
+        let connections = self.installed.connections().read(cx);
+        let facts = self.installed.facts().read(cx);
         recent_profiles(connections.profiles(cx), connections.recents(cx))
-            .map(|profile| summary(profile, facts, cx))
+            .map(|profile| summary(profile, facts, self.installed.detecting_country(cx), cx))
             .collect()
     }
 
     fn groups(&self, cx: &App) -> Vec<gpui_kit::SharedString> {
-        Connections::global(cx)
+        self.installed
+            .connections()
             .read(cx)
             .profiles(cx)
             .groups()
@@ -44,10 +62,11 @@ impl ConnectionDirectory for Directory {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        let Some(profile) = profile(id, cx) else {
+        let Some(profile) = self.profile(id, cx) else {
             return false;
         };
         connect(
+            &self.installed,
             workspace,
             spec_for_profile(&profile),
             Some(profile.id),
@@ -64,7 +83,7 @@ impl ConnectionDirectory for Directory {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EntityId> {
-        let spec = spec_for_profile(&profile(id, cx)?);
+        let spec = spec_for_profile(&self.profile(id, cx)?);
         workspace
             .update(cx, |workspace, cx| {
                 workspace.open_background_session(spec, window, cx)
@@ -74,7 +93,7 @@ impl ConnectionDirectory for Directory {
     }
 }
 
-fn summary(profile: &Profile, facts: &ServerFacts, cx: &App) -> ConnectionSummary {
+fn summary(profile: &Profile, facts: &ServerFacts, detecting: bool, cx: &App) -> ConnectionSummary {
     ConnectionSummary {
         id: profile.id.to_string().into(),
         name: profile.name.clone().into(),
@@ -83,7 +102,7 @@ fn summary(profile: &Profile, facts: &ServerFacts, cx: &App) -> ConnectionSummar
         target: profile.target.clone(),
         icon: facts.icon(profile, cx),
         flag: facts
-            .shown_country(profile, cx)
+            .shown_country(profile, detecting, cx)
             .and_then(|code| facts.flag(code)),
     }
 }
@@ -101,12 +120,3 @@ fn recent_profiles<'a>(
 
 #[cfg(test)]
 mod tests;
-
-fn profile(id: &str, cx: &App) -> Option<Profile> {
-    Connections::global(cx)
-        .read(cx)
-        .profiles(cx)
-        .iter()
-        .find(|profile| profile.id.to_string() == id)
-        .cloned()
-}

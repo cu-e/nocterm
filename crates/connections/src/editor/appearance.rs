@@ -28,6 +28,7 @@ pub(super) struct AppearanceFields {
 impl AppearanceFields {
     pub(super) fn new(
         profile: Option<&Profile>,
+        installed: &crate::Installed,
         window: &mut Window,
         cx: &mut Context<ConnectionEditor>,
     ) -> Self {
@@ -54,13 +55,13 @@ impl AppearanceFields {
                 cx.notify();
             }
         });
+        let facts = installed.facts().clone();
         let country_subscription =
-            cx.subscribe_in(&country, window, |this, input, event, _, cx| {
+            cx.subscribe_in(&country, window, move |this, input, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
                     let code = input.read(cx).value().trim().to_ascii_lowercase();
-                    crate::ServerFacts::global(cx)
-                        .update(cx, |facts, cx| facts.ensure_flag(&code, cx));
+                    facts.update(cx, |facts, cx| facts.ensure_flag(&code, cx));
                     cx.notify();
                 }
             });
@@ -100,11 +101,12 @@ impl AppearanceFields {
         &self,
         id: ProfileId,
         editing: bool,
+        installed: &crate::Installed,
         cx: &mut Context<ConnectionEditor>,
     ) -> Vec<AnyElement> {
         let color = self.preview_color(cx);
         let detected = editing
-            .then(|| crate::ServerFacts::global(cx).read(cx).os(id, cx))
+            .then(|| installed.facts().read(cx).os(id, cx))
             .flatten();
         let chosen = self.icon.as_deref().and_then(crate::os::find).or(detected);
         let hint = match chosen {
@@ -123,7 +125,7 @@ impl AppearanceFields {
                 cx,
             ),
             form::row("Colour", hint, colour, cx),
-            self.render_country(id, editing, cx),
+            self.render_country(id, editing, installed, cx),
         ]
     }
 
@@ -286,11 +288,12 @@ impl AppearanceFields {
         &self,
         id: ProfileId,
         editing: bool,
+        installed: &crate::Installed,
         cx: &mut Context<ConnectionEditor>,
     ) -> AnyElement {
         let border = cx.theme().border;
-        let detecting = crate::facts::country_detection_enabled(cx);
-        let facts = crate::ServerFacts::global(cx).read(cx);
+        let detecting = installed.detecting_country(cx);
+        let facts = installed.facts().read(cx);
         let typed = self.country.read(cx).value().trim().to_ascii_lowercase();
         let detected = editing
             .then(|| facts.country(id, cx))

@@ -14,9 +14,9 @@ fn native_append_tails_reorder_the_last_group_position_and_preserve_empty_target
     let first = gp("First", Some("Homelab"));
     let last = gp("Last", Some("Homelab"));
     let root = gp("Root", None);
-    let (handle, _, opened) = setup(cx, &[first.clone(), last.clone(), root.clone()]);
+    let (handle, _, opened, installed) = setup(cx, &[first.clone(), last.clone(), root.clone()]);
     let order = |cx: &mut TestAppContext, group| {
-        profiles_of(cx)
+        profiles_of(&installed, cx)
             .in_group(group, "")
             .iter()
             .map(|profile| profile.id)
@@ -91,7 +91,11 @@ fn native_append_tails_reorder_the_last_group_position_and_preserve_empty_target
     cx.run_until_parked();
     assert_eq!(order(cx, Some("Homelab")), [last.id, first.id]);
     assert_eq!(
-        profiles_of(cx).get(first.id).unwrap().group.as_deref(),
+        profiles_of(&installed, cx)
+            .get(first.id)
+            .unwrap()
+            .group
+            .as_deref(),
         Some("Homelab")
     );
     cx.update_window(handle, |_, window, cx| {
@@ -146,7 +150,7 @@ fn source_and_preview_keep_server_metadata_and_dimensions_without_shifting_targe
     server.icon_color = Some("#E95420".into());
     server.country = Some("de".into());
     let destination = gp("Destination", Some("Homelab"));
-    let (handle, _, opened) = setup(cx, &[destination.clone(), server.clone()]);
+    let (handle, _, opened, installed) = setup(cx, &[destination.clone(), server.clone()]);
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(900.)));
     cx.run_until_parked();
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
@@ -257,7 +261,7 @@ fn source_and_preview_keep_server_metadata_and_dimensions_without_shifting_targe
         .unwrap();
         cx.run_until_parked();
         assert_eq!(
-            profiles_of(cx)
+            profiles_of(&installed, cx)
                 .in_group(Some("Homelab"), "")
                 .iter()
                 .map(|profile| profile.id)

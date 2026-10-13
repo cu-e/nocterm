@@ -59,6 +59,7 @@ impl Render for ConnectionEditor {
                 &self.appearance,
                 self.edit.id(),
                 self.edit.editing(),
+                &self.deps,
                 cx,
             ),
             EditorSection::Authentication => self.authentication.page(cx),

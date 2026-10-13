@@ -20,7 +20,7 @@ use nocterm_session::{Auth, Target};
 use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{OpenVault, SessionSpec, Workspace};
 
-use crate::{Connections, model::connect, open_editor};
+use crate::{Installed, connect, open_editor, session_intents::spec_for_recent};
 
 const KEY_CONTEXT: &str = "QuickConnect";
 
@@ -35,7 +35,7 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 pub struct NewTabMenu {
-    connections: Entity<Connections>,
+    installed: Installed,
     workspace: WeakEntity<Workspace>,
     /// The quick connect field receives focus whenever the menu opens.
     focus_handle: FocusHandle,
@@ -46,7 +46,7 @@ pub struct NewTabMenu {
 
 impl NewTabMenu {
     pub fn new(
-        connections: Entity<Connections>,
+        installed: Installed,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -54,7 +54,7 @@ impl NewTabMenu {
         let quick_connect = cx.new(|cx| InputState::new(window, cx).placeholder("user@host:port"));
         let focus_handle = quick_connect.read(cx).focus_handle(cx);
         let subscriptions = vec![
-            cx.observe(&connections, |_, _, cx| cx.notify()),
+            cx.observe(installed.connections(), |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &quick_connect,
                 window,
@@ -66,7 +66,7 @@ impl NewTabMenu {
             ),
         ];
         Self {
-            connections,
+            installed,
             workspace,
             focus_handle,
             quick_connect,
@@ -78,15 +78,8 @@ impl NewTabMenu {
     /// Connects to what was typed, without saving it.
     fn quick_connect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.quick_connect.read(cx).value().to_string();
-        let target = match Target::parse(
-            &text,
-            self.connections
-                .read(cx)
-                .editor_inputs()
-                .defaults()
-                .user
-                .as_deref(),
-        ) {
+        let target = match Target::parse(&text, self.installed.inputs().defaults().user.as_deref())
+        {
             Ok(target) => target,
             Err(error) => {
                 self.error = Some(capitalize(&error.to_string()).into());
@@ -105,12 +98,19 @@ impl NewTabMenu {
             launch: None,
             credential: None,
         };
-        connect(&self.workspace, spec, None, window, cx);
+        connect(&self.installed, &self.workspace, spec, None, window, cx);
     }
 
     fn open_recent(&mut self, recent: &Recent, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = self.connections.read(cx).spec_for_recent(recent, cx);
-        connect(&self.workspace, spec, recent.profile, window, cx);
+        let spec = spec_for_recent(&self.installed, recent, cx);
+        connect(
+            &self.installed,
+            &self.workspace,
+            spec,
+            recent.profile,
+            window,
+            cx,
+        );
     }
 
     fn new_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -118,7 +118,7 @@ impl NewTabMenu {
             .workspace
             .update(cx, |workspace, cx| workspace.show_new_tab_menu(false, cx));
         open_editor(
-            self.connections.clone(),
+            self.installed.clone(),
             None,
             self.workspace.clone(),
             window,
@@ -127,11 +127,11 @@ impl NewTabMenu {
     }
 
     fn render_recents(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let connections = self.connections.read(cx);
+        let connections = self.installed.connections().read(cx);
         let recents: Vec<(Recent, SessionSpec)> = connections
             .recents(cx)
             .iter()
-            .map(|recent| (recent.clone(), connections.spec_for_recent(recent, cx)))
+            .map(|recent| (recent.clone(), spec_for_recent(&self.installed, recent, cx)))
             .collect();
         let theme = cx.theme();
         let muted = theme.muted_foreground;
@@ -276,11 +276,11 @@ mod tests {
 
     #[gpui_kit::test]
     fn menu_uses_input_focus_and_enter_opens_without_saving(cx: &mut TestAppContext) {
-        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
         let menu = cx
             .update_window(handle, |_, window, cx| {
                 let menu = cx.new(|cx| {
-                    NewTabMenu::new(Connections::global(cx), workspace.downgrade(), window, cx)
+                    NewTabMenu::new(installed.clone(), workspace.downgrade(), window, cx)
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.set_new_tab_menu(menu.clone(), cx);
@@ -318,11 +318,11 @@ mod tests {
             assert_eq!(opened.borrow()[0].target.port, 2222);
             assert_eq!(opened.borrow()[0].target.user, "alice");
             assert_eq!(
-                Connections::global(cx).read(cx).profiles(cx).iter().count(),
+                installed.connections().read(cx).profiles(cx).iter().count(),
                 0
             );
             assert_eq!(
-                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                installed.connections().read(cx).recents(cx).iter().count(),
                 1
             );
             assert_eq!(menu.read(cx).quick_connect.read(cx).value(), "");
@@ -332,11 +332,11 @@ mod tests {
 
     #[gpui_kit::test]
     fn space_keeps_quick_connect_open_and_inserts_text(cx: &mut TestAppContext) {
-        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
         let menu = cx
             .update_window(handle, |_, window, cx| {
                 let menu = cx.new(|cx| {
-                    NewTabMenu::new(Connections::global(cx), workspace.downgrade(), window, cx)
+                    NewTabMenu::new(installed.clone(), workspace.downgrade(), window, cx)
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.set_new_tab_menu(menu.clone(), cx);
@@ -371,7 +371,7 @@ mod tests {
             assert_eq!(menu.read(cx).quick_connect.read(cx).value(), "a b");
             assert!(opened.borrow().is_empty());
             assert_eq!(
-                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                installed.connections().read(cx).recents(cx).iter().count(),
                 0
             );
         })
@@ -382,11 +382,11 @@ mod tests {
     fn invalid_enter_keeps_menu_and_error_visible_without_recording_a_connection(
         cx: &mut TestAppContext,
     ) {
-        let (handle, workspace, opened) = crate::test_support::workspace(cx);
+        let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
         let menu = cx
             .update_window(handle, |_, window, cx| {
                 let menu = cx.new(|cx| {
-                    NewTabMenu::new(Connections::global(cx), workspace.downgrade(), window, cx)
+                    NewTabMenu::new(installed.clone(), workspace.downgrade(), window, cx)
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.set_new_tab_menu(menu.clone(), cx);
@@ -408,11 +408,11 @@ mod tests {
             window.render_frame(cx);
             assert!(opened.borrow().is_empty());
             assert_eq!(
-                Connections::global(cx).read(cx).profiles(cx).iter().count(),
+                installed.connections().read(cx).profiles(cx).iter().count(),
                 0
             );
             assert_eq!(
-                Connections::global(cx).read(cx).recents(cx).iter().count(),
+                installed.connections().read(cx).recents(cx).iter().count(),
                 0
             );
             assert!(menu.read(cx).error.is_some());

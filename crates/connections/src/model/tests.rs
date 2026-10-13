@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec_for_profile;
 use futures::channel::oneshot;
 use nocterm_core::persist;
 use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
@@ -390,9 +391,8 @@ async fn queue_full_and_captured_closing_are_semantic_errors(cx: &mut gpui_kit::
             ready_writer(),
             ready_writer(),
         )
-        .install(&shutdown, cx)
-        .unwrap();
-        Connections::global(cx)
+        .into_entity(&shutdown, cx)
+        .unwrap()
     });
     let (_, overflow) = entity.update(cx, |c, cx| {
         let accepted = (0..MAX_PENDING_WRITES)

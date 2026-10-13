@@ -47,7 +47,13 @@ async fn injected_country_and_flag_are_published_and_memory_flag_is_reused(
     let facts = cx.new(|_| ServerFacts::in_memory(deps(&script, true)));
     let first = profile();
     facts.update(cx, |facts, cx| {
-        facts.probe(&first, "example.com", Arc::new(InMemoryFs::default()), cx)
+        facts.probe(
+            &first,
+            "example.com",
+            Arc::new(InMemoryFs::default()),
+            true,
+            cx,
+        )
     });
     cx.run_until_parked();
     assert_eq!(
@@ -64,6 +70,7 @@ async fn injected_country_and_flag_are_published_and_memory_flag_is_reused(
             &second,
             "other.example",
             Arc::new(InMemoryFs::default()),
+            true,
             cx,
         )
     });
@@ -82,7 +89,7 @@ async fn injected_country_and_flag_are_published_and_memory_flag_is_reused(
     chosen.country = Some("fr".into());
     assert_eq!(
         facts.read_with(cx, |facts, cx| facts
-            .shown_country(&chosen, cx)
+            .shown_country(&chosen, true, cx)
             .map(str::to_owned)),
         Some("fr".into())
     );
@@ -96,7 +103,13 @@ async fn downloaded_flag_failure_uses_embedded_fallback(cx: &mut gpui_kit::TestA
     let facts = cx.new(|_| ServerFacts::in_memory(deps(&script, true)));
     let profile = profile();
     facts.update(cx, |facts, cx| {
-        facts.probe(&profile, "example.com", Arc::new(InMemoryFs::default()), cx)
+        facts.probe(
+            &profile,
+            "example.com",
+            Arc::new(InMemoryFs::default()),
+            true,
+            cx,
+        )
     });
     cx.run_until_parked();
     assert!(facts.read_with(cx, |facts, _| facts.flag("de").is_some()));
@@ -111,6 +124,7 @@ async fn offline_installation_does_not_call_observation_ports(cx: &mut gpui_kit:
             &profile(),
             "example.com",
             Arc::new(InMemoryFs::default()),
+            true,
             cx,
         )
     });
@@ -136,7 +150,13 @@ async fn persisted_ip_cache_bypasses_locator_and_invalid_code_is_rechecked(
         });
         let profile = profile();
         facts.update(cx, |facts, cx| {
-            facts.probe(&profile, "example.com", Arc::new(InMemoryFs::default()), cx)
+            facts.probe(
+                &profile,
+                "example.com",
+                Arc::new(InMemoryFs::default()),
+                true,
+                cx,
+            )
         });
         cx.run_until_parked();
         assert_eq!(

@@ -11,8 +11,8 @@ struct RowVisual {
 }
 
 impl RowVisual {
-    fn new(profile: &Profile, cx: &App) -> Self {
-        let facts = ServerFacts::global(cx).read(cx);
+    fn new(profile: &Profile, installed: &Installed, cx: &App) -> Self {
+        let facts = installed.facts().read(cx);
         Self {
             profile: profile.clone(),
             os: profile
@@ -21,7 +21,7 @@ impl RowVisual {
                 .and_then(os::find)
                 .or_else(|| facts.os(profile.id, cx)),
             flag: facts
-                .shown_country(profile, cx)
+                .shown_country(profile, installed.detecting_country(cx), cx)
                 .and_then(|code| Some((code.to_uppercase(), facts.flag(code)?))),
         }
     }
@@ -206,7 +206,7 @@ impl ConnectionsPanel {
 
     pub(super) fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
         let id = profile.id;
-        let visual = RowVisual::new(profile, cx);
+        let visual = RowVisual::new(profile, &self.installed, cx);
         let source = DragSource::default();
         let source_visual = visual.clone();
         let group = profile.group.clone();

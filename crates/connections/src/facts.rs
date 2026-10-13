@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::{ObservationDeps, observation::LocationRequest};
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Image, ImageFormat};
+use gpui_kit::{App, AppContext as _, Context, Entity, Image, ImageFormat, Subscription};
 use nocterm_connections_model::{facts::Known, observation::CountryCode};
 use nocterm_session::RemoteFs;
 use nocterm_store::{ShutdownCoordinator, StoreError};
@@ -42,9 +42,6 @@ pub struct ServerFacts {
     locating: HashSet<ProfileId>,
 }
 
-struct GlobalServerFacts(Entity<ServerFacts>);
-impl Global for GlobalServerFacts {}
-
 impl ServerFacts {
     pub fn with_backend(
         known: Known,
@@ -68,9 +65,10 @@ impl ServerFacts {
 
     pub(crate) fn install(
         mut self,
+        connections: &Entity<Connections>,
         shutdown: &ShutdownCoordinator,
         cx: &mut App,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(Entity<Self>, Vec<Subscription>), StoreError> {
         self.known.register(shutdown, cx)?;
         let countries: HashSet<String> =
             self.known.read(cx).countries().map(str::to_owned).collect();
@@ -82,7 +80,7 @@ impl ServerFacts {
             }
             this
         });
-        cx.observe(&storage, {
+        let storage_subscription = cx.observe(&storage, {
             let entity = entity.downgrade();
             move |storage, cx| {
                 if let Some(error) = storage.read(cx).error() {
@@ -90,11 +88,10 @@ impl ServerFacts {
                 }
                 let _ = entity.update(cx, |_, cx| cx.notify());
             }
-        })
-        .detach();
+        });
         // Forget servers whose connection was deleted, and load the flags of
         // countries chosen by hand.
-        cx.observe(&Connections::global(cx), {
+        let profiles_subscription = cx.observe(connections, {
             let entity = entity.downgrade();
             move |connections, cx| {
                 let profiles = connections.read(cx).profiles(cx);
@@ -110,14 +107,8 @@ impl ServerFacts {
                     this.known.update(|known| known.retain_profiles(&ids), cx);
                 });
             }
-        })
-        .detach();
-        cx.set_global(GlobalServerFacts(entity));
-        Ok(())
-    }
-
-    pub fn global(cx: &App) -> Entity<Self> {
-        cx.global::<GlobalServerFacts>().0.clone()
+        });
+        Ok((entity, vec![storage_subscription, profiles_subscription]))
     }
 
     /// The system detected on `id`'s server.
@@ -142,6 +133,7 @@ impl ServerFacts {
         profile: &Profile,
         host: &str,
         fs: Arc<dyn RemoteFs>,
+        detecting_country: bool,
         cx: &mut Context<Self>,
     ) {
         self.probed.retain(|seen| seen.strong_count() > 0);
@@ -180,7 +172,7 @@ impl ServerFacts {
         let located = self.known.read(cx).located_host(id) == Some(host);
         if self.observations.network_enabled()
             && profile.country.is_none()
-            && country_detection_enabled(cx)
+            && detecting_country
             && !located
             && self.locating.insert(id)
         {
@@ -206,12 +198,8 @@ impl ServerFacts {
                     if let Some(code) = &country {
                         this.ensure_flag(code, cx);
                     }
-                    this.known.update(
-                        |known| {
-                            known.accept_country(id, host, found);
-                        },
-                        cx,
-                    );
+                    this.known
+                        .update(|known| known.accept_country(id, host, found), cx);
                     cx.notify();
                 });
             })
@@ -240,12 +228,16 @@ impl ServerFacts {
 
     /// The country shown for `profile`: the one chosen by hand, else the
     /// detected one while detection is on.
-    pub fn shown_country<'a>(&'a self, profile: &'a Profile, cx: &'a App) -> Option<&'a str> {
-        profile.country.as_deref().or_else(|| {
-            country_detection_enabled(cx)
-                .then(|| self.country(profile.id, cx))
-                .flatten()
-        })
+    pub fn shown_country<'a>(
+        &'a self,
+        profile: &'a Profile,
+        detecting: bool,
+        cx: &'a App,
+    ) -> Option<&'a str> {
+        profile
+            .country
+            .as_deref()
+            .or_else(|| detecting.then(|| self.country(profile.id, cx)).flatten())
     }
 
     /// Loads the flag of `code` unless it is loaded or loading: from memory,
@@ -275,18 +267,10 @@ impl ServerFacts {
     }
 }
 
-/// Whether the user lets nocterm look up server countries. Without settings
-/// (tests) it is on; nothing goes over the network there anyway.
-pub(crate) fn country_detection_enabled(cx: &App) -> bool {
-    !cx.has_global::<nocterm_ui::SettingsStore>()
-        || nocterm_ui::SettingsExt::setting::<nocterm_ui::AppearanceSettings>(cx)
-            .detect_server_country
-}
-
 /// Probes the connected sessions of saved connections that are open in
 /// `workspace`. Each session is probed once, however often this runs.
-pub(crate) fn probe_sessions(workspace: &Workspace, cx: &mut App) {
-    let connections = Connections::global(cx);
+pub(crate) fn probe_sessions(installed: &crate::Installed, workspace: &Workspace, cx: &mut App) {
+    let connections = installed.connections();
     let found: Vec<_> = workspace
         .items()
         .filter_map(|item| {
@@ -308,9 +292,9 @@ pub(crate) fn probe_sessions(workspace: &Workspace, cx: &mut App) {
     if found.is_empty() {
         return;
     }
-    ServerFacts::global(cx).update(cx, |facts, cx| {
+    installed.facts().update(cx, |facts, cx| {
         for (profile, host, fs) in found {
-            facts.probe(&profile, &host, fs, cx);
+            facts.probe(&profile, &host, fs, installed.detecting_country(cx), cx);
         }
     });
 }
@@ -368,19 +352,23 @@ mod tests {
         let detected = |facts: &Entity<ServerFacts>, cx: &mut gpui_kit::TestAppContext| {
             facts.read_with(cx, |facts, cx| facts.os(profile.id, cx).map(|os| os.id))
         };
-        facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs.clone(), cx));
+        facts.update(cx, |facts, cx| {
+            facts.probe(&profile, "web", fs.clone(), true, cx)
+        });
         cx.run_until_parked();
         assert_eq!(detected(&facts, cx), Some("debian"));
         assert_eq!(detector.calls(), 1);
 
-        facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs.clone(), cx));
+        facts.update(cx, |facts, cx| {
+            facts.probe(&profile, "web", fs.clone(), true, cx)
+        });
         cx.run_until_parked();
         assert_eq!(detector.calls(), 1);
 
         let mut chosen = profile.clone();
         chosen.icon = Some("arch".into());
         let other: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
-        facts.update(cx, |facts, cx| facts.probe(&chosen, "web", other, cx));
+        facts.update(cx, |facts, cx| facts.probe(&chosen, "web", other, true, cx));
         cx.run_until_parked();
         assert_eq!(detector.calls(), 1);
         assert_eq!(detected(&facts, cx), Some("debian"));
@@ -390,13 +378,17 @@ mod tests {
             ),
         ));
         let failed: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
-        facts.update(cx, |facts, cx| facts.probe(&profile, "web", failed, cx));
+        facts.update(cx, |facts, cx| {
+            facts.probe(&profile, "web", failed, true, cx)
+        });
         cx.run_until_parked();
         assert_eq!(detector.calls(), 2);
         assert_eq!(detected(&facts, cx), Some("debian"));
         detector.answer_next(Ok(None));
         let absent: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
-        facts.update(cx, |facts, cx| facts.probe(&profile, "web", absent, cx));
+        facts.update(cx, |facts, cx| {
+            facts.probe(&profile, "web", absent, true, cx)
+        });
         cx.run_until_parked();
         assert_eq!(detector.calls(), 3);
         assert_eq!(detected(&facts, cx), Some("debian"));
@@ -444,12 +436,18 @@ mod tests {
         detector.answer_next(Ok(OsId::new("debian")));
         let prepared =
             crate::test_support::prepared_repository(repository.clone(), observations(detector));
-        cx.update(|cx| {
-            crate::init(prepared, &shutdown, cx).unwrap();
+        let installed = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let ready = nocterm_ui::init(
+                nocterm_ui::DesignTokens::builtin(),
+                nocterm_ui::SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+            crate::install(prepared, &ready, &shutdown, cx).unwrap()
         });
-        let facts = cx.read(ServerFacts::global);
+        let facts = installed.facts();
         let fs: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
-        facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs, cx));
+        facts.update(cx, |facts, cx| facts.probe(&profile, "web", fs, true, cx));
         cx.run_until_parked();
         assert_eq!(
             facts.read_with(cx, |facts, cx| facts.os(profile.id, cx).map(|os| os.id)),

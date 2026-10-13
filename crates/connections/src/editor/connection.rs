@@ -129,6 +129,7 @@ impl ConnectionFields {
         appearance: &AppearanceFields,
         id: ProfileId,
         editing: bool,
+        installed: &crate::Installed,
         cx: &mut Context<ConnectionEditor>,
     ) -> Vec<AnyElement> {
         let description_height = rems(cx.design().layout.connection_description_height);
@@ -165,7 +166,11 @@ impl ConnectionFields {
                 ],
                 cx,
             ),
-            form::section("Appearance", appearance.rows(id, editing, cx), cx),
+            form::section(
+                "Appearance",
+                appearance.rows(id, editing, installed, cx),
+                cx,
+            ),
             form::section(
                 "Notes",
                 [form::stacked_row(

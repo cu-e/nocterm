@@ -57,6 +57,7 @@ pub(crate) struct Booted {
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
+    connections: Option<nocterm_connections::Installed>,
     pub(crate) themes: nocterm_ui::ThemeUi,
     /// The vault, when it opened; credentials and its settings depend on it.
     pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
@@ -108,14 +109,17 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         cx,
     );
     let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown, cx);
-    let connections = match nocterm_connections::init(connections, &shutdown, cx) {
+    let connections = match nocterm_connections::install(connections, &ui, &shutdown, cx) {
         Ok(connections) => Some(connections),
         Err(error) => {
             report_store_registration("connections", Err(error));
             None
         }
     };
-    let vault = vault.and_then(|setup| open_vault(setup, &ui, connections, cx));
+    let association_owner = connections
+        .as_ref()
+        .map(|installed| installed.connections().clone());
+    let vault = vault.and_then(|setup| open_vault(setup, &ui, association_owner, cx));
     let (terminal_deps, vault) = match vault {
         Some(opened) => (
             terminal_deps.with_credentials(opened.credentials),
@@ -140,6 +144,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         settings_ui,
         images,
         metadata,
+        connections,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -263,7 +268,9 @@ pub(crate) fn build_workspace(
 ) {
     let vault = booted.vault.as_deref();
     nocterm_terminal::register(&booted.terminal, workspace);
-    nocterm_connections::register(workspace, window, cx);
+    if let Some(connections) = &booted.connections {
+        nocterm_connections::register(connections, workspace, window, cx);
+    }
     crate::register_settings(
         workspace,
         vault,
@@ -318,13 +325,23 @@ mod observation_tests {
         .unwrap();
         std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
         let prepared = crate::connection_setup::native(&paths);
-        cx.update(|cx| {
+        let installed = cx.update(|cx| {
             gpui_kit::init(cx);
-            nocterm_connections::init(prepared, &nocterm_store::ShutdownCoordinator::default(), cx)
-                .unwrap();
+            let ready = nocterm_ui::init(
+                DesignTokens::builtin(),
+                SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+            nocterm_connections::install(
+                prepared,
+                &ready,
+                &nocterm_store::ShutdownCoordinator::default(),
+                cx,
+            )
+            .unwrap()
         });
         cx.run_until_parked();
-        let facts = cx.read(nocterm_connections::ServerFacts::global);
+        let facts = installed.facts();
         assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_some()));
     }
 
@@ -340,19 +357,25 @@ mod observation_tests {
         )
         .unwrap();
         std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
-        cx.update(|cx| {
+        let installed = cx.update(|cx| {
             gpui_kit::init(cx);
+            let ready = nocterm_ui::init(
+                DesignTokens::builtin(),
+                SettingsStore::in_memory(Default::default()),
+                cx,
+            );
             // The observations are deliberately composed with no configured
             // paths, although old observations are present in the fixture.
-            nocterm_connections::init(
+            nocterm_connections::install(
                 crate::connection_setup::memory(),
+                &ready,
                 &nocterm_store::ShutdownCoordinator::default(),
                 cx,
             )
-            .unwrap();
+            .unwrap()
         });
         cx.run_until_parked();
-        let facts = cx.read(nocterm_connections::ServerFacts::global);
+        let facts = installed.facts();
         assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_none()));
     }
 }

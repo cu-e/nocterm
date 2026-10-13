@@ -1,49 +1,61 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowOptions};
-use nocterm_ui::{Design, DesignTokens};
+use nocterm_ui::DesignTokens;
 use nocterm_workspace::{SessionSpec, Workspace};
 
-use crate::Connections;
+use crate::{Connections, Installed, ObservationDeps, ServerFacts};
 
 pub(crate) type Opened = Rc<RefCell<Vec<SessionSpec>>>;
 
-pub(crate) fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>, Opened) {
+pub(crate) fn workspace(
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
     let opened = Opened::default();
     let calls = opened.clone();
-    let (window, workspace) = cx.update(|cx| {
+    let (window, workspace, installed) = cx.update(|cx| {
         // Keep dialog hitboxes stable between rendering and simulated clicks.
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
-        cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(
+        let ready = nocterm_ui::init(
+            DesignTokens::builtin(),
+            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            cx,
+        );
+        let installed = crate::install(
             crate::PreparedConnections::memory(nocterm_connections_model::draft::EditorDefaults {
                 user: Some("tester".into()),
                 home: None,
             }),
+            &ready,
             &nocterm_store::ShutdownCoordinator::default(),
             cx,
         )
         .unwrap();
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| {
-                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
-                let mut workspace = Workspace::new(deps, window, cx);
-                workspace.set_session_opener(move |_, spec, _, _| calls.borrow_mut().push(spec));
-                workspace
+        let (window, workspace) =
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let deps =
+                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    let mut workspace = Workspace::new(deps, window, cx);
+                    workspace
+                        .set_session_opener(move |_, spec, _, _| calls.borrow_mut().push(spec));
+                    workspace
+                })
             })
-        })
-        .unwrap()
+            .unwrap();
+        (window, workspace, installed)
     });
     assert!(cx.read(|cx| {
-        Connections::global(cx)
+        installed
+            .connections()
             .read(cx)
             .profiles(cx)
             .iter()
             .next()
             .is_none()
     }));
-    (window, workspace, opened)
+    (window, workspace, opened, installed)
 }
 
 /// The shared pure repository supplies failures/documents while the existing driver owns writes.
@@ -99,5 +111,34 @@ pub(crate) fn prepared_repository(
         ),
         values,
         observations,
+    )
+}
+
+/// Explicit alternate owners for tests; preserves the supplied settings installation.
+pub(crate) fn install_owners(
+    connections: Connections,
+    facts: ServerFacts,
+    settings: nocterm_store::SettingsHandle,
+    cx: &mut gpui_kit::App,
+) -> Installed {
+    Installed::from_owners(
+        connections,
+        facts,
+        settings,
+        &nocterm_store::ShutdownCoordinator::default(),
+        cx,
+    )
+    .unwrap()
+}
+pub(crate) fn install_model(
+    connections: Connections,
+    installed: &Installed,
+    cx: &mut gpui_kit::App,
+) -> Installed {
+    install_owners(
+        connections,
+        ServerFacts::in_memory(ObservationDeps::offline()),
+        installed.settings().clone(),
+        cx,
     )
 }

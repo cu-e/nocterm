@@ -84,3 +84,10 @@ installation, and binds the existing Send+Sync authentication factory to that
 installation. `Booted` shares it with every workspace window. Authentication tabs
 retain explicit isolated transports and once-only completion; no transport or
 credential compatibility global participates. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).
+
+Bootstrap retains the optional connection `Installed` handle in Booted and passes
+it to every new workspace. Vault association captures its exact connection entity
+rather than discovering a global. An installation failure skips connection view
+registration and returns a typed association failure while keeping vault access.
+All windows share the retained profile/facts/settings owners and subscription
+lifetimes; native preparation remains the earlier background capability boundary.

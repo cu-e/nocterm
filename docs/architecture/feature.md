@@ -92,8 +92,8 @@ the grouped sidebar, profile editor and quick-connect menu. Pure document format
 and checked transitions belong to `nocterm-connections-model`; the app supplies
 preloaded documents and repository writers. Editor, reload and quick-connect
 use injected identifiers, defaults and clock capabilities through the existing
-shared connection entity. Its `ServerFacts`
-global keeps what was detected about servers (system over SFTP, country through
+shared connection entity. Its retained `ServerFacts`
+entity keeps what was detected about servers (system over SFTP, country through
 GeoIP for public addresses) in the state directory's `servers.toml`, apart from
 `connections.toml`. `ObservationDeps` injects the pure country/resolution/flag
 ports; the app chooses native adapters or inert memory-only dependencies. The
@@ -358,7 +358,7 @@ Connection facts schedule injected `RemoteOsDetector` work and present checked
 identities with the feature OS glyph/color catalog. Release parsing and remote
 read/close work belong to domain rules and the native adapter. Probe-once and
 manual-icon precedence remain feature policy; fact publication race guards and
-compatibility globals remain existing lifecycle debt.
+observation completion authority remains existing lifecycle debt.
 
 Terminal models retain immutable `Installed` dependencies: remote transport,
 optional local-session factory, supplied default shell, optional credential
@@ -369,3 +369,13 @@ original installation. Missing local providers produce the existing unavailable
 session result; explicit command and program transports take precedence. Model
 and view subscriptions observe published settings through weak entity handles,
 without discovering a settings or transport global. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).
+
+
+Connection views now receive a retained `Installed` handle with their exact
+profile/facts entities, editor inputs, explicit settings and observer lifetimes.
+Directories, editors, menus and group actions capture those owners; connection
+and facts globals are removed. Session intents remain feature conversions over
+the unchanged workspace session factory. Country policy uses the supplied
+SettingsHandle. Publication/scheduling remain existing feature migration debt;
+stale observation completion authority remains separate work.
+See [ADR0043](../adr/0043-retained-connections-installation.md).
