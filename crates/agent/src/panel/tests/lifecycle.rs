@@ -93,7 +93,7 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
                 started: started.clone(),
                 cancelled: cancelled.clone(),
             });
-            services.codex_home = None;
+            services.usage_source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
             services.workdir = f._directory.path().join("pending");
             services
         },
@@ -470,7 +470,7 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
         |f| {
             let mut services = fixture_services(f);
             services.terminal_auth = Some(opener);
-            services.codex_home = None;
+            services.usage_source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
             services
         },
         cx,

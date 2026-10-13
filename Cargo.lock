@@ -5199,7 +5199,6 @@ dependencies = [
  "nocterm-keymap",
  "nocterm-settings",
  "nocterm-ui",
- "nocterm-workspace",
 ]
 
 [[package]]

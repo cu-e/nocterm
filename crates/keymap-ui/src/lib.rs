@@ -7,7 +7,7 @@
 //!
 //! Owns: keymap search, shortcut recording, conflict presentation and the settings page.
 //! Does not own: binding storage, effective keymap installation or feature commands.
-//! Ports used: `Keymap`; provided: workspace `SettingsPageSpec`.
+//! Ports used: `Keymap`; provided: UI `SettingsPageSpec`.
 //! Settings section: none (bindings use the keymap file). Globals: none.
 //! Invariants: edits go through the keymap owner; the page does not rewrite other bindings.
 mod render;

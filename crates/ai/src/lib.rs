@@ -3,10 +3,10 @@
 //! Owns: configuration, session/tool rules, bounded history codecs and storage ports.
 //! Does not own: history/favorites files or persistence scheduling; repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: AgentConnector, ToolBridge,
-//! AgentStateRepository and ChatRepository.
+//! AgentStateRepository, ChatRepository and usage::AccountUsageSource.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
-//! Existing ACP-backed DTOs, usage/sandbox/image I/O and clock/entropy are explicit
+//! Existing ACP-backed DTOs, sandbox/image I/O and clock/entropy are explicit
 //! migration debt; storage ports add no new protocol-specific types.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;

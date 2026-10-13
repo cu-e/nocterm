@@ -31,8 +31,6 @@ nocterm-workspace = 4
 "nocterm_ai::images::image::Limits::default" = 1
 "nocterm_ai::sandbox::std::fs::canonicalize" = 3
 "nocterm_ai::sandbox::std::fs::metadata" = 1
-"nocterm_ai::usage::std::fs::File::open" = 1
-"nocterm_ai::usage::std::fs::read_dir" = 1
 
 [global_reads]
 nocterm = 3

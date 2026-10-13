@@ -230,7 +230,7 @@ fn boot_with_ports(
                         paths.state_dir().join("agent-chats"),
                     )),
                 )),
-                codex_home: None,
+                usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 workdir: paths.state_dir().join("agent-workspace"),
                 terminal_auth: None,
                 private_dirs: Vec::new(),

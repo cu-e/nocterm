@@ -220,7 +220,7 @@ fn settle(f: &Fixture, cx: &mut TestAppContext) {
 }
 
 fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> Fixture {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());

@@ -55,8 +55,8 @@ pub struct AgentServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: runtime::AgentStorage,
-    /// Where Codex keeps its session logs, read for its plan limits.
-    pub codex_home: Option<PathBuf>,
+    /// The host's account usage capability, without native paths in the view.
+    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir: PathBuf,
     pub terminal_auth: Option<TerminalAuthOpener>,
     /// nocterm's own directories (settings, vault, chats), hidden from
@@ -93,7 +93,7 @@ pub fn init(
         connector: services.connector,
         bridge: services.bridge,
         storage: services.storage,
-        codex_home: services.codex_home,
+        usage_source: services.usage_source,
         workdir: services.workdir,
         terminal_auth: services.terminal_auth.is_some(),
         private_dirs: services.private_dirs,

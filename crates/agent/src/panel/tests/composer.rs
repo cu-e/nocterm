@@ -2,15 +2,22 @@ use super::*;
 
 #[gpui_kit::test]
 fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    // Codex writes its limits into its own logs.
-    let logs = f._directory.path().join("codex/sessions/2026/10/03");
-    std::fs::create_dir_all(&logs).unwrap();
-    std::fs::write(
-        logs.join("rollout-a.jsonl"),
-        r#"{"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":38.0,"window_minutes":10080,"resets_at":1791588105},"secondary":{"used_percent":12.0,"window_minutes":300,"resets_at":1791500000}}}}"#,
-    )
-    .unwrap();
+    let source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
+    source.push(Ok(Some(vec![
+        nocterm_ai::usage::RateLimit {
+            window: nocterm_ai::usage::Window::Weekly,
+            used: Some(0.38),
+            resets_at: Some(1_791_588_105),
+            reached: false,
+        },
+        nocterm_ai::usage::RateLimit {
+            window: nocterm_ai::usage::Window::FiveHour,
+            used: Some(0.12),
+            resets_at: Some(1_791_500_000),
+            reached: false,
+        },
+    ])));
+    let f = fixture_with_width(cx, 26., source);
     new_chat(&f, cx);
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -184,7 +191,7 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     cx.update(|cx| {
         f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
@@ -311,7 +318,7 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     cx.update(|cx| {
         f.panel
@@ -404,7 +411,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
 
 #[gpui_kit::test]
 fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {

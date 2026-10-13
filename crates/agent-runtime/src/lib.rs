@@ -4,7 +4,8 @@
 //! keyed write admission, lazy history hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
-//! explicit SettingsHandle and host-supplied ShutdownCoordinator at installation.
+//! AccountUsageSource, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! at installation.
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
 //! Settings section: ai consumer. Globals: existing RuntimeGlobal compatibility shell.
 //! Invariants: one current document owner per ID; delete seals an ID; persistence
@@ -49,8 +50,8 @@ pub struct RuntimeServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: AgentStorage,
-    /// Where Codex keeps its session logs, read for its plan limits.
-    pub codex_home: Option<PathBuf>,
+    /// Account usage is read through a host-injected native capability.
+    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir: PathBuf,
     /// Whether the host can run an agent's sign-in command in a terminal.
     pub terminal_auth: bool,
@@ -110,10 +111,11 @@ impl Runtime {
         let state = state::AgentStateStore::new(&services.storage, cx);
         let chats = documents::ChatStore::new(&mut services.storage, cx);
         let releases = releases::LeaseInbox::new(cx);
+        let usage = usage::UsageLimits::new(services.usage_source.clone());
         Self {
             state,
             chats,
-            usage: Default::default(),
+            usage,
             services,
             connections: Default::default(),
             admission: Default::default(),
@@ -268,13 +270,12 @@ impl Runtime {
         if self.shutting_down {
             return;
         }
-        let codex = nocterm_ai::AgentRegistry::new(self.ai(cx))
-            .get(agent)
-            .is_some_and(nocterm_ai::usage::is_codex);
-        let Some(home) = self.services.codex_home.clone().filter(|_| codex) else {
+        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
+        let Some(launch) = registry.get(agent) else {
             return;
         };
-        self.usage.refresh(agent.to_owned(), home, cx);
+        self.usage
+            .refresh(nocterm_ai::usage::UsageAgent::from(launch), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {

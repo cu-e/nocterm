@@ -123,3 +123,11 @@ The app injects these repositories; service and feature crates have no adapter
 dependency. Repository futures run filesystem work when polled on the background
 executor. The adapter owns no writer loop, per-chat gate or shutdown timer.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
+
+## Agent account usage
+
+`nocterm-agent-storage::CodexUsageReader` implements AI's `AccountUsageSource`.
+Composition supplies its optional home directory; unsupported launches never touch
+that path. The reader selects the newest lexical date and log, scans at most the
+last 256 KiB and returns the last usable account report. Missing or malformed reports
+produce no replacement; physical failures preserve typed I/O causes.

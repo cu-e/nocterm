@@ -150,6 +150,11 @@ validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
 Existing SavedChat/SharedChat ACP payloads remain protocol migration debt, as do
-separate usage, sandbox/image and clock/entropy responsibilities. New storage
+separate sandbox/image and clock/entropy responsibilities. New storage
 contracts use the existing typed records without adding protocol-specific fields.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
+
+Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
+contains launch identity without environment secrets; typed `UsageReadError` retains
+native causes as values. Domain `Limits` and transcript estimates remain pure;
+provider log discovery and parsing belong to the agent-storage adapter.

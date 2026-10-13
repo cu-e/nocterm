@@ -374,11 +374,12 @@ with successful execution.
 contracts, ACP update reducer, descriptors, MCP parser, approvals, filtering,
 favorites and image validation. `nocterm-acp` adapts subprocess stdio and local
 bridge transport. `nocterm-agent` owns GPUI lifecycle, chat state/UI and routing.
-Saved chats (`nocterm_ai::history`) and usage parsing — Claude limit metadata,
-Codex logs and the transcript estimate (`nocterm_ai::usage`) — are domain code
-with unit tests. The panel is split into modules by part: transcript, menus, attach menu, approvals,
-composer, history and usage card (`panel/*.rs`). The Codex home directory is injected through
-`AgentServices::codex_home`, so tests never read the user's logs.
+Saved chats (`nocterm_ai::history`), Claude limit metadata and transcript usage
+estimates (`nocterm_ai::usage`) remain domain code. Codex session-log parsing and
+bounded native reads belong to `nocterm-agent-storage`. The panel is split into modules by part: transcript, menus, attach menu, approvals,
+composer, history and usage card (`panel/*.rs`). Account usage is injected through
+`AgentServices::usage_source`; tests supply a scripted domain port and never read
+the user's logs.
 The composition root injects adapters through domain contracts. Features never
 import ACP adapters or the terminal/connections features; Workspace supplies
 neutral `TerminalAccess` and `ConnectionDirectory` contracts.

@@ -447,10 +447,17 @@ struct Fixture {
     shutdown: nocterm_store::ShutdownCoordinator,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
-    fixture_with_width(cx, 26.)
+    fixture_with_width(cx, 26., usage_source())
+}
+fn usage_source() -> Arc<nocterm_ai::testing::ScriptedUsageSource> {
+    Arc::new(nocterm_ai::testing::ScriptedUsageSource::default())
 }
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
-fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
+fn fixture_with_width(
+    cx: &mut TestAppContext,
+    width: f32,
+    usage_source: Arc<nocterm_ai::testing::ScriptedUsageSource>,
+) -> Fixture {
     let directory = tempfile::tempdir().unwrap();
     let repository = Arc::new(nocterm_ai::testing::InMemoryAgentRepository::default());
     let (commands, bridge, connector, events, sender, rejection_sender) = {
@@ -513,7 +520,7 @@ fn fixture_with_width(cx: &mut TestAppContext, width: f32) -> Fixture {
                     repository.clone(),
                     Ok(Default::default()),
                 ),
-                codex_home: Some(directory.path().join("codex")),
+                usage_source,
                 workdir: directory.path().join("work"),
             },
             &ui,
@@ -585,7 +592,7 @@ fn fixture_services(f: &Fixture) -> AgentServices {
             f.repository.clone(),
             Ok(f.repository.state()),
         ),
-        codex_home: Some(f._directory.path().join("codex")),
+        usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
         workdir: f._directory.path().join("work"),
         terminal_auth: None,
         private_dirs: Vec::new(),

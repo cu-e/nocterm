@@ -47,7 +47,7 @@ fn chat_label_heights(f: &Fixture, raw: &str, cx: &mut TestAppContext) -> [gpui_
 
 #[gpui_kit::test]
 fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let prompt = "смотри в чем соль\nтут";
@@ -134,7 +134,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let script = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/probe.txt').write_text('nocterm-ui-test-artifacts')\nPY";

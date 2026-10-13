@@ -80,3 +80,8 @@ Late normal close joins the same attempt rather than invoking cleanup again.
 Favorites, chats and process cleanup start independently
 under the host's one `ShutdownCoordinator` budget. Runtime installs no quit hook
 or persistence deadline. See [ADR0022](../adr/0022-agent-storage-owners.md).
+
+The runtime's private `UsageLimits` owner coalesces account refreshes per agent and
+schedules the injected `AccountUsageSource` on its existing background executor.
+Missing reports and failures retain the last accepted limits; stopping the runtime
+cancels pending delivery. Native account paths remain in the injected adapter.

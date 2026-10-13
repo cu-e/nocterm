@@ -11,6 +11,7 @@ use std::{
 };
 mod closing;
 mod preferences;
+mod usage;
 struct UnusedBridge;
 impl nocterm_ai::ToolBridge for UnusedBridge {
     fn register(
@@ -125,6 +126,21 @@ fn runtime_from_storage(
     storage: AgentStorage,
     directory: &std::path::Path,
 ) -> Entity<Runtime> {
+    runtime_with_usage_source(
+        cx,
+        connector,
+        storage,
+        directory,
+        Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
+    )
+}
+fn runtime_with_usage_source(
+    cx: &mut TestAppContext,
+    connector: Arc<ScriptedConnector>,
+    storage: AgentStorage,
+    directory: &std::path::Path,
+    usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+) -> Entity<Runtime> {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         settings.register::<nocterm_ai::AiSettings>(cx);
@@ -135,7 +151,7 @@ fn runtime_from_storage(
                     connector,
                     bridge: Arc::new(UnusedBridge),
                     storage,
-                    codex_home: None,
+                    usage_source,
                     workdir: directory.join("work"),
                     terminal_auth: false,
                     private_dirs: Vec::new(),
