@@ -50,7 +50,9 @@ pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,
     Reply, SecretRequest, Session, SessionDriver, SessionError, Transport, channel,
 };
-pub use target::{Auth, CredentialId, DEFAULT_PORT, ParseTargetError, Target};
+pub use target::{
+    Auth, CredentialId, CredentialIdParseError, DEFAULT_PORT, ParseTargetError, Target,
+};
 pub use text::TextEncodingError;
 
 pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};

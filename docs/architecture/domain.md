@@ -9,6 +9,15 @@ on other domain crates and the foundation, never on GPUI: `nocterm-session`,
 `nocterm-vault`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
+## Connection drafts
+
+`nocterm-connections-model` owns a nested `ProfileDraft`, typed validation and
+checked connection observation ports. Draft validation receives user/home values
+from its caller, preserves native credential, JSON, launch and session-option
+errors, and identifies the invalid field for presentation. It performs no native
+I/O, environment discovery or identifier generation. Saved profile formats and
+publication remain in the connections feature until their owners are separated.
+
 ## Sessions and terminal emulation
 
 `nocterm-session` defines transport-independent targets, authentication,

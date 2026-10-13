@@ -14,7 +14,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
 | `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-core`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-connections-io` | adapter | `nocterm-connections-model`, `nocterm-core` | Native DNS, bounded country lookup and atomic flag cache adapters. |
-| `nocterm-connections-model` | domain |  | Pure connection observation values and injected observation ports. |
+| `nocterm-connections-model` | domain | `nocterm-session` | Pure connection drafts, validation and injected observation ports. |
 | `nocterm-containers` | domain | `nocterm-session` | Containers on a host: listing, actions, logs and shells through the docker or podman CLI. |
 | `nocterm-containers-ui` | feature | `nocterm-containers`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's containers in the sidebar, with their logs and shells in tabs. |
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
@@ -109,6 +109,7 @@ graph TD
     nocterm_connections --> nocterm_workspace
     nocterm_connections_io --> nocterm_connections_model
     nocterm_connections_io --> nocterm_core
+    nocterm_connections_model --> nocterm_session
     nocterm_containers --> nocterm_session
     nocterm_containers_ui --> nocterm_containers
     nocterm_containers_ui --> nocterm_session

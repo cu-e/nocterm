@@ -237,16 +237,24 @@ impl fmt::Debug for CredentialId {
         write!(f, "CredentialId({self})")
     }
 }
+/// The credential identifier is not a checked hexadecimal value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CredentialIdParseError {
+    #[error("credential ID must be 32 hexadecimal characters")]
+    InvalidShape,
+    #[error("invalid credential ID")]
+    InvalidHex,
+}
 impl std::str::FromStr for CredentialId {
-    type Err = &'static str;
+    type Err = CredentialIdParseError;
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         if text.len() != 32 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("credential ID must be 32 hexadecimal characters");
+            return Err(CredentialIdParseError::InvalidShape);
         }
         let mut bytes = [0; 16];
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
-                .map_err(|_| "invalid credential ID")?;
+                .map_err(|_| CredentialIdParseError::InvalidHex)?;
         }
         Ok(Self(bytes))
     }
@@ -267,6 +275,18 @@ impl<'de> Deserialize<'de> for CredentialId {
 #[cfg(test)]
 mod credential_ids {
     use super::*;
+    #[test]
+    fn malformed_credential_ids_preserve_typed_reason_and_message() {
+        let invalid_hex = "g".repeat(32);
+        for value in ["", "not-an-id", invalid_hex.as_str()] {
+            let error = value.parse::<CredentialId>().unwrap_err();
+            assert_eq!(error, CredentialIdParseError::InvalidShape);
+            assert_eq!(
+                error.to_string(),
+                "credential ID must be 32 hexadecimal characters"
+            );
+        }
+    }
     #[test]
     fn explicit_bytes_keep_the_existing_identifier_wire_format() {
         let id = CredentialId::from_bytes([0xab; 16]);

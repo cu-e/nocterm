@@ -10,8 +10,8 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: connection formats, views, backend codecs and detected-server state.
-//! Does not own: session transport, credentials, DNS, HTTP, flag files or
+//! Owns: saved profile formats, views, backend codecs and detected-server state.
+//! Does not own: pure draft validation, session transport, credentials, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: RemoteFs, SnapshotWriter, ShutdownCoordinator,
 //! PublicAddressResolver, CountryLocator, FlagRepository.

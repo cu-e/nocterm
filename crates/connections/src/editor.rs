@@ -6,21 +6,21 @@ use gpui_kit::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{InputEvent, InputState, TextareaState},
+        input::{InputEvent, InputState},
         v_flex,
     },
     div,
     prelude::*,
     rems,
 };
-use nocterm_session::{Auth, DEFAULT_PORT};
+
 use nocterm_ui::ActiveDesign as _;
 use nocterm_workspace::Workspace;
 
 use crate::{
     Connections,
     model::{connect, spec_for_profile},
-    store::{Profile, ProfileId},
+    store::Profile,
 };
 
 /// Two rows of icon tiles: 28 px tiles with a 4 px gap.
@@ -31,14 +31,6 @@ mod profile;
 mod render;
 pub(crate) use profile::local_user;
 use profile::{build_profile, home_dir};
-
-/// How the user signs in, as the form offers it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AuthKind {
-    Auto,
-    Password,
-    Key,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditorSection {
@@ -60,21 +52,17 @@ impl EditorSection {
     ];
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ValidationField {
-    Host,
-    Port,
-    User,
-    Key,
-    Credential,
-    Arguments,
-    Environment,
-    Launch,
-    Session,
-    Description,
-    IconColor,
-    Country,
-}
+use appearance::AppearanceFields;
+use authentication::AuthenticationFields;
+use connection::ConnectionFields;
+use launch::LaunchFields;
+use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField};
+use state::EditState;
+mod authentication;
+mod connection;
+mod launch;
+mod state;
+
 #[derive(Debug)]
 struct FormError {
     field: ValidationField,
@@ -87,30 +75,6 @@ impl FormError {
             message: message.into(),
         }
     }
-}
-
-/// The form's text, as typed.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Fields {
-    name: String,
-    description: String,
-    options: nocterm_session::SessionOptions,
-    host: String,
-    port: String,
-    user: String,
-    group: String,
-    key_path: String,
-    credential: String,
-    override_launch: bool,
-    launch_integration: bool,
-    program: String,
-    args: String,
-    cwd: String,
-    env: String,
-    /// An operating system id; empty shows the detected system.
-    icon: String,
-    icon_color: String,
-    country: String,
 }
 
 /// Opens the form in a dialog: empty for a new connection, filled in for
@@ -140,7 +104,7 @@ fn open_editor_view(
         editor: editor.clone(),
         _subscription: cx.observe(&editor, |_, _, cx| cx.notify()),
     });
-    let dismissed = editor.read(cx).dismissed.clone();
+    let dismissed = editor.read(cx).edit.dismissal();
     let focus = editor.read(cx).focus_handle(cx);
     let content = editor.clone();
     window.open_dialog(cx, move |dialog, _, cx| {
@@ -152,11 +116,12 @@ fn open_editor_view(
             .bg(nocterm_ui::form::page_background(cx))
             .child(editor.clone())
             .footer(footer.clone())
-            .on_close(move |_, _, _| dismissed.store(true, std::sync::atomic::Ordering::Release))
+            .on_close(move |_, _, _| dismissed.dismiss())
             .on_ok(move |_, window, cx| {
                 editor.update(cx, |editor, cx| {
                     if !editor
-                        .description
+                        .connection
+                        .description()
                         .read(cx)
                         .focus_handle(cx)
                         .contains_focused(window, cx)
@@ -175,144 +140,57 @@ fn open_editor_view(
 /// The connection form.
 pub struct ConnectionEditor {
     focus: FocusHandle,
-    id: ProfileId,
-    editing: bool,
-    original: Option<Profile>,
-    pending: bool,
-    dismissed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    edit: EditState,
     workspace: WeakEntity<Workspace>,
-    name: Entity<InputState>,
-    description: Entity<TextareaState>,
+    connection: ConnectionFields,
+    authentication: AuthenticationFields,
+    launch: LaunchFields,
+    appearance: AppearanceFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
-    host: Entity<InputState>,
-    port: Entity<InputState>,
-    user: Entity<InputState>,
-    group: Entity<InputState>,
-    key_path: Entity<InputState>,
-    credential: Entity<InputState>,
-    override_launch: bool,
-    launch_integration: bool,
-    launch_fields: Vec<Entity<InputState>>,
-    icon: Option<String>,
-    icon_color: Entity<InputState>,
-    /// Whether every icon is shown, not just the first two rows.
-    icons_expanded: bool,
-    country: Entity<InputState>,
-    auth: AuthKind,
     section: EditorSection,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
+fn field(
+    placeholder: &str,
+    value: String,
+    window: &mut Window,
+    cx: &mut Context<ConnectionEditor>,
+) -> Entity<InputState> {
+    let placeholder = placeholder.to_owned();
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(placeholder)
+            .default_value(value)
+    })
+}
+fn watch(
+    input: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<ConnectionEditor>,
+) -> Subscription {
+    cx.subscribe_in(input, window, |this, _, event, _, cx| {
+        if matches!(event, InputEvent::Change) && this.error.take().is_some() {
+            cx.notify();
+        }
+    })
+}
+fn text(input: &Entity<InputState>, cx: &App) -> String {
+    input.read(cx).value().to_string()
+}
 impl ConnectionEditor {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn new(
         profile: Option<Profile>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let field =
-            |placeholder: &str, value: String, window: &mut Window, cx: &mut Context<Self>| {
-                let placeholder = placeholder.to_owned();
-                cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .placeholder(placeholder)
-                        .default_value(value)
-                })
-            };
         let existing = profile.as_ref();
-        let key_path = match existing.map(|profile| &profile.auth) {
-            Some(Auth::Key { path }) => path.display().to_string(),
-            _ => String::new(),
-        };
-        let auth = match existing.map(|profile| &profile.auth) {
-            Some(Auth::Password) => AuthKind::Password,
-            Some(Auth::Key { .. }) => AuthKind::Key,
-            _ => AuthKind::Auto,
-        };
-        let local_user = local_user().unwrap_or_default();
-
-        let name = field(
-            "Shown in the sidebar; the host if empty",
-            existing.map(|p| p.name.clone()).unwrap_or_default(),
-            window,
-            cx,
-        );
-        let host = field(
-            "example.com",
-            existing.map(|p| p.target.host.clone()).unwrap_or_default(),
-            window,
-            cx,
-        );
-        let port = field(
-            "22",
-            existing
-                .map(|p| p.target.port)
-                .filter(|port| *port != DEFAULT_PORT)
-                .map(|port| port.to_string())
-                .unwrap_or_default(),
-            window,
-            cx,
-        );
-        let user = field(
-            &local_user,
-            existing.map(|p| p.target.user.clone()).unwrap_or_default(),
-            window,
-            cx,
-        );
-        let group = field(
-            "None",
-            existing.and_then(|p| p.group.clone()).unwrap_or_default(),
-            window,
-            cx,
-        );
-        let key_path = field("~/.ssh/id_ed25519", key_path, window, cx);
-
-        let credential = field(
-            "Credential ID copied from Vault (optional)",
-            existing
-                .and_then(|profile| profile.credential)
-                .map(|id| id.to_string())
-                .unwrap_or_default(),
-            window,
-            cx,
-        );
-        let launch = existing
-            .and_then(|profile| profile.launch.clone())
-            .unwrap_or_default();
-        let override_launch = existing.is_some_and(|profile| profile.launch.is_some());
-        let launch_integration = launch.integration;
-        let launch_fields: Vec<_> = [
-            launch.program.unwrap_or_default(),
-            serde_json::to_string(&launch.args).expect("argument serialization"),
-            launch.cwd.unwrap_or_default(),
-            serde_json::to_string(&launch.env).expect("environment serialization"),
-        ]
-        .into_iter()
-        .map(|value| field("", value, window, cx))
-        .collect();
-        let icon_color = field(
-            "Brand colour",
-            existing
-                .and_then(|profile| profile.icon_color.clone())
-                .unwrap_or_default(),
-            window,
-            cx,
-        );
-        let country = field(
-            "Auto",
-            existing
-                .and_then(|profile| profile.country.clone())
-                .map(|code| code.to_uppercase())
-                .unwrap_or_default(),
-            window,
-            cx,
-        );
-        let description = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .default_value(existing.map(|p| p.description.clone()).unwrap_or_default())
-        });
+        let connection = ConnectionFields::new(existing, window, cx);
+        let authentication = AuthenticationFields::new(existing, window, cx);
+        let launch = LaunchFields::new(existing, window, cx);
+        let appearance = AppearanceFields::new(existing, window, cx);
         let options = cx.new(|cx| {
             nocterm_ui::SessionOptionsEditor::new(
                 existing.map(|p| p.options.clone()).unwrap_or_default(),
@@ -321,149 +199,58 @@ impl ConnectionEditor {
                 cx,
             )
         });
-        let mut subscriptions: Vec<_> = [
-            &name,
-            &host,
-            &port,
-            &user,
-            &group,
-            &key_path,
-            &credential,
-            &launch_fields[0],
-            &launch_fields[1],
-            &launch_fields[2],
-            &launch_fields[3],
-        ]
-        .into_iter()
-        .map(|input| {
-            cx.subscribe_in(input, window, |this, _, event, _, cx| match event {
-                InputEvent::Change if this.error.take().is_some() => cx.notify(),
-                _ => {}
-            })
-        })
-        .collect();
-        // The preview follows the colour as it is typed.
-        subscriptions.push(
-            cx.subscribe_in(&icon_color, window, |this, _, event, _, cx| {
-                if let InputEvent::Change = event {
-                    this.error = None;
-                    cx.notify();
-                }
-            }),
-        );
-        subscriptions.push(cx.observe(&crate::ServerFacts::global(cx), |_, _, cx| cx.notify()));
-        // The flag preview loads as a code is typed.
-        subscriptions.push(
-            cx.subscribe_in(&country, window, |this, input, event, _, cx| {
-                if let InputEvent::Change = event {
-                    this.error = None;
-                    let code = input.read(cx).value().trim().to_ascii_lowercase();
-                    crate::ServerFacts::global(cx)
-                        .update(cx, |facts, cx| facts.ensure_flag(&code, cx));
-                    cx.notify();
-                }
-            }),
-        );
-
+        let subscription = cx.observe(&crate::ServerFacts::global(cx), |_, _, cx| cx.notify());
         Self {
             focus: cx.focus_handle(),
-            id: existing.map_or_else(ProfileId::generate, |profile| profile.id),
-            editing: existing.is_some(),
-            original: profile.clone(),
-            pending: false,
-            dismissed: Default::default(),
+            edit: EditState::new(profile),
             workspace,
-            name,
-            description,
+            connection,
+            authentication,
+            launch,
+            appearance,
             options,
-            host,
-            port,
-            user,
-            group,
-            key_path,
-            credential,
-            override_launch,
-            launch_integration,
-            launch_fields,
-            icon: existing.and_then(|profile| profile.icon.clone()),
-            icon_color,
-            icons_expanded: false,
-            country,
-            auth,
             section: EditorSection::Connection,
             error: None,
-            _subscriptions: subscriptions,
+            _subscriptions: vec![subscription],
         }
     }
-
-    fn fields(&self, cx: &App) -> Fields {
-        let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
-        Fields {
-            name: text(&self.name),
-            description: self.description.read(cx).value().to_string(),
+    fn fields(&self, cx: &App) -> ProfileDraft {
+        let (metadata, endpoint) = self.connection.snapshot(cx);
+        ProfileDraft {
+            metadata,
+            endpoint,
+            authentication: self.authentication.snapshot(cx),
             options: Default::default(),
-            host: text(&self.host),
-            port: text(&self.port),
-            user: text(&self.user),
-            group: text(&self.group),
-            key_path: text(&self.key_path),
-            credential: text(&self.credential),
-            override_launch: self.override_launch,
-            launch_integration: self.launch_integration,
-            program: text(&self.launch_fields[0]),
-            args: text(&self.launch_fields[1]),
-            cwd: text(&self.launch_fields[2]),
-            env: text(&self.launch_fields[3]),
-            icon: self.icon.clone().unwrap_or_default(),
-            icon_color: text(&self.icon_color),
-            country: text(&self.country),
+            launch: self.launch.snapshot(cx),
+            appearance: self.appearance.snapshot(cx),
         }
     }
 
     /// Saves the connection, and opens it when `and_connect` is set.
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending || self.dismissed.load(std::sync::atomic::Ordering::Acquire) {
+        if !self.edit.try_begin() {
             return;
         }
-        let mut fields = self.fields(cx);
-        fields.options = match self.options.read(cx).options(cx) {
-            Ok(options) => options,
-            Err(error) => {
-                self.show_validation(
-                    FormError::new(ValidationField::Session, error.to_string()),
-                    window,
-                    cx,
-                );
-                cx.notify();
-                return;
-            }
-        };
-        let profile = match build_profile(
-            self.id,
-            &fields,
-            self.auth,
-            local_user().as_deref(),
-            home_dir().as_deref(),
-        ) {
+        let profile = match self.validated_profile(cx) {
             Ok(profile) => profile,
             Err(error) => {
-                self.show_validation(error, window, cx);
-                cx.notify();
+                if self.edit.finish() {
+                    self.show_validation(error, window, cx);
+                    cx.notify();
+                }
                 return;
             }
         };
 
         let saved = Connections::global(cx).update(cx, |connections, cx| {
-            connections.save_profile_checked(profile.clone(), self.original.clone(), cx)
+            connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });
-        self.pending = true;
         self.error = None;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.pending = false;
-                if this.dismissed.load(std::sync::atomic::Ordering::Acquire) {
+                if !this.edit.finish() {
                     return;
                 }
                 match result {
@@ -472,9 +259,8 @@ impl ConnectionEditor {
                         cx.notify();
                     }
                     Ok(()) => {
-                        this.original = Some(profile.clone());
-                        this.dismissed
-                            .store(true, std::sync::atomic::Ordering::Release);
+                        this.edit.accept(profile.clone());
+                        this.edit.dismiss();
                         window.close_dialog(cx);
                         if and_connect {
                             connect(
@@ -492,11 +278,28 @@ impl ConnectionEditor {
         .detach();
     }
 
+    fn validated_profile(&self, cx: &App) -> Result<Profile, FormError> {
+        let mut fields = self.fields(cx);
+        fields.options = self
+            .options
+            .read(cx)
+            .options(cx)
+            .map_err(|error| FormError::new(ValidationField::Session, error.to_string()))?;
+        build_profile(
+            self.edit.id(),
+            &fields,
+            self.authentication.kind(),
+            local_user().as_deref(),
+            home_dir().as_deref(),
+        )
+    }
+
     fn set_auth(&mut self, auth: AuthKind, window: &mut Window, cx: &mut Context<Self>) {
-        self.auth = auth;
+        self.authentication.select(auth);
         self.error = None;
         if auth == AuthKind::Key {
-            self.key_path
+            self.authentication
+                .key_path()
                 .update(cx, |input, cx| input.focus(window, cx));
         }
         cx.notify();
@@ -513,23 +316,23 @@ impl ConnectionEditor {
         };
         self.select_section(section, window, cx);
         let input = match error.field {
-            ValidationField::Host => Some(&self.host),
-            ValidationField::Port => Some(&self.port),
-            ValidationField::User => Some(&self.user),
-            ValidationField::Key => Some(&self.key_path),
-            ValidationField::Credential => Some(&self.credential),
-            ValidationField::Arguments => Some(&self.launch_fields[1]),
-            ValidationField::Environment => Some(&self.launch_fields[3]),
-            ValidationField::Launch => Some(&self.launch_fields[0]),
-            ValidationField::IconColor => Some(&self.icon_color),
-            ValidationField::Country => Some(&self.country),
+            ValidationField::Host => Some(self.connection.host()),
+            ValidationField::Port => Some(self.connection.port()),
+            ValidationField::User => Some(self.connection.user()),
+            ValidationField::Key => Some(self.authentication.key_path()),
+            ValidationField::Credential => Some(self.authentication.credential()),
+            ValidationField::Arguments => Some(&self.launch.inputs()[1]),
+            ValidationField::Environment => Some(&self.launch.inputs()[3]),
+            ValidationField::Launch => Some(&self.launch.inputs()[0]),
+            ValidationField::IconColor => Some(self.appearance.color()),
+            ValidationField::Country => Some(self.appearance.country()),
             _ => None,
         };
         let focus = input
             .map(|input| input.read(cx).focus_handle(cx))
             .or_else(|| {
                 matches!(error.field, ValidationField::Description)
-                    .then(|| self.description.read(cx).focus_handle(cx))
+                    .then(|| self.connection.description().read(cx).focus_handle(cx))
             });
         if let Some(focus) = focus {
             self.focus_after_render(section, focus, window, cx);
@@ -540,7 +343,11 @@ impl ConnectionEditor {
 
 impl Focusable for ConnectionEditor {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        let first = if self.editing { &self.name } else { &self.host };
+        let first = if self.edit.editing() {
+            self.connection.name()
+        } else {
+            self.connection.host()
+        };
         first.read(cx).focus_handle(cx)
     }
 }
@@ -561,14 +368,14 @@ impl ConnectionEditor {
         v_flex().id("editor-footer").gap_2()
             .when_some(self.error.clone(), |form, error| {
                 form.child(div().text_sm().text_color(danger).child(error))
-                    .when(self.original.is_some(), |form| form.child(
-                        Button::new("editor-reload-current").small().ghost().label("Reload connection").disabled(self.pending)
+                    .when(self.edit.original().is_some(), |form| form.child(
+                        Button::new("editor-reload-current").small().ghost().label("Reload connection").disabled(self.edit.pending())
                             .tooltip("Discard this draft and load the current saved connection")
                             .on_click(cx.listener(|this, _, window, cx| {
-                                if this.pending || this.dismissed.load(std::sync::atomic::Ordering::Acquire) { return; }
-                                let latest = Connections::global(cx).read(cx).profiles(cx).get(this.id).cloned();
+                                if this.edit.pending() || this.edit.is_dismissed() { return; }
+                                let latest = Connections::global(cx).read(cx).profiles(cx).get(this.edit.id()).cloned();
                                 if let Some(profile) = latest {
-                                    this.dismissed.store(true, std::sync::atomic::Ordering::Release);
+                                    this.edit.dismiss();
                                     let workspace = this.workspace.clone();
                                     window.close_dialog(cx);
                                     // Finish dismissal before mounting the replacement and focusing its input.
@@ -588,20 +395,20 @@ impl ConnectionEditor {
                             .ghost()
                             .label("Cancel")
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.dismissed.store(true, std::sync::atomic::Ordering::Release);
+                                this.edit.dismiss();
                                 window.close_dialog(cx);
                             })),
                     )
                     .child(
-                        Button::new("editor-save").label(if self.pending { "Saving…" } else { "Save" }).disabled(self.pending).on_click(
+                        Button::new("editor-save").label(if self.edit.pending() { "Saving…" } else { "Save" }).disabled(self.edit.pending()).on_click(
                             cx.listener(|this, _, window, cx| this.save(false, window, cx)),
                         ),
                     )
                     .child(
                         Button::new("editor-save-connect")
-                            .disabled(self.pending)
+                            .disabled(self.edit.pending())
                             .primary()
-                            .label(if self.editing {
+                            .label(if self.edit.editing() {
                                 "Save and Connect"
                             } else {
                                 "Connect"
@@ -622,10 +429,12 @@ impl ConnectionEditor {
         self.section = section;
         let focus = match section {
             EditorSection::Connection => self.focus_handle(cx),
-            EditorSection::Authentication => self.credential.read(cx).focus_handle(cx),
+            EditorSection::Authentication => {
+                self.authentication.credential().read(cx).focus_handle(cx)
+            }
             EditorSection::Session => self.options.read(cx).focus_handle(cx),
-            EditorSection::Launch if self.override_launch => {
-                self.launch_fields[0].read(cx).focus_handle(cx)
+            EditorSection::Launch if self.launch.overridden() => {
+                self.launch.inputs()[0].read(cx).focus_handle(cx)
             }
             EditorSection::Launch => self.focus.clone(),
         };
@@ -645,8 +454,7 @@ impl ConnectionEditor {
         window.defer(cx, move |window, cx| {
             let still_open = editor.upgrade().is_some_and(|editor| {
                 let editor = editor.read(cx);
-                editor.section == section
-                    && !editor.dismissed.load(std::sync::atomic::Ordering::Acquire)
+                editor.section == section && !editor.edit.is_dismissed()
             });
             if still_open {
                 window.focus(&focus, cx);
