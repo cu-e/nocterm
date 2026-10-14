@@ -1,5 +1,5 @@
 //! Checked profile intents, independent of UI and persistence scheduling.
-use std::sync::Arc;
+use nocterm_core::SharedError;
 
 use nocterm_session::{Auth, CredentialId, Target};
 
@@ -26,7 +26,13 @@ pub enum ProfileError {
     #[error("Connection fields exceed the 64 KiB size limit.")]
     ProfileSize,
     #[error("Could not encode connection fields: {0}")]
-    Encoding(#[source] Arc<toml::ser::Error>),
+    Encoding(#[source] SharedError<toml::ser::Error>),
+}
+
+impl ProfileError {
+    pub fn encoding(source: toml::ser::Error) -> Self {
+        Self::Encoding(SharedError::from_error(source))
+    }
 }
 
 #[derive(Clone)]
@@ -83,8 +89,7 @@ impl ProfileMutation {
             return Err(ProfileError::MutationSize);
         }
         if let Self::Save { profile, .. } = self {
-            let text = toml::to_string(profile.as_ref())
-                .map_err(|error| ProfileError::Encoding(Arc::new(error)))?;
+            let text = toml::to_string(profile.as_ref()).map_err(ProfileError::encoding)?;
             if text.len() > MAX_PROFILE_BYTES {
                 return Err(ProfileError::ProfileSize);
             }

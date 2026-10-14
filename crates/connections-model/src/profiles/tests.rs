@@ -442,3 +442,127 @@ fn supplied_ids_round_trip_all_legacy_uuid_spellings_with_typed_parse_causes() {
             .is_some()
     );
 }
+
+#[test]
+fn profile_encoding_causes_keep_real_codec_error_and_clone_identity() {
+    use std::error::Error;
+    for native in [
+        toml::to_string(&Option::<u8>::None).unwrap_err(),
+        toml::to_string(&7_u8).unwrap_err(),
+    ] {
+        let message = native.to_string();
+        let error = ProfileError::encoding(native);
+        let clone = error.clone();
+        let original = error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::ser::Error>()
+            .unwrap();
+        let shared = clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::ser::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(original, shared));
+        assert_eq!(original.to_string(), message);
+        assert_eq!(
+            error.to_string(),
+            format!("Could not encode connection fields: {message}")
+        );
+        assert_eq!(error.to_string(), clone.to_string());
+        assert!(original.source().is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_mutation_validation_retains_native_path_encoding_cause() {
+    use std::{error::Error, os::unix::ffi::OsStrExt};
+    let mut candidate = profile("native path", "host.example", None);
+    candidate.options.logging = Some(nocterm_session::LoggingOptions {
+        directory: Some(PathBuf::from(std::ffi::OsStr::from_bytes(b"native-\xff"))),
+        ..Default::default()
+    });
+    candidate.options.validate().unwrap();
+    let expected = toml::to_string(&candidate).unwrap_err().to_string();
+    let mutation = ProfileMutation::Save {
+        profile: Box::new(candidate),
+        expected: ProfileExpectation::Absent,
+    };
+    let error = mutation.validate().unwrap_err();
+    assert!(matches!(error, ProfileError::Encoding(_)));
+    let clone = error.clone();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<toml::ser::Error>()
+        .unwrap();
+    assert_eq!(original.to_string(), expected);
+    assert!(std::ptr::eq(
+        original,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::ser::Error>()
+            .unwrap()
+    ));
+}
+
+#[test]
+fn profile_mutations_keep_exact_size_limits_and_checked_conflicts() {
+    const LIMIT: usize = 64 * 1024;
+    let mut candidate = profile("size", "host.example", None);
+    candidate.description = "x".into();
+    let overhead = toml::to_string(&candidate).unwrap().len() - 1;
+    candidate.description = "x".repeat(LIMIT - overhead);
+    assert_eq!(toml::to_string(&candidate).unwrap().len(), LIMIT);
+    let mutation = |profile| ProfileMutation::Save {
+        profile: Box::new(profile),
+        expected: ProfileExpectation::Absent,
+    };
+    mutation(candidate.clone()).validate().unwrap();
+    candidate.description.push('x');
+    assert!(matches!(
+        mutation(candidate).validate(),
+        Err(ProfileError::ProfileSize)
+    ));
+    ProfileMutation::RenameGroup {
+        from: "a".repeat(LIMIT / 2),
+        to: "b".repeat(LIMIT / 2),
+    }
+    .validate()
+    .unwrap();
+    assert!(matches!(
+        ProfileMutation::RenameGroup {
+            from: "a".repeat(LIMIT / 2 + 1),
+            to: "b".repeat(LIMIT / 2),
+        }
+        .validate(),
+        Err(ProfileError::MutationSize)
+    ));
+
+    let original = profile("checked", "host.example", None);
+    let mut current = original.clone();
+    current.name = "new name".into();
+    let mut profiles = Profiles::default();
+    profiles.upsert(current.clone());
+    let before = toml::to_string(&profiles).unwrap();
+    let stale = ProfileMutation::Save {
+        profile: Box::new(original.clone()),
+        expected: ProfileExpectation::Snapshot(Box::new(original)),
+    };
+    stale.validate().unwrap();
+    assert!(
+        matches!(stale.apply(&mut profiles), Err(ProfileError::Conflict(id)) if id == current.id)
+    );
+    assert_eq!(profiles.get(current.id), Some(&current));
+    assert_eq!(toml::to_string(&profiles).unwrap(), before);
+}

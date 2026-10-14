@@ -7,6 +7,7 @@
 //! Invariants: only checked public addresses reach country lookup; country keys
 //! are two lower-case ASCII letters; supplied raw flag bytes are bounded at 256 KiB. IDs/timestamps/defaults are supplied values;
 //! observations are not connection authority and mutable collection state stays private.
+//! Profile encoding diagnostics share original typed serializer causes through foundation core.
 
 pub mod draft;
 pub mod facts;

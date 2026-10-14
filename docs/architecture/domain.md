@@ -17,6 +17,9 @@ checked edit expectations, remembered folders, user ordering, credential
 matching and recent deduplication. Native identifiers, timestamps and editor
 user/home defaults are supplied through values or narrow ports. Validation
 preserves typed credential, JSON, launch and session-option causes.
+Profile encoding errors retain original typed TOML serializer causes through
+foundation `SharedError`; clones share the native diagnostic. Checked conflict
+classification and both 64 KiB mutation/profile limits remain domain rules.
 `ConnectionRepository` describes blocking document calls without naming a file
 implementation; GPUI publication and observation scheduling stay outside the domain.
 `RecentUse` supplies semantic session-use inputs without workspace types or timestamps.
