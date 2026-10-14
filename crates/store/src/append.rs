@@ -8,8 +8,8 @@ use crate::{
 };
 use futures::{
     StreamExt,
-    channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    future::BoxFuture,
+    channel::mpsc::{self, Receiver, Sender},
+    future::{BoxFuture, poll_fn},
 };
 use gpui::{AppContext, Context, Entity};
 use nocterm_core::persist::WriteGate;
@@ -84,8 +84,8 @@ struct AppendAdmission {
     accepted_bytes: u64,
     closed: bool,
     error: Option<RecordingError>,
-    wake_tx: UnboundedSender<()>,
-    wake_rx: Option<UnboundedReceiver<()>>,
+    wake_tx: Sender<()>,
+    wake_rx: Arc<Mutex<Receiver<()>>>,
 }
 
 pub(crate) struct AppendPhysical {
@@ -223,7 +223,8 @@ impl AppendPersisted {
         completion: Option<Box<dyn FnOnce(&AppendStatus) + 'static>>,
         cx: &mut Context<Self>,
     ) -> (Self, AppendHandle) {
-        let (wake_tx, wake_rx) = mpsc::unbounded();
+        // futures mpsc reserves one slot per sender; this sole sender coalesces to one wake.
+        let (wake_tx, wake_rx) = mpsc::channel(0);
         let admission = AppendAdmission {
             queue: VecDeque::with_capacity(QUEUE_CAPACITY),
             next_sequence: 1,
@@ -231,7 +232,7 @@ impl AppendPersisted {
             closed: false,
             error: None,
             wake_tx,
-            wake_rx: Some(wake_rx),
+            wake_rx: Arc::new(Mutex::new(wake_rx)),
         };
         let physical = Arc::new(Mutex::new(AppendPhysical {
             sink: None,
@@ -307,14 +308,14 @@ impl AppendPersisted {
         }
 
         if admitted_any {
-            let _ = self.admission.wake_tx.unbounded_send(());
+            let _ = self.admission.wake_tx.try_send(());
         }
     }
 
     pub fn close_admission(&mut self, cx: &mut Context<Self>) {
         if !self.admission.closed {
             self.admission.closed = true;
-            let _ = self.admission.wake_tx.unbounded_send(());
+            let _ = self.admission.wake_tx.try_send(());
             self.update_status(cx);
         }
     }
@@ -411,9 +412,23 @@ impl NormalOwner for AppendPersisted {
     }
 
     fn wait_for_work(&mut self) -> Option<BoxFuture<'static, ()>> {
-        let mut rx = self.admission.wake_rx.take()?;
+        if self
+            .physical
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sealed
+        {
+            return None;
+        }
+        let rx = self.admission.wake_rx.clone();
         Some(Box::pin(async move {
-            let _ = rx.next().await;
+            // The lock covers one immediate poll, never an await or native operation.
+            let _ = poll_fn(|cx| {
+                rx.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .poll_next_unpin(cx)
+            })
+            .await;
         }))
     }
 }
