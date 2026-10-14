@@ -131,6 +131,9 @@ Composition supplies its optional home directory; unsupported launches never tou
 that path. The reader selects the newest lexical date and log, scans at most the
 last 256 KiB and returns the last usable account report. Missing or malformed reports
 produce no replacement; physical failures preserve typed I/O causes.
+AI owns typed shared usage causes and category-specific constructors; native readers
+retain the original I/O classification and deeper cause through standard traversal.
+Clones share the original payload without changing account selection or tail limits.
 
 ## Agent workspace and sandbox
 

@@ -75,13 +75,24 @@ fn unsupported_launch_does_not_access_the_configured_account_path() {
     let error = block_on(reader.read(codex())).unwrap_err();
     assert!(matches!(error, UsageReadError::Enumerate { .. }));
     use std::error::Error as _;
-    assert!(
-        error
-            .source()
-            .unwrap()
-            .downcast_ref::<Arc<std::io::Error>>()
-            .is_some()
-    );
+    let native = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(native.kind(), std::io::ErrorKind::NotADirectory);
+    let clone = error.clone();
+    let shared = clone
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert!(std::ptr::eq(native, shared));
+    assert_eq!(error.to_string(), clone.to_string());
 }
 
 #[test]
@@ -112,4 +123,40 @@ fn records_outside_the_tail_are_not_read_and_corrupt_reports_return_no_limits() 
     assert!(block_on(reader.read(codex())).unwrap().is_none());
     std::fs::write(&log, "{\"rate_limits\": invalid}\n{}\n").unwrap();
     assert!(block_on(reader.read(codex())).unwrap().is_none());
+}
+
+#[test]
+fn native_read_and_seek_refusals_preserve_the_original_error_mapping() {
+    use std::{
+        error::Error,
+        io::{Seek, SeekFrom},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let source = std::fs::read(directory.path()).unwrap_err();
+    let read_kind = source.kind();
+    let read = read_error(directory.path(), source);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut opened = std::fs::File::open(file.path()).unwrap();
+    let source = opened.seek(SeekFrom::Current(i64::MIN)).unwrap_err();
+    let seek_kind = source.kind();
+    let seek = UsageReadError::seek(file.path(), source);
+    for (error, kind) in [(read, read_kind), (seek, seek_kind)] {
+        let clone = error.clone();
+        let native = error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(native.kind(), kind);
+        let shared = clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, shared));
+    }
 }

@@ -9,7 +9,6 @@ use parser::codex_limits;
 use std::{
     io::{Read as _, Seek as _, SeekFrom},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 const CODEX_TAIL_BYTES: u64 = 256 * 1024;
@@ -65,10 +64,7 @@ fn read_codex_limits(home: &Path) -> Result<Option<Vec<RateLimit>>, UsageReadErr
         .map_err(|error| read_error(&log, error))?
         .len();
     file.seek(SeekFrom::Start(length.saturating_sub(CODEX_TAIL_BYTES)))
-        .map_err(|source| UsageReadError::Seek {
-            path: log.clone(),
-            source: Arc::new(source),
-        })?;
+        .map_err(|source| UsageReadError::seek(log.clone(), source))?;
     let mut tail = Vec::new();
     file.take(CODEX_TAIL_BYTES)
         .read_to_end(&mut tail)
@@ -83,10 +79,7 @@ fn newest(dir: &Path, keep: impl Fn(&Path) -> bool) -> Result<Option<PathBuf>, U
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
-            return Err(UsageReadError::Enumerate {
-                path: dir.to_owned(),
-                source: Arc::new(source),
-            });
+            return Err(UsageReadError::enumerate(dir.to_owned(), source));
         }
     };
     Ok(entries
@@ -96,8 +89,5 @@ fn newest(dir: &Path, keep: impl Fn(&Path) -> bool) -> Result<Option<PathBuf>, U
         .max_by(|a, b| a.file_name().cmp(&b.file_name())))
 }
 fn read_error(path: &Path, source: std::io::Error) -> UsageReadError {
-    UsageReadError::Read {
-        path: path.to_owned(),
-        source: Arc::new(source),
-    }
+    UsageReadError::read(path.to_owned(), source)
 }

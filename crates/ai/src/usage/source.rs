@@ -1,7 +1,8 @@
 //! Account usage capabilities, without native paths or provider log formats.
 use super::RateLimit;
 use futures::future::BoxFuture;
-use std::{path::PathBuf, sync::Arc};
+use nocterm_core::SharedError;
+use std::path::PathBuf;
 
 /// The launch identity needed to select an account source; environment is omitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,20 +29,41 @@ pub enum UsageReadError {
     Enumerate {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: SharedError<std::io::Error>,
     },
     #[error("Could not read account usage at {path}: {source}")]
     Read {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: SharedError<std::io::Error>,
     },
     #[error("Could not seek account usage at {path}: {source}")]
     Seek {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: SharedError<std::io::Error>,
     },
+}
+
+impl UsageReadError {
+    pub fn enumerate(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Enumerate {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn read(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Read {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn seek(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Seek {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
 }
 
 /// Implementations read only when polled on the host's background executor.

@@ -56,10 +56,10 @@ fn account_refresh_coalesces_and_retains_last_limits_on_missing_report_or_failur
     source.push(Ok(None));
     runtime.update(cx, |runtime, cx| runtime.refresh_limits("codex", cx));
     cx.run_until_parked();
-    source.push(Err(UsageReadError::Read {
-        path: "/unused/report".into(),
-        source: Arc::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
-    }));
+    source.push(Err(UsageReadError::read(
+        "/unused/report",
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    )));
     runtime.update(cx, |runtime, cx| runtime.refresh_limits("codex", cx));
     cx.run_until_parked();
     runtime.read_with(cx, |runtime, _| {
