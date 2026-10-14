@@ -1,5 +1,6 @@
 use nocterm_connections_model::profiles::ProfileError;
 use nocterm_connections_model::repository::ConnectionStorageError;
+use nocterm_core::SharedError;
 use nocterm_store::StoreError;
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ pub enum ConnectionsError {
     #[error(transparent)]
     Profile(#[from] ProfileError),
     #[error("Saved connections are read-only until the file is fixed: {0}")]
-    ReadOnly(#[source] Arc<ConnectionStorageError>),
+    ReadOnly(#[source] SharedError<ConnectionStorageError>),
     #[error("Connection publication revision is exhausted.")]
     RevisionExhausted,
     #[error("Connections service is shutting down.")]
@@ -19,6 +20,12 @@ pub enum ConnectionsError {
     Cancelled,
     #[error("Could not save connections: {0}")]
     Persistence(#[source] StoreError),
+}
+
+impl ConnectionsError {
+    pub fn read_only(source: Arc<ConnectionStorageError>) -> Self {
+        Self::ReadOnly(SharedError::from_arc(source))
+    }
 }
 
 impl From<StoreError> for ConnectionsError {

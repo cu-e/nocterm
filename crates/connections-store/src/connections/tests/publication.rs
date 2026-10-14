@@ -277,9 +277,38 @@ async fn readonly_noops_and_rejections_publish_no_authority_or_writes(
         .await
         .unwrap();
     let rejected = entity.update(cx, |store, cx| store.delete_profile(original.id, cx));
-    assert!(
-        matches!(rejected.await, Err(ConnectionsError::ReadOnly(error)) if Arc::ptr_eq(&error, &diagnostic))
+    use std::error::Error;
+    let error = rejected.await.unwrap_err();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<ConnectionStorageError>()
+        .unwrap();
+    assert!(std::ptr::eq(original, diagnostic.as_ref()));
+    assert_eq!(original.document(), ConnectionDocument::Profiles);
+    assert_eq!(original.operation(), StorageOperation::Read);
+    assert_eq!(
+        original
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
     );
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        original,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<ConnectionStorageError>()
+            .unwrap()
+    ));
     assert_eq!(projection(&entity, cx), initial);
     assert_eq!(*writes.lock().unwrap(), 0);
     entity.read_with(cx, |store, _| {

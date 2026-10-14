@@ -198,11 +198,47 @@ async fn readonly_broken_profiles_and_unknown_toml_are_preserved(
     fs::create_dir_all(paths.config_dir()).unwrap();
     fs::write(paths.connections_file(), "invalid [[").unwrap();
     let entity = cx.new(|_| owner(&paths));
-    assert!(matches!(
-        entity
-            .update(cx, |c, cx| c.save_profile(profile("New"), cx))
-            .await,
-        Err(ConnectionsError::ReadOnly(_))
+    use nocterm_connections_model::repository::{
+        ConnectionDocument, ConnectionStorageError, StorageOperation,
+    };
+    use std::error::Error;
+    let error = entity
+        .update(cx, |c, cx| c.save_profile(profile("New"), cx))
+        .await
+        .unwrap_err();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<ConnectionStorageError>()
+        .unwrap();
+    assert_eq!(original.document(), ConnectionDocument::Profiles);
+    assert_eq!(original.operation(), StorageOperation::Read);
+    entity.read_with(cx, |store, cx| {
+        assert!(std::ptr::eq(original, store.load_error().unwrap()));
+        assert!(store.profiles(cx).is_empty());
+    });
+    let parse = original
+        .source()
+        .unwrap()
+        .downcast_ref::<persist::PersistError>()
+        .unwrap();
+    let persist::PersistError::Parse { source, .. } = parse else {
+        panic!("actual malformed file retains its parse cause")
+    };
+    let codec = parse.source().unwrap().downcast_ref().unwrap();
+    assert!(std::ptr::eq(codec, source.as_ref()));
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        original,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<ConnectionStorageError>()
+            .unwrap()
     ));
     assert_eq!(
         fs::read_to_string(paths.connections_file()).unwrap(),

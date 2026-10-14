@@ -11,6 +11,7 @@
 //! admission/completion; stale jobs keep their physical slot until actual finish;
 //! 32 slots are shared across windows and paired reservations are atomic. Facts
 //! use common optimistic persistence/capture and its existing 180-ms deadline.
+//! Read-only diagnostics preserve their original allocation and concrete sources through core SharedError.
 mod connections;
 mod error;
 mod prepared;

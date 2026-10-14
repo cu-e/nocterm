@@ -1,6 +1,6 @@
 //! Checked snippet mutations delegate ordered durable publication to the store service.
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
-use nocterm_core::{Paths, persist};
+use nocterm_core::{Paths, SharedError, persist};
 use nocterm_snippets::{Library, LibraryError, Snippet};
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
 use std::{path::PathBuf, sync::Arc};
@@ -20,7 +20,7 @@ pub enum SnippetsError {
     #[error(transparent)]
     Library(#[from] LibraryError),
     #[error("Snippet library is read-only until its file is fixed: {0}")]
-    ReadOnly(#[source] Arc<SnippetsLoadError>),
+    ReadOnly(#[source] SharedError<SnippetsLoadError>),
     #[error("Snippet service is shutting down.")]
     Closing,
     #[error("Snippet save queue is full. Wait for pending saves and retry.")]
@@ -29,6 +29,12 @@ pub enum SnippetsError {
     Cancelled,
     #[error("Could not persist the snippet library: {0}")]
     Persistence(#[source] StoreError),
+}
+
+impl SnippetsError {
+    pub fn read_only(source: Arc<SnippetsLoadError>) -> Self {
+        Self::ReadOnly(SharedError::from_arc(source))
+    }
 }
 
 impl From<StoreError> for SnippetsError {
@@ -106,7 +112,7 @@ impl Snippets {
     pub(crate) fn error(&self, cx: &App) -> Option<SnippetsError> {
         self.load_error
             .as_ref()
-            .map(|error| SnippetsError::ReadOnly(error.clone()))
+            .map(|error| SnippetsError::read_only(error.clone()))
             .or_else(|| {
                 self.state
                     .read(cx)
@@ -154,7 +160,7 @@ impl Snippets {
             return Task::ready(Err(SnippetsError::Closing));
         }
         if let Some(error) = &self.load_error {
-            return Task::ready(Err(SnippetsError::ReadOnly(error.clone())));
+            return Task::ready(Err(SnippetsError::read_only(error.clone())));
         }
         let edit = move |library: &mut Library| edit(library).map_err(StoreError::edit);
         if !self.persistent {

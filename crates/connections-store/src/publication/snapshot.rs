@@ -60,7 +60,7 @@ impl ProfileSnapshot {
             return Ok(());
         }
         if let Some(error) = load_error {
-            return Err(ConnectionsError::ReadOnly(error.clone()));
+            return Err(ConnectionsError::read_only(error.clone()));
         }
         let generation = self
             .generation

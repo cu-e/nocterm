@@ -158,3 +158,8 @@ from full profile/policy validity; retaining an FS cannot retain closed Item met
 and changing association/policy cannot renew a live capability's OS once marker.
 Feature ItemsChanged schedules App-deferred reprojection outside the Workspace
 subscriber lease; original receipt validity checks are still synchronous.
+
+Connections read-only refusals retain the original loaded diagnostic allocation
+through foundation `SharedError`; standard sources reach the concrete storage
+error and its native cause. Publication rejects edits without replacing diagnostic
+identity, profile authority or the malformed source file.

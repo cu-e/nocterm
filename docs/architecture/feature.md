@@ -203,7 +203,9 @@ connection group, reattach its snippets to the new name in the editor. The nativ
 GPUI Kit Editor supplies bundled Shell, JSON, Python, YAML and TOML syntax grammars.
 Library writes run in one bounded background queue, rebase checked draft/delete
 snapshots on the last persisted state, and publish only after an atomic save succeeds.
-Invalid library files remain read-only; persistence errors appear in the panel and
+Invalid library files remain read-only; their shared load diagnostics retain the
+original non-Clone error and transparent native cause through core `SharedError`.
+Persistence errors appear in the panel and
 editor. The Snippet and Attachments pages keep one draft with a fixed footer;
 attachments show searchable server folders with independent direct-profile and
 whole-group bindings. Copy preserves code verbatim. Run and a row double-click

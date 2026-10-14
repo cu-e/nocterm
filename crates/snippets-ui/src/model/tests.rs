@@ -35,10 +35,33 @@ async fn corrupt_file_is_read_only_and_never_overwritten(cx: &mut gpui_kit::Test
     std::fs::write(&path, "snippets = =").unwrap();
     let model = cx.new(|cx| Snippets::new(Some(path.clone()), cx));
     assert!(!model.read_with(cx, |model, cx| model.writable(cx)));
+    use std::error::Error;
+    let initial = model.read_with(cx, |model, cx| model.error(cx).unwrap());
     let task = model.update(cx, |model, cx| model.save(snippet(), None, cx));
-    assert!(
-        matches!(task.await, Err(SnippetsError::ReadOnly(ref source)) if matches!(source.as_ref(), SnippetsLoadError::File(persist::PersistError::Parse { .. })))
-    );
+    let error = task.await.unwrap_err();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<SnippetsLoadError>()
+        .unwrap();
+    let first = initial
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<SnippetsLoadError>()
+        .unwrap();
+    assert!(std::ptr::eq(original, first));
+    let SnippetsLoadError::File(persist::PersistError::Parse { source, .. }) = original else {
+        panic!("malformed native library retains its original parse diagnostic")
+    };
+    // The transparent File variant delegates directly to the original codec source.
+    let codec = original.source().unwrap().downcast_ref().unwrap();
+    assert!(std::ptr::eq(codec, source.as_ref()));
+    assert!(model.read_with(cx, |model, cx| model.library(cx).snippets.is_empty()));
+    assert!(!model.read_with(cx, |model, cx| model.writable(cx)));
     assert_eq!(std::fs::read_to_string(path).unwrap(), "snippets = =");
 }
 #[gpui_kit::test]
@@ -222,4 +245,37 @@ async fn bounded_queue_reports_full_without_losing_accepted_records(
     for (index, record) in library.snippets.iter().enumerate() {
         assert_eq!(record.id, uuid::Uuid::from_u128(index as u128 + 1));
     }
+}
+
+#[test]
+fn readonly_constructor_preserves_supplied_nonclone_diagnostic_allocation() {
+    use std::error::Error;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snippets.toml");
+    std::fs::write(&path, "snippets = =").unwrap();
+    let diagnostic = Arc::new(SnippetsLoadError::File(
+        persist::load::<Library>(&path).unwrap_err(),
+    ));
+    let first = SnippetsError::read_only(diagnostic.clone());
+    let second = SnippetsError::read_only(diagnostic.clone());
+    let original = first
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<SnippetsLoadError>()
+        .unwrap();
+    assert!(std::ptr::eq(original, diagnostic.as_ref()));
+    assert!(std::ptr::eq(
+        original,
+        second
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<SnippetsLoadError>()
+            .unwrap()
+    ));
+    assert_eq!(first.to_string(), second.to_string());
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "snippets = =");
 }

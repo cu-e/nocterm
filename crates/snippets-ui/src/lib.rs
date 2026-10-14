@@ -7,6 +7,7 @@
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.
 //! Snippet submission keeps target and terminal refusals typed until notice presentation.
+//! Read-only diagnostics share their original non-Clone load error through core SharedError.
 
 mod editor;
 mod model;
