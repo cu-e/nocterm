@@ -45,6 +45,12 @@ kind while the already committed file remains a successful outcome.
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.
 
+Recording diagnostics preserve native I/O through immutable foundation `SharedError`.
+Domain constructors retain operation category, path and physical append offset;
+equality continues to compare those semantic values rather than cause identity.
+Native adapters and the shared scripted port retain the same physical-prefix and
+seal ordering, including failure outcomes that do not claim durability.
+
 The optional session `test-support` feature provides `InMemoryFs`, `FakeExec`,
 `ScriptedTransport` and `FakeCredentialStore` to consumers through dev-dependencies.
 They perform no real I/O or background scheduling. Tests drive the real session and

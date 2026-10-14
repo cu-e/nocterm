@@ -3,6 +3,8 @@
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
 //! and recording::{OutputLogFactory, OutputLog}.
+//! Recording diagnostics use foundation shared typed causes and domain constructors;
+//! semantic equality retains category, path and append offset.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
 //! Invariants: IDs use explicit bytes; launch validation performs no I/O or value expansion.
 //! InvalidLaunch/InvalidOptions preserve typed causes; errors never retain environment values.

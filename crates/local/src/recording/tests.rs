@@ -1,6 +1,15 @@
 use super::*;
 use futures::executor::block_on;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, error::Error};
+fn native_cause(error: &RecordingError) -> &io::Error {
+    error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap()
+}
 fn block(sequence: u64, offset: u64, bytes: &[u8]) -> AppendBlock {
     AppendBlock::new(sequence, offset, Arc::from(bytes)).unwrap()
 }
@@ -9,10 +18,20 @@ fn exclusive_creation_keeps_existing_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("output.log");
     fs::write(&path, b"existing").unwrap();
-    assert!(matches!(
-        create_at(path.clone(), 20),
-        Err(RecordingError::Create { .. })
-    ));
+    let error = create_at(path.clone(), 20).err().unwrap();
+    assert!(matches!(error, RecordingError::Create { .. }));
+    let native = native_cause(&error);
+    assert_eq!(native.kind(), io::ErrorKind::AlreadyExists);
+    // std::io adapts FileError by forwarding its source, not exposing a FileError frame.
+    let deeper = native
+        .source()
+        .unwrap()
+        .downcast_ref::<io::Error>()
+        .unwrap();
+    assert_eq!(deeper.kind(), io::ErrorKind::AlreadyExists);
+    assert!(deeper.raw_os_error().is_some());
+    let clone = error.clone();
+    assert!(std::ptr::eq(native, native_cause(&clone)));
     assert_eq!(fs::read(path).unwrap(), b"existing");
 }
 #[test]
@@ -143,8 +162,16 @@ fn interrupted_short_writes_count_exact_partial_prefix_without_retry() {
     assert_eq!(result.prefix().partial_bytes(), 2);
     assert_eq!(result.prefix().complete_sequence(), 0);
     assert!(
-        matches!(result.error(), Some(RecordingError::Append { source, .. }) if source.kind() == io::ErrorKind::StorageFull)
+        matches!(result.error(), Some(RecordingError::Append { source, .. }) if source.as_ref().kind() == io::ErrorKind::StorageFull)
     );
+    let error = result.error().unwrap();
+    let native = native_cause(error);
+    assert_eq!(native.kind(), io::ErrorKind::StorageFull);
+    let duplicate = file.append(request.clone());
+    assert!(std::ptr::eq(
+        native,
+        native_cause(duplicate.error().unwrap())
+    ));
     file.append(request);
     file.append(block(2, 2, b"more"));
     assert_eq!(&*lock(&bytes), b"he");
@@ -166,8 +193,26 @@ fn flush_and_sync_failures_close_once_and_never_claim_sync() {
         assert_eq!(result.prefix().written_bytes(), 5);
         assert!(result.prefix().closed());
         assert!(!result.prefix().synced());
-        assert!(result.error().is_some());
-        file.seal();
+        let error = result.error().unwrap();
+        assert!(matches!(
+            (flush_error, error),
+            (true, RecordingError::Flush { .. }) | (false, RecordingError::Sync { .. })
+        ));
+        let native = native_cause(error);
+        assert_eq!(
+            native.kind(),
+            if flush_error {
+                io::ErrorKind::BrokenPipe
+            } else {
+                io::ErrorKind::Other
+            }
+        );
+        let sealed_again = file.seal();
+        assert!(std::ptr::eq(
+            native,
+            native_cause(sealed_again.error().unwrap())
+        ));
+
         assert_eq!(*lock(&syncs), usize::from(!flush_error));
         assert_eq!(*lock(&drops), 1);
     }
@@ -201,9 +246,10 @@ fn factory_creates_unique_names_and_invalid_parent_retains_source() {
     let parent = directory.path().join("regular-file");
     fs::write(&parent, b"unchanged").unwrap();
     let error = create_at(parent.join("log"), 20).err().unwrap();
-    assert!(
-        matches!(error, RecordingError::Create { source, .. } if source.kind() != io::ErrorKind::Other)
-    );
+    assert!(matches!(error, RecordingError::Create { .. }));
+    assert_ne!(native_cause(&error).kind(), io::ErrorKind::Other);
+    let clone = error.clone();
+    assert!(std::ptr::eq(native_cause(&error), native_cause(&clone)));
     assert_eq!(fs::read(parent).unwrap(), b"unchanged");
 }
 #[test]
@@ -227,4 +273,26 @@ fn short_writes_complete_once_and_zero_write_keeps_partial_prefix() {
         file.append(request);
         assert_eq!(lock(&bytes).len() as u64, expected);
     }
+}
+
+#[test]
+fn supplied_read_only_native_writer_keeps_failure_and_partial_prefix_through_seal() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("readonly.log");
+    fs::write(&path, b"existing").unwrap();
+    let writer = File::open(&path).unwrap();
+    let mut file = AppendFile::new(writer, path.clone(), 20);
+    let result = file.append(block(1, 0, b"new"));
+    let error = result.error().unwrap();
+    assert!(
+        matches!(error, RecordingError::Append { path: failure_path, offset: 0, .. } if failure_path == &path)
+    );
+    let native = native_cause(error);
+    assert!(native.raw_os_error().is_some());
+    assert_eq!(result.prefix().written_bytes(), 0);
+    assert_eq!(result.prefix().partial_bytes(), 0);
+    let seal = file.seal();
+    assert!(seal.prefix().closed());
+    assert!(std::ptr::eq(native, native_cause(seal.error().unwrap())));
+    assert_eq!(fs::read(&path).unwrap(), b"existing");
 }

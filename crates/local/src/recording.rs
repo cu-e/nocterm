@@ -38,16 +38,11 @@ impl OutputLogFactory for LocalOutputLogFactory {
 }
 fn create_at(path: PathBuf, limit: u64) -> Result<LocalOutputLog, RecordingError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| RecordingError::Create {
-            path: path.clone(),
-            source: Arc::new(source),
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|source| RecordingError::create(path.clone(), source))?;
     }
-    let file =
-        nocterm_core::fs::create_private(&path).map_err(|source| RecordingError::Create {
-            path: path.clone(),
-            source: Arc::new(source.into_io_error()),
-        })?;
+    let file = nocterm_core::fs::create_private(&path)
+        .map_err(|source| RecordingError::create(path.clone(), source.into_io_error()))?;
     Ok(LocalOutputLog {
         path: path.clone(),
         state: Arc::new(Mutex::new(AppendFile::new(file, path, limit))),
@@ -150,11 +145,7 @@ impl<W: DurableWrite> AppendFile<W> {
             false,
             false,
         );
-        let error = error.map(|source| RecordingError::Append {
-            path: self.path.clone(),
-            offset: written,
-            source: Arc::new(source),
-        });
+        let error = error.map(|source| RecordingError::append(self.path.clone(), written, source));
         self.failure = error.clone();
         let outcome = AppendOutcome::new(self.prefix.clone(), error);
         self.last = Some((block, outcome.clone()));
@@ -190,19 +181,9 @@ impl<W: DurableWrite> AppendFile<W> {
         let mut error = None;
         if let Some(mut writer) = self.writer.take() {
             match writer.flush() {
-                Err(source) => {
-                    error = Some(RecordingError::Flush {
-                        path: self.path.clone(),
-                        source: Arc::new(source),
-                    })
-                }
+                Err(source) => error = Some(RecordingError::flush(self.path.clone(), source)),
                 Ok(()) => match writer.sync() {
-                    Err(source) => {
-                        error = Some(RecordingError::Sync {
-                            path: self.path.clone(),
-                            source: Arc::new(source),
-                        })
-                    }
+                    Err(source) => error = Some(RecordingError::sync(self.path.clone(), source)),
                     Ok(()) => synced = true,
                 },
             }

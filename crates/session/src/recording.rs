@@ -1,5 +1,6 @@
 //! Bounded immutable append requests; adapters own files and services schedule work.
 use futures::future::BoxFuture;
+use nocterm_core::SharedError;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -34,27 +35,55 @@ pub enum RecordingError {
     Create {
         path: PathBuf,
         #[source]
-        source: Arc<io::Error>,
+        source: SharedError<io::Error>,
     },
     #[error("could not append {} at {offset}: {source}", path.display())]
     Append {
         path: PathBuf,
         offset: u64,
         #[source]
-        source: Arc<io::Error>,
+        source: SharedError<io::Error>,
     },
     #[error("could not flush {}: {source}", path.display())]
     Flush {
         path: PathBuf,
         #[source]
-        source: Arc<io::Error>,
+        source: SharedError<io::Error>,
     },
     #[error("could not sync {}: {source}", path.display())]
     Sync {
         path: PathBuf,
         #[source]
-        source: Arc<io::Error>,
+        source: SharedError<io::Error>,
     },
+}
+
+impl RecordingError {
+    pub fn create(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::Create {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn append(path: impl Into<PathBuf>, offset: u64, source: io::Error) -> Self {
+        Self::Append {
+            path: path.into(),
+            offset,
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn flush(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::Flush {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn sync(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::Sync {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
 }
 
 impl PartialEq for RecordingError {

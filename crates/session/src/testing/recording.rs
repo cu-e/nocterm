@@ -166,4 +166,106 @@ mod tests {
         assert_eq!(block_on(future).prefix().written_bytes(), 3);
         assert_eq!(log.prefix().written_bytes(), 3);
     }
+
+    #[test]
+    fn recording_categories_keep_native_sources_and_existing_equality() {
+        use std::error::Error;
+        for error in [
+            RecordingError::create(
+                "memory.log",
+                std::io::Error::from(std::io::ErrorKind::StorageFull),
+            ),
+            RecordingError::append(
+                "memory.log",
+                7,
+                std::io::Error::from(std::io::ErrorKind::StorageFull),
+            ),
+            RecordingError::flush(
+                "memory.log",
+                std::io::Error::from(std::io::ErrorKind::StorageFull),
+            ),
+            RecordingError::sync(
+                "memory.log",
+                std::io::Error::from(std::io::ErrorKind::StorageFull),
+            ),
+        ] {
+            let clone = error.clone();
+            let native = error
+                .source()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap();
+            let shared = clone
+                .source()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap();
+            assert_eq!(native.kind(), std::io::ErrorKind::StorageFull);
+            assert!(std::ptr::eq(native, shared));
+            assert_eq!(error, clone);
+            assert_eq!(error.to_string(), clone.to_string());
+        }
+        assert_eq!(
+            RecordingError::append("memory.log", 7, std::io::ErrorKind::Other.into()),
+            RecordingError::append("memory.log", 7, std::io::ErrorKind::BrokenPipe.into())
+        );
+        assert_ne!(
+            RecordingError::append("memory.log", 7, std::io::ErrorKind::Other.into()),
+            RecordingError::append("memory.log", 8, std::io::ErrorKind::Other.into())
+        );
+        assert_ne!(
+            RecordingError::flush("memory.log", std::io::ErrorKind::Other.into()),
+            RecordingError::sync("memory.log", std::io::ErrorKind::Other.into())
+        );
+    }
+    #[test]
+    fn held_scripted_append_and_seal_keep_error_identity_with_physical_prefix() {
+        use std::error::Error;
+        let log = ScriptedOutputLog::new(PathBuf::from("memory.log"));
+        let error = RecordingError::append("memory.log", 2, std::io::ErrorKind::StorageFull.into());
+        let original = error.clone();
+        let gate = Gate::pending();
+        log.enqueue_append(
+            gate.clone(),
+            AppendOutcome::new(
+                PhysicalPrefix::new(0, 2, 2, false, false),
+                Some(error.clone()),
+            ),
+        );
+        let mut append = log.append(AppendBlock::new(1, 0, Arc::from(&b"bytes"[..])).unwrap());
+        assert!(append.as_mut().now_or_never().is_none());
+        assert_eq!(log.prefix().written_bytes(), 0);
+        gate.release();
+        let result = block_on(append);
+        assert_eq!(result.prefix().partial_bytes(), 2);
+        log.enqueue_seal(
+            Gate::open(),
+            AppendOutcome::new(PhysicalPrefix::new(0, 2, 2, false, true), Some(error)),
+        );
+        let sealed = block_on(log.seal());
+        assert!(sealed.prefix().closed());
+        assert!(!sealed.prefix().synced());
+        assert_eq!(log.seal_count(), 1);
+        let native = original
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        for observed in [result.error().unwrap(), sealed.error().unwrap()] {
+            let shared = observed
+                .source()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap();
+            assert!(std::ptr::eq(native, shared));
+        }
+    }
 }
