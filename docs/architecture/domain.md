@@ -36,6 +36,11 @@ validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
 Text conversion stays in the terminal feature, outside the session domain.
+Local filesystem diagnostics retain native I/O and recursive partial-removal causes
+through foundation `SharedError`; clones share each original allocation. Domain
+constructors preserve semantic NotFound/PermissionDenied/AlreadyExists conversion
+and its deliberate lack of a native source. Publication warnings retain their native
+kind while the already committed file remains a successful outcome.
 `nocterm-vt` turns a byte stream into a terminal grid using
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.

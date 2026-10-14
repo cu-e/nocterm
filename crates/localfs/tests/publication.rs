@@ -206,3 +206,49 @@ fn explicit_cancel_removes_only_its_held_candidate_after_ancestor_replacement() 
     assert!(!moved.join("final").exists());
     assert!(!outside.path().join("final").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn failed_replace_retains_native_cause_and_same_held_stage_for_retry() {
+    use std::error::Error;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("directory")).unwrap();
+    let fs = LocalFilesystem::with_base(root.path().to_owned()).unwrap();
+    let held = fs.open_directory(root.path()).unwrap();
+    let mut stage = held.stage().unwrap();
+    stage.write(b"candidate").unwrap();
+    let error = stage
+        .publish(OsStr::new("directory"), UploadMode::Replace)
+        .unwrap_err();
+    assert!(root.path().join("directory").is_dir());
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(original.kind(), std::io::ErrorKind::IsADirectory);
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        original,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+    ));
+    assert!(matches!(
+        stage
+            .publish(OsStr::new("retried"), UploadMode::Create)
+            .unwrap(),
+        PublicationOutcome::Published
+    ));
+    drop(stage);
+    assert_eq!(
+        std::fs::read(root.path().join("retried")).unwrap(),
+        b"candidate"
+    );
+}

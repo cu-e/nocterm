@@ -218,3 +218,156 @@ fn unreadable_children_consume_the_same_budget_as_successful_metadata() {
         )))
     ));
 }
+
+#[test]
+fn local_io_causes_keep_native_leaf_and_nested_sources_across_clones() {
+    use std::error::Error;
+    #[derive(Debug)]
+    struct NativeContext;
+    impl std::fmt::Display for NativeContext {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("native context")
+        }
+    }
+    impl Error for NativeContext {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&std::fmt::Error)
+        }
+    }
+    for native in [
+        std::io::Error::from(std::io::ErrorKind::StorageFull),
+        std::io::Error::other(NativeContext),
+    ] {
+        let kind = native.kind();
+        let error = LocalFsError::from_io("/held", native);
+        let clone = error.clone();
+        let original = error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        let shared = clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(original, shared));
+        assert_eq!(original.kind(), kind);
+        assert_eq!(error.to_string(), clone.to_string());
+        if kind == std::io::ErrorKind::Other {
+            assert!(original.source().unwrap().is::<std::fmt::Error>());
+        } else {
+            assert!(original.source().is_none());
+        }
+    }
+}
+
+#[test]
+fn durability_warning_keeps_published_outcome_and_shared_native_kind() {
+    use std::error::Error;
+    let warning = DurabilityWarning::new(std::io::Error::from(std::io::ErrorKind::StorageFull));
+    let outcome = PublicationOutcome::PublishedWithWarning(warning.clone());
+    let PublicationOutcome::PublishedWithWarning(clone) = outcome else {
+        panic!("warning stays a committed outcome")
+    };
+    let original = warning
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    let shared = clone
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert!(std::ptr::eq(original, shared));
+    assert_eq!(warning.kind(), std::io::ErrorKind::StorageFull);
+    assert_eq!(clone.kind(), warning.kind());
+    assert_eq!(warning.to_string(), clone.to_string());
+}
+
+#[test]
+fn partial_removal_keeps_immediate_semantic_cause_before_native_child() {
+    use std::error::Error;
+    for cause in [
+        LocalFsError::NotFound("/missing".into()),
+        LocalFsError::from_io(
+            "/held",
+            std::io::Error::from(std::io::ErrorKind::StorageFull),
+        ),
+    ] {
+        let error = LocalFsError::partial_removal(3, cause);
+        let clone = error.clone();
+        assert!(matches!(
+            error,
+            LocalFsError::PartialRemoval { removed: 3, .. }
+        ));
+        let original = error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<LocalFsError>()
+            .unwrap();
+        let shared = clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<LocalFsError>()
+            .unwrap();
+        assert!(std::ptr::eq(original, shared));
+        match original {
+            LocalFsError::NotFound(path) => {
+                assert_eq!(path, &std::path::PathBuf::from("/missing"));
+                assert!(original.source().is_none());
+            }
+            LocalFsError::Io { .. } => assert_eq!(
+                original
+                    .source()
+                    .unwrap()
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .kind(),
+                std::io::ErrorKind::StorageFull
+            ),
+            _ => panic!("original semantic cause retained"),
+        }
+        assert_eq!(error.to_string(), clone.to_string());
+    }
+}
+
+#[test]
+fn classified_local_io_refusals_keep_semantics_without_retaining_native_sources() {
+    use std::error::Error;
+    for kind in [
+        std::io::ErrorKind::NotFound,
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::AlreadyExists,
+    ] {
+        let error = LocalFsError::from_io("/classified", std::io::Error::from(kind));
+        assert!(error.source().is_none());
+        assert!(matches!(
+            (kind, error),
+            (std::io::ErrorKind::NotFound, LocalFsError::NotFound(_))
+                | (
+                    std::io::ErrorKind::PermissionDenied,
+                    LocalFsError::PermissionDenied(_)
+                )
+                | (
+                    std::io::ErrorKind::AlreadyExists,
+                    LocalFsError::AlreadyExists(_)
+                )
+        ));
+    }
+}

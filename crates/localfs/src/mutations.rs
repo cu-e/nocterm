@@ -187,9 +187,6 @@ pub(crate) fn remove(
             removed: removal.removed,
         }),
         Err(source) if removal.removed == 0 => Err(source),
-        Err(source) => Err(LocalFsError::PartialRemoval {
-            removed: removal.removed,
-            source: Box::new(source),
-        }),
+        Err(source) => Err(LocalFsError::partial_removal(removal.removed, source)),
     }
 }

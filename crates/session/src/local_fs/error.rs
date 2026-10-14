@@ -1,4 +1,5 @@
-use std::{io, path::PathBuf, sync::Arc};
+use nocterm_core::SharedError;
+use std::{io, path::PathBuf};
 
 pub type LocalResult<T> = Result<T, LocalFsError>;
 
@@ -28,16 +29,22 @@ pub enum LocalFsError {
     Io {
         path: PathBuf,
         #[source]
-        source: Arc<io::Error>,
+        source: SharedError<io::Error>,
     },
     #[error("{removed} entries deleted before failure: {source}")]
     PartialRemoval {
         removed: usize,
         #[source]
-        source: Box<LocalFsError>,
+        source: SharedError<LocalFsError>,
     },
 }
 impl LocalFsError {
+    pub fn partial_removal(removed: usize, source: Self) -> Self {
+        Self::PartialRemoval {
+            removed,
+            source: SharedError::from_error(source),
+        }
+    }
     pub fn from_io(path: impl Into<PathBuf>, source: io::Error) -> Self {
         let path = path.into();
         match source.kind() {
@@ -46,7 +53,7 @@ impl LocalFsError {
             io::ErrorKind::AlreadyExists => Self::AlreadyExists(path),
             _ => Self::Io {
                 path,
-                source: Arc::new(source),
+                source: SharedError::from_error(source),
             },
         }
     }
@@ -56,16 +63,16 @@ impl LocalFsError {
 #[error("the file was published, but directory durability could not be confirmed: {source}")]
 pub struct DurabilityWarning {
     #[source]
-    source: Arc<io::Error>,
+    source: SharedError<io::Error>,
 }
 impl DurabilityWarning {
     pub fn new(source: io::Error) -> Self {
         Self {
-            source: Arc::new(source),
+            source: SharedError::from_error(source),
         }
     }
     pub fn kind(&self) -> io::ErrorKind {
-        self.source.kind()
+        self.source.as_ref().kind()
     }
 }
 #[derive(Clone, Debug)]

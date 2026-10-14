@@ -612,9 +612,6 @@ pub(super) fn remove(
             removed: removal.removed,
         }),
         Err(error) if removal.removed == 0 => Err(error),
-        Err(source) => Err(LocalFsError::PartialRemoval {
-            removed: removal.removed,
-            source: Box::new(source),
-        }),
+        Err(source) => Err(LocalFsError::partial_removal(removal.removed, source)),
     }
 }

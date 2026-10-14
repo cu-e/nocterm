@@ -5293,6 +5293,7 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "futures",
+ "nocterm-core",
  "nocterm-settings",
  "schemars 1.2.2",
  "secrecy",

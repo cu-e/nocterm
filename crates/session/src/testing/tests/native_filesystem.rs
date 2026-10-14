@@ -67,11 +67,32 @@ fn local_stage_collisions_can_retry_same_candidate_and_committed_warnings_never_
         base.clone(),
         LocalFsError::Unsupported("directory fsync"),
     );
-    assert!(matches!(
-        stage
-            .publish(OsStr::new("renamed"), UploadMode::Create)
-            .unwrap(),
-        PublicationOutcome::PublishedWithWarning(_)
+    let PublicationOutcome::PublishedWithWarning(warning) = stage
+        .publish(OsStr::new("renamed"), UploadMode::Create)
+        .unwrap()
+    else {
+        panic!("injected directory sync failure is a committed warning")
+    };
+    use std::error::Error;
+    let clone = warning.clone();
+    let native = warning
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(native.kind(), std::io::ErrorKind::Other);
+    assert_eq!(warning.kind(), native.kind());
+    assert!(std::ptr::eq(
+        native,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
     ));
     assert!(
         stage
@@ -290,4 +311,54 @@ fn unreadable_native_children_cannot_extend_the_statistics_walk_budget() {
             "statistics entries"
         )))
     ));
+}
+
+#[test]
+fn bounded_shared_local_removal_preserves_partial_cause_and_unvisited_bytes() {
+    use std::error::Error;
+    let fs = InMemoryFs::default();
+    let base = fs.home().unwrap().unwrap();
+    let tree = base.join("tree");
+    for name in ["one", "two", "three"] {
+        fs.seed_native_file(&tree.join(name), b"keep").unwrap();
+    }
+    let error = LocalMutations::remove(
+        &fs,
+        &tree,
+        RemovalLimits::new(10, 2).unwrap(),
+        &CancelFlag::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        LocalFsError::PartialRemoval { removed: 1, .. }
+    ));
+    let clone = error.clone();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<LocalFsError>()
+        .unwrap();
+    assert!(matches!(original, LocalFsError::BoundExceeded("deletion")));
+    assert!(std::ptr::eq(
+        original,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<LocalFsError>()
+            .unwrap()
+    ));
+    let remaining = fs
+        .browse(&tree, ListingLimits::default(), &CancelFlag::default())
+        .unwrap();
+    assert_eq!(remaining.entries.len(), 2);
+    for entry in remaining.entries {
+        let mut source = fs.open_source(&tree.join(entry.name)).unwrap();
+        assert_eq!(source.read(32).unwrap(), b"keep");
+        source.close().unwrap();
+    }
 }

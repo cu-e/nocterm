@@ -20,6 +20,8 @@
 //! `ProgramOpener`, `local_fs::{LocalFs, LocalMutations, LocalDirectory, LocalSource, LocalStage}`.
 //! Settings sections: SSH and local shell options (adapter-ownership migration debt).
 //! Globals: none. Invariants: bounded channels carry ordered output and explicit closure.
+//! Local filesystem diagnostics use foundation SharedError for immutable typed causes;
+//! native adapters construct partial outcomes through domain methods without core access.
 
 #[cfg(feature = "test-support")]
 pub mod testing;

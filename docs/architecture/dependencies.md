@@ -29,7 +29,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session` | Host resource monitoring: collection scripts, parsers, rates and history. |
 | `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
-| `nocterm-session` | domain | `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
+| `nocterm-session` | domain | `nocterm-core`, `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: typed sections and the file that holds them. |
 | `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-session`, `nocterm-settings`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
@@ -145,6 +145,7 @@ graph TD
     nocterm_monitor_ui --> nocterm_settings
     nocterm_monitor_ui --> nocterm_ui
     nocterm_monitor_ui --> nocterm_workspace
+    nocterm_session --> nocterm_core
     nocterm_session --> nocterm_settings
     nocterm_settings --> nocterm_core
     nocterm_settings_ui --> nocterm_ai

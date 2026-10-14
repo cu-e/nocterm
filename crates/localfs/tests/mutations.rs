@@ -110,6 +110,24 @@ fn deletion_bound_reports_partial_mutation_and_preserves_unvisited_entries() {
         error,
         LocalFsError::PartialRemoval { removed: 1, .. }
     ));
+    use std::error::Error;
+    let clone = error.clone();
+    let original = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<LocalFsError>()
+        .unwrap();
+    assert!(matches!(original, LocalFsError::BoundExceeded("deletion")));
+    let shared = clone
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<LocalFsError>()
+        .unwrap();
+    assert!(std::ptr::eq(original, shared));
     assert_eq!(
         std::fs::read_dir(root.path().join("tree")).unwrap().count(),
         2

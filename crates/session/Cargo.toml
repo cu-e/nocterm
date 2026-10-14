@@ -14,6 +14,7 @@ default = []
 test-support = []
 
 [dependencies]
+nocterm-core.workspace = true
 nocterm-settings.workspace = true
 async-channel.workspace = true
 futures.workspace = true
