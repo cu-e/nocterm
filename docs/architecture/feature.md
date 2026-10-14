@@ -95,13 +95,14 @@ session-intent conversion and quick-connect menu. `Connections` aliases the actu
 and checked transitions belong to `nocterm-connections-model`; the app supplies
 preloaded documents and repository writers. Editor, reload and quick-connect
 use injected identifiers/defaults retained by `Installed`; recent-use intents
-receive their timestamp from the service's injected clock. Its retained `ServerFacts`
-entity keeps what was detected about servers (system over SFTP, country through
-GeoIP for public addresses) in the state directory's `servers.toml`, apart from
-`connections.toml`. `ObservationDeps` injects the pure country/resolution/flag
-ports; the app chooses native adapters or inert memory-only dependencies. The
-feature retains the image cache and embedded fallback flags; bounded disk/HTTP
-flag acquisition belongs to `nocterm-connections-io`. Icons and flags
+receive their timestamp from the service's injected clock. `Installed` retains the
+actual `FactsService` entity. `FactsPresentation` projects immutable bounded flag
+bytes to one cached GPUI image per country, with embedded fallback after a terminal
+negative result. Raw fact persistence, detection admission and native job reservations
+belong to the GPUI-only service. `ObservationDeps` arrives explicitly from bootstrap;
+no view performs native acquisition. Weak rotating source projections supply original
+Item/session receipts and retry refused work by re-reading live capabilities after
+capacity events, without retaining a waiting request/FS payload. Icons and flags
 reach other features only as images in `ConnectionSummary`. The empty workspace
 projects its six most recent saved profiles through
 `ConnectionDirectory`, using current names and the same icon and country policy as
@@ -382,11 +383,12 @@ same-key completions and remeasures rows only for accepted delivery. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
 
-Connection facts schedule injected `RemoteOsDetector` work and present checked
-identities with the feature OS glyph/color catalog. Release parsing and remote
-read/close work belong to domain rules and the native adapter. Probe-once and
-manual-icon precedence remain feature policy; fact publication race guards and
-observation completion authority remains existing lifecycle debt.
+The connections service schedules injected `RemoteOsDetector` work and owns
+probe admission, once-per-session decisions and publication/completion authority.
+The feature projects original session receipts and presents checked identities
+with its OS glyph/color catalog and manual-icon precedence. Release parsing and
+remote read/close work belong to domain rules and the native adapter.
+See [ADR 0048](../adr/0048-guarded-connection-facts.md).
 
 Terminal models retain immutable `Installed` dependencies: remote transport,
 optional local-session factory, supplied default shell, optional credential
@@ -404,7 +406,23 @@ profile/facts entities, editor inputs, explicit settings and observer lifetimes.
 Directories, editors, menus and group actions capture those owners; connection
 and facts globals are removed. Session intents remain feature conversions over
 the unchanged workspace session factory. Country policy uses the supplied
-SettingsHandle. Profile/recent publication belongs to the service; detected-fact
-publication/scheduling remains existing feature migration debt;
-stale observation completion authority remains separate work.
+SettingsHandle. Both profile/recent and raw-fact publication belong to the supplied
+service entities. Feature state owns image presentation and original Item/session
+source projections; admission/completion authority is checked by the service.
 See [ADR0043](../adr/0043-retained-connections-installation.md).
+
+`TerminalCapabilities` provides optional `ConnectionFactSession` alongside its other
+narrow consumer ports. The terminal's existing weak Access owner reads one actual
+session/ExpectedSession snapshot. Connection source authority compares captured epoch,
+full target and original FS directly through this receipt, independent of window
+membership/cursor lifetime. Closing the original Item calls its normal disconnect
+transition; promoting/transferring the same live Item keeps authority. Unsupported
+Items expose no port; no broad Item/ItemHandle/TerminalState API was expanded. The
+shared workspace test-support SessionProbe supplies the same receipt and named
+close/connection/epoch transitions; its mutable state remains private.
+
+Connection projection callbacks keep weak connection/facts handles and upgrade them
+only at execution; App-deferred work does not retain Installed through teardown.
+Editor country-input subscriptions capture the narrow weak raw-facts service rather
+than the installation, preserving owner-owned subscription cleanup without nested
+unsubscribe during callback destruction. UI owners retain the installation itself.

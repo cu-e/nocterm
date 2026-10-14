@@ -59,13 +59,13 @@ impl ObservationDeps {
 /// Immutable observation request; its background work captures no view or App.
 pub(crate) struct LocationRequest {
     host: String,
-    cached: BTreeMap<String, String>,
+    cached: Arc<BTreeMap<String, String>>,
     observations: ObservationDeps,
 }
 impl LocationRequest {
     pub(crate) fn new(
         host: &str,
-        cached: BTreeMap<String, String>,
+        cached: Arc<BTreeMap<String, String>>,
         observations: ObservationDeps,
     ) -> Self {
         Self {

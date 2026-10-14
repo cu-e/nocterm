@@ -9,13 +9,16 @@
 //! `RightPanel`, `LocalTerminal`; layout arrives as an explicit `LayoutHandle`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session observations and separate state, text,
-//! input, live-command, execution, prompt, reconnect and user-paste ports.
+//! input, live-command, execution, prompt, reconnect and user-paste ports, plus
+//! the optional consumer-named ConnectionFactSession original-session receipt.
 //! Settings section: none. Globals: legacy local execution in `host`.
 //! Invariants: one native dock is the placement authority; each registered tab
 //! owns its feature handle and subscriptions; cached session identity preserves
 //! its filesystem and executor Arcs; local command focus leaves central session
 //! context available. Owners commit transitions before the shell emits events
 //! and applies focus. All application windows share the bootstrapped layout handle.
+//! The optional test-support feature shares the original session Item fixture
+//! with private connected/generation transitions and supplied filesystem ports.
 //! Background promotion retains the same Item entity; close detaches subscriptions
 //! before calling the feature's close hook. Local directory synchronization reports typed
 //! capability refusals and preserves encoding causes through its LocalTerminal port.
@@ -51,10 +54,10 @@ pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
 pub use terminal_ports::{
-    ExpectedSession, LiveCommandLease, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
-    TerminalCapabilities, TerminalEntry, TerminalExecution, TerminalInfo, TerminalInput,
-    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
-    UserTerminalPaste,
+    ConnectionFactSession, ExpectedSession, FactSessionSnapshot, LiveCommandLease, LiveCommands,
+    RemoteReconnect, SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalEntry,
+    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
+    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
     Deps, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace,
@@ -63,3 +66,6 @@ pub use workspace::{
 
 /// The key context of the workspace, for keymap entries.
 pub const KEY_CONTEXT: &str = "Workspace";
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

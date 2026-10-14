@@ -341,8 +341,7 @@ mod observation_tests {
             .unwrap()
         });
         cx.run_until_parked();
-        let facts = installed.facts();
-        assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_some()));
+        assert!(cx.read(|cx| installed.flag("xx", cx).is_some()));
     }
 
     #[gpui_kit::test]
@@ -375,8 +374,7 @@ mod observation_tests {
             .unwrap()
         });
         cx.run_until_parked();
-        let facts = installed.facts();
-        assert!(facts.read_with(cx, |facts, _| facts.flag("xx").is_none()));
+        assert!(cx.read(|cx| installed.flag("xx", cx).is_none()));
     }
 }
 

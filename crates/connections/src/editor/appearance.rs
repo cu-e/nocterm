@@ -55,13 +55,18 @@ impl AppearanceFields {
                 cx.notify();
             }
         });
-        let facts = installed.facts().clone();
+        let flags = installed.facts().downgrade();
         let country_subscription =
             cx.subscribe_in(&country, window, move |this, input, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.error = None;
                     let code = input.read(cx).value().trim().to_ascii_lowercase();
-                    facts.update(cx, |facts, cx| facts.ensure_flag(&code, cx));
+                    if let (Some(facts), Ok(code)) = (
+                        flags.upgrade(),
+                        nocterm_connections_model::observation::CountryCode::new(&code),
+                    ) {
+                        let _ = facts.update(cx, |facts, cx| facts.request_flag(code, cx));
+                    }
                     cx.notify();
                 }
             });
@@ -105,9 +110,7 @@ impl AppearanceFields {
         cx: &mut Context<ConnectionEditor>,
     ) -> Vec<AnyElement> {
         let color = self.preview_color(cx);
-        let detected = editing
-            .then(|| installed.facts().read(cx).os(id, cx))
-            .flatten();
+        let detected = editing.then(|| installed.os(id, cx)).flatten();
         let chosen = self.icon.as_deref().and_then(crate::os::find).or(detected);
         let hint = match chosen {
             Some(os) => format!("Empty: the {} colour, {}.", os.name, os.color),
@@ -304,7 +307,7 @@ impl AppearanceFields {
         } else {
             Some(typed.clone()).filter(|code| crate::geo::is_country_code(code))
         };
-        let flag = shown.as_deref().and_then(|code| facts.flag(code));
+        let flag = shown.as_deref().and_then(|code| installed.flag(code, cx));
         let hint = match (typed.is_empty(), detected) {
             (false, _) => "Two-letter ISO code. Clear it to detect the country again.".to_owned(),
             (true, Some(code)) => {
@@ -332,7 +335,11 @@ impl AppearanceFields {
                         ),
                 )
             })
-            .child(div().w(rems(5.)).child(Input::new(&self.country).small()));
+            .child(
+                div()
+                    .w(rems(5.))
+                    .child(Input::new(&self.country).id("editor-country").small()),
+            );
         form::row("Country", hint, control, cx)
     }
 }

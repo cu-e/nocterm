@@ -90,6 +90,26 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (first == 0x2001 && ip.segments()[1] == 0x0db8))
 }
 
+/// Maximum supplied/cache/network SVG flag body, shared by every producer.
+pub const MAX_FLAG_BYTES: u64 = 256 * 1024;
+
+/// Immutable bounded raw flag bytes; decoding and fallback remain presentation-owned.
+#[derive(Clone, Debug)]
+pub struct FlagBytes(std::sync::Arc<[u8]>);
+impl FlagBytes {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, ObservationError> {
+        if bytes.len() as u64 > MAX_FLAG_BYTES {
+            return Err(ObservationError::BodyLimit {
+                limit: MAX_FLAG_BYTES,
+            });
+        }
+        Ok(Self(bytes.into()))
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// Adapter errors retain native causes without coupling this domain to them.
 #[derive(Debug, thiserror::Error)]
 pub enum ObservationError {

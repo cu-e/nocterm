@@ -174,7 +174,7 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         let recents = connections.read(cx).recents(cx).clone();
         crate::test_support::install_owners(
             crate::Connections::with_documents(profiles, recents),
-            crate::ServerFacts::with_backend(
+            crate::FactsPrepared::new(
                 known,
                 std::sync::Arc::new(|_| Box::pin(async { Ok(()) })),
                 observations,
@@ -277,20 +277,19 @@ async fn distinct_installations_keep_profiles_facts_and_credential_association_i
             None
         );
     });
-    first
-        .facts()
-        .update(cx, |facts, cx| facts.ensure_flag("de", cx));
+    cx.update(|cx| {
+        first.facts().update(cx, |facts, cx| {
+            facts
+                .request_flag(
+                    nocterm_connections_model::observation::CountryCode::new("de").unwrap(),
+                    cx,
+                )
+                .unwrap()
+        })
+    });
     cx.run_until_parked();
-    assert!(
-        first
-            .facts()
-            .read_with(cx, |facts, _| facts.flag("de").is_some())
-    );
-    assert!(
-        second
-            .facts()
-            .read_with(cx, |facts, _| facts.flag("de").is_none())
-    );
+    assert!(cx.read(|cx| first.flag("de", cx).is_some()));
+    assert!(cx.read(|cx| second.flag("de", cx).is_none()));
 }
 
 #[gpui_kit::test]

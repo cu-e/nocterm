@@ -10,32 +10,34 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views, editor inputs, session-intent conversion and detected-server presentation/lifecycle.
+//! Owns: views, editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
-//! ProfileIds, ConnectionClock, PublicAddressResolver, CountryLocator, FlagRepository, RemoteOsDetector.
+//! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
 //! Ports provided: ConnectionDirectory. Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
-//! Detected-fact scheduling/publication remains feature migration debt.
+//! Raw facts/jobs belong to the supplied actual service entity. Original Item
+//! capability receipts retain session authority independently of window projection.
 
 mod installed;
 mod session_intents;
 pub use installed::{Installed, install};
 pub use session_intents::{connect, spec_for_profile};
+mod country_policy;
 mod directory;
 mod editor;
-mod facts;
+mod facts_presentation;
 mod geo;
 mod menu;
-mod observation;
 pub mod os;
 mod panel;
 mod prepared;
+mod probe_sources;
 pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]
@@ -45,10 +47,10 @@ use gpui_kit::{Context, Window, prelude::*};
 use nocterm_workspace::Workspace;
 
 pub use editor::{ConnectionEditor, open_editor};
-pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
+pub use nocterm_connections_store::ObservationDeps;
 pub use nocterm_connections_store::{ConnectionStore as Connections, ConnectionsError};
-pub use observation::ObservationDeps;
+pub use nocterm_connections_store::{FactsPrepared, FactsService};
 pub use panel::ConnectionsPanel;
 
 gpui_kit::actions!(
@@ -87,11 +89,24 @@ pub fn register(
         }
     })
     .detach();
+    installed.sources().register(cx.entity().downgrade());
     // Learn about servers as their sessions come up.
-    let probes = installed.clone();
-    cx.subscribe(&cx.entity(), move |workspace, _, event, cx| {
+    let projection = installed.sources().clone();
+    let observed_facts = installed.facts().downgrade();
+    let observed_connections = installed.connections().downgrade();
+    cx.subscribe(&cx.entity(), move |_, _, event, cx| {
         if *event == nocterm_workspace::WorkspaceEvent::ItemsChanged {
-            facts::probe_sessions(&probes, workspace, cx);
+            let (projection, facts, connections) = (
+                projection.clone(),
+                observed_facts.clone(),
+                observed_connections.clone(),
+            );
+            // App::defer escapes the subscriber lease; weak collaborators cannot retain app teardown.
+            gpui_kit::App::defer(cx, move |cx| {
+                if let (Some(connections), Some(facts)) = (connections.upgrade(), facts.upgrade()) {
+                    projection.scan(&connections, &facts, cx);
+                }
+            });
         }
     })
     .detach();

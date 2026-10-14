@@ -45,3 +45,4 @@ acceptance; a later record supersedes an earlier one.
 | [0044](0044-private-thread-coordination.md) | Private chat owners return named coordination effects |
 | [0046](0046-shared-concrete-error-causes.md) | Shared error causes retain the original concrete error in standard source chains |
 | [0047](0047-connection-publication-authority-service.md) | Connection publication service preserves committed profile authority histories |
+| [0048](0048-guarded-connection-facts.md) | Original-source guarded raw facts and bounded connection jobs |

@@ -4,6 +4,7 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub struct TerminalCapabilities {
     state: Rc<dyn TerminalState>,
+    fact_session: Option<Rc<dyn ConnectionFactSession>>,
     text: Option<Rc<dyn TerminalTextSource>>,
     input: Option<Rc<dyn TerminalInput>>,
     live: Option<Rc<dyn LiveCommands>>,
@@ -16,6 +17,7 @@ impl TerminalCapabilities {
     pub fn new(state: Rc<dyn TerminalState>) -> Self {
         Self {
             state,
+            fact_session: None,
             text: None,
             input: None,
             live: None,
@@ -24,6 +26,13 @@ impl TerminalCapabilities {
             reconnect: None,
             paste: None,
         }
+    }
+    pub fn with_fact_session(mut self, port: Rc<dyn ConnectionFactSession>) -> Self {
+        self.fact_session = Some(port);
+        self
+    }
+    pub fn fact_session(&self) -> Option<&Rc<dyn ConnectionFactSession>> {
+        self.fact_session.as_ref()
     }
     pub fn state(&self) -> &Rc<dyn TerminalState> {
         &self.state

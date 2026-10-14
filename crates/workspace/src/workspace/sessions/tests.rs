@@ -1,57 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use gpui_kit::{
-    App, Context, EventEmitter, FocusHandle, Focusable, TestAppContext, Window, WindowOptions, div,
-    prelude::*,
-};
+use gpui_kit::{TestAppContext, WindowOptions, prelude::*};
 use nocterm_session::{Auth, Target};
 
-use crate::{Item, ItemEvent, SessionContext, SessionSpec, Workspace};
+use crate::{SessionSpec, Workspace};
 
-struct Remote {
-    focus: FocusHandle,
-    spec: SessionSpec,
-    connected: bool,
-}
-impl Remote {
-    fn new(
-        spec: SessionSpec,
-        connected: bool,
-        cx: &mut Context<Workspace>,
-    ) -> gpui_kit::Entity<Self> {
-        cx.new(|cx| Self {
-            focus: cx.focus_handle(),
-            spec,
-            connected,
-        })
-    }
-}
-impl EventEmitter<ItemEvent> for Remote {}
-impl Focusable for Remote {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for Remote {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus)
-    }
-}
-impl Item for Remote {
-    fn tab_title(&self, _: &App) -> gpui_kit::SharedString {
-        self.spec.title.clone()
-    }
-    fn session(&self, _: &App) -> Option<SessionContext> {
-        Some(SessionContext::new(
-            self.spec.target.clone(),
-            None,
-            self.connected,
-        ))
-    }
-    fn session_spec(&self, _: &App) -> Option<SessionSpec> {
-        Some(self.spec.clone())
-    }
-}
+use crate::test_support::SessionProbe as Remote;
 
 #[gpui_kit::test]
 fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {

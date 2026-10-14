@@ -4,7 +4,7 @@ use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, Workspace};
 
 use std::collections::HashSet;
 
-use crate::{Installed, ServerFacts, connect, spec_for_profile};
+use crate::{Installed, connect, spec_for_profile};
 
 pub(crate) struct Directory {
     installed: Installed,
@@ -26,21 +26,19 @@ impl Directory {
 
 impl ConnectionDirectory for Directory {
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
-        let facts = self.installed.facts().read(cx);
         self.installed
             .connections()
             .read(cx)
             .profiles(cx)
             .iter()
-            .map(|profile| summary(profile, facts, self.installed.detecting_country(cx), cx))
+            .map(|profile| summary(profile, &self.installed, cx))
             .collect()
     }
 
     fn recent_connections(&self, cx: &App) -> Vec<ConnectionSummary> {
         let connections = self.installed.connections().read(cx);
-        let facts = self.installed.facts().read(cx);
         recent_profiles(connections.profiles(cx), connections.recents(cx))
-            .map(|profile| summary(profile, facts, self.installed.detecting_country(cx), cx))
+            .map(|profile| summary(profile, &self.installed, cx))
             .collect()
     }
 
@@ -93,17 +91,17 @@ impl ConnectionDirectory for Directory {
     }
 }
 
-fn summary(profile: &Profile, facts: &ServerFacts, detecting: bool, cx: &App) -> ConnectionSummary {
+fn summary(profile: &Profile, installed: &Installed, cx: &App) -> ConnectionSummary {
     ConnectionSummary {
         id: profile.id.to_string().into(),
         name: profile.name.clone().into(),
         group: profile.group.clone().map(Into::into),
         description: profile.description.clone().into(),
         target: profile.target.clone(),
-        icon: facts.icon(profile, cx),
-        flag: facts
-            .shown_country(profile, detecting, cx)
-            .and_then(|code| facts.flag(code)),
+        icon: installed.icon(profile, cx),
+        flag: installed
+            .shown_country(profile, cx)
+            .and_then(|code| installed.flag(&code, cx)),
     }
 }
 

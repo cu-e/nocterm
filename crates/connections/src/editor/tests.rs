@@ -682,3 +682,82 @@ fn creating_a_profile_preserves_seeded_profiles_with_memory_or_writer_backends(
         });
     }
 }
+
+#[gpui_kit::test]
+fn unsaved_country_input_loads_flag_when_detection_is_off_and_no_session_exists(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    use nocterm_connections_model::{
+        observation::CountryCode,
+        test_support::{ObservationCall, ScriptedObservations},
+    };
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    let (window, workspace, _, original) = crate::test_support::workspace(cx);
+    let script = Arc::new(ScriptedObservations::default());
+    script.flag_next(Ok(Some(b"<svg/>".to_vec())));
+    let receipt = cx.update(|cx| {
+        original
+            .settings()
+            .update::<nocterm_ui::AppearanceSettings>(cx, |settings| {
+                settings.detect_server_country = false
+            })
+    });
+    cx.run_until_parked();
+    futures::executor::block_on(receipt).unwrap();
+    let installed = cx.update(|cx| {
+        crate::test_support::install_owners_with_executor(
+            Connections::with_documents(Default::default(), Default::default()),
+            crate::FactsPrepared::in_memory(crate::ObservationDeps::new(
+                script.clone(),
+                script.clone(),
+                script.clone(),
+                true,
+                Arc::new(nocterm_connections_model::os_observation::OfflineOsDetector),
+            )),
+            original.settings().clone(),
+            gpui_kit::BackgroundExecutor::new(Arc::new(gpui_kit::ThreadedDispatcher::new())),
+            cx,
+        )
+    });
+    cx.update_window(window, |_, window, cx| {
+        open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
+        window.render_frame(cx);
+        window.scroll(
+            "editor-section-content",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-1200.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click("editor-country", cx);
+        window.input("fr", cx);
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| installed.flag("fr", cx).is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("dialog").is_some());
+        assert_eq!(window.focused_input(cx).unwrap().value(cx).as_ref(), "fr");
+        assert_eq!(
+            installed.connections().read(cx).profiles(cx).iter().count(),
+            0
+        );
+        assert_eq!(workspace.read(cx).items().count(), 0);
+    })
+    .unwrap();
+    assert_eq!(
+        script.calls(),
+        vec![ObservationCall::Flag(CountryCode::new("fr").unwrap())]
+    );
+}

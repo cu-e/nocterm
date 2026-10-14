@@ -39,6 +39,9 @@ impl Known {
     pub fn retain_profiles(&mut self, ids: &HashSet<ProfileId>) {
         self.servers.retain(|id, _| ids.contains(id));
     }
+    pub fn forget_profile(&mut self, id: ProfileId) {
+        self.servers.remove(&id);
+    }
     pub fn set_os(&mut self, id: ProfileId, os: crate::os::OsId) {
         self.servers.entry(id).or_default().os = Some(os.as_str().to_owned());
     }
@@ -61,6 +64,20 @@ impl Known {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn forgetting_an_old_incarnation_preserves_global_geoip_cache() {
+        let id = ProfileId::from_bytes([1; 16]);
+        let mut known = Known::default();
+        known.accept_country(
+            id,
+            "host".into(),
+            Some(("8.8.8.8".into(), CountryCode::new("de").unwrap())),
+        );
+        known.forget_profile(id);
+        assert_eq!(known.country(id), None);
+        assert_eq!(known.located_host(id), None);
+        assert_eq!(known.geoip().get("8.8.8.8").map(String::as_str), Some("de"));
+    }
     #[test]
     fn known_servers_round_trip_without_rewriting_existing_cache_values() {
         let text = r#"[server."00000000-0000-0000-0000-000000000001"]

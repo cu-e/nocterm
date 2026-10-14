@@ -111,7 +111,7 @@ connector still follows the existing retained orphan-cleanup completion.
 publication and coupled shutdown capture. The feature re-exports its actual entity,
 so installed views and credential callbacks retain identical ownership. Writers and
 a `ConnectionClock` are explicit dependencies; editor inputs, native acquisitions,
-settings, views and fact jobs stay outside this service.
+settings storage and views stay outside this service.
 
 Profiles use durable checked edits, recents use optimistic coalescing, and both
 reuse `Persisted` and `ShutdownCoordinator` with the common 180-ms budget.
@@ -127,3 +127,34 @@ Failed, rejected and unadmitted mutations cannot publish authority. Captured
 background drain has no App/entity access; successful physical prefix/final
 snapshots alone select recents effects through the existing two-event feed.
 See [ADR0047](../adr/0047-connection-publication-authority-service.md).
+
+## Raw connection facts
+
+`FactsService` in `nocterm-connections-store` owns optimistic persisted Known data,
+immutable raw flag state and bounded native job reservations. The supplied background
+executor runs only native ports/data. Foreground tickets read the distinct committed
+profile carrier, narrow enabled/published-revision policy and captured original source
+at every admission and completion. Endpoint/incarnation/manual-override stamps retain
+intermediate history; original Item/session authority cannot renew through another
+window, equal filesystem Arc or a profile-only flag request. A newer original epoch
+may admit its own job without releasing or clearing obsolete physical jobs.
+
+All windows share 32 physical slots. Atomic paired OS/location reservation precedes
+capability decisions; stale work retains slots until actual completion. Rotating weak
+source cursors reproject on capacity delivery, preserving pending paired reservations
+and alternating raw flag/probe lanes. There is no native cancellation guarantee,
+production pool, hidden runtime/global lookup or waiting filesystem request queue.
+
+Raw CountryCode flag requests are independent of live sessions and detection policy:
+persisted startup keys, manual saved choices and editor drafts keep their previous
+behavior. DNS/GeoIP and OS require an original connected matching session. A terminal
+flag negative result is cached; image decoding/presentation stays in the feature.
+Known capture reuses Persisted/ShutdownCoordinator; closing blocks admissions and
+late completions from mutating captured data. See [ADR0048](../adr/0048-guarded-connection-facts.md).
+
+Immutable FactWorkload queries expose physical work and retained original-source
+metadata. The logical ledger prunes original Item/epoch/session lifetime separately
+from full profile/policy validity; retaining an FS cannot retain closed Item metadata,
+and changing association/policy cannot renew a live capability's OS once marker.
+Feature ItemsChanged schedules App-deferred reprojection outside the Workspace
+subscriber lease; original receipt validity checks are still synchronous.

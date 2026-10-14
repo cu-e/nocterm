@@ -1,5 +1,5 @@
 //! Prepared documents and injected collaborators, installed without foreground native acquisition.
-use crate::{Connections, ObservationDeps, ServerFacts};
+use crate::{Connections, FactsPrepared, ObservationDeps};
 use nocterm_connections_model::{
     draft::EditorDefaults,
     facts::Known,
@@ -77,7 +77,7 @@ impl PreparedConnections {
             observations: ObservationDeps::offline(),
         }
     }
-    pub(crate) fn into_owners(self) -> (Connections, EditorInputs, ServerFacts) {
+    pub(crate) fn into_owners(self) -> (Connections, EditorInputs, FactsPrepared) {
         let profiles = self.documents.profiles;
         let recents = self.documents.recents;
         let (connections, facts) = match self.writers {
@@ -90,11 +90,11 @@ impl PreparedConnections {
                     self.documents.read_only,
                     self.clock,
                 ),
-                ServerFacts::with_backend(self.documents.known, writers.facts, self.observations),
+                FactsPrepared::new(self.documents.known, writers.facts, self.observations),
             ),
             None => (
                 Connections::memory_with_clock(profiles, recents, self.clock),
-                ServerFacts::in_memory(self.observations),
+                FactsPrepared::in_memory(self.observations),
             ),
         };
         (connections, self.inputs, facts)

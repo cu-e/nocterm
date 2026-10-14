@@ -98,6 +98,17 @@ impl Drop for LiveCommandLease {
     }
 }
 
+/// Original connection-facts source, independent of any window projection.
+#[derive(Clone)]
+pub struct FactSessionSnapshot {
+    pub expected: ExpectedSession,
+    pub session: crate::SessionContext,
+    pub profile: Option<SharedString>,
+}
+pub trait ConnectionFactSession: 'static {
+    fn current(&self, cx: &App) -> Option<FactSessionSnapshot>;
+}
+
 /// Reads current state; observation itself grants no session authority.
 pub trait TerminalState: 'static {
     fn info(&self, cx: &App) -> Option<TerminalInfo>;

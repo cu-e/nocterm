@@ -5,7 +5,7 @@ use nocterm_connections_model::observation::{
 use std::{io::Read as _, time::Duration};
 
 pub(crate) const MAX_GEOIP_BYTES: u64 = 4 * 1024;
-pub(crate) const MAX_FLAG_BYTES: u64 = 256 * 1024;
+pub(crate) use nocterm_connections_model::observation::MAX_FLAG_BYTES;
 const TIMEOUT: Duration = Duration::from_secs(8);
 
 pub(crate) struct HttpCountry {

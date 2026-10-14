@@ -4,7 +4,7 @@ use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowO
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{SessionSpec, Workspace};
 
-use crate::{Connections, Installed, ObservationDeps, ServerFacts};
+use crate::{Connections, FactsPrepared, Installed, ObservationDeps};
 
 pub(crate) type Opened = Rc<RefCell<Vec<SessionSpec>>>;
 
@@ -58,79 +58,30 @@ pub(crate) fn workspace(
     (window, workspace, opened, installed)
 }
 
-/// The shared pure repository supplies failures/documents while the existing driver owns writes.
-pub(crate) fn prepared_repository(
-    repository: std::sync::Arc<
-        nocterm_connections_model::test_support::InMemoryConnectionRepository,
-    >,
-    observations: crate::ObservationDeps,
-) -> crate::PreparedConnections {
-    use nocterm_connections_model::{
-        draft::EditorDefaults, repository::ConnectionRepository, value_ports::SuppliedValues,
-    };
-    let documents = repository.load();
-    let profiles = repository.clone();
-    let recents = repository.clone();
-    let facts = repository;
-    let writers = crate::ConnectionWriters::new(
-        std::sync::Arc::new(move |snapshot| {
-            let repository = profiles.clone();
-            Box::pin(async move {
-                repository
-                    .save_profiles(&snapshot)
-                    .map_err(nocterm_store::StoreError::backend)
-            })
-        }),
-        std::sync::Arc::new(move |snapshot| {
-            let repository = recents.clone();
-            Box::pin(async move {
-                repository
-                    .save_recents(&snapshot)
-                    .map_err(nocterm_store::StoreError::backend)
-            })
-        }),
-        std::sync::Arc::new(move |snapshot| {
-            let repository = facts.clone();
-            Box::pin(async move {
-                repository
-                    .save_facts(&snapshot)
-                    .map_err(nocterm_store::StoreError::backend)
-            })
-        }),
-    );
-    let values = std::sync::Arc::new(SuppliedValues::excluding(
-        1,
-        0,
-        documents.profiles.iter().map(|profile| profile.id),
-    ));
-    crate::PreparedConnections::new(
-        documents,
-        writers,
-        crate::EditorInputs::new(
-            EditorDefaults {
-                user: Some("tester".into()),
-                home: None,
-            },
-            values.clone(),
-        ),
-        values,
-        observations,
-    )
-}
-
 /// Explicit alternate owners for tests; preserves the supplied settings installation.
 pub(crate) fn install_owners(
     connections: Connections,
-    facts: ServerFacts,
+    facts: FactsPrepared,
     settings: nocterm_store::SettingsHandle,
     cx: &mut gpui_kit::App,
 ) -> Installed {
+    let executor = cx.background_executor().clone();
+    install_owners_with_executor(connections, facts, settings, executor, cx)
+}
+pub(crate) fn install_owners_with_executor(
+    connections: Connections,
+    facts: FactsPrepared,
+    settings: nocterm_store::SettingsHandle,
+    executor: gpui_kit::BackgroundExecutor,
+    cx: &mut gpui_kit::App,
+) -> Installed {
     let inputs = model_inputs(&connections, cx);
-    Installed::from_owners(
+    Installed::from_owners_with_executor(
         connections,
         facts,
         inputs,
         settings,
+        executor,
         &nocterm_store::ShutdownCoordinator::default(),
         cx,
     )
@@ -143,7 +94,7 @@ pub(crate) fn install_model(
 ) -> Installed {
     install_owners(
         connections,
-        ServerFacts::in_memory(ObservationDeps::offline()),
+        FactsPrepared::in_memory(ObservationDeps::offline()),
         installed.settings().clone(),
         cx,
     )

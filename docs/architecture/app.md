@@ -69,7 +69,9 @@ scripted AI codec. Image ports are not discovered through globals or Runtime.
 
 Prepared connection observation dependencies include an explicit remote OS detector:
 startup supplies `NativeOsDetector`; memory composition supplies an inert detector
-that performs no remote acquisition. Bootstrap consumes the prepared collaborators.
+that performs no remote acquisition. Bootstrap consumes the prepared collaborators. Installation supplies the existing
+App background executor to raw FactsService; isolated blocking-port tests explicitly
+supply a threaded test executor. This creates no production executor/pool or global.
 
 Booted retains the explicitly supplied chat metadata capability before consuming
 AgentServices and passes it to each window's agent registration. Native startup

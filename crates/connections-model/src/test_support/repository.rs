@@ -9,7 +9,7 @@ use crate::{
 };
 use std::{
     collections::VecDeque,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepositoryCall {
@@ -77,24 +77,7 @@ impl InMemoryConnectionRepository {
         Ok(())
     }
 }
-/// Explicitly driven blocking repository admission, not a timer or executor.
-#[derive(Default)]
-pub struct RepositoryGate {
-    released: Mutex<bool>,
-    changed: Condvar,
-}
-impl RepositoryGate {
-    pub fn release(&self) {
-        *self.released.lock().unwrap() = true;
-        self.changed.notify_all();
-    }
-    fn wait(&self) {
-        let mut released = self.released.lock().unwrap();
-        while !*released {
-            released = self.changed.wait(released).unwrap();
-        }
-    }
-}
+pub use super::gates::BlockingGate as RepositoryGate;
 impl ConnectionRepository for InMemoryConnectionRepository {
     fn load(&self) -> LoadedConnections {
         self.calls.lock().unwrap().push(RepositoryCall::Load);

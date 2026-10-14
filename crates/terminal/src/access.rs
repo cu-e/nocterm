@@ -33,6 +33,22 @@ impl Access {
     }
 }
 
+impl nocterm_workspace::ConnectionFactSession for Access {
+    fn current(&self, cx: &App) -> Option<nocterm_workspace::FactSessionSnapshot> {
+        let item = self.item().ok()?;
+        let entity = self.terminal.upgrade()?;
+        let terminal = entity.read(cx);
+        if terminal.is_local() {
+            return None;
+        }
+        Some(nocterm_workspace::FactSessionSnapshot {
+            expected: ExpectedSession::new(item, terminal.connection_epoch()),
+            session: terminal.session_context(),
+            profile: terminal.spec().profile.clone(),
+        })
+    }
+}
+
 impl TerminalState for Access {
     fn info(&self, cx: &App) -> Option<TerminalInfo> {
         let item = self.item().ok()?;

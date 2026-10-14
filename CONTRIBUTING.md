@@ -80,7 +80,7 @@ Rules:
 
 | Scope | Covers |
 | ----- | ------ |
-| `connections-store` | ordered profile/recent publication and committed authority |
+| `connections-store` | profile/recent publication, committed authority and bounded raw facts |
 - **Body** explains *why*, not *what*; wrap at ~100 chars. Blank line after the header.
 - **Breaking changes**: add `!` after the type/scope *and* a `BREAKING CHANGE: <what breaks and how to migrate>` footer.
 - **Footers**: `Refs: #123`, `Closes: #123`, `Co-Authored-By: ...`.

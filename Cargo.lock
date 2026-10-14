@@ -5062,7 +5062,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
- "tracing",
 ]
 
 [[package]]
@@ -5102,7 +5101,10 @@ dependencies = [
  "nocterm-connections-model",
  "nocterm-core",
  "nocterm-session",
+ "nocterm-settings",
  "nocterm-store",
+ "schemars 1.2.2",
+ "serde",
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",

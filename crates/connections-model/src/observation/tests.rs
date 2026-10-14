@@ -54,3 +54,19 @@ fn public_address_policy_preserves_reserved_and_mapped_ranges() {
         assert_eq!(PublicAddress::new(ip).unwrap().as_ip(), ip);
     }
 }
+
+#[test]
+fn raw_flag_bytes_are_bounded_and_shared_without_decoding() {
+    let bytes = FlagBytes::new(vec![0; MAX_FLAG_BYTES as usize]).unwrap();
+    let cloned = bytes.clone();
+    assert!(std::ptr::eq(
+        bytes.bytes().as_ptr(),
+        cloned.bytes().as_ptr()
+    ));
+    assert!(matches!(
+        FlagBytes::new(vec![0; MAX_FLAG_BYTES as usize + 1]),
+        Err(ObservationError::BodyLimit {
+            limit: MAX_FLAG_BYTES
+        })
+    ));
+}

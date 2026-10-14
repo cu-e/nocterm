@@ -148,6 +148,7 @@ impl Item for TerminalView {
         let access = std::rc::Rc::new(crate::access::Access::new(owner, self.terminal.downgrade()));
         Some(
             nocterm_workspace::TerminalCapabilities::new(access.clone())
+                .with_fact_session(access.clone())
                 .with_text(access.clone())
                 .with_input(access.clone())
                 .with_live(access.clone())

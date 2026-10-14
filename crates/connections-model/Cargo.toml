@@ -20,5 +20,8 @@ thiserror.workspace = true
 [features]
 test-support = []
 
+[dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true

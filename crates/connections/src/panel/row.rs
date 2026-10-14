@@ -12,17 +12,16 @@ struct RowVisual {
 
 impl RowVisual {
     fn new(profile: &Profile, installed: &Installed, cx: &App) -> Self {
-        let facts = installed.facts().read(cx);
         Self {
             profile: profile.clone(),
             os: profile
                 .icon
                 .as_deref()
                 .and_then(os::find)
-                .or_else(|| facts.os(profile.id, cx)),
-            flag: facts
-                .shown_country(profile, installed.detecting_country(cx), cx)
-                .and_then(|code| Some((code.to_uppercase(), facts.flag(code)?))),
+                .or_else(|| installed.os(profile.id, cx)),
+            flag: installed
+                .shown_country(profile, cx)
+                .and_then(|code| Some((code.to_uppercase(), installed.flag(&code, cx)?))),
         }
     }
 
