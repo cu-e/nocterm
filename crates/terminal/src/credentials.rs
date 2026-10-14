@@ -1,7 +1,6 @@
 //! Prompts answered from, and remembered in, a [`nocterm_session::CredentialStore`].
 use gpui_kit::Task;
 use nocterm_session::{Secret, SecretRequest};
-use std::sync::Arc;
 
 /// The credential is saved, but attaching its ID to connection history failed.
 #[derive(Debug, thiserror::Error)]
@@ -9,11 +8,11 @@ pub enum CredentialAssociationError {
     #[error("connection history is unavailable for credential association")]
     Unavailable,
     #[error("could not associate the saved credential: {0}")]
-    Binding(#[source] Arc<dyn std::error::Error + Send + Sync>),
+    Binding(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 impl CredentialAssociationError {
     pub fn binding(error: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Self::Binding(Arc::new(error))
+        Self::Binding(Box::new(error))
     }
 }
 

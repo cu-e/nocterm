@@ -49,7 +49,9 @@ authentication answers nor the input stream enter the recorder.
 
 Session Settings reuses the validated session options editor for transient
 overrides. Safe reconnect retires the previous session, event pump, prompts and
-remote filesystem before starting a new epoch.
+remote filesystem before starting a new epoch. Credential association failures
+retain their original owned concrete cause. A failed history link leaves the
+authenticated credential saved; late completions cannot replace a newer prompt.
 
 Terminal input preserves typed charset failures and distinct command, snippet,
 live ownership and queue refusals through the workspace seam. Explorer path drops
