@@ -68,6 +68,7 @@ pub struct AppendPersisted {
     options: RecordingOptions,
     control: DriverControl,
     status: AppendStatus,
+    shared_status: Arc<Mutex<AppendStatus>>,
     completion: Option<Box<dyn FnOnce(&AppendStatus) + 'static>>,
 }
 
@@ -249,6 +250,7 @@ impl AppendPersisted {
             options,
             control: DriverControl::default(),
             status,
+            shared_status: shared_status.clone(),
             completion,
         };
         crate::worker::start(&mut instance, cx);
@@ -327,6 +329,7 @@ impl AppendPersisted {
             .error
             .clone()
             .or_else(|| phys.first_disk_error.clone());
+        *self.shared_status.lock().unwrap_or_else(|e| e.into_inner()) = self.status.clone();
         cx.notify();
     }
 }
@@ -612,10 +615,8 @@ impl RecordingRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(entity.clone());
-        AppendHandle {
-            entity: entity.clone(),
-            status: Arc::new(Mutex::new(AppendStatus::default())),
-        }
+        let status = entity.read(cx).shared_status.clone();
+        AppendHandle { entity, status }
     }
 
     pub fn register(&self, coordinator: &crate::ShutdownCoordinator) -> Result<(), StoreError> {
