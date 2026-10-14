@@ -1,4 +1,4 @@
-use nocterm_core::SharedCause;
+use nocterm_core::{SharedCause, SharedError};
 use std::{error::Error, sync::Arc};
 
 /// A rejected edit, failed write or interrupted completion.
@@ -21,7 +21,7 @@ pub enum StoreError {
     #[error("multiple persistence participants failed: {first}; {second}")]
     Joined {
         #[source]
-        first: Arc<StoreError>,
+        first: SharedError<StoreError>,
         second: Arc<StoreError>,
     },
     #[error("snapshot persistence failed: {0}")]
@@ -29,6 +29,14 @@ pub enum StoreError {
 }
 
 impl StoreError {
+    /// Preserve the primary failure in the linear chain and the separate secondary diagnostic.
+    pub fn joined(first: Arc<Self>, second: Arc<Self>) -> Self {
+        Self::Joined {
+            first: SharedError::from_arc(first),
+            second,
+        }
+    }
+
     pub fn edit(error: impl Error + Send + Sync + 'static) -> Self {
         Self::Edit(SharedCause::new(error))
     }

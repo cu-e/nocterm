@@ -90,10 +90,9 @@ fn join_captured(
         match (profiles.into_result(), recents.into_result()) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-            (Err(profiles), Err(recents)) => Err(StoreError::Joined {
-                first: Arc::new(profiles),
-                second: Arc::new(recents),
-            }),
+            (Err(profiles), Err(recents)) => {
+                Err(StoreError::joined(Arc::new(profiles), Arc::new(recents)))
+            }
         }
     })
 }

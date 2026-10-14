@@ -59,7 +59,9 @@ true only after the keyed writer owns the immutable candidate. Revision-bearing
 `SaveAdmitted`, `Saved` and `SaveFailed` events distinguish intake from physical
 publication. Registry stamps are committed after intake succeeds. Capture retains
 writer-owned intents when a client has nothing pending; shutdown returns captured
-admission errors together with drained publication failures. Normal detach leaves a
+admission errors together with drained publication failures. Aggregation retains
+the original primary StoreError in its standard source chain; the secondary
+diagnostic stays separately inspectable, and both messages remain displayed. Normal detach leaves a
 client registered when admission fails so its desired candidate can still be retried.
 An older revision from the same current owner cannot replace a newer admitted intent.
 Successful detach admission acknowledges its original client outside the Runtime

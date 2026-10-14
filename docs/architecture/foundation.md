@@ -50,5 +50,8 @@ no I/O, serialization or text conversion and expose no mutable access.
 
 Store's Edit and Backend causes use SharedCause, preserving semantic checked-edit
 conversion and backend diagnostics. AI's ImageCodecCause is an alias of the same
-holder. Other existing Arc source boundaries retain their current representation.
+holder. Joined keeps its primary StoreError in a typed shared holder and its secondary
+failure as a separately inspectable diagnostic; the linear source chain follows
+only the original primary failure. Other existing Arc source boundaries retain
+their current representation.
 See [ADR0046](../adr/0046-shared-concrete-error-causes.md).

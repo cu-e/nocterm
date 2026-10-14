@@ -493,6 +493,34 @@ async fn captured_backend_failure_retains_concrete_and_native_causes(cx: &mut Te
     drop(entity);
     let error = cx.background_executor.spawn(work).await.unwrap_err();
     let receipt_error = receipt.wait().await.unwrap_err();
+    let primary = Arc::new(error.clone());
+    let secondary = Arc::new(receipt_error.clone());
+    let aggregate = StoreError::joined(primary.clone(), secondary.clone());
+    let original = aggregate.source().unwrap().source().unwrap();
+    assert!(std::ptr::eq(
+        original.downcast_ref::<StoreError>().unwrap(),
+        primary.as_ref()
+    ));
+    let StoreError::Joined { second, .. } = &aggregate else {
+        panic!("expected aggregate")
+    };
+    assert!(Arc::ptr_eq(second, &secondary));
+    assert!(std::ptr::eq(
+        original
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<nocterm_core::PersistError>()
+            .unwrap(),
+        error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<nocterm_core::PersistError>()
+            .unwrap()
+    ));
     let backend = error.source().unwrap().source().unwrap();
     assert!(
         backend
@@ -510,4 +538,56 @@ async fn captured_backend_failure_retains_concrete_and_native_causes(cx: &mut Te
             .kind(),
         std::io::ErrorKind::PermissionDenied
     );
+}
+
+#[test]
+fn joined_failures_retain_leaf_primary_secondary_and_recursive_identity() {
+    let first = Arc::new(StoreError::Full);
+    let second = Arc::new(StoreError::Closing);
+    let joined = StoreError::joined(first.clone(), second.clone());
+    let primary = joined.source().unwrap().source().unwrap();
+    assert!(std::ptr::eq(
+        primary.downcast_ref::<StoreError>().unwrap(),
+        first.as_ref()
+    ));
+    assert!(primary.source().is_none());
+    let cloned = joined.clone();
+    assert!(std::ptr::eq(
+        cloned
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<StoreError>()
+            .unwrap(),
+        first.as_ref()
+    ));
+    let StoreError::Joined {
+        second: diagnostic, ..
+    } = &cloned
+    else {
+        panic!("expected aggregate")
+    };
+    assert!(Arc::ptr_eq(diagnostic, &second));
+    assert_eq!(
+        joined.to_string(),
+        format!("multiple persistence participants failed: {first}; {second}")
+    );
+    let nested = Arc::new(joined);
+    let outer = StoreError::joined(nested.clone(), Arc::new(StoreError::DeadlineExceeded));
+    let original = outer.source().unwrap().source().unwrap();
+    assert!(std::ptr::eq(
+        original.downcast_ref::<StoreError>().unwrap(),
+        nested.as_ref()
+    ));
+    assert!(std::ptr::eq(
+        original
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<StoreError>()
+            .unwrap(),
+        first.as_ref()
+    ));
 }

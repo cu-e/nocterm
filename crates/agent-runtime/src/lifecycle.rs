@@ -247,10 +247,9 @@ impl Runtime {
                 if let Err(error) = result {
                     failure = Some(match failure {
                         None => error,
-                        Some(first) => nocterm_store::StoreError::Joined {
-                            first: Arc::new(first),
-                            second: Arc::new(error),
-                        },
+                        Some(first) => {
+                            nocterm_store::StoreError::joined(Arc::new(first), Arc::new(error))
+                        }
                     })
                 }
             }

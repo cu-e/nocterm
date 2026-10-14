@@ -359,3 +359,86 @@ async fn final_failure_preserves_physical_prefix_effects_and_final_success_appli
         );
     }
 }
+
+fn native_store_cause(error: &StoreError) -> &std::io::Error {
+    use std::error::Error as _;
+    error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap()
+}
+
+#[gpui::test]
+async fn captured_profile_and_recent_failures_keep_primary_receipt_and_both_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    use std::error::Error as _;
+    let original = profile("Original");
+    let profiles_error = StoreError::backend(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "profiles denied",
+    ));
+    let recents_error = StoreError::backend(std::io::Error::new(
+        std::io::ErrorKind::StorageFull,
+        "recents full",
+    ));
+    let profile_failure = profiles_error.clone();
+    let writer: SnapshotWriter<Profiles> = Arc::new(move |_| {
+        let error = profile_failure.clone();
+        Box::pin(async move { Err(error) })
+    });
+    let recent_failure = recents_error.clone();
+    let recents_writer: SnapshotWriter<Recents> = Arc::new(move |_| {
+        let error = recent_failure.clone();
+        Box::pin(async move { Err(error) })
+    });
+    let shutdown = ShutdownCoordinator::default();
+    let entity = cx.update(|cx| {
+        Connections::with_backends(
+            documents(std::slice::from_ref(&original)),
+            Recents::default(),
+            writer,
+            recents_writer,
+        )
+        .into_entity(&shutdown, cx)
+        .unwrap()
+    });
+    let deleted = entity.update(cx, |c, cx| c.delete_profile(original.id, cx));
+    entity.update(cx, |c, cx| {
+        c.record_use(recent_use(&original, Some(original.id)), cx)
+    });
+    let work = cx.update(|cx| shutdown.capture_all(cx));
+    let report = cx.background_executor.spawn(work).await;
+    assert!(!report.timed_out());
+    let [aggregate] = report.failures() else {
+        panic!("expected one coupled failure")
+    };
+    let primary = aggregate
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<StoreError>()
+        .unwrap();
+    assert!(matches!(primary, StoreError::Backend(_)));
+    let native = native_store_cause(primary);
+    assert!(std::ptr::eq(native, native_store_cause(&profiles_error)));
+    let StoreError::Joined { second, .. } = aggregate else {
+        panic!("expected aggregate")
+    };
+    assert!(std::ptr::eq(
+        native_store_cause(second),
+        native_store_cause(&recents_error)
+    ));
+    let rejected = deleted.await.unwrap_err();
+    let ConnectionsError::Persistence(error) = rejected else {
+        panic!("expected publication failure")
+    };
+    assert!(std::ptr::eq(native_store_cause(&error), native));
+    assert!(entity.read_with(cx, |c, cx| c.profiles(cx).get(original.id).is_some()));
+    assert!(aggregate.to_string().contains("profiles denied"));
+    assert!(aggregate.to_string().contains("recents full"));
+}

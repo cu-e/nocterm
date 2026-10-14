@@ -9,6 +9,7 @@
 //! normal and final writes; durable state advances only after successful writes;
 //! ready-key capacity bounds dispatch tokens and never drops accepted dirty keys.
 //! Edit/backend causes retain their concrete errors through core shared ownership.
+//! Joined failures preserve their original primary cause and separate secondary diagnostic.
 
 mod append;
 mod captured;

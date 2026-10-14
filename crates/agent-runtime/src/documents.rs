@@ -406,10 +406,7 @@ impl ChatStore {
                         .into_iter()
                         .filter_map(|outcome| outcome.result().err()),
                 )
-                .reduce(|first, second| StoreError::Joined {
-                    first: Arc::new(first),
-                    second: Arc::new(second),
-                });
+                .reduce(|first, second| StoreError::joined(Arc::new(first), Arc::new(second)));
             failure.map_or(Ok(()), Err)
         })
     }
