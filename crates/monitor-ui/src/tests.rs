@@ -123,6 +123,10 @@ fn sessions_that_run_programs_are_watched_remotely() {
 
     let watched = watched_host(Some(&remote(&host, true)), Some(&local), &settings).unwrap();
     assert_eq!(watched.key, HostKey::Remote(target("user@host")));
+    assert!(Arc::ptr_eq(
+        &watched.exec,
+        &(host.clone() as Arc<dyn HostExec>)
+    ));
 
     let without_exec = SessionContext::new(target("user@other"), None, true);
     let watched = watched_host(Some(&without_exec), Some(&local), &settings).unwrap();
@@ -304,4 +308,25 @@ fn settings_switch_the_monitor_off_and_hosts_without_a_script_say_so(cx: &mut Te
     cx.run_until_parked();
     assert_eq!(status(cx, &monitor), Status::Off);
     assert_eq!(mac.programs(), ["uname"]);
+}
+
+#[gpui_kit::test]
+fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut TestAppContext) {
+    let first = FakeHost::new("Linux");
+    let second = FakeHost::new("Linux");
+    for host in [first.clone(), second.clone(), first.clone()] {
+        let (window, workspace, _) = fixture(cx, None);
+        cx.update_window(window, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                crate::register(Some(host.clone()), workspace, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(first.programs().len(), 2);
+    assert_eq!(second.programs().len(), 1);
+    assert!(first.reading(0));
+    assert!(first.reading(1));
+    assert!(second.reading(0));
 }

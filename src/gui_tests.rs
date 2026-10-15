@@ -220,7 +220,10 @@ fn boot_with_ports(
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
     let (transport, local) = terminal;
-    let has_local_sessions = local.is_available();
+    let local_host = local.is_available().then(|| {
+        Arc::new(nocterm_session::testing::FakeExec::default())
+            as Arc<dyn nocterm_session::HostExec>
+    });
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
         file: directory.path().join("vault.bin"),
@@ -247,6 +250,7 @@ fn boot_with_ports(
             connections: crate::connection_setup::memory(),
             transport,
             local,
+            local_host,
             terminal_auth_factory: None,
             files,
             themes,
@@ -280,12 +284,6 @@ fn boot_with_ports(
         },
         cx,
     );
-    if has_local_sessions {
-        nocterm_workspace::host::set_local_exec(
-            Arc::new(nocterm_session::testing::FakeExec::default()),
-            cx,
-        );
-    }
     cx.set_reduce_motion(true);
     booted
 }

@@ -11,7 +11,8 @@
 //! file drag contracts, immutable tab/session observations and separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
-//! Settings section: none. Globals: legacy local execution in `host`.
+//! Settings section: none. Globals: none.
+//! Host resolution uses an explicitly supplied optional local executor; it owns no runner.
 //! Invariants: one native dock is the placement authority; each registered tab
 //! owns its feature handle and subscriptions; cached session identity preserves
 //! its filesystem and executor Arcs; local command focus leaves central session

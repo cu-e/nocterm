@@ -93,3 +93,13 @@ rather than discovering a global. An installation failure skips connection view
 registration and returns a typed association failure while keeping vault access.
 All windows share the retained profile/facts/settings owners and subscription
 lifetimes; native preparation remains the earlier background capability boundary.
+
+
+## Supplied local host execution
+
+Native startup supplies the optional local `HostExec` implementation once. Bootstrap
+retains that same executor with the window dependencies and supplies it explicitly
+to resource-monitor and container registration. New windows clone the retained
+capability; test composition supplies an inert fake or None before installation.
+Workspace host resolution uses the provided capability while preserving the active
+remote session's executor and connection authority. It stores no global runner.

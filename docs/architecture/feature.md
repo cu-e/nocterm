@@ -225,7 +225,8 @@ keeps a sampler per recently seen host and runs exactly one script: the status
 bar's metrics at the slow interval while the details are closed, and the union
 with the details' metrics at the fast interval while they are open. It adds a
 leading footer view through the workspace and supplies its Settings page as a
-`SettingsPageSpec`.
+`SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
+registration and retained by its model; active remote execution keeps precedence.
 
 ## Containers
 
@@ -238,6 +239,8 @@ connection of its own and the tab follows as the same host.
 Destructive confirmation captures the host executor, engine, object IDs and
 connection epoch when the dialog opens. Switching hosts or reconnecting
 invalidates that confirmation; completion refreshes only its original context.
+Its optional local executor is supplied at registration; another window cannot
+replace it through workspace service lookup.
 
 ## Vault
 

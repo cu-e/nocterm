@@ -26,6 +26,8 @@ pub(crate) struct Services {
     pub(crate) transport: Arc<dyn Transport>,
     /// Whether local shells run on this machine.
     pub(crate) local: nocterm_terminal::LocalSessions,
+    /// Local host execution, supplied once independently of session creation.
+    pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     pub(crate) terminal_auth_factory:
         Option<fn(nocterm_terminal::Installed) -> nocterm_agent::TerminalAuthOpener>,
     pub(crate) files: nocterm_files::Deps,
@@ -51,6 +53,7 @@ pub(crate) struct VaultSetup {
 /// Installed dependencies retained by every workspace window.
 #[derive(Clone)]
 pub(crate) struct Booted {
+    local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
     settings_ui: nocterm_settings_ui::Deps,
     images: nocterm_agent::ImageDeps,
@@ -82,6 +85,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         persist,
         transport,
         local,
+        local_host,
         terminal_auth_factory,
         files,
         themes,
@@ -108,7 +112,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         &shutdown,
         cx,
     );
-    let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown, cx);
+    let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown);
     let connections = match nocterm_connections::install(connections, &ui, &shutdown, cx) {
         Ok(connections) => Some(connections),
         Err(error) => {
@@ -140,6 +144,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         cx,
     );
     let booted = Booted {
+        local_host,
         terminal,
         settings_ui,
         images,
@@ -160,11 +165,7 @@ fn terminal_dependencies(
     local: nocterm_terminal::LocalSessions,
     stored: Option<&nocterm_core::Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
-    cx: &mut App,
 ) -> nocterm_terminal::Deps {
-    if local.is_available() {
-        nocterm_workspace::host::set_local_exec(Arc::new(nocterm_local::LocalExec), cx);
-    }
     let deps = nocterm_terminal::Deps::new(transport, local);
     let Some(paths) = stored else {
         return deps;
@@ -280,8 +281,8 @@ pub(crate) fn build_workspace(
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     nocterm_snippets_ui::register(workspace, window, cx);
-    nocterm_containers_ui::register(workspace, window, cx);
-    nocterm_monitor_ui::register(workspace, window, cx);
+    nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
+    nocterm_monitor_ui::register(booted.local_host.clone(), workspace, window, cx);
     nocterm_agent::register(
         workspace,
         booted.images.clone(),

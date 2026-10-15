@@ -7,6 +7,7 @@
 //! closed only what the summary shows is read, at the slow interval.
 //!
 //! Owns: active-host sampling lifecycle, status/details views and monitor settings controls.
+//! Local host execution is supplied explicitly at registration and retained by the model.
 //! Does not own: metric parsing, host execution or session establishment.
 //! Ports used: workspace active-session contracts and session `HostExec`; provided: `SettingsPageSpec`.
 //! Settings section: `[monitor]`. Globals: none.
@@ -19,8 +20,10 @@ mod settings;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
+use nocterm_session::HostExec;
 use nocterm_ui::SettingsPageSpec;
 use nocterm_workspace::Workspace;
+use std::sync::Arc;
 
 pub use page::MonitorPage;
 pub use settings::{
@@ -36,11 +39,15 @@ gpui_kit::actions!(
 );
 
 /// Adds the monitor to the footer of `workspace`.
-pub fn register(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
+pub fn register(
+    local: Option<Arc<dyn HostExec>>,
+    workspace: &mut Workspace,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     nocterm_ui::register_setting::<crate::MonitorSettings>(cx);
     let handle = cx.entity();
     let session = workspace.active_session(cx);
-    let local = nocterm_workspace::host::local_exec(cx);
     let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, local, cx));
     let status = cx.new(|cx| status::MonitorStatus::new(monitor, cx));
     workspace.add_leading_status_view(status, cx);

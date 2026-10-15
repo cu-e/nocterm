@@ -386,3 +386,40 @@ fn malformed_successful_listing_remains_a_retryable_failure(cx: &mut TestAppCont
     assert_status(cx, &fixture, |status| matches!(status, Status::Ready));
     assert_eq!(badge(cx, &fixture).as_deref(), Some("1"));
 }
+
+#[gpui_kit::test]
+fn registered_container_panels_keep_their_supplied_host_across_other_windows(
+    cx: &mut TestAppContext,
+) {
+    let first = FakeHost::new(true);
+    let second = FakeHost::new(true);
+    for host in [first.clone(), second.clone(), first.clone()] {
+        let fixture = fixture(cx, None);
+        cx.update_window(fixture.window, |_, window, cx| {
+            fixture.workspace.update(cx, |workspace, cx| {
+                crate::register(Some(host.clone()), workspace, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        first
+            .ran()
+            .iter()
+            .filter(|command| command.starts_with("docker events"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        second
+            .ran()
+            .iter()
+            .filter(|command| command.starts_with("docker events"))
+            .count(),
+        1
+    );
+    assert!(first.following(0));
+    assert!(first.following(1));
+    assert!(second.following(0));
+}

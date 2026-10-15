@@ -96,6 +96,10 @@ impl PreparedApp {
         });
         let codec = Arc::new(nocterm_image_codec::NativeImageCodec);
         let images = nocterm_agent::ImageDeps::new(codec.clone(), codec);
+        let local_host = self
+            .local
+            .is_available()
+            .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
         let booted = bootstrap::bootstrap(
             bootstrap::Services {
                 images,
@@ -108,6 +112,7 @@ impl PreparedApp {
                 persist: true,
                 transport: Arc::new(self.transport),
                 local: self.local,
+                local_host,
                 terminal_auth_factory: Some(agent_auth::opener),
                 files: self.files,
                 themes: Some(self.themes),
