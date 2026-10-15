@@ -362,6 +362,16 @@ pub struct Emulator {
 }
 
 impl Emulator {
+    /// The most recent logical terminal text, within the caller's bounds.
+    pub fn text(&self, query: crate::TextQuery) -> crate::TextTail {
+        crate::text::TextReader::new(
+            self.search_grid(),
+            self.modes().alt_screen,
+            self.output_line_number().saturating_add(1),
+        )
+        .read(query)
+    }
+
     pub fn new(size: TermSize, options: EmulatorOptions) -> Self {
         let events = Arc::new(Mutex::new(Vec::new()));
         Self {

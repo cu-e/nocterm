@@ -13,7 +13,7 @@
 //! underneath does.
 //!
 //! * [`Emulator`] holds the screen: feed it output, read a [`Frame`].
-//! * [`Emulator::text`] reads the history and screen as bounded plain text.
+//! * [`Emulator::text`] delegates bounded history/screen reads to a borrowed text reader.
 //! * [`encode_key`], [`encode_mouse`], [`encode_paste`] and [`encode_focus`]
 //!   produce what to send for user input, given the [`Modes`] the running
 //!   program has set.

@@ -38,7 +38,6 @@ nocterm-ui = 5
 "nocterm_ui::settings::SettingsStore" = 1
 
 [impl_spread]
-"nocterm_vt::emulator::Emulator" = 5
 
 [pub_fields]
 "nocterm_agent::panel::entries::tool_input::Section" = 3
