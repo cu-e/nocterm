@@ -115,3 +115,15 @@ supplied settings. Successful installation is reused by every workspace, editor
 and action; a shutdown registration failure reports its typed error and omits the
 feature. Closing the first window does not change the library used by surviving
 or newly opened workspaces. See [ADR0050](../adr/0050-retained-snippet-installation.md).
+
+
+Bootstrap retains the exact KeymapHandle installed from application defaults and
+the optional user file. Settings/OpenKeymap page factories and NewWindow clones
+share that installation; closing its first workspace does not reload or replace
+bindings. Services remain composition inputs rather than a lookup registry.
+Application directory actions capture config and fallback state/logs paths once.
+LogsDirectory reads the supplied settings handle at click time, so only published
+LoggingOptions changes affect the next native open and Some(empty) stays explicit.
+Directory authority comes only from captured paths and settings. The existing native
+create/open background lifecycle and notices remain unchanged. See
+[ADR0051](../adr/0051-retained-keymap-installation.md).

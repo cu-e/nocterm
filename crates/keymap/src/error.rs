@@ -12,6 +12,6 @@ pub enum KeymapError {
         #[source]
         source: InvalidKeystrokeError,
     },
-    #[error("{0}")]
-    Persistence(#[from] PersistError),
+    #[error(transparent)]
+    Persistence(#[from] nocterm_core::SharedError<PersistError>),
 }

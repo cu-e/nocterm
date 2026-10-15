@@ -54,6 +54,7 @@ pub(crate) struct VaultSetup {
 /// Installed dependencies retained by every workspace window.
 #[derive(Clone)]
 pub(crate) struct Booted {
+    keymap: nocterm_keymap::KeymapHandle,
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
     settings_ui: nocterm_settings_ui::Deps,
@@ -69,6 +70,9 @@ pub(crate) struct Booted {
 }
 
 impl Booted {
+    pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
+        self.keymap.clone()
+    }
     pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Deps {
         self.settings_ui.clone()
     }
@@ -140,11 +144,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
     report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
     let files = install_files(files, &ui, &shutdown, cx);
-    crate::keymap::load(
-        stored.map(|paths| paths.config_dir().join("keymap.toml")),
-        cx,
-    );
+    let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
+    let keymap = crate::keymap::load(user_keymap, cx);
     let booted = Booted {
+        keymap,
         local_host,
         terminal,
         settings_ui,
@@ -157,7 +160,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         workspace: nocterm_workspace::Deps::new(layout),
         themes,
     };
-    crate::application::register(paths, booted.clone(), cx);
+    crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     booted
 }
 
@@ -307,6 +310,7 @@ pub(crate) fn build_workspace(
         vault,
         booted.themes.clone(),
         booted.settings_deps(),
+        booted.keymap(),
     );
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.

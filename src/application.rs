@@ -3,24 +3,30 @@
 use std::path::PathBuf;
 
 use gpui_kit::{
-    App, Global,
+    App,
     component::{WindowExt as _, button::Button, v_flex},
     prelude::*,
 };
 use nocterm_core::Paths;
-use nocterm_ui::SettingsExt as _;
+use nocterm_store::SettingsHandle;
 use nocterm_workspace::{About, CloseWindow, LogsDirectory, NewWindow, ProfilesDirectory, Quit};
 
 // release-please's authoritative version file, also used by packaging.
 pub(crate) const VERSION: &str = include_str!("../version.txt");
 
-struct ApplicationState {
+pub(crate) fn register(
     paths: Paths,
-}
-impl Global for ApplicationState {}
-
-pub(crate) fn register(paths: Paths, booted: crate::bootstrap::Booted, cx: &mut App) {
-    cx.set_global(ApplicationState { paths });
+    booted: crate::bootstrap::Booted,
+    settings: SettingsHandle,
+    cx: &mut App,
+) {
+    register_directory_actions(
+        paths.config_dir().to_owned(),
+        paths.state_dir().join("logs"),
+        settings,
+        open_directory,
+        cx,
+    );
     nocterm_workspace::command_palette::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(move |_: &NewWindow, cx| {
@@ -62,26 +68,25 @@ pub(crate) fn register(paths: Paths, booted: crate::bootstrap::Booted, cx: &mut 
             });
         }
     });
-    cx.on_action(|_: &ProfilesDirectory, cx| {
-        let directory = cx
-            .global::<ApplicationState>()
-            .paths
-            .config_dir()
-            .to_owned();
-        open_directory(directory, cx);
-    });
-    cx.on_action(|_: &LogsDirectory, cx| {
-        let directory = cx
-            .setting::<nocterm_session::LoggingOptions>()
+}
+
+/// Composition seam shared by native actions and action-dispatch tests.
+fn register_directory_actions(
+    config: PathBuf,
+    fallback_logs: PathBuf,
+    settings: SettingsHandle,
+    open: impl Fn(PathBuf, &mut App) + Clone + 'static,
+    cx: &mut App,
+) {
+    let profiles = open.clone();
+    cx.on_action(move |_: &ProfilesDirectory, cx| profiles(config.clone(), cx));
+    cx.on_action(move |_: &LogsDirectory, cx| {
+        let directory = settings
+            .setting::<nocterm_session::LoggingOptions>(cx)
             .directory
             .clone()
-            .unwrap_or_else(|| {
-                cx.global::<ApplicationState>()
-                    .paths
-                    .state_dir()
-                    .join("logs")
-            });
-        open_directory(directory, cx);
+            .unwrap_or_else(|| fallback_logs.clone());
+        open(directory, cx);
     });
 }
 
@@ -109,3 +114,6 @@ fn report_error(message: String, cx: &mut App) {
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

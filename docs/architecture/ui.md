@@ -206,6 +206,13 @@ them without a restart and leaves the component library's own bindings alone.
 Edit APIs return `KeymapError`, preserving native keystroke and persistence causes.
 A failed save leaves the desired binding installed and reports the failure;
 a later successful edit persists the current desired keymap.
+The composition root retains a cloneable KeymapHandle around the private owner and
+passes it to each page and window. Named edits install owned marked bindings after
+releasing the entity borrow, then notify observers, including persistence failure.
+The typed shared PersistError is the same original cause returned to the caller;
+invalid keystrokes leave the previous state and diagnostic intact. Native loading
+and synchronous keymap persistence remain existing UI-layer migration debt.
+See [ADR0051](../adr/0051-retained-keymap-installation.md).
 It also names actions for people (`humanize`) and decides which are user
 commands (`offered`), for the command palette and the keymap page alike.
 `nocterm-keymap-ui` is the Keymap settings page, a guest page like the vault's:

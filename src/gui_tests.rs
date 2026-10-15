@@ -15,6 +15,7 @@ use nocterm_terminal::TerminalView;
 use nocterm_workspace::{SessionSpec, Workspace};
 
 mod chat_history;
+mod keymap;
 mod menu_tabs;
 mod program_opening;
 mod shortcuts;
@@ -103,8 +104,25 @@ fn fixture_with_theme_option(
     Entity<TerminalView>,
     Arc<MockTransport>,
 ) {
+    let (window, workspace, terminal, transport, _) =
+        fixture_with_keymap(cx, vault_ready, themes, with_local);
+    (window, workspace, terminal, transport)
+}
+
+fn fixture_with_keymap(
+    cx: &mut TestAppContext,
+    vault_ready: bool,
+    themes: Option<Arc<nocterm_themes::test_support::InMemoryThemes>>,
+    with_local: bool,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<TerminalView>,
+    Arc<MockTransport>,
+    nocterm_keymap::KeymapHandle,
+) {
     let transport = Arc::new(MockTransport::default());
-    let (window, workspace, terminal) = cx.update(|cx| {
+    let (window, workspace, terminal, keymap) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
         let directory = tempfile::tempdir().unwrap();
         settings.update::<nocterm_session::LocalShellSettings>(|section| {
@@ -158,7 +176,7 @@ fn fixture_with_theme_option(
                 workspace.read(cx).find_item::<TerminalView>().unwrap()
             })
             .unwrap();
-        (window, workspace, terminal)
+        (window, workspace, terminal, booted.keymap())
     });
     emit(cx, &transport, 0, Event::Connected);
     cx.update_window(window, |_, window, cx| {
@@ -175,7 +193,7 @@ fn fixture_with_theme_option(
         assert!(terminal.read(cx).focus_handle(cx).is_focused(window));
     })
     .unwrap();
-    (window, workspace, terminal, transport)
+    (window, workspace, terminal, transport, keymap)
 }
 
 /// Installs the application's globals as the application does, with the

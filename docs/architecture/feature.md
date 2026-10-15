@@ -462,3 +462,12 @@ only at execution; App-deferred work does not retain Installed through teardown.
 Editor country-input subscriptions capture the narrow weak raw-facts service rather
 than the installation, preserving owner-owned subscription cleanup without nested
 unsubscribe during callback destruction. UI owners retain the installation itself.
+
+
+The keymap page receives its actual KeymapHandle from the root's lazy page factory.
+Its private search, recording and per-view message remain window-local; a retained
+weak observation subscription refreshes shared desired bindings and typed native
+save errors across windows. Deactivating a page releases interception; closing also releases
+observation. It edits only through named handle operations, without a global owner
+or mutable model projection. New windows reuse the root installation rather than
+reloading the file. See [ADR0051](../adr/0051-retained-keymap-installation.md).

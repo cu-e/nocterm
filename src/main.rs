@@ -100,9 +100,10 @@ fn register_settings(
     vault: Option<&nocterm_vault_ui::Installed>,
     themes: nocterm_ui::ThemeUi,
     deps: nocterm_settings_ui::Deps,
+    keymap: nocterm_keymap::KeymapHandle,
 ) {
     let mut pages = vec![
-        nocterm_keymap_ui::settings_page(),
+        nocterm_keymap_ui::settings_page(keymap),
         nocterm_monitor_ui::settings_page(),
         nocterm_files::settings_page(),
     ];

@@ -28,17 +28,14 @@ nocterm-workspace = 4
 [domain_io]
 
 [global_reads]
-nocterm = 3
+nocterm = 1
 nocterm-agent-runtime = 1
-nocterm-keymap = 2
 nocterm-settings-ui = 2
 nocterm-ui = 5
 
 [globals]
-"nocterm::application::ApplicationState" = 1
 "nocterm_agent::TerminalAuth" = 1
 "nocterm_agent_runtime::RuntimeGlobal" = 1
-"nocterm_keymap::Keymap" = 1
 "nocterm_ui::design::Design" = 1
 "nocterm_ui::layout::LayoutMemory" = 1
 "nocterm_ui::notice::Notices" = 1
@@ -72,7 +69,6 @@ nocterm-ui = 5
 "nocterm_files::statistics::Policy" = 1
 "nocterm_files::statistics::Statistics" = 8
 "nocterm_keymap_ui::rows::Row" = 7
-"nocterm_keymap_ui::view::KeymapView" = 3
 "nocterm_monitor_ui::model::Plan" = 2
 "nocterm_settings_ui::field::Field" = 3
 "nocterm_snippets_ui::panel::run::RunTarget" = 1

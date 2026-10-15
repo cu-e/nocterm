@@ -1,7 +1,7 @@
 //! The table's rows: every binding in effect, then every command without
 //! one, and the search over them.
 use gpui_kit::{App, SharedString};
-use nocterm_keymap::{Binding, Keymap, Source, humanize, normalize, offered};
+use nocterm_keymap::{Binding, KeymapHandle, Source, humanize, normalize, offered};
 
 /// One line of the table.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,8 +33,7 @@ pub(crate) fn default_context(action: &str, defaults: &[Binding]) -> Option<Stri
     )
 }
 
-pub(crate) fn rows(cx: &App) -> Vec<Row> {
-    let keymap = Keymap::global(cx);
+pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
     let docs = cx.action_documentation();
     let row = |action: &str, binding: Option<&Binding>| Row {
         action: action.to_owned(),
@@ -47,9 +46,9 @@ pub(crate) fn rows(cx: &App) -> Vec<Row> {
         keystrokes: binding.map(|binding| binding.keystrokes.clone()),
         context: binding.and_then(|binding| binding.context.clone()),
         source: binding.map(|binding| binding.source),
-        customized: keymap.is_customized(action),
+        customized: keymap.is_customized(action, cx),
     };
-    let bindings = keymap.bindings();
+    let bindings = keymap.bindings(cx);
     let mut rows: Vec<Row> = bindings
         .iter()
         .filter(|binding| offered(&binding.action))

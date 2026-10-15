@@ -13,7 +13,7 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_keymap::{Keymap, Source};
+use nocterm_keymap::Source;
 use nocterm_ui::{IconName, form};
 
 use crate::{
@@ -45,6 +45,7 @@ impl KeymapView {
             .child(
                 div().flex_1().child(
                     Input::new(&self.search)
+                        .id("keymap-search")
                         .prefix(gpui_kit::component::Icon::new(IconName::Search).small())
                         .cleanable(true),
                 ),
@@ -204,7 +205,7 @@ impl KeymapView {
                                 .tooltip("Remove this shortcut")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     let result =
-                                        Keymap::unbind(&action, context.clone(), &keys, cx);
+                                        this.keymap.unbind(&action, context.clone(), &keys, cx);
                                     this.report(result, cx);
                                 })),
                         )
@@ -217,7 +218,7 @@ impl KeymapView {
                                 .icon(IconName::RotateCcw)
                                 .tooltip("Restore the default shortcuts")
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    let result = Keymap::reset(&reset, cx);
+                                    let result = this.keymap.reset(&reset, cx);
                                     this.report(result, cx);
                                 })),
                         )
@@ -230,12 +231,12 @@ impl KeymapView {
 impl Render for KeymapView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.search.read(cx).value().to_string();
-        let listed: Vec<Row> = rows(cx)
+        let listed: Vec<Row> = rows(&self.keymap, cx)
             .into_iter()
             .filter(|row| matches(row, &query))
             .collect();
         let count = listed.len();
-        let file_error = Keymap::global(cx).error.clone();
+        let file_error = self.keymap.error(cx).map(ToString::to_string);
         let mut table = v_flex().id("keymap-table").test_support().w_full();
         table = table.child(Self::column_titles(cx));
         for (index, row) in listed.into_iter().enumerate() {
@@ -261,10 +262,15 @@ impl Render for KeymapView {
             ))
             .child(self.header(cx))
             .when_some(file_error, |page, error| {
-                page.child(form::error_text(
-                    format!("keymap.toml could not be used: {error}"),
-                    cx,
-                ))
+                page.child(
+                    div()
+                        .id("keymap-file-error")
+                        .test_support()
+                        .child(form::error_text(
+                            format!("keymap.toml could not be used: {error}"),
+                            cx,
+                        )),
+                )
             })
             .when_some(self.message.clone(), |page, (message, error)| {
                 page.child(if error {

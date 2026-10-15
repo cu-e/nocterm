@@ -4,10 +4,13 @@ use gpui_kit::{
     Subscription, Window,
     component::input::{InputEvent, InputState},
 };
-use nocterm_keymap::{Keymap, KeymapError, humanize};
+use nocterm_keymap::{KeymapError, KeymapHandle, humanize};
 use nocterm_ui::SettingsPage;
 
 use crate::rows::default_context;
+
+#[path = "render.rs"]
+mod render;
 
 /// What the next keystroke is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,16 +27,18 @@ pub(crate) enum Recording {
 
 pub struct KeymapView {
     focus: FocusHandle,
-    pub(crate) search: Entity<InputState>,
-    pub(crate) recording: Option<Recording>,
+    search: Entity<InputState>,
+    recording: Option<Recording>,
     /// The result of the last change, or why it failed.
-    pub(crate) message: Option<(SharedString, bool)>,
+    message: Option<(SharedString, bool)>,
     interceptor: Option<Subscription>,
     _subscription: Subscription,
+    keymap: KeymapHandle,
+    _keymap_subscription: Subscription,
 }
 
 impl KeymapView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(keymap: KeymapHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Search commands, descriptions or keys…")
         });
@@ -42,7 +47,13 @@ impl KeymapView {
                 cx.notify();
             }
         });
+        let view = cx.weak_entity();
+        let keymap_subscription = keymap.observe(cx, move |cx| {
+            let _ = view.update(cx, |_, cx| cx.notify());
+        });
         Self {
+            keymap,
+            _keymap_subscription: keymap_subscription,
             focus: cx.focus_handle(),
             search,
             recording: None,
@@ -115,32 +126,34 @@ impl KeymapView {
         keys: &str,
         cx: &mut Context<Self>,
     ) {
-        let others = Keymap::global(cx).conflicts(action, &context, keys);
-        self.message = Some(match Keymap::bind(action, context, replacing, keys, cx) {
-            Err(error) => (format!("Not saved: {error}").into(), true),
-            Ok(()) if others.is_empty() => {
-                (format!("{keys} runs {}.", humanize(action)).into(), false)
-            }
-            Ok(()) => (
-                format!(
-                    "{keys} now runs {} instead of {}.",
-                    humanize(action),
-                    others
-                        .iter()
-                        .map(|other| humanize(other))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-                .into(),
-                false,
-            ),
-        });
+        let others = self.keymap.conflicts(action, &context, keys, cx);
+        self.message = Some(
+            match self.keymap.bind(action, context, replacing, keys, cx) {
+                Err(error) => (format!("Not saved: {error}").into(), true),
+                Ok(()) if others.is_empty() => {
+                    (format!("{keys} runs {}.", humanize(action)).into(), false)
+                }
+                Ok(()) => (
+                    format!(
+                        "{keys} now runs {} instead of {}.",
+                        humanize(action),
+                        others
+                            .iter()
+                            .map(|other| humanize(other))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .into(),
+                    false,
+                ),
+            },
+        );
         cx.notify();
     }
 
     /// Starts recording a new shortcut for `action`.
     pub(crate) fn add(&mut self, action: &str, cx: &mut Context<Self>) {
-        let context = default_context(action, &Keymap::global(cx).defaults());
+        let context = default_context(action, &self.keymap.defaults(cx));
         self.record(
             Recording::Bind {
                 action: action.to_owned(),

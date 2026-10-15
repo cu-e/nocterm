@@ -49,3 +49,4 @@ acceptance; a later record supersedes an earlier one.
 | [0048](0048-guarded-connection-facts.md) | Original-source guarded raw facts and bounded connection jobs |
 | [0049](0049-bounded-panel-coordination.md) | Private panel membership, notice tasks and finite presentation operations |
 | [0050](0050-retained-snippet-installation.md) | Snippet views retain their original installation and private draft controls |
+| [0051](0051-retained-keymap-installation.md) | Keymap pages and directory actions retain supplied ownership across windows |
