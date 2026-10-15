@@ -103,9 +103,7 @@ pub(crate) fn spawn(
         .kill_on_drop(true)
         .spawn()
         .map_err(|source| match &request.sandbox {
-            Some(_) => AgentError::Sandbox(nocterm_ai::sandbox::SandboxLaunchError::Spawn(
-                Arc::new(source),
-            )),
+            Some(_) => AgentError::Sandbox(nocterm_ai::sandbox::SandboxLaunchError::spawn(source)),
             None => AgentError::Io(format!("Cannot start agent: {source}")),
         })?;
     let group = Arc::new(ProcessGroup::new(
@@ -375,5 +373,64 @@ mod tests {
             return false;
         }
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn invalid_native_sandbox_executable_preserves_spawn_cause_without_plain_fallback() {
+        use std::error::Error;
+        let directory = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(directory.path()).unwrap();
+        let bwrap = root.join("bwrap");
+        std::fs::write(&bwrap, b"invalid native executable format").unwrap();
+        std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let marker = root.join("plain-ran");
+        let mut input = request(
+            &root,
+            "/bin/sh",
+            vec![
+                "-c".into(),
+                format!("printf leaked > '{}'", marker.display()),
+            ],
+        );
+        input.sandbox = Some(nocterm_ai::sandbox::SandboxPolicy::new(
+            &root,
+            None,
+            &[],
+            &[],
+        ));
+        input
+            .launch
+            .env
+            .insert("PATH".into(), root.to_string_lossy().into_owned());
+        let error = spawn(&input, None)
+            .err()
+            .expect("native spawn must refuse invalid bubblewrap");
+        let AgentError::Sandbox(error) = error else {
+            panic!("native refusal remains a sandbox launch error")
+        };
+        assert!(matches!(
+            error,
+            nocterm_ai::sandbox::SandboxLaunchError::Spawn(_)
+        ));
+        let native = error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(native.raw_os_error(), Some(8));
+        let clone = error.clone();
+        let shared = clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, shared));
+        assert_eq!(native.kind(), shared.kind());
+        assert!(!marker.exists());
     }
 }

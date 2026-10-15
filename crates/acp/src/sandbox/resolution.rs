@@ -3,7 +3,7 @@ use nocterm_ai::{
     sandbox::{PathKind, ResolvedPath, ResolvedSandboxPaths, SandboxPolicy},
     workspace::WorkdirError,
 };
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 pub(crate) struct PathResolver;
 impl PathResolver {
@@ -64,8 +64,5 @@ fn paths(paths: &[std::path::PathBuf]) -> Result<Vec<ResolvedPath>, WorkdirError
 }
 
 fn error(path: &Path, source: std::io::Error) -> WorkdirError {
-    WorkdirError::Resolve {
-        path: path.to_owned(),
-        source: Arc::new(source),
-    }
+    WorkdirError::resolve(path.to_owned(), source)
 }

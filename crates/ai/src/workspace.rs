@@ -1,7 +1,8 @@
 //! Native workspace preparation is supplied by an adapter, never performed here.
 use crate::sandbox::{ProtectedWorkdirError, SandboxPolicy};
 use futures::future::BoxFuture;
-use std::{path::PathBuf, sync::Arc};
+use nocterm_core::SharedError;
+use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IsolationPaths {
     pub private_dirs: Vec<PathBuf>,
@@ -26,18 +27,32 @@ pub enum WorkdirError {
     CreatePrivate {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: SharedError<std::io::Error>,
     },
     #[error("Could not resolve agent workspace path {path}: {source}")]
     Resolve {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: SharedError<std::io::Error>,
     },
     #[error("{0}")]
     Protected(#[from] ProtectedWorkdirError),
     #[error("The agent working directory changed during startup. Retry opening the chat.")]
     ChangedSincePrepared,
+}
+impl WorkdirError {
+    pub fn create_private(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::CreatePrivate {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
+    pub fn resolve(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Resolve {
+            path: path.into(),
+            source: SharedError::from_error(source),
+        }
+    }
 }
 pub trait WorkdirResolver: Send + Sync {
     fn prepare(

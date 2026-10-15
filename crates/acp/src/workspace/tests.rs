@@ -154,9 +154,22 @@ fn unreadable_native_credential_resolution_retains_its_io_cause_and_never_succee
     let source = error
         .source()
         .unwrap()
-        .downcast_ref::<Arc<std::io::Error>>()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
         .unwrap();
     assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        source,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+    ));
 }
 
 #[cfg(unix)]
@@ -178,11 +191,59 @@ fn looping_private_alias_is_a_typed_resolution_failure_instead_of_a_mount_fallba
     };
     let error = block_on(NativeWorkdirResolver::with_home(None).prepare(input)).unwrap_err();
     assert!(matches!(error, WorkdirError::Resolve { .. }));
-    assert!(
-        error
+    let source = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert!(source.raw_os_error().is_some());
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        source,
+        clone
             .source()
             .unwrap()
-            .downcast_ref::<Arc<std::io::Error>>()
-            .is_some()
-    );
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+    ));
+    assert_eq!(error.to_string(), clone.to_string());
+}
+
+#[test]
+fn private_workspace_creation_refusal_preserves_the_native_cause_and_original_file() {
+    use std::error::Error;
+    let directory = tempfile::tempdir().unwrap();
+    let parent = directory.path().join("existing-file");
+    std::fs::write(&parent, b"keep").unwrap();
+    let expected = std::fs::create_dir_all(&parent).unwrap_err();
+    let candidate = parent.join("workspace");
+    let error =
+        block_on(NativeWorkdirResolver::with_home(None).prepare(request(&candidate, true, false)))
+            .unwrap_err();
+    assert!(matches!(error, WorkdirError::CreatePrivate { .. }));
+    let native = error
+        .source()
+        .unwrap()
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap();
+    assert_eq!(native.kind(), expected.kind());
+    assert!(native.raw_os_error().is_some());
+    let clone = error.clone();
+    assert!(std::ptr::eq(
+        native,
+        clone
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+    ));
+    assert_eq!(std::fs::read(parent).unwrap(), b"keep");
 }

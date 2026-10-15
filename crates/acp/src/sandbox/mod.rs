@@ -56,10 +56,9 @@ fn lookup(
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) => {}
             Err(source) if strict => {
-                return Err(nocterm_ai::workspace::WorkdirError::Resolve {
-                    path: candidate,
-                    source: std::sync::Arc::new(source),
-                });
+                return Err(nocterm_ai::workspace::WorkdirError::resolve(
+                    candidate, source,
+                ));
             }
             Err(_) => {}
         }

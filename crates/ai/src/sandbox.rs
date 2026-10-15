@@ -233,7 +233,12 @@ pub enum SandboxLaunchError {
     #[error("{0}")]
     Protected(#[from] ProtectedWorkdirError),
     #[error("Cannot start agent: {0}")]
-    Spawn(#[source] std::sync::Arc<std::io::Error>),
+    Spawn(#[source] nocterm_core::SharedError<std::io::Error>),
+}
+impl SandboxLaunchError {
+    pub fn spawn(source: std::io::Error) -> Self {
+        Self::Spawn(nocterm_core::SharedError::from_error(source))
+    }
 }
 #[cfg(test)]
 mod tests;

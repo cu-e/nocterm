@@ -4,7 +4,7 @@ use nocterm_ai::{
     sandbox::SandboxPolicy,
     workspace::{PreparedWorkspace, WorkdirError, WorkdirRequest, WorkdirResolver},
 };
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 #[derive(Clone, Default)]
 enum Home {
     #[default]
@@ -34,10 +34,7 @@ impl WorkdirResolver for NativeWorkdirResolver {
             }
             if request.create_private {
                 nocterm_core::paths::ensure_private_dir(&request.candidate).map_err(|source| {
-                    WorkdirError::CreatePrivate {
-                        path: request.candidate.clone(),
-                        source: Arc::new(source),
-                    }
+                    WorkdirError::create_private(request.candidate.clone(), source)
                 })?;
             }
             let root =

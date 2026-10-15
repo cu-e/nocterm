@@ -140,7 +140,9 @@ Clones share the original payload without changing account selection or tail lim
 `nocterm-acp::NativeWorkdirResolver` creates the explicit private default workspace
 through the shared foundation helper and canonicalizes user-selected roots. One
 private path resolver supplies facts to AI's pure policy and revalidates them before
-launch. Existing credential aliases resolve to the same paths used for mounting;
+launch. Workspace and sandbox-spawn diagnoses retain the original typed native
+I/O cause through foundation sharing and narrow domain constructors. Clones keep
+the same original allocation. Existing credential aliases resolve to the same paths used for mounting;
 non-missing native failures refuse the operation with typed I/O causes.
 
 The native sandbox launcher checks bubblewrap against the current sanitized agent

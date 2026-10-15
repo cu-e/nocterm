@@ -13,6 +13,8 @@
 //! ImageCodecCause reuses core shared causes without exposing a native codec type.
 //! Account usage diagnostics retain typed native I/O causes through foundation SharedError;
 //! narrow domain constructors preserve operation category and path.
+//! Workspace preparation and sandbox spawn diagnostics retain typed shared native I/O;
+//! adapter constructors preserve classification without changing policy or mount authority.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
 //! Snapshot framing and transcript timestamps accept supplied identity/time.
