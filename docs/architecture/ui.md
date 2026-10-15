@@ -175,8 +175,9 @@ every new window. Agent presentation receives the same handle through its suppli
 subscriptions exclude unrelated keys, flags and persistence-only notifications.
 Shared history split updates are applied at the next native group rebuild, preserving
 its existing entity and subscriptions without another persistence write.
-The legacy `LayoutMemory` compatibility shell retains that same entity and creates
-no second writer or shutdown participant.
+`LayoutMemory` is an initialization namespace returning the explicit handle. It
+keeps the existing application quit hook in its initializer and has no global state
+or fallback arrangement. Clones share the original persistence participant.
 The explicitly injected `ShutdownCoordinator` captures layout before background
 drain and shares one deadline across its registered participants (ADR 0013).
 Settings also uses `nocterm-store`, with durable publication rather than optimistic

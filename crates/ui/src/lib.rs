@@ -11,7 +11,7 @@
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling and the installed settings handle.
 //! Settings sections: appearance, terminal.
-//! Globals: Design, SettingsStore, LayoutMemory, Notices.
+//! Globals: Design, SettingsStore, Notices.
 //! Imported themes use an explicit ThemeUi projection over ThemesHandle.
 //! Feature policy schemas are registered by their owning service.
 //! Invariants: layout edits remain visible on persistence failure; theme uses typed settings.
