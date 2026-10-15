@@ -24,7 +24,7 @@ pub(super) enum CleanupError {
     Terminate(nix::errno::Errno),
     #[cfg(any(windows, test))]
     #[error("Cannot run taskkill to stop the agent process tree: {0}")]
-    TaskkillFailed(std::sync::Arc<std::io::Error>),
+    TaskkillFailed(#[source] nocterm_core::SharedError<std::io::Error>),
     #[cfg(any(windows, test))]
     #[error("taskkill did not confirm agent process tree termination ({0})")]
     TaskkillUnconfirmed(std::process::ExitStatus),
@@ -163,8 +163,9 @@ fn stop_group(pid: u32, force: bool) -> Result<(), CleanupError> {
 
 #[cfg(any(windows, test))]
 fn confirm_taskkill(result: std::io::Result<std::process::ExitStatus>) -> Result<(), CleanupError> {
-    let status =
-        result.map_err(|error| CleanupError::TaskkillFailed(std::sync::Arc::new(error)))?;
+    let status = result.map_err(|error| {
+        CleanupError::TaskkillFailed(nocterm_core::SharedError::from_error(error))
+    })?;
     if status.success() {
         Ok(())
     } else {
@@ -174,8 +175,44 @@ fn confirm_taskkill(result: std::io::Result<std::process::ExitStatus>) -> Result
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::confirm_taskkill;
+    use super::{CleanupError, confirm_taskkill};
+    use nocterm_core::SharedError;
+    use std::error::Error as _;
     use std::os::unix::process::ExitStatusExt as _;
+    #[test]
+    fn taskkill_failure_retains_the_native_error_across_clones() {
+        let native = std::io::Error::from_raw_os_error(2);
+        let message = native.to_string();
+        let error = confirm_taskkill(Err(native)).unwrap_err();
+        let cloned = error.clone();
+        assert!(matches!(error, CleanupError::TaskkillFailed(_)));
+        let holder = error.source().unwrap();
+        assert!(holder.is::<SharedError<std::io::Error>>());
+        let native = holder
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        let cloned_native = cloned
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(native.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(native.raw_os_error(), Some(2));
+        assert_eq!(native.to_string(), message);
+        assert!(std::ptr::eq(native, cloned_native));
+        assert_eq!(
+            error.to_string(),
+            format!("Cannot run taskkill to stop the agent process tree: {message}")
+        );
+        let unconfirmed =
+            confirm_taskkill(Ok(std::process::ExitStatus::from_raw(256))).unwrap_err();
+        assert!(matches!(unconfirmed, CleanupError::TaskkillUnconfirmed(_)));
+        assert!(unconfirmed.source().is_none());
+    }
     #[test]
     fn taskkill_errors_never_acknowledge_process_cleanup() {
         assert!(confirm_taskkill(Ok(std::process::ExitStatus::from_raw(0))).is_ok());

@@ -151,6 +151,10 @@ changed canonical cwd, protected roots, unsupported platforms and missing or
 unexecutable bubblewrap. It projects ordered policy mounts into native flags while
 process grouping and cleanup retain their existing owner.
 
+ACP native taskkill diagnostics retain their original I/O error through foundation
+SharedError, including native classification and shared allocation identity. The public
+process shutdown port retains its existing stringified AgentError diagnostic.
+
 ## Connection files and native values
 
 `nocterm-connections-io` implements the connection repository with the shared

@@ -8,6 +8,8 @@
 //! and, on Linux, the `run_agent_host` entry point with its `AgentHostError`.
 //! Settings section: none. Globals: none.
 //! Invariants: relay registrations authenticate callers; revocation closes owned sockets.
+//! Native taskkill diagnostics retain the original I/O error through shared typed causes;
+//! the public process shutdown port retains its existing string diagnostic.
 mod bridge;
 mod client;
 mod lines;
