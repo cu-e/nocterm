@@ -400,6 +400,13 @@ identities guard deferred completion. MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
+Panel coordination retains twelve private fields across four implementation files.
+ChatList binds selection and per-chat observation to the original entity; removal
+commits only after existing document admission. SignInCards retains original-token
+secret inputs, PanelBindings installation lifetimes, and PanelNotices the actual
+cancellable 33-ms redraw task and approval fingerprint. Stateless renderers consume
+immutable projections; finite preview/image operations return typed results to named
+completions. See [ADR 0049](../adr/0049-bounded-panel-coordination.md).
 
 The connections service schedules injected `RemoteOsDetector` work and owns
 probe admission, once-per-session decisions and publication/completion authority.

@@ -5,7 +5,7 @@ use super::{
 };
 use gpui_kit::{
     AnyElement, AnyView, App, Context, KeyBinding, ListAlignment, ListOffset, ListSizingBehavior,
-    ListState, TestSupportExt as _, WeakEntity, Window,
+    ListState, TestSupportExt as _, WeakEntity,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -357,152 +357,12 @@ pub(super) fn tooltip(name: String, panel: WeakEntity<AgentPanel>, cx: &mut App)
     })
     .into()
 }
-impl AgentPanel {
-    pub(super) fn reset_commands(&mut self) {
-        self.composer.reset_commands();
-    }
-    pub(super) fn refresh_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.current() else {
-            return;
-        };
-        let key = (
-            thread.entity_id(),
-            thread.read(cx).configuration().commands_revision(),
-        );
-        let commands = thread.read(cx).configuration().commands().to_vec();
-        if self.composer.refresh_commands(key, &commands, window, cx) {
-            cx.notify();
-        }
-    }
-    pub(super) fn command_matches(&self, cx: &App) -> Vec<usize> {
-        self.current()
-            .map(|thread| {
-                self.composer
-                    .command_matches(thread.read(cx).configuration().commands(), cx)
-            })
-            .unwrap_or_default()
-    }
-    pub(super) fn sync_command_token(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let commands = self
-            .current()
-            .map(|thread| thread.read(cx).configuration().commands().to_vec())
-            .unwrap_or_default();
-        self.composer.sync_command_token(&commands, window, cx);
-    }
-    fn complete_command(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.composer.confirm_command(name, window, cx);
-        cx.notify();
-    }
-    pub(super) fn command_action(
-        &mut self,
-        key: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.composer.focus(cx).is_focused(window) {
-            return;
-        }
-        let indices = self.command_matches(cx);
-        if indices.is_empty()
-            || !matches!(
-                key,
-                "up" | "down" | "escape" | "tab" | "shift-tab" | "enter"
-            )
-        {
-            return;
-        }
-        let Some(thread) = self.current() else {
-            return;
-        };
-        let names = indices
-            .iter()
-            .map(|index| {
-                thread.read(cx).configuration().commands()[*index]
-                    .name
-                    .clone()
-            })
-            .collect::<Vec<_>>();
-        self.composer.command_action(key, &names, window, cx);
-        cx.stop_propagation();
-        cx.notify();
-    }
-    pub(super) fn render_commands(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !self.composer.focus(cx).is_focused(window) {
-            return None;
-        }
-        let commands = self.command_matches(cx);
-        if commands.is_empty() {
-            return None;
-        }
-        let scroll = self.composer.command_list_state(&commands);
-        let indices = commands;
-        let menu = div()
-            .id("agent-slash-commands")
-            .test_support()
-            .rounded(px(8.))
-            .bg(cx.theme().muted)
-            .p_1()
-            .min_w_0()
-            .child(
-                list(
-                    scroll,
-                    cx.processor(move |this, index, _, cx| {
-                        this.render_command_row(index, indices[index], cx)
-                    }),
-                )
-                .with_sizing_behavior(ListSizingBehavior::Infer)
-                .w_full()
-                .max_h(px(192.)),
-            );
-        Some(div().mx_3().min_w_0().child(menu).into_any_element())
-    }
-    fn render_command_row(
-        &self,
-        index: usize,
-        command_index: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(thread) = self.current() else {
-            return div().into_any_element();
-        };
-        let command = thread.read(cx).configuration().commands()[command_index].clone();
-        let origin = CommandOrigin {
-            chat: thread.entity_id(),
-            advertisement: thread.read(cx).configuration().commands_revision(),
-        };
-        CommandRenderer::row(
-            index,
-            &command,
-            index == self.composer.selected_command(),
-            origin,
-            cx,
-        )
-    }
-    fn on_command_selected(
-        &mut self,
-        origin: CommandOrigin,
-        name: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.current().is_some_and(|thread| {
-            thread.entity_id() == origin.chat
-                && thread.read(cx).configuration().commands_revision() == origin.advertisement
-        }) {
-            self.complete_command(name, window, cx);
-        }
-    }
-}
 #[derive(Clone, Copy)]
-struct CommandOrigin {
+pub(super) struct CommandOrigin {
     chat: gpui_kit::EntityId,
     advertisement: u64,
 }
-struct CommandRenderer;
+pub(super) struct CommandRenderer;
 impl CommandRenderer {
     fn row(
         index: usize,
@@ -562,6 +422,51 @@ impl CommandRenderer {
                     })),
             )
             .into_any_element()
+    }
+}
+
+impl CommandRenderer {
+    pub(super) fn list(
+        scroll: gpui_kit::ListState,
+        rows: Vec<acp::AvailableCommand>,
+        selected: usize,
+        origin: CommandOrigin,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
+        let menu = div()
+            .id("agent-slash-commands")
+            .test_support()
+            .rounded(px(8.))
+            .bg(cx.theme().muted)
+            .p_1()
+            .min_w_0()
+            .child(
+                list(
+                    scroll,
+                    cx.processor(move |_, index, _, cx| {
+                        Self::row(index, &rows[index], index == selected, origin, cx)
+                    }),
+                )
+                .with_sizing_behavior(ListSizingBehavior::Infer)
+                .w_full()
+                .max_h(px(192.)),
+            );
+        div().mx_3().min_w_0().child(menu).into_any_element()
+    }
+}
+
+impl CommandOrigin {
+    pub(super) fn new(chat: gpui_kit::EntityId, advertisement: u64) -> Self {
+        Self {
+            chat,
+            advertisement,
+        }
+    }
+}
+
+impl CommandOrigin {
+    pub(super) fn matches(&self, chat: gpui_kit::EntityId, advertisement: u64) -> bool {
+        self.chat == chat && self.advertisement == advertisement
     }
 }
 

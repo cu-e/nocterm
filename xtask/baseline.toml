@@ -3,7 +3,7 @@
 [complexity_expects]
 nocterm = 4
 nocterm-acp = 7
-nocterm-agent = 11
+nocterm-agent = 9
 nocterm-ai = 2
 nocterm-connections = 5
 nocterm-design = 1
@@ -47,12 +47,10 @@ nocterm-ui = 5
 "nocterm_ui::settings::SettingsStore" = 1
 
 [impl_spread]
-"nocterm_agent::panel::AgentPanel" = 16
 "nocterm_vt::emulator::Emulator" = 5
 
 [pub_fields]
 "nocterm_agent::TerminalAuth" = 1
-"nocterm_agent::panel::approvals::SignInInput" = 1
 "nocterm_agent::panel::entries::tool_input::Section" = 3
 "nocterm_agent::panel::entries::tool_input::Source" = 5
 "nocterm_agent::panel::entries::tool_output::Output" = 2

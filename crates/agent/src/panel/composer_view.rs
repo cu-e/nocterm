@@ -300,3 +300,40 @@ impl ComposerView {
         self.queue.heights.retain(|id, _| !chats.contains(id));
     }
 }
+
+impl ComposerView {
+    pub(super) fn command_menu(
+        &mut self,
+        thread: Option<Entity<crate::thread::AgentThread>>,
+        window: &mut Window,
+        cx: &mut Context<AgentPanel>,
+    ) -> Option<gpui_kit::AnyElement> {
+        if !self.focus(cx).is_focused(window) {
+            return None;
+        }
+        let commands = thread
+            .as_ref()
+            .map(|thread| self.command_matches(thread.read(cx).configuration().commands(), cx))
+            .unwrap_or_default();
+        if commands.is_empty() {
+            return None;
+        }
+        let scroll = self.command_list_state(&commands);
+        let thread = thread?;
+        let origin = super::commands::CommandOrigin::new(
+            thread.entity_id(),
+            thread.read(cx).configuration().commands_revision(),
+        );
+        let rows = commands
+            .into_iter()
+            .map(|i| thread.read(cx).configuration().commands()[i].clone())
+            .collect();
+        Some(super::commands::CommandRenderer::list(
+            scroll,
+            rows,
+            self.selected_command(),
+            origin,
+            cx,
+        ))
+    }
+}

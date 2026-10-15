@@ -2,6 +2,11 @@
 //! PanelDeps supplies the actual image, shared layout and settings collaborators.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.
+//! ChatList retains original entity selection and slot observations; SignInCards owns
+//! secret controls and prompt tokens. PanelNotices owns errors, approval identity and
+//! cancellable redraw work; PanelBindings retains installation subscriptions.
+//! Stateless renderers take immutable projections; finite presentation operations return
+//! typed results to named completions bound to their original view/session authority.
 //!
 //! Owns: panel views, private Composer/ChatConfig/ChatDocument owners, AgentThread
 //! coordination, private SessionDriver and ToolRuntime owners, and the session-scoped

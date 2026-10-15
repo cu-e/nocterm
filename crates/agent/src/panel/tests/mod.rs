@@ -31,6 +31,13 @@ use std::{
     },
 };
 
+fn activate_thread(thread: &Entity<crate::thread::AgentThread>, cx: &mut App) {
+    Runtime::global(cx).update(cx, |runtime, cx| {
+        runtime.register_document(crate::thread::client(thread), cx)
+    });
+    thread.update(cx, |thread, cx| thread.request_activation(cx));
+}
+
 fn shutdown_runtime(cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         let coordinator = nocterm_store::ShutdownCoordinator::default();

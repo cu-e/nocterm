@@ -677,3 +677,80 @@ fn snapshot_capture_and_rejected_queue_budget_do_not_acquire_native_metadata(
         assert_eq!(f._directory.metadata.requests(), calls);
     });
 }
+
+#[gpui_kit::test]
+fn chat_membership_preserves_selection_and_retires_removed_observations(cx: &mut TestAppContext) {
+    use crate::panel::chat_list::{ChatList, ChatSlot};
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    first.update(cx, |thread, cx| {
+        thread.rename(Some("Keep first".into()), cx)
+    });
+    new_chat(&f, cx);
+    let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let events = Rc::new(std::cell::Cell::new(0));
+    let mut chats = ChatList::default();
+    for thread in [&second, &first] {
+        let seen = events.clone();
+        let observation = cx.update(|cx| cx.observe(thread, move |_, _| seen.set(seen.get() + 1)));
+        let slot = ChatSlot::new(thread.clone(), observation);
+        if thread.entity_id() == second.entity_id() {
+            chats.append(slot);
+            chats.select(second.entity_id());
+        } else {
+            chats.prepend(vec![slot]);
+        }
+    }
+    assert_eq!(chats.current().unwrap().entity_id(), second.entity_id());
+    assert_eq!(chats.iter().count(), 2);
+    chats.remove_admitted(&[first.entity_id()]);
+    cx.run_until_parked();
+    events.set(0);
+    first.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert_eq!(
+        events.get(),
+        0,
+        "removed slot must release its subscription"
+    );
+    second.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert_eq!(events.get(), 1, "retained slot keeps its own subscription");
+    assert_eq!(chats.current().unwrap().entity_id(), second.entity_id());
+    chats.remove_admitted(&[second.entity_id()]);
+    assert!(chats.current().is_none());
+    assert!(chats.is_empty());
+}
+
+#[gpui_kit::test]
+fn removed_chat_notifications_do_not_redraw_the_surviving_panel(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let removed = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    removed.update(cx, |thread, cx| thread.rename(Some("Old chat".into()), cx));
+    new_chat(&f, cx);
+    let survivor = cx.update(|cx| f.panel.read(cx).current().unwrap().entity_id());
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("delete-thread", removed.entity_id().as_u64()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(40));
+    cx.run_until_parked();
+    let notifications = Rc::new(std::cell::Cell::new(0));
+    let seen = notifications.clone();
+    let _observation = cx.update(|cx| cx.observe(&f.panel, move |_, _| seen.set(seen.get() + 1)));
+    removed.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(40));
+    cx.run_until_parked();
+    assert_eq!(notifications.get(), 0);
+    cx.update(|cx| {
+        assert_eq!(f.panel.read(cx).current().unwrap().entity_id(), survivor);
+        assert_eq!(f.panel.read(cx).chat_documents().len(), 1);
+    });
+}

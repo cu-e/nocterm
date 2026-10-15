@@ -67,7 +67,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
 
     // Opening it reopens the agent's session instead of starting another.
     let sessions = f.commands.sessions.load(Ordering::SeqCst);
-    panel.update(cx, |panel, cx| panel.wake(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -194,7 +194,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(nginx.entity_id(), window, cx);
             let fork = panel.current().unwrap();
-            panel.wake(&fork, cx)
+            activate_thread(&fork, cx)
         })
     })
     .unwrap();

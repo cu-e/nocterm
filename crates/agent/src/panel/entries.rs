@@ -1,7 +1,5 @@
 //! The chat transcript: messages, reasoning, tool calls and images.
-use std::sync::Arc;
 
-use base64::Engine as _;
 use gpui_kit::{
     Context, SharedString, TestSupportExt as _,
     component::{ActiveTheme as _, h_flex, v_flex},
@@ -16,11 +14,11 @@ use super::{
     AgentPanel,
     image_pipeline::PreviewState,
     message_actions::{MESSAGE_GROUP, escape_markdown, message_text},
-    widgets::{chat_markdown, disclosure_header, entry_is_live, safe_markdown},
+    widgets::{chat_markdown, disclosure_header, safe_markdown},
 };
 
 #[derive(Debug, thiserror::Error)]
-enum PreviewError {
+pub(super) enum PreviewError {
     #[error("{0}")]
     Base64(#[from] base64::DecodeError),
     #[error("{0}")]
@@ -29,102 +27,7 @@ enum PreviewError {
 pub(super) mod tool_input;
 pub(super) mod tool_output;
 
-impl AgentPanel {
-    fn image_view(&self, key: (usize, usize, bool)) -> gpui_kit::AnyElement {
-        EntryRenderer::image(self.messages.preview_state(&key))
-    }
-    pub(super) fn cached_image(
-        &mut self,
-        key: (usize, usize, bool),
-        data: impl FnOnce() -> Vec<u8>,
-        encoded: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        self.cached_image_for_row(key, data, encoded, None, cx)
-    }
-    fn cached_image_for_row(
-        &mut self,
-        key: (usize, usize, bool),
-        data: impl FnOnce() -> Vec<u8>,
-        encoded: bool,
-        row: Option<usize>,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        if let Some(binding) = self.messages.binding()
-            && let Some(ticket) = self.messages.request_preview(key)
-        {
-            let bytes = data();
-            let thumbnailer = self.messages.thumbnailer();
-            let future = cx.background_executor().spawn(async move {
-                let bytes = if encoded {
-                    if bytes.len() > nocterm_ai::images::MAX_IMAGE_BYTES.div_ceil(3) * 4 {
-                        return Err(PreviewError::Codec(
-                            nocterm_ai::images::ImageCodecError::SourceSize,
-                        ));
-                    }
-                    base64::engine::general_purpose::STANDARD.decode(bytes)?
-                } else {
-                    bytes
-                };
-                let bounds = nocterm_ai::images::PreviewBounds::new(640, 640)?;
-                let preview = thumbnailer.thumbnail(bytes.into(), bounds)?;
-                // Supplied previews retain the same pure size/format contract.
-                let preview =
-                    nocterm_ai::images::EncodedPreview::new(preview.bytes().clone(), bounds)?;
-                Ok::<_, PreviewError>(Arc::new(gpui_kit::Image::from_bytes(
-                    gpui_kit::ImageFormat::Png,
-                    preview.bytes().to_vec(),
-                )))
-            });
-            let task = cx.spawn(async move |this, cx| {
-                let result = future.await;
-                let _ = this.update(cx, |this, cx| {
-                    this.on_preview_completed(binding, ticket, row, result.ok(), cx)
-                });
-            });
-            self.messages.install_preview_task(ticket, task);
-        }
-        self.image_view(key)
-    }
-    pub(super) fn render_entry(
-        &mut self,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        let Some(thread) = self.current() else {
-            return div().into_any_element();
-        };
-        let state = thread.read(cx);
-        let Some(entry) = state.history_entries().get(index) else {
-            return div().into_any_element();
-        };
-        let frame = RowPresentation {
-            chat: thread.entity_id(),
-            binding: self.messages.binding(),
-            index,
-            expanded: self.messages.expanded(index),
-            live: entry_is_live(
-                state.history_entries(),
-                index,
-                state.session_generating() && state.session_accepts_updates(),
-            ),
-            generating: state.session_generating(),
-            time: state.transcript().time(index),
-            redact: self
-                .settings
-                .setting::<nocterm_ai::AiSettings>(cx)
-                .approval
-                .redact_secrets,
-        };
-        let (row, pending) = EntryRenderer::render(frame, entry, &self.messages, cx);
-        for (key, data) in pending {
-            self.cached_image_for_row(key, || data, true, Some(index), cx);
-        }
-        row
-    }
-}
-
-struct RowPresentation {
+pub(super) struct RowPresentation {
     chat: gpui_kit::EntityId,
     binding: Option<super::message_list::ActiveListBinding>,
     index: usize,
@@ -134,9 +37,9 @@ struct RowPresentation {
     time: Option<u64>,
     redact: bool,
 }
-struct EntryRenderer;
+pub(super) struct EntryRenderer;
 impl EntryRenderer {
-    fn image(state: Option<&PreviewState>) -> gpui_kit::AnyElement {
+    pub(super) fn image(state: Option<&PreviewState>) -> gpui_kit::AnyElement {
         match state {
             Some(PreviewState::Ready(image)) => img(image.clone())
                 .max_w_full()
@@ -148,7 +51,7 @@ impl EntryRenderer {
             _ => div().child("Loading image…").into_any_element(),
         }
     }
-    fn render(
+    pub(super) fn render(
         frame: RowPresentation,
         entry: &Entry,
         messages: &super::message_list::MessageList,
@@ -374,5 +277,29 @@ impl EntryRenderer {
             }
         }
         row
+    }
+}
+
+impl RowPresentation {
+    pub(super) fn new(
+        chat: gpui_kit::EntityId,
+        binding: Option<super::message_list::ActiveListBinding>,
+        index: usize,
+        expanded: bool,
+        live: bool,
+        generating: bool,
+        time: Option<u64>,
+        redact: bool,
+    ) -> Self {
+        Self {
+            chat,
+            binding,
+            index,
+            expanded,
+            live,
+            generating,
+            time,
+            redact,
+        }
     }
 }

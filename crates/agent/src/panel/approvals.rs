@@ -1,13 +1,12 @@
 //! Requests waiting for the user: the agent's own permission prompts and
 //! terminal tool calls that need approval.
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EntityId, SharedString, Subscription,
-    TestSupportExt as _, Window,
+    AnyElement, Context, Entity, SharedString, TestSupportExt as _,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{Input, InputEvent, InputState},
+        input::{Input, InputState},
         v_flex,
     },
     div,
@@ -21,22 +20,6 @@ use nocterm_workspace::UnlockVault;
 use super::{AgentPanel, widgets::menu_variant};
 use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
 
-/// The password field of a sign-in card.
-pub(super) struct SignInInput {
-    pub(super) input: Entity<InputState>,
-    masked: bool,
-    token: nocterm_workspace::UserPromptToken,
-    _submit: Subscription,
-}
-
-#[derive(Clone)]
-struct SignInSubmission {
-    thread: gpui_kit::WeakEntity<AgentThread>,
-    item: EntityId,
-    token: nocterm_workspace::UserPromptToken,
-    input: Entity<InputState>,
-    prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
-}
 fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
     let heading = if wait.vault {
         "Unlock the vault to sign in".to_owned()
@@ -59,77 +42,28 @@ fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
     (heading, detail)
 }
 
-impl AgentPanel {
-    /// The cards of every pending request of `thread`; none when nothing waits.
-    pub(super) fn render_approvals(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let permissions = thread.read(cx).permission_cards();
-        let tools = thread.read(cx).tool_cards();
-        let pending = permissions.len() + tools.len() + thread.read(cx).sign_in_waits().len();
-        let asking: Vec<EntityId> = self
-            .threads
-            .iter()
-            .flat_map(|thread| thread.read(cx).sign_in_waits().iter().map(|wait| wait.item))
-            .collect();
-        self.sign_in_inputs.retain(|item, _| asking.contains(item));
-        if pending == 0 {
-            return None;
-        }
-        let mut list = v_flex()
-            .id("agent-approval-list")
-            .test_support()
-            .w_full()
-            .min_w_0()
-            .min_h_0()
-            .max_h(window.viewport_size().height * 0.35)
-            .overflow_y_scroll()
-            .gap_2();
-        for index in 0..thread.read(cx).sign_in_waits().len() {
-            list = list.child(self.sign_in_card(thread, index, window, cx));
-        }
-        for (index, permission) in permissions.into_iter().enumerate() {
-            list = list.child(self.permission_card(thread, permission, index, cx));
-        }
-        for (index, tool) in tools.into_iter().enumerate() {
-            list = list.child(self.tool_card(thread, tool, index, cx));
-        }
-        Some(
-            v_flex()
-                .id("agent-approvals")
-                .test_support()
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .px_3()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().warning)
-                        .child(format!("Waiting for you · {pending}")),
-                )
-                .child(list)
-                .into_any_element(),
-        )
-    }
+fn card(cx: &Context<AgentPanel>) -> gpui_kit::Div {
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .p_2()
+        .gap_1()
+        .rounded(px(8.))
+        .bg(cx.theme().muted)
+}
 
+pub(super) struct ApprovalCardsRenderer;
+impl ApprovalCardsRenderer {
     /// A background session asks for a secret. The user types it here, or
     /// unlocks the vault when a saved secret answers it; the session never
     /// becomes a tab.
-    fn sign_in_card(
-        &mut self,
-        thread: &Entity<AgentThread>,
+    pub(super) fn sign_in_card(
+        wait: crate::thread::SignInWait,
+        input: Entity<InputState>,
+        submission: super::sign_in::SignInSubmission,
         index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let wait = thread.read(cx).sign_in_waits()[index].clone();
-        let item = wait.item;
-        let input = self.sign_in_input(thread, &wait, window, cx);
         let (heading, detail) = sign_in_text(&wait);
         let field = Input::new(&input).id(("sign-in-input", index)).small();
         let field = if wait.prompt.masked {
@@ -138,13 +72,6 @@ impl AgentPanel {
             field
         };
         let panel = cx.weak_entity();
-        let submission = SignInSubmission {
-            thread: thread.downgrade(),
-            item,
-            token: wait.prompt.token,
-            input: input.clone(),
-            prompts: wait.prompts(),
-        };
         card(cx)
             .child(
                 div()
@@ -196,95 +123,11 @@ impl AgentPanel {
             )
             .into_any_element()
     }
-
-    fn sign_in_input(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        wait: &crate::thread::SignInWait,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<InputState> {
-        let (item, masked, token) = (wait.item, wait.prompt.masked, wait.prompt.token);
-        if let Some(field) = self.sign_in_inputs.get(&item)
-            && field.masked == masked
-            && field.token == token
-        {
-            return field.input.clone();
-        }
-        if let Some(obsolete) = self.sign_in_inputs.remove(&item) {
-            obsolete
-                .input
-                .update(cx, |input, cx| input.set_value("", window, cx));
-        }
-        let input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(masked)
-                .placeholder(if masked { "Password" } else { "Answer" })
-        });
-        let submission = SignInSubmission {
-            thread: thread.downgrade(),
-            item,
-            token,
-            input: input.clone(),
-            prompts: wait.prompts(),
-        };
-        let submit = cx.subscribe_in(&input, window, move |this, _, event, window, cx| {
-            if matches!(event, InputEvent::PressEnter { .. }) {
-                this.submit_sign_in(&submission, window, cx);
-            }
-        });
-        self.sign_in_inputs.insert(
-            item,
-            SignInInput {
-                input: input.clone(),
-                masked,
-                token,
-                _submit: submit,
-            },
-        );
-        input
-    }
-
-    /// Answers the session's prompt with what the user typed. The card goes
-    /// away when the session stops asking.
-    fn submit_sign_in(
-        &mut self,
-        submission: &SignInSubmission,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let answer = submission.input.read(cx).value().to_string();
-        if answer.is_empty() {
-            return;
-        }
-        submission
-            .input
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let current =
-            submission.thread.upgrade().is_some_and(|thread| {
-                thread.read(cx).sign_in_waits().iter().any(|wait| {
-                    wait.item == submission.item && wait.prompt.token == submission.token
-                })
-            });
-        let result = if current {
-            submission
-                .prompts
-                .answer(submission.token, nocterm_session::Secret::new(answer), cx)
-        } else {
-            Err(nocterm_workspace::TerminalError::StalePrompt)
-        };
-        if let Err(error) = result {
-            self.error = Some(error.to_string());
-        }
-        cx.notify();
-    }
-
-    fn permission_card(
-        &self,
+    pub(super) fn permission_card(
         thread: &Entity<AgentThread>,
         permission: PermissionCard,
         index: usize,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let generation = permission.token();
         let title = permission
@@ -349,21 +192,63 @@ impl AgentPanel {
             .child(actions)
             .into_any_element()
     }
-
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn tool_card(
-        &self,
+    pub(super) fn tool_card(
         thread: &Entity<AgentThread>,
         approval: ToolApprovalCard,
+        target: String,
+        reusable: bool,
         index: usize,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let token = approval.token();
         let call = approval.call().clone();
         let owner = thread.downgrade();
-        let target = thread.update(cx, |thread, cx| thread.describe_target(&call, cx));
-        let reusable = thread.update(cx, |thread, cx| !thread.unsafe_live_input(&call, cx));
-        let (heading, exact, grant) = match &call {
+        let (heading, exact, grant) = Self::tool_text(&call, &target);
+        let exact = nocterm_ai::redact::redact(&exact);
+        card(cx)
+            .child(div().min_w_0().truncate().text_sm().child(heading))
+            .child(
+                h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
+                    [
+                        (false, false, "Deny"),
+                        (true, false, "Allow once"),
+                        (true, true, grant),
+                    ]
+                    .into_iter()
+                    .filter(|(_, grant, _)| !grant || reusable)
+                    .map(|(allow, grant, label)| {
+                        let owner = owner.clone();
+                        Button::new((SharedString::from(format!("tool-{label}")), index))
+                            .custom(menu_variant(cx))
+                            .small()
+                            .max_w_full()
+                            .label(label)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if let Some(thread) = owner.upgrade() {
+                                    thread.update(cx, |thread, cx| {
+                                        thread.approve_tool(token, allow, grant, cx)
+                                    });
+                                }
+                            }))
+                    }),
+                ),
+            )
+            .child(
+                div()
+                    .id(("approval-command", index))
+                    .test_support()
+                    .w_full()
+                    .min_w_0()
+                    .max_h(px(64.))
+                    .overflow_x_scroll()
+                    .overflow_y_scroll()
+                    .text_xs()
+                    .child(exact),
+            )
+            .into_any_element()
+    }
+    fn tool_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
+        match call {
             TerminalCall::ReadTerminal(request) => (
                 "Read terminal output",
                 format!("{target} ({} lines)", request.lines.unwrap_or(200)),
@@ -409,62 +294,12 @@ impl AgentPanel {
                 format!("{target}: {}", request.command_id),
                 "Allow execution on this terminal",
             ),
-            TerminalCall::OpenTerminal(_) => {
-                ("Connect in the background", target, "Allow for this server")
-            }
+            TerminalCall::OpenTerminal(_) => (
+                "Connect in the background",
+                target.to_owned(),
+                "Allow for this server",
+            ),
             TerminalCall::ListTerminals => ("List terminals", String::new(), "Allow"),
-        };
-        let exact = nocterm_ai::redact::redact(&exact);
-        card(cx)
-            .child(div().min_w_0().truncate().text_sm().child(heading))
-            .child(
-                h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
-                    [
-                        (false, false, "Deny"),
-                        (true, false, "Allow once"),
-                        (true, true, grant),
-                    ]
-                    .into_iter()
-                    .filter(|(_, grant, _)| !grant || reusable)
-                    .map(|(allow, grant, label)| {
-                        let owner = owner.clone();
-                        Button::new((SharedString::from(format!("tool-{label}")), index))
-                            .custom(menu_variant(cx))
-                            .small()
-                            .max_w_full()
-                            .label(label)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                if let Some(thread) = owner.upgrade() {
-                                    thread.update(cx, |thread, cx| {
-                                        thread.approve_tool(token, allow, grant, cx)
-                                    });
-                                }
-                            }))
-                    }),
-                ),
-            )
-            .child(
-                div()
-                    .id(("approval-command", index))
-                    .test_support()
-                    .w_full()
-                    .min_w_0()
-                    .max_h(px(64.))
-                    .overflow_x_scroll()
-                    .overflow_y_scroll()
-                    .text_xs()
-                    .child(exact),
-            )
-            .into_any_element()
+        }
     }
-}
-
-fn card(cx: &Context<AgentPanel>) -> gpui_kit::Div {
-    v_flex()
-        .w_full()
-        .min_w_0()
-        .p_2()
-        .gap_1()
-        .rounded(px(8.))
-        .bg(cx.theme().muted)
 }

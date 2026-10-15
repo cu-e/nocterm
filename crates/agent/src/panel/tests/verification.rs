@@ -373,7 +373,7 @@ fn reopen(
     let thread = cx.new(|cx| {
         crate::thread::AgentThread::restored(saved, f._directory.host(f.workspace.downgrade()), cx)
     });
-    f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     thread
 }

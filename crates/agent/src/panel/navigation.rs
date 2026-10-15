@@ -81,14 +81,13 @@ impl MessageNavigation {
     }
 }
 
-impl AgentPanel {
-    fn jump_to_message(&mut self, first: bool, cx: &mut Context<Self>) {
-        self.messages.navigate(first, cx);
-        cx.notify();
-    }
-
-    pub(super) fn render_message_navigation(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (first, previous) = self.messages.navigation_targets(cx)?;
+pub(super) struct NavigationRenderer;
+impl NavigationRenderer {
+    pub(super) fn render(
+        messages: &super::message_list::MessageList,
+        cx: &mut Context<AgentPanel>,
+    ) -> Option<AnyElement> {
+        let (first, previous) = messages.navigation_targets(cx)?;
         Some(
             v_flex()
                 .id("agent-message-navigation")

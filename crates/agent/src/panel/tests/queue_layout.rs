@@ -102,12 +102,22 @@ fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestApp
 
 #[gpui_kit::test]
 fn collapsed_queue_skips_hidden_row_and_image_rendering(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let codec = image_codec();
+    let f = fixture_with_width(
+        cx,
+        32.,
+        usage_source(),
+        workspace_resolver(),
+        crate::ImageDeps::new(codec.clone(), codec.clone()),
+    );
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
         thread.send("hidden queue".into(), cx);
     });
     settle(&f, cx);
@@ -118,4 +128,20 @@ fn collapsed_queue_skips_hidden_row_and_image_rendering(cx: &mut TestAppContext)
         assert!(window.try_find("agent-queue-reveal").is_none());
     })
     .unwrap();
+    assert!(
+        !codec
+            .requests()
+            .iter()
+            .any(|request| matches!(request, nocterm_ai::testing::ImageRequest::Thumbnail(..))),
+        "collapsed queue must not prepare hidden thumbnails"
+    );
+    open_queue(&f, cx);
+    settle(&f, cx);
+    assert!(
+        codec
+            .requests()
+            .iter()
+            .any(|request| matches!(request, nocterm_ai::testing::ImageRequest::Thumbnail(..))),
+        "opening queue must prepare its images"
+    );
 }

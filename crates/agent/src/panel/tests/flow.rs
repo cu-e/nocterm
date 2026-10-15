@@ -252,7 +252,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         .lock()
         .unwrap()
         .push_back(AgentError::AuthRequired("Sign in".into()));
-    f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
@@ -379,7 +379,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
         .unwrap()
         .push_back(AgentError::Io("temporary".into()));
     let count = f.commands.sessions.load(Ordering::SeqCst);
-    f.panel.update(cx, |panel, cx| panel.wake(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
@@ -650,10 +650,14 @@ fn late_image_preparation_cannot_attach_to_a_different_chat(cx: &mut TestAppCont
     new_chat(&f, cx);
     ready.send(()).unwrap();
     cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-error").is_none());
+    })
+    .unwrap();
     cx.update(|cx| {
         let panel = f.panel.read(cx);
         assert!(!panel.preparing_images());
-        assert!(panel.error.is_none());
         assert!(
             panel
                 .current()

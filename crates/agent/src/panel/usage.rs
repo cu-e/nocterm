@@ -2,7 +2,7 @@
 //! the context window is, the session's tokens and the plan's limits.
 
 use gpui_kit::{
-    App, ClickEvent, Context, MouseButton, PathBuilder, TestSupportExt as _, Window, canvas,
+    App, ClickEvent, Context, MouseButton, PathBuilder, TestSupportExt as _, canvas,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -15,12 +15,11 @@ use gpui_kit::{
 use nocterm_ai::acp;
 use nocterm_ui::IconName;
 
-use super::{AgentPanel, MenuKind};
-use crate::runtime::Runtime;
+use super::AgentPanel;
 use nocterm_ai::usage::{Breakdown, RateLimit};
 
 /// The card's sections, gathered before anything is laid out.
-struct Report {
+pub(super) struct Report {
     context: Option<acp::UsageUpdate>,
     breakdown: Breakdown,
     tokens: Option<acp::Usage>,
@@ -29,110 +28,9 @@ struct Report {
     limits_hint: Option<&'static str>,
 }
 
-impl AgentPanel {
-    pub(super) fn dismiss_usage(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.menus.dismiss_usage() {
-            return false;
-        }
-        cx.notify();
-        true
-    }
-
-    pub(super) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let restore = self.menus.usage_contains_focus(window, cx);
-        self.dismiss_usage(cx);
-        if restore {
-            window.focus(&self.composer.focus(cx), cx);
-        }
-    }
-
-    pub(super) fn usage_button(
-        &self,
-        usage: Option<&acp::UsageUpdate>,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        // Match native popovers: toggle on mouse-down, using the rendered state.
-        // Outside dismissal may already have run in this event's capture phase.
-        let open = self.menus.is_open(&MenuKind::Usage);
-        context_ring(usage, cx)
-            .selected(open)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    this.toggle_usage(open, window, cx);
-                }),
-            )
-            .on_click(cx.listener(move |this, event, window, cx| {
-                if !matches!(event, ClickEvent::Mouse(_)) {
-                    this.toggle_usage(open, window, cx);
-                }
-            }))
-    }
-
-    fn toggle_usage(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if open {
-            self.close_usage(window, cx);
-        } else {
-            self.refresh_usage(cx);
-            self.menus.open(MenuKind::Usage);
-            // Read-only information must not interrupt composing.
-            if !self.composer.focus(cx).is_focused(window) {
-                window.focus(self.menus.usage_focus(), cx);
-            }
-            cx.notify();
-        }
-    }
-
-    /// Reads the plan limits again when the card opens.
-    pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.current() {
-            let agent = thread.read(cx).document().agent_id().to_owned();
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx));
-        }
-    }
-
-    fn usage_report(&self, cx: &App) -> Option<Report> {
-        let thread = self.current()?;
-        let thread = thread.read(cx);
-        let context = thread
-            .transcript()
-            .usage
-            .clone()
-            .filter(|usage| usage.size > 0);
-        let breakdown = context
-            .as_ref()
-            .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
-            .unwrap_or_default();
-        let limits: Vec<RateLimit> = Runtime::global(cx)
-            .read(cx)
-            .limits(thread.document().agent_id())
-            .map(|limits| limits.iter().cloned().collect())
-            .unwrap_or_default();
-        let limits_hint = match thread.document().agent_id() {
-            "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
-            "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
-            _ => None,
-        };
-        Some(Report {
-            context,
-            breakdown,
-            tokens: thread.transcript().tokens.clone(),
-            limits,
-            limits_hint,
-        })
-    }
-
-    pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let Some(report) = self.usage_report(cx) else {
-            return div().into_any_element();
-        };
-        UsageCard::render(&report, self.menus.usage_focus(), self.host.timestamp(), cx)
-    }
-}
-
-struct UsageCard;
+pub(super) struct UsageCard;
 impl UsageCard {
-    fn render(
+    pub(super) fn render(
         report: &Report,
         focus: &gpui_kit::FocusHandle,
         now: u64,
@@ -479,6 +377,48 @@ pub(super) fn context_ring(usage: Option<&acp::UsageUpdate>, cx: &App) -> Button
             .w(px(16.))
             .h(px(16.)),
         )
+}
+
+impl UsageCard {
+    pub(super) fn usage_button(
+        open: bool,
+        usage: Option<&acp::UsageUpdate>,
+        cx: &mut Context<AgentPanel>,
+    ) -> Button {
+        // Match native popovers: toggle on mouse-down, using the rendered state.
+        // Outside dismissal may already have run in this event's capture phase.
+        context_ring(usage, cx)
+            .selected(open)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.toggle_usage(open, window, cx);
+                }),
+            )
+            .on_click(cx.listener(move |this, event, window, cx| {
+                if !matches!(event, ClickEvent::Mouse(_)) {
+                    this.toggle_usage(open, window, cx);
+                }
+            }))
+    }
+}
+
+impl Report {
+    pub(super) fn new(
+        context: Option<acp::UsageUpdate>,
+        breakdown: Breakdown,
+        tokens: Option<acp::Usage>,
+        limits: Vec<RateLimit>,
+        limits_hint: Option<&'static str>,
+    ) -> Self {
+        Self {
+            context,
+            breakdown,
+            tokens,
+            limits,
+            limits_hint,
+        }
+    }
 }
 
 #[cfg(test)]
