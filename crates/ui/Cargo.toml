@@ -13,7 +13,6 @@ layer = "ui"
 nocterm-core.workspace = true
 nocterm-store.workspace = true
 nocterm-session.workspace = true
-nocterm-ai.workspace = true
 nocterm-themes.workspace = true
 nocterm-theme-service.workspace = true
 nocterm-design.workspace = true

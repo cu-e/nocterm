@@ -1,6 +1,6 @@
 //! Public document ownership and repository effects across foreground cancellation.
 use super::*;
-use gpui::TestAppContext;
+use gpui::{Entity, TestAppContext};
 use nocterm_ai::{
     history::SharedChat,
     testing::{InMemoryAgentRepository, ScriptedConnector, StorageOperation},
@@ -152,7 +152,6 @@ fn runtime_with_usage_source(
 ) -> Entity<Runtime> {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        settings.register::<nocterm_ai::AiSettings>(cx);
         cx.new(|cx| {
             Runtime::new(
                 RuntimeServices {

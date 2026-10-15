@@ -71,7 +71,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     assert_eq!(value["draft"], "draft before disabling AI");
     assert!(value["entries"].as_array().unwrap().is_empty());
     // A retained entity must not replace the saved text with its cleared UI state at quit.
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned()),
         id
@@ -107,7 +107,7 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
         thread.update(cx, |thread, cx| {
             thread.set_draft("latest dormant text".into(), cx)
         });
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx))
+        f.installation.installed.runtime().shutdown(cx)
     });
     cx.foreground_executor().block_test(shutdown);
     assert_eq!(
@@ -140,7 +140,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
         assert!(thread.read(cx).session().is_none());
     });
     type_draft(&f, "latest text after provider failure", cx);
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         disk_value(&f.repository, &id)["draft"],
         "latest text after provider failure"

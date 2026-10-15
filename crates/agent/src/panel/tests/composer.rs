@@ -41,8 +41,13 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let runtime = Runtime::global(cx).read(cx);
-        let limits: Vec<_> = runtime.limits("codex").unwrap().iter().cloned().collect();
+        let runtime = f.installation.installed.runtime();
+        let limits: Vec<_> = runtime
+            .limits("codex", cx)
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
         assert_eq!(limits.len(), 2);
         assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
         let thread = f.panel.read(cx).current().unwrap();
@@ -498,4 +503,55 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
         }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn prompt_completion_refreshes_its_original_usage_source_after_another_installation(
+    cx: &mut TestAppContext,
+) {
+    let source = usage_source();
+    source.push(Ok(Some(vec![nocterm_ai::usage::RateLimit {
+        window: nocterm_ai::usage::Window::Weekly,
+        used: Some(0.38),
+        resets_at: None,
+        reached: false,
+    }])));
+    let first = fixture_with_width(cx, 26., source.clone(), workspace_resolver(), image_deps());
+    new_chat(&first, cx);
+    let thread = cx.update(|cx| first.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("original prompt".into(), cx));
+    cx.run_until_parked();
+    let finish = first.commands.pending.lock().unwrap().take().unwrap();
+    let other_source = usage_source();
+    let second = fixture_with_width(
+        cx,
+        26.,
+        other_source.clone(),
+        workspace_resolver(),
+        image_deps(),
+    );
+    finish
+        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(source.requests().len(), 1);
+    assert!(other_source.requests().is_empty());
+    cx.update(|cx| {
+        assert!(
+            first
+                .installation
+                .installed
+                .runtime()
+                .limits("codex", cx)
+                .is_some()
+        );
+        assert!(
+            second
+                .installation
+                .installed
+                .runtime()
+                .limits("codex", cx)
+                .is_none()
+        );
+    });
 }

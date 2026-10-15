@@ -1,32 +1,47 @@
 //! Explicit immutable host collaborators retained by each panel and its chats.
-use gpui_kit::WeakEntity;
-use nocterm_ai::{history::SavedChat, metadata::ChatMetadataSource};
+use gpui_kit::{App, WeakEntity};
+use nocterm_ai::history::SavedChat;
 use nocterm_workspace::Workspace;
-use std::sync::Arc;
-
 #[derive(Clone)]
 pub(crate) struct ChatHost {
     workspace: WeakEntity<Workspace>,
-    metadata: Arc<dyn ChatMetadataSource>,
+    installed: crate::Installed,
 }
 impl ChatHost {
-    pub(crate) fn new(
-        workspace: WeakEntity<Workspace>,
-        metadata: Arc<dyn ChatMetadataSource>,
-    ) -> Self {
+    pub(crate) fn new(workspace: WeakEntity<Workspace>, installed: crate::Installed) -> Self {
         Self {
             workspace,
-            metadata,
+            installed,
         }
     }
     pub(crate) fn workspace(&self) -> &WeakEntity<Workspace> {
         &self.workspace
     }
+    pub(crate) fn runtime(&self) -> &crate::runtime::RuntimeHandle {
+        self.installed.runtime()
+    }
+    pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
+        self.installed.settings()
+    }
+    pub(crate) fn ai<'a>(&self, cx: &'a App) -> &'a nocterm_ai::AiSettings {
+        self.settings().setting::<nocterm_ai::AiSettings>(cx)
+    }
+    pub(crate) fn enabled(&self, cx: &App) -> bool {
+        self.ai(cx).enabled
+    }
+    pub(crate) fn images(&self) -> &crate::ImageDeps {
+        self.installed.images()
+    }
+    pub(crate) fn layout(&self) -> &nocterm_ui::LayoutHandle {
+        self.installed.layout()
+    }
+    pub(crate) fn auth(&self) -> Option<crate::TerminalAuthOpener> {
+        self.installed.auth()
+    }
     pub(crate) fn timestamp(&self) -> u64 {
-        self.metadata.timestamp()
+        self.installed.timestamp()
     }
     pub(crate) fn new_chat(&self, agent: String) -> SavedChat {
-        let identity = self.metadata.new_identity();
-        SavedChat::for_identity(agent, identity.id, identity.created)
+        self.installed.new_chat(agent)
     }
 }

@@ -102,9 +102,8 @@ fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) 
     let mut f = fixture(cx);
     lazy_start(cx);
     cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.remember_options("codex", &models(), cx)
-        })
+        let runtime = f.installation.installed.runtime();
+        runtime.remember_options("codex", &models(), cx)
     });
     let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),

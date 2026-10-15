@@ -29,6 +29,7 @@ pub(super) fn init(cx: &mut App) {
         SettingsStore::in_memory(SettingsDocument::default()),
         cx,
     );
+    nocterm_ui::register_setting::<AiSettings>(cx);
 }
 
 pub(super) fn theme_ui(cx: &mut App) -> nocterm_ui::ThemeUi {
@@ -428,6 +429,7 @@ async fn a_failed_save_is_reported_and_keeps_the_active_settings(cx: &mut TestAp
             SettingsStore::new(SettingsDocument::default(), file),
             cx,
         );
+        nocterm_ui::register_setting::<AiSettings>(cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| SettingsView::new(window, cx))
         })

@@ -11,7 +11,7 @@ pub(super) fn archived(
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
     f.repository.seed_chat(chat).unwrap();
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.reload_history(cx)));
+    cx.update(|cx| f.installation.installed.runtime().reload_history(cx));
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel
@@ -211,7 +211,7 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
         .block_next(nocterm_ai::testing::StorageOperation::Load(
             chats.first().unwrap().id.clone(),
         ));
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.reload_history(cx)));
+    cx.update(|cx| f.installation.installed.runtime().reload_history(cx));
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         f.panel

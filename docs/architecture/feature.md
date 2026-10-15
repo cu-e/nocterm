@@ -403,8 +403,8 @@ Explorer refreshes the affected destination after a finished transfer that ackno
 file publication or destination directory preparation, including transfers that later fail
 or cancel. Empty-directory copies therefore refresh without being counted as completed files.
 
-Agent presentation receives immutable `PanelDeps`: image capabilities, the shared
-layout handle and the actual settings handle. Five private feature owners retain
+Agent presentation receives immutable `Installed`: the actual RuntimeHandle, image
+capabilities, shared layout/settings handles, metadata and optional terminal auth. Five private feature owners retain
 the actual controls and their subscriptions/tasks: MessageList, ComposerView,
 HistoryColumn, PanelLayout and MenuView. Original chat/input/search/catalog/list
 identities guard deferred completion. MessageList reuses one ImagePipeline for
@@ -471,3 +471,12 @@ save errors across windows. Deactivating a page releases interception; closing a
 observation. It edits only through named handle operations, without a global owner
 or mutable model projection. New windows reuse the root installation rather than
 reloading the file. See [ADR0051](../adr/0051-retained-keymap-installation.md).
+Agent panels and threads retain one `Installed` through their original weak-workspace
+ChatHost. Runtime commands, deferred preferences/usage and terminal authentication
+use that same installation, while policy is read from its supplied SettingsHandle
+at the existing admission/completion boundary. The service registers the AI schema
+before registry reads. Installation retains a weak-runtime settings subscription;
+per-window subscriptions retain weak views and original window handles. There is
+no runtime/auth or shared-UI AI policy compatibility lookup. Shutdown registration
+status remains separately typed and does not discard a usable installation. See
+[ADR0052](../adr/0052-retained-agent-installation.md).

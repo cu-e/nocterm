@@ -371,9 +371,14 @@ fn reopen(
     });
     cx.run_until_parked();
     let thread = cx.new(|cx| {
-        crate::thread::AgentThread::restored(saved, f._directory.host(f.workspace.downgrade()), cx)
+        crate::thread::AgentThread::restored(
+            saved,
+            f._directory
+                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+            cx,
+        )
     });
-    cx.update(|cx| activate_thread(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     thread
 }

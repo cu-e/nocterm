@@ -29,13 +29,10 @@ nocterm-workspace = 4
 
 [global_reads]
 nocterm = 1
-nocterm-agent-runtime = 1
 nocterm-settings-ui = 2
 nocterm-ui = 5
 
 [globals]
-"nocterm_agent::TerminalAuth" = 1
-"nocterm_agent_runtime::RuntimeGlobal" = 1
 "nocterm_ui::design::Design" = 1
 "nocterm_ui::layout::LayoutMemory" = 1
 "nocterm_ui::notice::Notices" = 1
@@ -45,7 +42,6 @@ nocterm-ui = 5
 "nocterm_vt::emulator::Emulator" = 5
 
 [pub_fields]
-"nocterm_agent::TerminalAuth" = 1
 "nocterm_agent::panel::entries::tool_input::Section" = 3
 "nocterm_agent::panel::entries::tool_input::Source" = 5
 "nocterm_agent::panel::entries::tool_output::Output" = 2
@@ -54,7 +50,6 @@ nocterm-ui = 5
 "nocterm_agent::thread::execution::jobs::Job" = 3
 "nocterm_agent::thread::execution::jobs::Snapshot" = 5
 "nocterm_agent::thread::queue::QueuedPrompt" = 5
-"nocterm_agent_runtime::RuntimeGlobal" = 1
 "nocterm_agent_runtime::client::ClientState" = 9
 "nocterm_agent_runtime::lease::ReleasedLease" = 5
 "nocterm_agent_runtime::lease::SessionLease" = 5

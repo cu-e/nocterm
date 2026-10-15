@@ -243,7 +243,8 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     let thread = cx.new(|cx| {
         crate::thread::AgentThread::restored(
             saved.clone(),
-            f._directory.host(f.workspace.downgrade()),
+            f._directory
+                .host(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });
@@ -252,7 +253,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         .lock()
         .unwrap()
         .push_back(AgentError::AuthRequired("Sign in".into()));
-    cx.update(|cx| activate_thread(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
@@ -369,7 +370,8 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
     let thread = cx.new(|cx| {
         crate::thread::AgentThread::restored(
             saved.clone(),
-            f._directory.host(f.workspace.downgrade()),
+            f._directory
+                .host(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });
@@ -379,7 +381,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
         .unwrap()
         .push_back(AgentError::Io("temporary".into()));
     let count = f.commands.sessions.load(Ordering::SeqCst);
-    cx.update(|cx| activate_thread(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
@@ -486,7 +488,7 @@ fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
         thread.send("after restart".into(), cx);
     });
     cx.run_until_parked();
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
+    cx.update(|cx| f.installation.installed.runtime().shutdown(cx).detach());
     let saved = f.repository.chats();
     assert_eq!(saved[0].queue[0].text, "after restart");
     assert!(

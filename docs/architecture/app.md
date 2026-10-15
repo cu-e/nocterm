@@ -104,11 +104,12 @@ capability; test composition supplies an inert fake or None before installation.
 Workspace host resolution uses the provided capability while preserving the active
 remote session's executor and connection authority. It stores no global runner.
 
-Bootstrap retains immutable agent `PanelDeps` instead of a standalone image slot.
-They combine the prepared image ports, exact shared layout handle and installed
-settings handle, and are cloned for every workspace window. Agent view owners
-retain these supplied collaborators while existing runtime/authentication
-compatibility acquisition remains in the panel coordinator.
+Bootstrap retains one agent `Installed`, combining actual runtime, metadata,
+image ports, shared layout/settings and optional terminal authentication. Every
+workspace receives that installation. Agent installation returns usable authority
+and a separately typed shutdown registration status; reporting a registration
+failure preserves the existing available feature. Capture holds RuntimeHandle,
+never Installed or Workspace. See [ADR0052](../adr/0052-retained-agent-installation.md).
 
 Bootstrap retains the optional snippet `Installed` handle over the library and
 supplied settings. Successful installation is reused by every workspace, editor

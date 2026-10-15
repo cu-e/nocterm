@@ -167,3 +167,13 @@ Connections read-only refusals retain the original loaded diagnostic allocation
 through foundation `SharedError`; standard sources reach the concrete storage
 error and its native cause. Publication rejects edits without replacing diagnostic
 identity, profile authority or the malformed source file.
+
+Agent runtime installation exposes `RuntimeHandle`, retaining one private Runtime
+entity behind named typed commands, immutable projections and actual observation.
+Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings on
+its supplied settings handle before its first registry read. Settings observation
+uses a weak runtime; the feature installation owns that subscription. Shutdown
+capture retains only the runtime handle and returns the existing App-free work.
+No runtime global selects the recipient of a deferred operation. Protocol and
+physical history signatures remain ACP/version one. See
+[ADR0052](../adr/0052-retained-agent-installation.md).

@@ -1,5 +1,5 @@
 //! Agent chat presentation and session coordination through injected contracts.
-//! PanelDeps supplies the actual image, shared layout and settings collaborators.
+//! Installed retains the actual runtime, image, layout, settings, metadata and auth collaborators.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.
 //! ChatList retains original entity selection and slot observations; SignInCards owns
@@ -21,7 +21,7 @@
 //! and explicit ChatMetadataSource retained with each window collaborator.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
-//! Globals: legacy TerminalAuth; runtime globals belong to agent-runtime.
+//! Globals: none.
 //! Invariants: approval cards retain their original chat and stable token; every
 //! choice revalidates current session, registration and attachment authority.
 //! Archive delivery also validates document ownership and its local load generation;
@@ -43,15 +43,15 @@
 
 mod chat_host;
 mod image_deps;
-mod panel_deps;
-pub use panel_deps::PanelDeps;
+mod installation;
+pub use installation::Installed;
 mod panel;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
 mod thread;
 pub use runtime::TerminalAuthRequest;
 
-use gpui_kit::{App, Global, WeakEntity, Window, prelude::*};
+use gpui_kit::{App, WeakEntity, Window, prelude::*};
 use nocterm_ai::{AgentConnector, ToolBridge};
 use std::{path::PathBuf, sync::Arc};
 
@@ -101,50 +101,18 @@ pub struct AgentServices {
     pub shared_dirs: Vec<PathBuf>,
 }
 
-/// The host's sign-in terminal, if it has one.
-#[derive(Clone, Default)]
-pub(crate) struct TerminalAuth(pub Option<TerminalAuthOpener>);
-
-impl Global for TerminalAuth {}
-
-impl TerminalAuth {
-    pub(crate) fn opener(cx: &App) -> Option<TerminalAuthOpener> {
-        cx.try_global::<Self>().and_then(|auth| auth.0.clone())
-    }
-}
-
 /// Installs services without starting an agent or opening a listener.
+/// The installation remains usable if shutdown registration is refused.
 pub fn init(
     services: AgentServices,
+    images: ImageDeps,
+    layout: nocterm_ui::LayoutHandle,
     ready: &nocterm_ui::UiReady,
     shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
-) -> Result<(), nocterm_store::StoreError> {
+) -> (Installed, Result<(), nocterm_store::StoreError>) {
     panel::commands::init(cx);
-    cx.set_global(TerminalAuth(services.terminal_auth.clone()));
-    let services = runtime::RuntimeServices {
-        settings: ready.settings().clone(),
-        connector: services.connector,
-        bridge: services.bridge,
-        storage: services.storage,
-        usage_source: services.usage_source,
-        workdir_resolver: services.workdir_resolver,
-        workdir: services.workdir,
-        terminal_auth: services.terminal_auth.is_some(),
-        private_dirs: services.private_dirs,
-        shared_dirs: services.shared_dirs,
-    };
-    let runtime = cx.new(|cx| runtime::Runtime::new(services, cx));
-    cx.set_global(runtime::RuntimeGlobal(runtime.clone()));
-    let observed = runtime.downgrade();
-    ready
-        .settings()
-        .observe(cx, move |cx| {
-            let _ = observed.update(cx, |runtime, cx| runtime.settings_changed(cx));
-        })
-        .detach();
-    shutdown
-        .register_capture(move |cx| runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx)))
+    installation::install(services, images, layout, ready, shutdown, cx)
 }
 
 gpui_kit::actions!(
@@ -163,18 +131,17 @@ gpui_kit::actions!(
 /// Installs a window-local panel with an initially empty chat history.
 pub fn register(
     workspace: &mut nocterm_workspace::Workspace,
-    deps: PanelDeps,
-    metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
+    installed: Installed,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) {
     let owner = cx.entity().downgrade();
-    let host = chat_host::ChatHost::new(owner, metadata);
-    let enabled = deps
+    let host = chat_host::ChatHost::new(owner, installed);
+    let enabled = host
         .settings()
         .setting::<nocterm_ai::AiSettings>(cx)
         .enabled;
-    let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, deps, window, panel_cx));
+    let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, window, panel_cx));
     workspace.set_right_panel(panel, window, cx);
     workspace.set_right_panel_available(enabled, window, cx);
 }

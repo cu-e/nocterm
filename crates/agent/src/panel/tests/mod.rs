@@ -1,10 +1,5 @@
 mod image_fixtures;
-use crate::{
-    AgentServices,
-    panel::AgentPanel,
-    runtime::{self, Runtime},
-    thread::Attachment,
-};
+use crate::{AgentServices, panel::AgentPanel, runtime, thread::Attachment};
 use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -31,21 +26,23 @@ use std::{
     },
 };
 
-fn activate_thread(thread: &Entity<crate::thread::AgentThread>, cx: &mut App) {
-    Runtime::global(cx).update(cx, |runtime, cx| {
-        runtime.register_document(crate::thread::client(thread), cx)
-    });
+fn activate_thread(
+    thread: &Entity<crate::thread::AgentThread>,
+    installed: &crate::Installed,
+    cx: &mut App,
+) {
+    installed
+        .runtime()
+        .register_document(crate::thread::client(thread), cx);
     thread.update(cx, |thread, cx| thread.request_activation(cx));
 }
 
-fn shutdown_runtime(cx: &mut TestAppContext) {
+fn shutdown_runtime(installed: &crate::Installed, cx: &mut TestAppContext) {
     let task = cx.update(|cx| {
         let coordinator = nocterm_store::ShutdownCoordinator::default();
-        let runtime = Runtime::global(cx);
+        let runtime = installed.runtime().clone();
         coordinator
-            .register_capture(move |cx| {
-                runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx))
-            })
+            .register_capture(move |cx| runtime.capture_shutdown(cx))
             .unwrap();
         let work = coordinator.capture_all(cx);
         cx.background_executor().spawn(work)
@@ -309,13 +306,23 @@ impl HostEnvironment {
     fn path(&self) -> &std::path::Path {
         self.directory.path()
     }
-    fn host(&self, workspace: gpui_kit::WeakEntity<Workspace>) -> crate::chat_host::ChatHost {
-        crate::chat_host::ChatHost::new(workspace, self.metadata.clone())
+    fn host(
+        &self,
+        workspace: gpui_kit::WeakEntity<Workspace>,
+        installed: crate::Installed,
+    ) -> crate::chat_host::ChatHost {
+        crate::chat_host::ChatHost::new(workspace, installed)
     }
 }
 
-struct Fixture {
+struct FixtureInstallation {
+    ready: nocterm_ui::UiReady,
+    shutdown: nocterm_store::ShutdownCoordinator,
     layout: nocterm_ui::LayoutHandle,
+    installed: crate::Installed,
+}
+struct Fixture {
+    installation: FixtureInstallation,
     handle: AnyWindowHandle,
     workspace: Entity<Workspace>,
     panel: Entity<AgentPanel>,
@@ -330,8 +337,6 @@ struct Fixture {
     rejections: async_channel::Sender<nocterm_ai::BridgeRejection>,
     _directory: HostEnvironment,
     repository: Arc<nocterm_ai::testing::InMemoryAgentRepository>,
-    ready: nocterm_ui::UiReady,
-    shutdown: nocterm_store::ShutdownCoordinator,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
     fixture_with_width(cx, 26., usage_source(), workspace_resolver(), image_deps())
@@ -393,81 +398,88 @@ fn fixture_with_width(
         )
     };
     let access = Access::new(None, Rc::default());
-    let (handle, workspace, panel, terminal, ready, shutdown, layout) = cx.update(|cx| {
-        gpui_kit::init(cx);
-        let mut tokens = nocterm_ui::DesignTokens::builtin();
-        tokens.layout.agent_panel_width = width;
-        let ui = nocterm_ui::init(
-            tokens,
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
-            cx,
-        );
-        let shutdown = nocterm_store::ShutdownCoordinator::default();
-        let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
-        crate::init(
-            AgentServices {
-                metadata: directory.metadata.clone(),
-                terminal_auth: None,
-                private_dirs: Vec::new(),
-                shared_dirs: Vec::new(),
-                connector: connector.clone(),
-                bridge: bridge.clone(),
-                storage: runtime::AgentStorage::prepared(
-                    repository.clone(),
-                    repository.clone(),
-                    Ok(Default::default()),
-                ),
-                usage_source,
-                workdir_resolver,
-                workdir: directory.path().join("work"),
-            },
-            &ui,
-            &shutdown,
-            cx,
-        )
-        .unwrap();
-        let mut panel = None;
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.inject_events(connector.events.clone(), cx)
-        });
-        let mut terminal = None;
-        let (handle, workspace) =
-            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| {
-                    let mut workspace =
-                        Workspace::new(nocterm_workspace::Deps::new(layout.clone()), window, cx);
-                    let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
-                    terminal = Some(item.entity_id());
-                    workspace.add_item(item, window, cx);
-                    let owner = cx.entity().downgrade();
-                    let view = cx.new(|cx| {
-                        AgentPanel::new(
-                            directory.host(owner),
-                            crate::PanelDeps::new(images, layout.clone(), ui.settings().clone()),
+    let (handle, workspace, panel, terminal, ready, shutdown, layout, installed) =
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            let mut tokens = nocterm_ui::DesignTokens::builtin();
+            tokens.layout.agent_panel_width = width;
+            let ui = nocterm_ui::init(
+                tokens,
+                nocterm_ui::SettingsStore::in_memory(Default::default()),
+                cx,
+            );
+            let shutdown = nocterm_store::ShutdownCoordinator::default();
+            let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
+            let (installed, registration) = crate::init(
+                AgentServices {
+                    metadata: directory.metadata.clone(),
+                    terminal_auth: None,
+                    private_dirs: Vec::new(),
+                    shared_dirs: Vec::new(),
+                    connector: connector.clone(),
+                    bridge: bridge.clone(),
+                    storage: runtime::AgentStorage::prepared(
+                        repository.clone(),
+                        repository.clone(),
+                        Ok(Default::default()),
+                    ),
+                    usage_source,
+                    workdir_resolver,
+                    workdir: directory.path().join("work"),
+                },
+                images,
+                layout.clone(),
+                &ui,
+                &shutdown,
+                cx,
+            );
+            registration.unwrap();
+            let mut panel = None;
+            installed
+                .runtime()
+                .inject_events(connector.events.clone(), cx);
+            let mut terminal = None;
+            let (handle, workspace) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| {
+                        let mut workspace = Workspace::new(
+                            nocterm_workspace::Deps::new(layout.clone()),
                             window,
                             cx,
-                        )
-                    });
-                    workspace.set_right_panel(view.clone(), window, cx);
-                    workspace.set_right_panel_available(true, window, cx);
-                    workspace.toggle_right_panel(window, cx);
-                    panel = Some(view);
-                    workspace
+                        );
+                        let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
+                        terminal = Some(item.entity_id());
+                        workspace.add_item(item, window, cx);
+                        let owner = cx.entity().downgrade();
+                        let view = cx.new(|cx| {
+                            AgentPanel::new(directory.host(owner, installed.clone()), window, cx)
+                        });
+                        workspace.set_right_panel(view.clone(), window, cx);
+                        workspace.set_right_panel_available(true, window, cx);
+                        workspace.toggle_right_panel(window, cx);
+                        panel = Some(view);
+                        workspace
+                    })
                 })
-            })
-            .unwrap();
-        (
-            handle,
-            workspace,
-            panel.unwrap(),
-            terminal.unwrap(),
-            ui,
+                .unwrap();
+            (
+                handle,
+                workspace,
+                panel.unwrap(),
+                terminal.unwrap(),
+                ui,
+                shutdown,
+                layout,
+                installed,
+            )
+        });
+    Fixture {
+        installation: FixtureInstallation {
+            ready,
             shutdown,
             layout,
-        )
-    });
-    Fixture {
-        layout,
+            installed,
+        },
         handle,
         workspace,
         panel,
@@ -481,8 +493,6 @@ fn fixture_with_width(
         rejections: rejection_sender,
         _directory: directory,
         repository,
-        ready,
-        shutdown,
     }
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
@@ -509,24 +519,30 @@ fn install_fixture(
     services: impl FnOnce(&Fixture) -> AgentServices,
     cx: &mut TestAppContext,
 ) {
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     let services = services(f);
     cx.update(|cx| {
-        crate::init(services, &f.ready, &f.shutdown, cx).unwrap();
-        Runtime::global(cx).update(cx, |runtime, cx| {
+        let (installed, registration) = crate::init(
+            services,
+            image_deps(),
+            f.installation.layout.clone(),
+            &f.installation.ready,
+            &f.installation.shutdown,
+            cx,
+        );
+        registration.unwrap();
+        f.installation.installed = installed;
+        {
+            let runtime = f.installation.installed.runtime();
             runtime.inject_events(f.connector.events.clone(), cx)
-        });
+        };
     });
     let panel = cx
         .update_window(f.handle, |_, window, cx| {
             let panel = cx.new(|cx| {
                 AgentPanel::new(
-                    f._directory.host(f.workspace.downgrade()),
-                    crate::PanelDeps::new(
-                        image_deps(),
-                        f.layout.clone(),
-                        f.ready.settings().clone(),
-                    ),
+                    f._directory
+                        .host(f.workspace.downgrade(), f.installation.installed.clone()),
                     window,
                     cx,
                 )

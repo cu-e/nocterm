@@ -350,7 +350,7 @@ impl AgentPanel {
     pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.current() {
             let agent = thread.read(cx).document().agent_id().to_owned();
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx));
+            self.host.runtime().refresh_limits(&agent, cx);
         }
     }
     pub(super) fn usage_report(&self, cx: &App) -> Option<Report> {
@@ -365,9 +365,10 @@ impl AgentPanel {
             .as_ref()
             .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
             .unwrap_or_default();
-        let limits: Vec<RateLimit> = Runtime::global(cx)
-            .read(cx)
-            .limits(thread.document().agent_id())
+        let limits: Vec<RateLimit> = self
+            .host
+            .runtime()
+            .limits(thread.document().agent_id(), cx)
             .map(|limits| limits.iter().cloned().collect())
             .unwrap_or_default();
         let limits_hint = match thread.document().agent_id() {

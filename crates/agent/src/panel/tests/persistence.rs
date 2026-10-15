@@ -49,7 +49,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
         "background IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(
         chats.len(),
@@ -74,7 +74,7 @@ fn shutdown_preserves_a_delete_extracted_by_the_writer_after_document_release(
     cx.run_until_parked();
     assert_eq!(f.repository.chats().len(), 1);
     let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
+    cx.update(|cx| f.installation.installed.runtime().delete_chat(id, cx));
     assert!(cx.background_executor.tick());
     assert_eq!(
         f.repository.chats().len(),
@@ -82,7 +82,7 @@ fn shutdown_preserves_a_delete_extracted_by_the_writer_after_document_release(
         "delete IO ran before the shutdown interleaving"
     );
     remove_document(&f, thread, cx);
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert!(
         f.repository.chats().is_empty(),
         "quit lost the writer-owned deletion"
@@ -117,7 +117,7 @@ fn shutdown_saves_the_replacement_when_the_old_document_is_retained_elsewhere(
     replacement.update(cx, |thread, cx| {
         thread.rename(Some("replacement wins".into()), cx)
     });
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(
@@ -170,7 +170,7 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
         Some("replacement owner"),
         "a stale owner saved over the replacement outside shutdown"
     );
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         f.repository.chats()[0].name.as_deref(),
         Some("replacement owner")
@@ -195,7 +195,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
         thread.save(cx);
     });
     remove_document(&f, thread, cx);
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(chats[0].name.as_deref(), Some("latest queued snapshot"));
@@ -237,7 +237,7 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
         thread.release_resources(cx);
     });
     cx.run_until_parked();
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(save_count(&f, &saved.id), 0);
     assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
     cx.update(|cx| assert_eq!(thread.read(cx).updated_at(), 40));
@@ -266,7 +266,7 @@ fn equal_warm_resume_does_not_rewrite_imported_session_metadata(cx: &mut TestApp
     });
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(save_count(&f, &saved.id), 0);
     assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
 }
@@ -297,7 +297,7 @@ fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
         assert!(!thread.read(cx).composer().paused());
         assert_eq!(thread.read(cx).draft_text(), Some("latest literal draft"));
     });
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         f.repository.transcript(&id).unwrap().draft.as_deref(),
         Some("latest literal draft")
@@ -318,7 +318,7 @@ fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
     let second = cx.update(|cx| client.capture(cx).unwrap());
     assert_eq!(first.1, second.1);
     assert!(Arc::ptr_eq(&first.0, &second.0));
-    shutdown_runtime(cx);
+    shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         f.repository
             .transcript(&first.0.id)

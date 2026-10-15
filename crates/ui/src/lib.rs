@@ -10,13 +10,12 @@
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling and the installed settings handle.
-//! Settings sections: appearance, terminal; init also registers ai.
+//! Settings sections: appearance, terminal.
 //! Globals: Design, SettingsStore, LayoutMemory, Notices.
 //! Imported themes use an explicit ThemeUi projection over ThemesHandle.
-//! Compatibility settings access: `ActiveAi`.
+//! Feature policy schemas are registered by their owning service.
 //! Invariants: layout edits remain visible on persistence failure; theme uses typed settings.
 
-mod ai;
 mod design;
 mod drag_preview;
 mod floating;
@@ -34,7 +33,6 @@ mod terminal_style;
 mod theme;
 mod themes;
 
-pub use ai::{ActiveAi, observe_ai_enabled};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};
@@ -68,7 +66,6 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiRe
     let settings = settings::init(cx);
     register_setting::<crate::AppearanceSettings>(cx);
     register_setting::<crate::TerminalSettings>(cx);
-    register_setting::<nocterm_ai::AiSettings>(cx);
     apply_theme(cx);
 
     cx.observe_global::<Design>(apply_theme).detach();

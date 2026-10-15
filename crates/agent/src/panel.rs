@@ -1,4 +1,4 @@
-use crate::{runtime::Runtime, thread::AgentThread};
+use crate::thread::AgentThread;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString,
     Subscription, TestSupportExt as _, Window,
@@ -78,11 +78,12 @@ mod tests;
 impl AgentPanel {
     pub(crate) fn new(
         host: crate::chat_host::ChatHost,
-        deps: crate::PanelDeps,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (images, layout, settings) = deps.into_parts();
+        let images = host.images().clone();
+        let layout = host.layout().clone();
+        let settings = host.settings().clone();
         let composer = composer_view::ComposerView::new(window, cx);
         let menus = menu_view::MenuView::new(composer.focus(cx), window, cx);
         let history = history_column::HistoryColumn::new(window, cx);
@@ -126,8 +127,11 @@ impl AgentPanel {
                 panel.on_workspace_event(*event, window, cx);
             })
         });
-        let runtime = cx.observe_in(&Runtime::global(cx), window, |panel, _, window, cx| {
-            panel.on_runtime_changed(window, cx);
+        let panel = cx.weak_entity();
+        let runtime = host.runtime().observe(cx, move |cx| {
+            let _ = cx.update_window(originating_window, |_, window, cx| {
+                let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
+            });
         });
         [Some(settings), workspace, Some(runtime)]
             .into_iter()
@@ -250,8 +254,8 @@ impl AgentPanel {
         let registry =
             nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx));
         let known = |id: &&String| registry.get(id).is_some();
-        Runtime::global(cx)
-            .read(cx)
+        self.host
+            .runtime()
             .favorites(cx)
             .last_agent
             .as_ref()
@@ -329,7 +333,7 @@ impl AgentPanel {
             self.settings.setting::<nocterm_ai::AiSettings>(cx).clone(),
             self.last_agent(cx),
             self.focus.clone(),
-            Runtime::global(cx).read(cx).favorites(cx).clone(),
+            self.host.runtime().favorites(cx).clone(),
             attachment,
         );
         menu::ConfigMenuRenderer::render_menu(frame, window, cx)
@@ -407,7 +411,7 @@ impl Render for AgentPanel {
                     .test_support(),
             );
         }
-        if let Some(error) = Runtime::global(cx).read(cx).favorites_error(cx) {
+        if let Some(error) = self.host.runtime().favorites_error(cx) {
             body = body.child(shell::ShellRenderer::error(
                 format!("Favorites were not saved: {error}"),
                 cx,

@@ -170,7 +170,7 @@ an explicitly injected `nocterm_ui::LayoutHandle`, keyed by name and saved to
 `layout.json` in the state directory. Its private `nocterm_store::Persisted` entity
 keeps changes immediately visible and coalesces pending snapshots into the latest
 arrangement. Bootstrap retains that same handle in the workspace dependencies for
-every new window. Agent presentation receives the same handle through `PanelDeps`.
+every new window. Agent presentation receives the same handle through its supplied `Installed`.
 `observe_size` projects only changes to one normalized visible scalar; caller-owned
 subscriptions exclude unrelated keys, flags and persistence-only notifications.
 Shared history split updates are applied at the next native group rebuild, preserving
@@ -223,3 +223,7 @@ a searchable table that records new shortcuts through a keystroke interceptor
 using the same design and theme rules as `current`. Terminal views use the section
 from their model's installed SettingsHandle; the compatibility `current` helper
 remains available to other UI callers.
+
+Shared UI does not register or read the AI policy schema. Agent runtime registers
+its own supplied settings section; standalone settings-page compositions register
+that section explicitly before constructing AI controls.

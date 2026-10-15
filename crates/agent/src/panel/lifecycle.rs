@@ -27,7 +27,7 @@ impl AgentPanel {
             .filter(|thread| thread.read(cx).is_archived())
             .map(|thread| thread.read(cx).document().chat_id().to_owned())
             .collect();
-        let reader = Runtime::global(cx).read(cx).history_reader();
+        let reader = self.host.runtime().history_reader(cx);
         let catalog = self
             .chats
             .iter()
@@ -105,7 +105,7 @@ impl AgentPanel {
         if let Some(thread) = self.chats.find(id).cloned() {
             let chat = thread.read(cx).document().chat_id().to_owned();
             thread.update(cx, |thread, cx| thread.release_resources(cx));
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
+            self.host.runtime().delete_chat(chat, cx);
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
             if self.current().is_none() {
                 self.composer.set_text("", window, cx);
@@ -309,9 +309,7 @@ impl AgentPanel {
         id: gpui_kit::EntityId,
         cx: &mut Context<Self>,
     ) -> bool {
-        match Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.capture_and_detach_document(id, cx)
-        }) {
+        match self.host.runtime().capture_and_detach_document(id, cx) {
             Ok(true) => {
                 if let Some(thread) = self.chats.iter().find(|thread| thread.entity_id() == id) {
                     thread.update(cx, |thread, cx| {
@@ -366,7 +364,7 @@ impl AgentPanel {
         else {
             return;
         };
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.set_last_agent(&id, cx));
+        self.host.runtime().set_last_agent(&id, cx);
         self.leave_composer(cx);
         let active = self
             .host
@@ -416,16 +414,16 @@ impl AgentPanel {
         else {
             return;
         };
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.register_document(crate::thread::client(&thread), cx)
-        });
+        self.host
+            .runtime()
+            .register_document(crate::thread::client(&thread), cx);
         thread.update(cx, |thread, cx| {
             thread.save(cx);
             cx.notify();
         });
         self.load_composer(cx);
         let old = old.entity_id();
-        Runtime::global(cx).update(cx, |runtime, cx| runtime.unregister_document(old, cx));
+        self.host.runtime().unregister_document(old, cx);
         self.retain_threads(|thread, _| thread.entity_id() != old, cx);
     }
     /// Shows the chats saved in earlier runs, oldest first, before the
@@ -434,9 +432,7 @@ impl AgentPanel {
         if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
             return;
         }
-        let (chats, catalog) = Runtime::global(cx).update(cx, |runtime, _| {
-            (runtime.take_saved_chats(), runtime.take_saved_catalog())
-        });
+        let (chats, catalog) = self.host.runtime().take_history(cx);
         let mut restored = Vec::new();
         if let Some(chats) = chats {
             for chat in chats.into_iter().rev() {
@@ -501,9 +497,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> chat_list::ChatSlot {
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.register_document(crate::thread::client(thread), cx)
-        });
+        self.host
+            .runtime()
+            .register_document(crate::thread::client(thread), cx);
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.bind_window(handle));

@@ -4,8 +4,6 @@ use nocterm_ai::{acp, thread::ThreadState};
 use std::{sync::Arc, time::Duration};
 
 use super::{AgentThread, Attachment, Composer, Fork, RestartData, Restore, archive};
-use crate::runtime::Runtime;
-use nocterm_ui::ActiveAi as _;
 
 impl AgentThread {
     pub(crate) fn send_now(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -129,10 +127,9 @@ impl AgentThread {
             self.state.agent_id().to_owned(),
             self.config.options().to_vec(),
         );
+        let runtime = self.host.runtime().clone();
         cx.defer(move |cx| {
-            crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
-                runtime.remember_options(&agent, &options, cx)
-            });
+            runtime.remember_options(&agent, &options, cx);
         });
     }
 
@@ -144,7 +141,7 @@ impl AgentThread {
     }
 
     pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
-        if self.session.generating() || !cx.ai_enabled() {
+        if self.session.generating() || !self.host.enabled(cx) {
             return;
         }
         if self.config.choose_mode(id.clone()) {
@@ -177,7 +174,7 @@ impl AgentThread {
         value: acp::SessionConfigOptionValue,
         cx: &mut Context<Self>,
     ) {
-        if self.session.generating() || !cx.ai_enabled() {
+        if self.session.generating() || !self.host.enabled(cx) {
             return;
         }
         let choice = self.config.choose_option(&id, &value);
@@ -190,10 +187,9 @@ impl AgentThread {
         }
         if let Some((option, choice)) = choice.remember() {
             let agent = self.state.agent_id().to_owned();
+            let runtime = self.host.runtime().clone();
             cx.defer(move |cx| {
-                crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
-                    runtime.remember_choice(&agent, &option, &choice, cx)
-                });
+                runtime.remember_choice(&agent, &option, &choice, cx);
             });
         }
         let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
@@ -217,7 +213,7 @@ impl AgentThread {
     }
 
     pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
-        let state = crate::runtime::Runtime::global(cx).read(cx).favorites(cx);
+        let state = self.host.runtime().favorites(cx);
         self.config.preview(
             state.choices(self.state.agent_id()),
             state
@@ -411,10 +407,11 @@ impl AgentThread {
         let (load_id, ticket, result, permit) = completion.into_parts();
 
         let current = self.session.session_current(ticket)
-            && cx.ai_enabled()
-            && Runtime::global(cx)
-                .read(cx)
-                .document_is_current(self.state.chat_id(), cx.entity_id());
+            && self.host.enabled(cx)
+            && self
+                .host
+                .runtime()
+                .document_is_current(self.state.chat_id(), cx.entity_id(), cx);
         match self.archive.accept(load_id, current, result, permit) {
             archive::LoadOutcome::Stale => return,
             archive::LoadOutcome::Failed(error) => {
@@ -455,7 +452,7 @@ impl AgentThread {
             return;
         };
         self.notice.present("Loading saved chat…".into());
-        let reader = Runtime::global(cx).read(cx).history_reader();
+        let reader = self.host.runtime().history_reader(cx);
         let operation =
             archive::load_operation::LoadOperation::new(load_id, ticket, chat_id, reader);
         let loading = cx.background_executor().spawn(operation.run());
@@ -712,10 +709,9 @@ impl AgentThread {
         }
         let owner = cx.entity_id();
         let thread = cx.weak_entity();
+        let runtime = self.host.runtime().clone();
         cx.defer(move |cx| {
-            let result = Runtime::global(cx).update(cx, |runtime, cx| {
-                runtime.save_chat(chat, owner, revision, cx)
-            });
+            let result = runtime.save_chat(chat, owner, revision, cx);
             match result {
                 Ok(true) => {
                     let _ = thread.update(cx, |thread, cx| thread.document_admitted(revision, cx));

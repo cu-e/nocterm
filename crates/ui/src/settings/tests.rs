@@ -396,14 +396,14 @@ async fn late_section_registration_survives_an_in_flight_publication(cx: &mut Te
     let (release, writes) = gated_writer(cx);
     let task = copy_on_select(cx);
     cx.run_until_parked();
-    cx.update(register_setting::<nocterm_ai::AiSettings>);
+    cx.update(register_setting::<nocterm_session::LoggingOptions>);
     release.send(Ok(())).unwrap();
     task.await.unwrap();
     cx.update(|cx| {
         assert!(
             cx.global::<SettingsStore>()
                 .document(cx)
-                .is_registered::<nocterm_ai::AiSettings>()
+                .is_registered::<nocterm_session::LoggingOptions>()
         )
     });
     let work = cx.update(|cx| {

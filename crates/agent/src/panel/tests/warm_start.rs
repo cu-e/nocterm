@@ -58,7 +58,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
     exchange(&f, "hello", "Hi.", cx);
     cx.update(|cx| {
         assert_eq!(thread.read(cx).model().as_deref(), Some("Opus"));
-        let state = &Runtime::global(cx).read(cx).favorites(cx);
+        let state = &f.installation.installed.runtime().favorites(cx);
         assert_eq!(
             state.choices("codex").get("model"),
             Some(&ConfigValue::Value("opus".into()))
@@ -73,9 +73,8 @@ fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &m
     lazy_start(cx);
     f.commands.config.set_options(models());
     cx.update(|cx| {
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.remember_options("codex", &models(), cx)
-        })
+        let runtime = f.installation.installed.runtime();
+        runtime.remember_options("codex", &models(), cx)
     });
     let thread = chat(&f, cx);
     cx.run_until_parked();

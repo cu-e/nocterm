@@ -191,7 +191,7 @@ impl AgentPanel {
         );
         let notices = composer_renderer::ComposerRenderer::render_notices(
             &self.composer,
-            crate::TerminalAuth::opener(cx).is_some(),
+            self.host.auth().is_some(),
             thread,
             cx,
         );
@@ -353,9 +353,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let (agent, config, value, _selected) = action.into_parts();
-        Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.toggle_favorite(&agent, &config, &value, cx)
-        });
+        self.host
+            .runtime()
+            .toggle_favorite(&agent, &config, &value, cx);
     }
     pub(super) fn preparing_images(&self) -> bool {
         self.composer.preparing()

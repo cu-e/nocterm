@@ -10,8 +10,7 @@ use gpui_kit::{App, Context, EntityId, Task, WeakEntity};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure, acp};
 use nocterm_session::ExecRequest;
-use nocterm_ui::ActiveAi as _;
-use nocterm_ui::SettingsExt as _;
+
 use nocterm_workspace::{ExpectedSession, TerminalEntry, TerminalStatus};
 use std::sync::{
     Arc,
@@ -87,7 +86,7 @@ impl AgentThread {
     ) -> Result<Option<serde_json::Value>, ToolFailure> {
         if !self.session.session_current(operation.ticket())
             || !self.session.accepts_updates()
-            || !cx.ai_enabled()
+            || !self.host.enabled(cx)
         {
             return Err(ToolFailure::from("Chat is unavailable."));
         }
@@ -95,12 +94,7 @@ impl AgentThread {
         let state = self
             .tools
             .command_snapshot(operation.id(), operation.terminal())?;
-        operation.frame(
-            state,
-            cx.setting::<nocterm_ai::AiSettings>()
-                .approval
-                .redact_secrets,
-        )
+        operation.frame(state, self.host.ai(cx).approval.redact_secrets)
     }
 
     fn wait_command(
@@ -366,10 +360,7 @@ impl AgentThread {
         expected: ExpectedSession,
         cx: &mut Context<Self>,
     ) {
-        let redact = cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .redact_secrets;
+        let redact = self.host.ai(cx).approval.redact_secrets;
         let action = self.tools.dispatch(call, entry, expected, redact, cx);
         self.apply_dispatch_action(action, cx);
     }
@@ -377,7 +368,7 @@ impl AgentThread {
     fn execute_tool_with(&mut self, bound: BoundToolCall, reconnect: bool, cx: &mut Context<Self>) {
         use super::tool_runtime::dispatch::{AdmissionRoute, ExecutionAdmission};
         let admission = ExecutionAdmission::new(
-            cx.ai_enabled() && self.session.accepts_updates(),
+            self.host.enabled(cx) && self.session.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
         );
         let bound = match admission.route(bound) {
@@ -416,7 +407,7 @@ impl AgentThread {
             || self.registration().as_ref().map(|value| value.id) != target.registration()
             || !self.session.session_current(target.ticket())
             || !self.session.accepts_updates()
-            || !cx.ai_enabled()
+            || !self.host.enabled(cx)
         {
             return Err(ConnectionWaitError::Stopped);
         }
@@ -462,7 +453,7 @@ impl AgentThread {
             || self.registration().as_ref().map(|value| value.id) != registration
             || !self.session.session_current(ticket)
             || !self.session.accepts_updates()
-            || !cx.ai_enabled()
+            || !self.host.enabled(cx)
         {
             return Err(ConnectionWaitError::Stopped);
         }
@@ -484,7 +475,7 @@ impl AgentThread {
         while let Some(effect) = self.tools.take_ready_reconnect(scope) {
             let (accepted, call, result, guard) = effect.into_parts();
             let current = self.session.accepts_updates()
-                && cx.ai_enabled()
+                && self.host.enabled(cx)
                 && accepted.is_current(
                     self.host.workspace(),
                     self.bindings.window(),
@@ -530,19 +521,13 @@ impl AgentThread {
         operation: &mut super::live::LiveCommandOperation,
         cx: &mut Context<Self>,
     ) -> Result<Option<serde_json::Value>, super::live::TerminalOperationError> {
-        operation.check_active(self.session.accepts_updates() && cx.ai_enabled())?;
+        operation.check_active(self.session.accepts_updates() && self.host.enabled(cx))?;
         let entry = self
             .resolved(cx)
             .into_iter()
             .find(|(id, _, _)| id == operation.id())
             .map(|(_, entry, _)| entry);
-        let result = operation.poll(
-            entry,
-            cx.setting::<nocterm_ai::AiSettings>()
-                .approval
-                .redact_secrets,
-            cx,
-        )?;
+        let result = operation.poll(entry, self.host.ai(cx).approval.redact_secrets, cx)?;
         Ok(result.map(|(payload, bytes)| {
             self.tools.account_outcome(bytes);
             payload
@@ -697,7 +682,7 @@ impl AgentThread {
         if self.is_archived() {
             return Err(SubmitError::Loading);
         }
-        if !cx.ai_enabled() || self.session.sign_in_required() {
+        if !self.host.enabled(cx) || self.session.sign_in_required() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.composer.images().is_empty() {

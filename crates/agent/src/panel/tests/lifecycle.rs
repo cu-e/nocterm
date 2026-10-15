@@ -142,11 +142,10 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
 fn favorites_latest_snapshot_is_persisted_in_order(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
-            runtime.toggle_favorite("codex", "model", "a", cx);
-            runtime.toggle_favorite("codex", "model", "b", cx);
-            runtime.toggle_favorite("codex", "model", "a", cx);
-        })
+        let runtime = f.installation.installed.runtime();
+        runtime.toggle_favorite("codex", "model", "a", cx);
+        runtime.toggle_favorite("codex", "model", "b", cx);
+        runtime.toggle_favorite("codex", "model", "a", cx);
     });
     cx.run_until_parked();
     let state = f.repository.state();
@@ -163,17 +162,15 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let mut workspace =
-                        Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
+                    let mut workspace = Workspace::new(
+                        nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                        window,
+                        cx,
+                    );
                     let owner = cx.entity().downgrade();
                     let view = cx.new(|cx| {
                         AgentPanel::new(
-                            f._directory.host(owner),
-                            crate::PanelDeps::new(
-                                image_deps(),
-                                f.layout.clone(),
-                                f.ready.settings().clone(),
-                            ),
+                            f._directory.host(owner, f.installation.installed.clone()),
                             window,
                             cx,
                         )
@@ -490,6 +487,7 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
         },
         cx,
     );
+    let unrelated = fixture(cx);
     f.connector
         .report_auth_methods(vec![acp::AuthMethod::Terminal(
             acp::AuthMethodTerminal::new("setup", "Terminal setup")
@@ -521,6 +519,8 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
         0,
         "terminal methods must not use the agent authenticate RPC"
     );
+    assert_eq!(unrelated.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(unrelated.commands.authentications.load(Ordering::SeqCst), 0);
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].program, "npx");

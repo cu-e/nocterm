@@ -240,7 +240,7 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.set_draft("unsaved dormant edit".into(), cx);
     });
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
+    cx.update(|cx| f.installation.installed.runtime().shutdown(cx).detach());
     cx.run_until_parked();
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
@@ -263,17 +263,15 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let mut workspace =
-                        Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
+                    let mut workspace = Workspace::new(
+                        nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                        window,
+                        cx,
+                    );
                     let owner = cx.entity().downgrade();
                     let view = cx.new(|cx| {
                         AgentPanel::new(
-                            f._directory.host(owner),
-                            crate::PanelDeps::new(
-                                image_deps(),
-                                f.layout.clone(),
-                                f.ready.settings().clone(),
-                            ),
+                            f._directory.host(owner, f.installation.installed.clone()),
                             window,
                             cx,
                         )
@@ -447,7 +445,7 @@ fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut
     thread.update(cx, |thread, cx| {
         thread.rename(Some("latest document".into()), cx)
     });
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.shutdown(cx).detach()));
+    cx.update(|cx| f.installation.installed.runtime().shutdown(cx).detach());
     cx.run_until_parked();
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);

@@ -135,3 +135,85 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
     }
     cx.update(|cx| assert_eq!(owner.read(cx).permission_cards().len(), 2));
 }
+
+#[gpui_kit::test]
+fn separate_installations_keep_original_runtime_and_policy_after_later_composition(
+    cx: &mut TestAppContext,
+) {
+    let first = fixture(cx);
+    let second = fixture(cx);
+    cx.update(|cx| {
+        second
+            .installation
+            .installed
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |ai| ai.enabled = false)
+            .detach();
+        first
+            .installation
+            .installed
+            .runtime()
+            .set_last_agent("original", cx);
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(first.workspace.read(cx).right_panel_is_available());
+        assert!(!second.workspace.read(cx).right_panel_is_available());
+        assert_eq!(
+            first
+                .installation
+                .installed
+                .runtime()
+                .favorites(cx)
+                .last_agent
+                .as_deref(),
+            Some("original")
+        );
+        assert!(
+            second
+                .installation
+                .installed
+                .runtime()
+                .favorites(cx)
+                .last_agent
+                .is_none()
+        );
+    });
+    new_chat(&first, cx);
+    assert_eq!(first.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(second.connector.connects.load(Ordering::SeqCst), 0);
+}
+
+#[gpui_kit::test]
+fn refused_shutdown_registration_returns_a_usable_original_installation(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let refused = nocterm_store::ShutdownCoordinator::default();
+    cx.update(|cx| {
+        drop(refused.capture_all(cx));
+        let (installed, registration) = crate::init(
+            fixture_services(&f),
+            image_deps(),
+            f.installation.layout.clone(),
+            &f.installation.ready,
+            &refused,
+            cx,
+        );
+        assert!(matches!(
+            registration,
+            Err(nocterm_store::StoreError::Closing)
+        ));
+        installed.runtime().set_last_agent("still-usable", cx);
+        assert_eq!(
+            installed.runtime().favorites(cx).last_agent.as_deref(),
+            Some("still-usable")
+        );
+        assert!(
+            f.installation
+                .installed
+                .runtime()
+                .favorites(cx)
+                .last_agent
+                .is_none()
+        );
+    });
+}

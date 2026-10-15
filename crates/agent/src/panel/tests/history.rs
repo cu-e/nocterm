@@ -67,7 +67,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
 
     // Opening it reopens the agent's session instead of starting another.
     let sessions = f.commands.sessions.load(Ordering::SeqCst);
-    cx.update(|cx| activate_thread(&thread, cx));
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -77,7 +77,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     cx.update(|cx| assert_eq!(thread.read(cx).session().as_ref(), Some(&session)));
 
     let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(id, cx)));
+    cx.update(|cx| f.installation.installed.runtime().delete_chat(id, cx));
     cx.run_until_parked();
     assert!(f.repository.chats().is_empty());
 }
@@ -194,7 +194,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(nginx.entity_id(), window, cx);
             let fork = panel.current().unwrap();
-            activate_thread(&fork, cx)
+            activate_thread(&fork, &f.installation.installed, cx)
         })
     })
     .unwrap();
@@ -414,17 +414,15 @@ fn second_history_window(
     let (handle, _) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let mut workspace =
-                    Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
+                let mut workspace = Workspace::new(
+                    nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                    window,
+                    cx,
+                );
                 let owner = cx.entity().downgrade();
                 let view = cx.new(|cx| {
                     AgentPanel::new(
-                        f._directory.host(owner),
-                        crate::PanelDeps::new(
-                            image_deps(),
-                            f.layout.clone(),
-                            f.ready.settings().clone(),
-                        ),
+                        f._directory.host(owner, f.installation.installed.clone()),
                         window,
                         cx,
                     )
@@ -496,6 +494,7 @@ fn settle_scheduled_history(
 fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut TestAppContext) {
     use gpui_kit::{px, size};
     let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
@@ -509,10 +508,9 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
     let changes = Rc::new(std::cell::Cell::new(0));
     let seen = changes.clone();
     let _subscription = cx.update(|cx| {
-        f.layout
-            .observe_size("agent.history", cx, move |_, _| seen.set(seen.get() + 1))
+        layout.observe_size("agent.history", cx, move |_, _| seen.set(seen.get() + 1))
     });
-    cx.update(|cx| f.layout.set("agent.history", px(360.), cx).unwrap());
+    cx.update(|cx| layout.set("agent.history", px(360.), cx).unwrap());
     cx.run_until_parked();
     for handle in [f.handle, other] {
         assert!((history_width(handle, cx) - px(360.)).abs() <= px(1.));
@@ -536,7 +534,7 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
         window.render_frame(cx);
     })
     .unwrap();
-    cx.update(|cx| f.layout.set("agent.history", px(420.), cx).unwrap());
+    cx.update(|cx| layout.set("agent.history", px(420.), cx).unwrap());
     cx.run_until_parked();
     cx.update_window(other, |_, window, cx| {
         window.click("agent-history", cx);
@@ -577,7 +575,7 @@ fn closing_one_window_keeps_the_surviving_history_layout_subscription(cx: &mut T
         cx.set_quit_mode(gpui_kit::QuitMode::Explicit);
     });
     let (survivor, _panel) = second_history_window(&f, cx);
-    let layout = f.layout.clone();
+    let layout = f.installation.layout.clone();
     let removed = f.panel.downgrade();
     let _ = history_width(survivor, cx);
     cx.update_window(f.handle, |_, window, _| window.remove_window())
@@ -622,6 +620,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
 ) {
     use gpui_kit::{InputEvent as _, MouseButton, MouseDownEvent, MouseUpEvent, point, px, size};
     let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
@@ -659,7 +658,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
             cx.has_active_drag(),
             "real divider drag must be active before the shared update"
         );
-        f.layout.set("agent.history", px(380.), cx).unwrap();
+        layout.set("agent.history", px(380.), cx).unwrap();
     });
     cx.run_until_parked();
     // Exercise the previously painted listener before the refresh draw, then the
@@ -683,7 +682,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
     .unwrap();
     assert!((history_width(f.handle, cx) - px(380.)).abs() <= px(1.));
     assert!((history_width(other, cx) - px(380.)).abs() <= px(1.));
-    cx.update(|cx| f.layout.set("agent.history", px(1000.), cx).unwrap());
+    cx.update(|cx| layout.set("agent.history", px(1000.), cx).unwrap());
     cx.run_until_parked();
     let _ = history_width(f.handle, cx);
     assert!(!settle_scheduled_history(f.handle, cx).is_empty());
@@ -694,7 +693,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
     }
     assert!(settle_scheduled_history(f.handle, cx).is_empty());
     assert_eq!(
-        cx.update(|cx| f.layout.get("agent.history", cx)),
+        cx.update(|cx| layout.get("agent.history", cx)),
         Some(px(1000.))
     );
 }

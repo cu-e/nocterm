@@ -1,14 +1,13 @@
-use crate::runtime::Runtime;
 use crate::runtime::SessionLease;
 use approval_inbox::ToolGate;
 use futures::FutureExt as _;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, EntityId, Window};
 use nocterm_ai::context::{ServerDescriptor, TerminalDescriptor};
 use nocterm_ai::{
-    AgentCommands, AgentInfo, AiSettings, BridgeRegistration, TerminalCall, acp,
-    session::SessionPhase, thread::ThreadState,
+    AgentCommands, AgentInfo, BridgeRegistration, TerminalCall, acp, session::SessionPhase,
+    thread::ThreadState,
 };
-use nocterm_ui::{ActiveAi as _, SettingsExt as _};
+
 use nocterm_workspace::{ConnectionSummary, ExpectedSession, TerminalEntry};
 use session_driver::OperationGuard;
 use std::{path::PathBuf, sync::Arc};
@@ -163,7 +162,7 @@ impl AgentThread {
         };
         ToolGate::from_context(
             call,
-            cx.ai_enabled() && self.session.accepts_updates(),
+            self.host.enabled(cx) && self.session.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
             &resolved,
             &offline,
@@ -280,8 +279,8 @@ impl AgentThread {
         if self.session.shown()
             && !self.is_archived()
             && self.state.persistence_error().is_none()
-            && cx.ai_enabled()
-            && cx.setting::<AiSettings>().sessions.warm_start
+            && self.host.enabled(cx)
+            && self.host.ai(cx).sessions.warm_start
             && self.session.phase() == SessionPhase::Detached
         {
             self.request_activation(cx);
@@ -308,8 +307,9 @@ impl AgentThread {
         self.notice.clear_error();
         self.notice.present("Waiting for an agent slot…".into());
         let owner = self::client(&cx.entity());
+        let runtime = self.host.runtime().clone();
         cx.defer(move |cx| {
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.request_activation(owner, cx));
+            runtime.request_activation(owner, cx);
         });
         cx.notify();
     }
@@ -345,19 +345,22 @@ impl AgentThread {
     fn on_release(&mut self, id: EntityId, cx: &mut gpui_kit::App) {
         self.cancel_pending();
         self.finalize_tool_displays();
-        let snapshot = cx.ai_enabled().then(|| self.capture_pending(cx)).flatten();
+        let snapshot = self
+            .host
+            .enabled(cx)
+            .then(|| self.capture_pending(cx))
+            .flatten();
         self.cancel_execution();
         // The lease releases its connection when it is dropped.
         self.session.release_lease();
+        let runtime = self.host.runtime().clone();
         cx.defer(move |cx| {
-            Runtime::global(cx).update(cx, |runtime, cx| {
-                if let Some((chat, revision)) = snapshot
-                    && let Err(error) = runtime.save_chat(chat, id, revision, cx)
-                {
-                    tracing::warn!(%error,"released chat admission failed");
-                }
-                runtime.unregister_document(id, cx);
-            });
+            if let Some((chat, revision)) = snapshot
+                && let Err(error) = runtime.save_chat(chat, id, revision, cx)
+            {
+                tracing::warn!(%error,"released chat admission failed");
+            }
+            runtime.unregister_document(id, cx);
         });
         if let Some(window) = self.bindings.window() {
             let workspace = self.host.workspace().clone();
@@ -605,7 +608,7 @@ impl AgentThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() || self.session_phase() != SessionPhase::SignInRequired {
+        if !self.host.enabled(cx) || self.session_phase() != SessionPhase::SignInRequired {
             return;
         }
         let Some(commands) = self.commands().clone() else {
@@ -626,13 +629,13 @@ impl AgentThread {
         let auth = match method {
             acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
             acp::AuthMethod::Terminal(method) => {
-                let runtime = Runtime::global(cx);
-                let Some(opener) = crate::TerminalAuth::opener(cx) else {
+                let runtime = self.host.runtime();
+                let Some(opener) = self.host.auth() else {
                     return;
                 };
                 let Some(request) = self
                     .connection_key()
-                    .and_then(|key| runtime.read(cx).terminal_auth_request(key, &method))
+                    .and_then(|key| runtime.terminal_auth_request(key, &method, cx))
                 else {
                     return;
                 };
@@ -673,7 +676,7 @@ impl AgentThread {
         result: Result<(), nocterm_ai::AgentError>,
         cx: &mut Context<Self>,
     ) {
-        if !self.session.accepts_authority(&authority) || !cx.ai_enabled() {
+        if !self.session.accepts_authority(&authority) || !self.host.enabled(cx) {
             return;
         }
         let has_session = self.session().is_some();

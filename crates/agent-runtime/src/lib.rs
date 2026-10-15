@@ -7,13 +7,15 @@
 //! AccountUsageSource, WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
 //! at installation.
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
-//! Settings section: ai consumer. Globals: existing RuntimeGlobal compatibility shell.
+//! Settings section: ai consumer. Globals: none.
 //! Invariants: one current document owner per ID; delete seals an ID; persistence
 //! admission and physical publication are separate revision-bearing events. Registry
 //! stamps change only after writer acceptance; final work reads no App and joins
 //! captured admission failures with publication failures. Shared cleanup diagnostics
 //! retain the original typed AgentError through standard source traversal.
 
+mod handle;
+pub use handle::RuntimeHandle;
 mod admission;
 mod bridge;
 mod catalog;
@@ -31,7 +33,7 @@ mod state;
 use futures::future::BoxFuture;
 mod storage;
 pub use client::{Client, ClientState, SessionClient, SessionEvent};
-use gpui::{App, Context, Entity, EntityId, Global, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 pub use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
@@ -66,8 +68,6 @@ pub struct RuntimeServices {
     /// tools' socket directory.
     pub shared_dirs: Vec<PathBuf>,
 }
-pub struct RuntimeGlobal(pub Entity<Runtime>);
-impl Global for RuntimeGlobal {}
 struct Connection {
     chat_id: String,
     launch: AgentLaunch,
@@ -102,10 +102,8 @@ impl Runtime {
         self.ai(cx).enabled
     }
 
-    pub fn global(cx: &App) -> Entity<Self> {
-        cx.global::<RuntimeGlobal>().0.clone()
-    }
     pub fn new(mut services: RuntimeServices, cx: &mut Context<Self>) -> Self {
+        services.settings.register::<nocterm_ai::AiSettings>(cx);
         for warning in
             nocterm_ai::AgentRegistry::new(services.settings.setting::<nocterm_ai::AiSettings>(cx))
                 .warnings

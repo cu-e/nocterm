@@ -1,8 +1,11 @@
 use super::*;
 use std::error::Error;
 
-fn capture(cx: &mut TestAppContext) -> BoxFuture<'static, Result<(), nocterm_store::StoreError>> {
-    cx.update(|cx| Runtime::global(cx).update(cx, |runtime, cx| runtime.capture_shutdown(cx)))
+fn capture(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> BoxFuture<'static, Result<(), nocterm_store::StoreError>> {
+    cx.update(|cx| f.installation.installed.runtime().capture_shutdown(cx))
 }
 
 #[gpui_kit::test]
@@ -10,7 +13,7 @@ fn captured_cleanup_is_lazy_and_retains_the_original_agent_error(cx: &mut TestAp
     let f = fixture(cx);
     new_chat(&f, cx);
     f.commands.shutdown_failure.store(true, Ordering::SeqCst);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
     let error = cx.foreground_executor().block_test(work).unwrap_err();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
@@ -37,7 +40,7 @@ fn capture_retries_failed_ordinary_cleanup_once(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     f.commands.shutdown_failure.store(false, Ordering::SeqCst);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     cx.foreground_executor().block_test(work).unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 2);
@@ -55,7 +58,7 @@ fn capture_bypasses_close_acknowledgement_and_late_close_joins_cleanup(cx: &mut 
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
     cx.foreground_executor().block_test(work).unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
@@ -72,7 +75,7 @@ fn capture_joins_successful_ordinary_cleanup(cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     cx.foreground_executor().block_test(work).unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
 }
@@ -87,7 +90,7 @@ fn capture_deduplicates_the_same_native_command_handle(cx: &mut TestAppContext) 
     });
     new_chat(&f, cx);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
     cx.foreground_executor().block_test(work).unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
@@ -106,7 +109,7 @@ fn capture_keeps_distinct_command_handles_with_shared_counters_independent(
     });
     new_chat(&f, cx);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
-    let work = capture(cx);
+    let work = capture(&f, cx);
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
     cx.foreground_executor().block_test(work).unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 2);

@@ -24,7 +24,7 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
     .into_bytes();
     nocterm_ai::history::decode(&bytes, id).unwrap();
     std::fs::write(&file, &bytes).unwrap();
-    let (window, workspace) = cx.update(|cx| {
+    let (booted, window, workspace) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings.update::<nocterm_ai::AiSettings>(|ai| ai.sessions.warm_start = false);
         let booted = boot(
@@ -34,7 +34,8 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
             false,
             cx,
         );
-        open_workspace(&booted, cx)
+        let (window, workspace) = open_workspace(&booted, cx);
+        (booted, window, workspace)
     });
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
@@ -67,10 +68,7 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| assert!(!workspace.read(cx).right_panel_is_available()));
-    let final_work = cx.update(|cx| {
-        nocterm_agent_runtime::Runtime::global(cx)
-            .update(cx, |runtime, cx| runtime.capture_shutdown(cx))
-    });
+    let final_work = cx.update(|cx| booted.agent_installation().runtime().capture_shutdown(cx));
     final_work.await.unwrap();
     assert_eq!(
         std::fs::read(file).unwrap(),

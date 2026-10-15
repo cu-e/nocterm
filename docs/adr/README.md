@@ -50,3 +50,4 @@ acceptance; a later record supersedes an earlier one.
 | [0049](0049-bounded-panel-coordination.md) | Private panel membership, notice tasks and finite presentation operations |
 | [0050](0050-retained-snippet-installation.md) | Snippet views retain their original installation and private draft controls |
 | [0051](0051-retained-keymap-installation.md) | Keymap pages and directory actions retain supplied ownership across windows |
+| [0052](0052-retained-agent-installation.md) | Agent views retain runtime, policy and host installation authority |

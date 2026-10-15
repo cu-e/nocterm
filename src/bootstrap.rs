@@ -58,8 +58,7 @@ pub(crate) struct Booted {
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
     settings_ui: nocterm_settings_ui::Deps,
-    panel: nocterm_agent::PanelDeps,
-    metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
+    agent: nocterm_agent::Installed,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
     connections: Option<nocterm_connections::Installed>,
@@ -72,6 +71,10 @@ pub(crate) struct Booted {
 impl Booted {
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn agent_installation(&self) -> &nocterm_agent::Installed {
+        &self.agent
     }
     pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Deps {
         self.settings_ui.clone()
@@ -100,7 +103,6 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         vault,
         connections,
     } = services;
-    let metadata = agent.metadata.clone();
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
     let base = tokens.clone();
@@ -142,7 +144,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         agent.terminal_auth = Some(factory(terminal.clone()));
     }
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
-    report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
+    let (agent, registration) =
+        nocterm_agent::init(agent, images, layout.clone(), &ui, &shutdown, cx);
+    report_store_registration("agent", registration);
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
@@ -151,8 +155,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         local_host,
         terminal,
         settings_ui,
-        panel: nocterm_agent::PanelDeps::new(images, layout.clone(), ui.settings().clone()),
-        metadata,
+        agent,
         connections,
         snippets,
         vault,
@@ -319,13 +322,7 @@ pub(crate) fn build_workspace(
     }
     nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
     nocterm_monitor_ui::register(booted.local_host.clone(), workspace, window, cx);
-    nocterm_agent::register(
-        workspace,
-        booted.panel.clone(),
-        booted.metadata.clone(),
-        window,
-        cx,
-    );
+    nocterm_agent::register(workspace, booted.agent.clone(), window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(vault) = vault
         && cx

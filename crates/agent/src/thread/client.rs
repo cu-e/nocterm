@@ -5,15 +5,15 @@ use super::{
     approval_inbox::{ToolDecision, ToolRejection},
     bound_call::BoundToolCall,
 };
-use crate::runtime::{Runtime, SessionEvent};
+use crate::runtime::SessionEvent;
 use gpui_kit::{App, Context};
 use nocterm_ai::{
     AgentCommands, AgentInfo, BridgeCall, BridgeRejection, TerminalCall, ToolFailure,
     thread::{Entry, ThreadChange},
     tool_display::{self, ToolDisplay},
 };
-use nocterm_ai::{AiSettings, PermissionResponder, acp};
-use nocterm_ui::{ActiveAi as _, SettingsExt as _};
+use nocterm_ai::{PermissionResponder, acp};
+
 use nocterm_workspace::TerminalEntry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,7 +55,7 @@ impl AgentThread {
     }
 
     pub(super) fn on_execution_watch(&mut self, cx: &gpui_kit::App) -> bool {
-        if !cx.ai_enabled() {
+        if !self.host.enabled(cx) {
             self.cancel_execution();
         } else {
             self.revoke_executions(cx);
@@ -81,9 +81,7 @@ impl AgentThread {
         super::tool_runtime::presentation::command_payload(
             id,
             state,
-            cx.setting::<nocterm_ai::AiSettings>()
-                .approval
-                .redact_secrets,
+            self.host.ai(cx).approval.redact_secrets,
         )
     }
 
@@ -134,7 +132,7 @@ impl AgentThread {
     }
 
     pub(crate) fn handle_tool(&mut self, mut call: BridgeCall, cx: &mut Context<Self>) {
-        if !cx.ai_enabled()
+        if !self.host.enabled(cx)
             || !self.session.accepts_updates()
             || self.registration().as_ref().map(|value| value.id) != Some(call.registration_id)
         {
@@ -151,7 +149,7 @@ impl AgentThread {
         let decision = self.tools.approval_receive_tool(
             BoundToolCall::new(call, expected),
             &gate,
-            &cx.setting::<nocterm_ai::AiSettings>().approval,
+            &self.host.ai(cx).approval,
         );
         self.apply_tool_decision(decision, cx);
     }
@@ -192,7 +190,7 @@ impl AgentThread {
         rejected: BridgeRejection,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled()
+        if !self.host.enabled(cx)
             || !self.session.accepts_updates()
             || self.session.stopped()
             || self.registration().as_ref().map(|value| value.id) != Some(rejected.registration_id)
@@ -202,11 +200,7 @@ impl AgentThread {
         let server = tool_display::bridge_server_name(rejected.registration_id);
         let mut display = ToolDisplay::requested(rejected.tool.clone(), rejected.arguments.clone());
         display.finish(Err(rejected.error.into()));
-        if cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .redact_secrets
-        {
+        if self.host.ai(cx).approval.redact_secrets {
             display.redact();
         }
         self.tools
@@ -237,11 +231,7 @@ impl AgentThread {
         let destination = self.tool_destination(&call.call, provided_entry.or(entry.as_ref()), cx);
         let mut display = ToolDisplay::requested(tool.into(), arguments.clone());
         display.destination = destination.map(|text| nocterm_ai::redact::redact(&text));
-        if cx
-            .setting::<nocterm_ai::AiSettings>()
-            .approval
-            .redact_secrets
-        {
+        if self.host.ai(cx).approval.redact_secrets {
             display.redact();
         }
         self.tools
@@ -278,7 +268,7 @@ impl AgentThread {
         is_command: bool,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() || !self.session.accepts_authority(&authority) {
+        if !self.host.enabled(cx) || !self.session.accepts_authority(&authority) {
             return;
         }
         let completed = matches!(
@@ -300,9 +290,8 @@ impl AgentThread {
                 // Agents that keep limits in their own files have
                 // just written this turn's.
                 let agent = self.state.agent_id().to_owned();
-                cx.defer(move |cx| {
-                    Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx))
-                });
+                let runtime = self.host.runtime().clone();
+                cx.defer(move |cx| runtime.refresh_limits(&agent, cx));
                 self.notice.present(if self.session.stopped() {
                     "Stopped".into()
                 } else {
@@ -331,7 +320,7 @@ impl AgentThread {
     }
 
     pub(super) fn clear_settled_disabled_document(&mut self, cx: &gpui_kit::App) {
-        if !cx.ai_enabled() && self.state.release_disabled() {
+        if !self.host.enabled(cx) && self.state.release_disabled() {
             self.config.disabled();
             self.composer.reset_after_disable();
         }
@@ -397,7 +386,7 @@ impl AgentThread {
     ) {
         use super::config::operation::ConfigurationResult;
         if !self.session.session_current(ticket)
-            || !cx.ai_enabled()
+            || !self.host.enabled(cx)
             || (reconciling && !self.session.opening())
         {
             return;
@@ -495,7 +484,7 @@ impl AgentThread {
         completion: super::session_driver::open_operation::OpenSessionCompletion,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !cx.ai_enabled() || !self.session.accepts_authority(completion.authority()) {
+        if !self.host.enabled(cx) || !self.session.accepts_authority(completion.authority()) {
             return false;
         }
         let (authority, result, restored, workdir, pending_restore) = completion.into_parts();
@@ -552,7 +541,7 @@ impl AgentThread {
         workdir: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() {
+        if !self.host.enabled(cx) {
             return;
         }
         let Some(server) = self.registration().as_ref().map(|r| r.mcp_server()) else {
@@ -612,7 +601,7 @@ impl AgentThread {
 
     fn permission_gate(&self, cx: &App) -> PermissionGate {
         PermissionGate::new(
-            cx.ai_enabled(),
+            self.host.enabled(cx),
             self.session.accepts_updates(),
             self.session.stopped(),
             self.session().clone(),
@@ -625,7 +614,7 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let gate = self.permission_gate(cx);
-        let policy = cx.setting::<AiSettings>().approval.agent_permissions;
+        let policy = self.host.ai(cx).approval.agent_permissions;
         if self
             .tools
             .approval_receive_provider(request, respond, &gate, policy)
@@ -635,7 +624,7 @@ impl AgentThread {
     }
     pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
         let gate = self.permission_gate(cx);
-        let policy = cx.setting::<AiSettings>().approval.agent_permissions;
+        let policy = self.host.ai(cx).approval.agent_permissions;
         if self.tools.approval_apply_provider_policy(&gate, policy) {
             cx.notify();
         }
@@ -732,7 +721,7 @@ impl AgentThread {
             SessionEvent::SaveAdmitted { revision } => self.document_admitted(revision, cx),
             SessionEvent::Saved { revision } => {
                 if self.state.published(revision) {
-                    if cx.ai_enabled() {
+                    if self.host.enabled(cx) {
                         self.dispatch_next(cx);
                     } else {
                         self.clear_settled_disabled_document(cx);
