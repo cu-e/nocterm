@@ -1,6 +1,7 @@
 //! Composition order for services and explicit feature dependencies, shared by
 //! application and GUI fixtures. Booted retains one terminal installation for all
 //! windows; authentication captures it after settings and credentials are installed.
+//! Successful snippet installation retains the exact library/settings across windows.
 
 use std::sync::Arc;
 
@@ -61,6 +62,7 @@ pub(crate) struct Booted {
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
     connections: Option<nocterm_connections::Installed>,
+    snippets: Option<nocterm_snippets_ui::Installed>,
     pub(crate) themes: nocterm_ui::ThemeUi,
     /// The vault, when it opened; credentials and its settings depend on it.
     pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
@@ -135,10 +137,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
     }
-    report_store_registration("snippets", nocterm_snippets_ui::init(stored, &shutdown, cx));
+    let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
     report_store_registration("agent", nocterm_agent::init(agent, &ui, &shutdown, cx));
-    let files = nocterm_files::install(files, &ui, cx);
-    register_transfer_shutdown(&files, &shutdown);
+    let files = install_files(files, &ui, &shutdown, cx);
     crate::keymap::load(
         stored.map(|paths| paths.config_dir().join("keymap.toml")),
         cx,
@@ -150,6 +151,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         panel: nocterm_agent::PanelDeps::new(images, layout.clone(), ui.settings().clone()),
         metadata,
         connections,
+        snippets,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -157,6 +159,22 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     };
     crate::application::register(paths, booted.clone(), cx);
     booted
+}
+
+/// Retain only installations registered with the common shutdown coordinator.
+fn install_snippets(
+    paths: Option<&nocterm_core::Paths>,
+    settings: &nocterm_store::SettingsHandle,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<nocterm_snippets_ui::Installed> {
+    match nocterm_snippets_ui::init(paths, settings.clone(), shutdown, cx) {
+        Ok(installed) => Some(installed),
+        Err(error) => {
+            report_store_registration("snippets", Err(error));
+            None
+        }
+    }
 }
 
 /// Compose one registry and native session capabilities for all windows.
@@ -179,6 +197,18 @@ fn terminal_dependencies(
 }
 
 /// Freeze transfer admission during synchronous capture, then drain without App.
+/// Files installation and its transfer shutdown participant share one lifetime.
+fn install_files(
+    deps: nocterm_files::Deps,
+    ui: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> nocterm_files::Installed {
+    let files = nocterm_files::install(deps, ui, cx);
+    register_transfer_shutdown(&files, shutdown);
+    files
+}
+
 fn register_transfer_shutdown(
     files: &nocterm_files::Installed,
     shutdown: &nocterm_store::ShutdownCoordinator,
@@ -280,7 +310,9 @@ pub(crate) fn build_workspace(
     );
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
-    nocterm_snippets_ui::register(workspace, window, cx);
+    if let Some(snippets) = &booted.snippets {
+        nocterm_snippets_ui::register(workspace, snippets, window, cx);
+    }
     nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
     nocterm_monitor_ui::register(booted.local_host.clone(), workspace, window, cx);
     nocterm_agent::register(

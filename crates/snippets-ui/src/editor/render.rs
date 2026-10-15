@@ -21,10 +21,20 @@ impl SnippetEditor {
         v_flex()
             .gap_2()
             .when(self.saved, |footer| {
-                footer.child(form::note("Snippet saved.", cx))
+                footer.child(
+                    div()
+                        .id("snippet-saved")
+                        .test_support()
+                        .child(form::note("Snippet saved.", cx)),
+                )
             })
-            .when_some(self.error.clone(), |footer, error| {
-                footer.child(form::error_text(error, cx))
+            .when_some(self.draft.error().cloned(), |footer, error| {
+                footer.child(
+                    div()
+                        .id("snippet-error")
+                        .test_support()
+                        .child(form::error_text(error, cx)),
+                )
             })
             .child(
                 h_flex()
@@ -66,16 +76,23 @@ impl SnippetEditor {
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().font_medium().child("Name"))
-                    .child(Input::new(&self.name).disabled(self.pending)),
+                    .child(
+                        div()
+                            .id("snippet-name")
+                            .test_support()
+                            .child(Input::new(self.draft.name()).disabled(self.pending)),
+                    ),
             )
             .child(
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().font_medium().child("Description"))
                     .child(
-                        Textarea::new(&self.description)
-                            .h(px(64.))
-                            .disabled(self.pending),
+                        div().id("snippet-description").test_support().child(
+                            Textarea::new(self.draft.description())
+                                .h(px(64.))
+                                .disabled(self.pending),
+                        ),
                     ),
             )
             .child(
@@ -92,7 +109,7 @@ impl SnippetEditor {
                                     .ghost()
                                     .xsmall()
                                     .label(language.label())
-                                    .selected(self.draft.language == language)
+                                    .selected(self.draft.current().language == language)
                                     .disabled(self.pending)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.select_language(language, cx)
@@ -100,10 +117,12 @@ impl SnippetEditor {
                             })),
                     )
                     .child(
-                        Editor::new(&self.code)
-                            .h(px(220.))
-                            .disabled(self.pending)
-                            .aria_label("Snippet code"),
+                        div().id("snippet-code").test_support().child(
+                            Editor::new(self.draft.code())
+                                .h(px(220.))
+                                .disabled(self.pending)
+                                .aria_label("Snippet code"),
+                        ),
                     ),
             )
             .into_any_element()
@@ -116,7 +135,7 @@ impl Render for SnippetEditor {
         let available =
             (window.viewport_size().height - rems(10.).to_pixels(window.rem_size())).max(px(0.));
         let nav_width = rems(layout.connection_nav_width);
-        let page = match self.section {
+        let page = match self.picker.selected() {
             EditorSection::Snippet => self.snippet_page(cx),
             EditorSection::Attachments => self.attachments_page(cx),
         };
@@ -145,7 +164,7 @@ impl Render for SnippetEditor {
                     ]
                     .into_iter()
                     .map(|(section, id, label, icon)| {
-                        form::nav_item(id, icon, label, self.section == section, cx)
+                        form::nav_item(id, icon, label, self.picker.selected() == section, cx)
                             .test_support()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.select_section(section, window, cx)

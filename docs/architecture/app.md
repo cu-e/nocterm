@@ -109,3 +109,9 @@ They combine the prepared image ports, exact shared layout handle and installed
 settings handle, and are cloned for every workspace window. Agent view owners
 retain these supplied collaborators while existing runtime/authentication
 compatibility acquisition remains in the panel coordinator.
+
+Bootstrap retains the optional snippet `Installed` handle over the library and
+supplied settings. Successful installation is reused by every workspace, editor
+and action; a shutdown registration failure reports its typed error and omits the
+feature. Closing the first window does not change the library used by surviving
+or newly opened workspaces. See [ADR0050](../adr/0050-retained-snippet-installation.md).

@@ -1,5 +1,5 @@
 //! Checked snippet mutations delegate ordered durable publication to the store service.
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Task};
 use nocterm_core::{Paths, SharedError, persist};
 use nocterm_snippets::{Library, LibraryError, Snippet};
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
@@ -52,9 +52,6 @@ impl From<StoreError> for SnippetsError {
     }
 }
 
-struct GlobalLibrary(Entity<Snippets>);
-impl Global for GlobalLibrary {}
-
 pub(crate) struct Snippets {
     state: Entity<Persisted<Library>>,
     load_error: Option<Arc<SnippetsLoadError>>,
@@ -103,9 +100,6 @@ impl Snippets {
         }
     }
 
-    pub(crate) fn global(cx: &App) -> Entity<Self> {
-        cx.global::<GlobalLibrary>().0.clone()
-    }
     pub(crate) fn library<'a>(&self, cx: &'a App) -> &'a Library {
         self.state.read(cx).visible()
     }
@@ -190,11 +184,10 @@ pub(crate) fn init(
     paths: Option<&Paths>,
     shutdown: &ShutdownCoordinator,
     cx: &mut App,
-) -> Result<(), StoreError> {
+) -> Result<Entity<Snippets>, StoreError> {
     let model = cx.new(|cx| Snippets::new(paths.map(Paths::snippets_file), cx));
     model.read(cx).register_shutdown(shutdown)?;
-    cx.set_global(GlobalLibrary(model));
-    Ok(())
+    Ok(model)
 }
 #[cfg(test)]
 mod tests;

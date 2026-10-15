@@ -48,3 +48,4 @@ acceptance; a later record supersedes an earlier one.
 | [0047](0047-connection-publication-authority-service.md) | Connection publication service preserves committed profile authority histories |
 | [0048](0048-guarded-connection-facts.md) | Original-source guarded raw facts and bounded connection jobs |
 | [0049](0049-bounded-panel-coordination.md) | Private panel membership, notice tasks and finite presentation operations |
+| [0050](0050-retained-snippet-installation.md) | Snippet views retain their original installation and private draft controls |

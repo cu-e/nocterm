@@ -22,14 +22,14 @@ struct Access {
 
 #[gpui_kit::test]
 fn hidden_bottom_refuses_run_and_show_restores_the_same_terminal(cx: &mut TestAppContext) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let access = Access::new(true);
     let workspace = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let item = terminal(access.clone(), cx);
             workspace.update(cx, |workspace, cx| {
                 workspace.set_local_terminal(item.clone(), window, cx)
@@ -229,15 +229,15 @@ fn click_row(id: SharedString, count: usize, window: &mut Window, cx: &mut App) 
 fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_actions(
     cx: &mut TestAppContext,
 ) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let remote = Access::new(false);
     let local = Access::new(true);
     let (workspace, remote_item, local_item) = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let remote_item = terminal(remote.clone(), cx);
             let local_item = terminal(local.clone(), cx);
             workspace.update(cx, |workspace, cx| {
@@ -258,7 +258,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
             workspace.activate_panel_of::<SnippetsPanel>(window, cx)
         });
         window.render_frame(cx);
-        assert!(panel.read(cx).profile.is_none());
+        assert_eq!(window.find("snippet-context").label(), Some("Local"));
         window.click("run", cx);
         assert!(
             local_item.read(cx).focus_handle(cx).is_focused(window),
@@ -313,7 +313,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
             workspace.activate_panel_of::<SnippetsPanel>(window, cx)
         });
         window.render_frame(cx);
-        assert_eq!(panel.read(cx).profile.as_deref(), Some("remote-profile"));
+        assert_eq!(window.find("snippet-context").label(), Some("Remote"));
         window.click("run", cx);
         assert!(
             remote_item.read(cx).focus_handle(cx).is_focused(window),
@@ -352,7 +352,8 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(panel.read(cx).profile.is_none());
+        window.render_frame(cx);
+        assert_eq!(window.find("snippet-context").label(), Some("Local"));
         workspace.update(cx, |workspace, cx| {
             workspace.close_local_terminal(window, cx)
         });
@@ -362,7 +363,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(panel.read(cx).profile.as_deref(), Some("remote-profile"));
+        assert_eq!(window.find("snippet-context").label(), Some("Remote"));
         window.click("run", cx);
         assert_eq!(
             remote.sent.borrow().len(),
@@ -381,14 +382,14 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn run_refuses_authentication_alternate_closed_and_background_terminals(cx: &mut TestAppContext) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let access = Access::new(false);
     let (workspace, item) = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let item = terminal(access.clone(), cx);
             workspace.update(cx, |workspace, cx| {
                 workspace.add_item(item.clone(), window, cx)

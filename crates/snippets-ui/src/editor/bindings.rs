@@ -2,6 +2,7 @@
 use super::SnippetEditor;
 use gpui_kit::{
     AnyElement, Context, SharedString,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -76,20 +77,15 @@ impl SnippetEditor {
         let groups = directory
             .as_ref()
             .map_or_else(Vec::new, |directory| directory.groups(cx));
-        let folders = project(
-            &connections,
-            &groups,
-            &self.attachment_search.read(cx).value(),
-        );
-        let no_matches =
-            folders.is_empty() && !self.attachment_search.read(cx).value().trim().is_empty();
+        let folders = project(&connections, &groups, &self.picker.query(cx));
+        let no_matches = folders.is_empty() && !self.picker.query(cx).trim().is_empty();
         let mut tree = v_flex().gap_1();
         for folder in folders {
             let key = folder.name.as_ref().map(ToString::to_string);
-            let folded = self.folded_groups.contains(&key);
+            let folded = self.picker.is_folded(&key);
             let inherited = key
                 .as_ref()
-                .is_some_and(|name| self.draft.groups.contains(name));
+                .is_some_and(|name| self.draft.current().groups.contains(name));
             let label = folder.name.clone().unwrap_or_else(|| "Ungrouped".into());
             let count = folder.servers.len();
             let fold_key = key.clone();
@@ -111,9 +107,7 @@ impl SnippetEditor {
                             "Collapse group"
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.folded_groups.remove(&fold_key) {
-                                this.folded_groups.insert(fold_key.clone());
-                            }
+                            this.picker.toggle(fold_key.clone());
                             cx.notify();
                         })),
                 )
@@ -143,7 +137,7 @@ impl SnippetEditor {
             if !folded {
                 for server in folder.servers {
                     let id = server.id.to_string();
-                    let checked = self.draft.profiles.contains(&id);
+                    let checked = self.draft.current().profiles.contains(&id);
                     let name = if inherited {
                         format!("{} · via group", server.name)
                     } else {
@@ -171,6 +165,7 @@ impl SnippetEditor {
         }
         let missing_profiles: Vec<_> = self
             .draft
+            .current()
             .profiles
             .iter()
             .filter(|id| {
@@ -182,6 +177,7 @@ impl SnippetEditor {
             .collect();
         let missing_groups: Vec<_> = self
             .draft
+            .current()
             .groups
             .iter()
             .filter(|name| {
@@ -223,8 +219,8 @@ impl SnippetEditor {
         }
         v_flex().gap_3()
             .child(form::page_header("Attachments", Some("Group bindings include future servers. Direct server bindings are independent.".into()), cx))
-            .child(Input::new(&self.attachment_search).small())
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} direct server{}, {} group{} selected", self.draft.profiles.len(), if self.draft.profiles.len() == 1 { "" } else { "s" }, self.draft.groups.len(), if self.draft.groups.len() == 1 { "" } else { "s" })))
+            .child(div().id("snippet-attachment-search").test_support().child(Input::new(self.picker.search()).small()))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} direct server{}, {} group{} selected", self.draft.current().profiles.len(), if self.draft.current().profiles.len() == 1 { "" } else { "s" }, self.draft.current().groups.len(), if self.draft.current().groups.len() == 1 { "" } else { "s" })))
             .when(connections.is_empty() && groups.is_empty(), |page| page.child(form::note("No saved servers or groups. You can save this snippet without attachments.", cx)))
             .when(no_matches, |page| page.child(form::note("No matching servers or groups.", cx)))
             .child(tree)

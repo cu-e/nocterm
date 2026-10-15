@@ -18,6 +18,7 @@ mod chat_history;
 mod menu_tabs;
 mod program_opening;
 mod shortcuts;
+mod snippets;
 mod terminal_events;
 mod titlebar;
 mod vault;

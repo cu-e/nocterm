@@ -217,6 +217,17 @@ the paste closing marker. It sends the complete sequence atomically and refuses
 authentication, disconnected or alternate-screen states. Shell integration is not
 required; SSH and local shells use the same terminal path.
 
+The snippets feature returns one cloneable `Installed` over its exact library entity and
+supplied `SettingsHandle`. Bootstrap retains successful installation and supplies it to
+every workspace/action/editor. Separate installations remain independent; no snippet
+global or transitive settings lookup selects the save target. Shutdown registration
+failure omits this feature rather than publishing an unregistered writer. SnippetDraft
+owns the actual name/description/code controls and original checked-save expectation;
+AttachmentPicker owns search, folding and section focus. Save completion advances the
+expected record only on success and can close only its original focused dialog. The
+existing viewless library/native file boundary remains migration debt. See
+[ADR0050](../adr/0050-retained-snippet-installation.md).
+
 ## Monitor
 
 `nocterm-monitor-ui` follows the active session (a
