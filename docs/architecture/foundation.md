@@ -34,7 +34,10 @@ settings reference does not list a section.
 
 ## Design tokens
 
-`nocterm-design` owns typed visual tokens and theme overrides. These foundation
+`nocterm-design` owns typed visual tokens and theme overrides. Resize widths and their
+minimum/maximum bounds form shared pure data groups; terminal ANSI colors form normal
+and bright eight-color banks. Their serialized token keys and generated schema remain
+flat and retain the existing optional overrides and unknown-token rejection. These foundation
 crates have no UI or transport dependencies. TokenError preserves its owned boxed
 TOML parser and exposes that concrete error directly through standard source
 traversal; semantic invalid-token diagnostics have no native source.

@@ -82,5 +82,3 @@ nocterm-ui = 5
 [struct_fields]
 "nocterm_ai::history::SavedChat" = 20
 "nocterm_ai::history::wire::Wire" = 18
-"nocterm_design::tokens::Layout" = 18
-"nocterm_design::tokens::TerminalColors" = 20

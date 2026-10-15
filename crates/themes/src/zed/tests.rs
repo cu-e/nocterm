@@ -141,12 +141,12 @@ fn mapping_sources_fallbacks_contrast_and_translucency() {
     assert_eq!(palette.canvas, parse_color("#111"));
     assert_eq!(palette.terminal.background, None);
     assert_eq!(palette.terminal.foreground, Some(Color::rgb(128, 128, 128)));
-    assert_eq!(palette.terminal.blue, Color::rgb(128, 128, 128));
+    assert_eq!(palette.terminal.normal.blue, Color::rgb(128, 128, 128));
     assert_eq!(palette.terminal.cursor, parse_color("#0f0"));
     assert_eq!(palette.terminal.selection, parse_color("#00f8"));
     assert_eq!(
-        palette.terminal.bright_white,
-        base.dark.terminal.bright_white
+        palette.terminal.bright.white,
+        base.dark.terminal.bright.white
     );
 }
 #[test]
@@ -160,7 +160,7 @@ fn dracula_imports_valid_ansi_and_refines_its_invalid_bright_white() {
         palette.terminal.background,
         Some(theme.colors["terminal.background"])
     );
-    assert_eq!(palette.terminal.red, parse_color("#ff5555").unwrap());
+    assert_eq!(palette.terminal.normal.red, parse_color("#ff5555").unwrap());
     assert_eq!(palette.terminal.ansi().len(), 16);
     for (name, color) in [
         "black",
@@ -185,7 +185,7 @@ fn dracula_imports_valid_ansi_and_refines_its_invalid_bright_white() {
     {
         if name == "bright_white" {
             // Original Dracula 1.1.2 spells this value "ffffffff" without #.
-            assert_eq!(color, DesignTokens::builtin().dark.terminal.bright_white);
+            assert_eq!(color, DesignTokens::builtin().dark.terminal.bright.white);
         } else {
             assert_eq!(color, theme.colors[&format!("terminal.ansi.{name}")]);
         }
@@ -205,7 +205,7 @@ fn inherited_translucent_terminal_background_and_explicit_alpha_are_opaque() {
     let palette = parse_family(source).unwrap().themes[0].palette(&base.light);
     assert_eq!(palette.terminal.background, Some(Color::rgb(127, 127, 127)));
     assert_eq!(palette.terminal.foreground, Some(Color::rgb(191, 63, 63)));
-    assert_eq!(palette.terminal.black, Color::rgb(63, 63, 63));
+    assert_eq!(palette.terminal.normal.black, Color::rgb(63, 63, 63));
 }
 
 #[test]

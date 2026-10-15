@@ -47,10 +47,13 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
             TerminalStyle::current(cx).background,
             "#112233".parse().unwrap()
         );
-        assert_eq!(cx.design().dark.terminal.red, "#ff0000".parse().unwrap());
         assert_eq!(
-            cx.design().dark.terminal.blue,
-            DesignTokens::builtin().dark.terminal.blue
+            cx.design().dark.terminal.normal.red,
+            "#ff0000".parse().unwrap()
+        );
+        assert_eq!(
+            cx.design().dark.terminal.normal.blue,
+            DesignTokens::builtin().dark.terminal.normal.blue
         );
         assert!(cx.global::<Design>().is_imported(true));
         assert!(!cx.global::<Design>().is_imported(false));
@@ -189,7 +192,7 @@ fn verify_sparse_palette(dark: bool, source: &str, cx: &gpui_kit::App) {
     );
     assert_eq!(
         style.ansi[4],
-        DesignTokens::builtin().palette(dark).terminal.blue,
+        DesignTokens::builtin().palette(dark).terminal.normal.blue,
         "theme.toml ANSI must not leak"
     );
     assert_eq!(style.background.a, 255);

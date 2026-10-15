@@ -402,7 +402,7 @@ fn fixture_with_width(
         cx.update(|cx| {
             gpui_kit::init(cx);
             let mut tokens = nocterm_ui::DesignTokens::builtin();
-            tokens.layout.agent_panel_width = width;
+            tokens.layout.agent_panel.width = width;
             let ui = nocterm_ui::init(
                 tokens,
                 nocterm_ui::SettingsStore::in_memory(Default::default()),

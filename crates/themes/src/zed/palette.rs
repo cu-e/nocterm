@@ -173,24 +173,69 @@ impl ZedTheme {
             });
         terminal.cursor = cursor.map(|c| opaque(c, resolved));
         terminal.selection = selection;
-        macro_rules! ansi { ($($key:ident),*) => { $(terminal.$key = opaque(get(&[concat!("terminal.ansi.", stringify!($key))]).unwrap_or(base.terminal.$key), resolved);)* }; }
-        ansi!(
-            black,
-            red,
-            green,
-            yellow,
-            blue,
-            magenta,
-            cyan,
-            white,
-            bright_black,
-            bright_red,
-            bright_green,
-            bright_yellow,
-            bright_blue,
-            bright_magenta,
-            bright_cyan,
-            bright_white
+        terminal.normal.black = opaque(
+            get(&["terminal.ansi.black"]).unwrap_or(base.terminal.normal.black),
+            resolved,
+        );
+        terminal.normal.red = opaque(
+            get(&["terminal.ansi.red"]).unwrap_or(base.terminal.normal.red),
+            resolved,
+        );
+        terminal.normal.green = opaque(
+            get(&["terminal.ansi.green"]).unwrap_or(base.terminal.normal.green),
+            resolved,
+        );
+        terminal.normal.yellow = opaque(
+            get(&["terminal.ansi.yellow"]).unwrap_or(base.terminal.normal.yellow),
+            resolved,
+        );
+        terminal.normal.blue = opaque(
+            get(&["terminal.ansi.blue"]).unwrap_or(base.terminal.normal.blue),
+            resolved,
+        );
+        terminal.normal.magenta = opaque(
+            get(&["terminal.ansi.magenta"]).unwrap_or(base.terminal.normal.magenta),
+            resolved,
+        );
+        terminal.normal.cyan = opaque(
+            get(&["terminal.ansi.cyan"]).unwrap_or(base.terminal.normal.cyan),
+            resolved,
+        );
+        terminal.normal.white = opaque(
+            get(&["terminal.ansi.white"]).unwrap_or(base.terminal.normal.white),
+            resolved,
+        );
+        terminal.bright.black = opaque(
+            get(&["terminal.ansi.bright_black"]).unwrap_or(base.terminal.bright.black),
+            resolved,
+        );
+        terminal.bright.red = opaque(
+            get(&["terminal.ansi.bright_red"]).unwrap_or(base.terminal.bright.red),
+            resolved,
+        );
+        terminal.bright.green = opaque(
+            get(&["terminal.ansi.bright_green"]).unwrap_or(base.terminal.bright.green),
+            resolved,
+        );
+        terminal.bright.yellow = opaque(
+            get(&["terminal.ansi.bright_yellow"]).unwrap_or(base.terminal.bright.yellow),
+            resolved,
+        );
+        terminal.bright.blue = opaque(
+            get(&["terminal.ansi.bright_blue"]).unwrap_or(base.terminal.bright.blue),
+            resolved,
+        );
+        terminal.bright.magenta = opaque(
+            get(&["terminal.ansi.bright_magenta"]).unwrap_or(base.terminal.bright.magenta),
+            resolved,
+        );
+        terminal.bright.cyan = opaque(
+            get(&["terminal.ansi.bright_cyan"]).unwrap_or(base.terminal.bright.cyan),
+            resolved,
+        );
+        terminal.bright.white = opaque(
+            get(&["terminal.ansi.bright_white"]).unwrap_or(base.terminal.bright.white),
+            resolved,
         );
         // Zed's own `background` is the workspace behind its panels and
         // editors, which is what floating cards sit on. Themes that leave it

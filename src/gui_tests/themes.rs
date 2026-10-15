@@ -110,7 +110,10 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
         let background = "#123456".parse().unwrap();
         assert_eq!(Theme::global(cx).background, hsla(background));
         assert_eq!(TerminalStyle::current(cx).background, background);
-        assert_eq!(cx.design().dark.terminal.red, "#ff0000".parse().unwrap());
+        assert_eq!(
+            cx.design().dark.terminal.normal.red,
+            "#ff0000".parse().unwrap()
+        );
         assert_eq!(
             workspace.read(cx).items().count(),
             1,

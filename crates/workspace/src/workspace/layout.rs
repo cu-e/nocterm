@@ -167,17 +167,17 @@ impl BodyWidths {
     pub(super) fn new(memory: &LayoutHandle, window: &Window, cx: &gpui_kit::App) -> Self {
         let layout = &cx.design().layout;
         let rem = window.rem_size();
-        let sidebar_range = rems(layout.sidebar_min_width).to_pixels(rem)
-            ..rems(layout.sidebar_max_width).to_pixels(rem);
-        let right_panel_range = rems(layout.agent_panel_min_width).to_pixels(rem)
-            ..rems(layout.agent_panel_max_width).to_pixels(rem);
+        let sidebar_range = rems(layout.sidebar.min_width).to_pixels(rem)
+            ..rems(layout.sidebar.max_width).to_pixels(rem);
+        let right_panel_range = rems(layout.agent_panel.min_width).to_pixels(rem)
+            ..rems(layout.agent_panel.max_width).to_pixels(rem);
         let sidebar = memory
             .get(SIDEBAR, cx)
-            .unwrap_or_else(|| rems(layout.sidebar_width).to_pixels(rem))
+            .unwrap_or_else(|| rems(layout.sidebar.width).to_pixels(rem))
             .clamp(sidebar_range.start, sidebar_range.end);
         let right_panel = memory
             .get(RIGHT_PANEL, cx)
-            .unwrap_or_else(|| rems(layout.agent_panel_width).to_pixels(rem))
+            .unwrap_or_else(|| rems(layout.agent_panel.width).to_pixels(rem))
             .clamp(right_panel_range.start, right_panel_range.end);
         Self {
             sidebar,
