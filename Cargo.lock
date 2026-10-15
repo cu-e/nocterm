@@ -5007,6 +5007,7 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-ai",
+ "nocterm-core",
  "nocterm-store",
  "serde_json",
  "tempfile",

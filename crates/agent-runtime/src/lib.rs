@@ -11,7 +11,8 @@
 //! Invariants: one current document owner per ID; delete seals an ID; persistence
 //! admission and physical publication are separate revision-bearing events. Registry
 //! stamps change only after writer acceptance; final work reads no App and joins
-//! captured admission failures with publication failures.
+//! captured admission failures with publication failures. Shared cleanup diagnostics
+//! retain the original typed AgentError through standard source traversal.
 
 mod admission;
 mod bridge;

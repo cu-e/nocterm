@@ -92,6 +92,8 @@ while App still exists. Normal session close and final capture share one lazy pr
 command handle. Final capture bypasses a blocked close acknowledgement and joins
 cleanup already running; a previously failed normal attempt gets one final retry.
 Late normal close joins the same attempt rather than invoking cleanup again.
+Cleanup receipts retain the original typed AgentError through foundation SharedError,
+including any native source already retained by its variant.
 Favorites, chats and process cleanup start independently
 under the host's one `ShutdownCoordinator` budget. Runtime installs no quit hook
 or persistence deadline. See [ADR0022](../adr/0022-agent-storage-owners.md).

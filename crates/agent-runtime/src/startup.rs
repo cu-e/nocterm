@@ -16,8 +16,15 @@ pub(super) enum CleanupError {
     #[error("agent startup cleanup acknowledgement was lost")]
     AcknowledgementDropped,
     #[error("agent process cleanup failed: {0}")]
-    Process(#[source] Arc<AgentError>),
+    Process(#[source] nocterm_core::SharedError<AgentError>),
 }
+impl CleanupError {
+    pub(super) fn process(error: AgentError) -> Self {
+        Self::Process(nocterm_core::SharedError::from_error(error))
+    }
+}
+#[cfg(test)]
+mod tests;
 pub(super) type Completion = Shared<BoxFuture<'static, Result<(), CleanupError>>>;
 pub(super) struct StartupConfig {
     request: ConnectRequest,
@@ -83,8 +90,8 @@ pub(super) fn start(
         .spawn(async move {
             let result = launch(&mut config, connector).await;
             let uncertain = match &result {
-                Err(AgentError::CleanupUnconfirmed(message)) => Some(CleanupError::Process(
-                    Arc::new(AgentError::CleanupUnconfirmed(message.clone())),
+                Err(AgentError::CleanupUnconfirmed(message)) => Some(CleanupError::process(
+                    AgentError::CleanupUnconfirmed(message.clone()),
                 )),
                 _ => None,
             };
@@ -107,7 +114,7 @@ pub(super) fn start(
                 commands
                     .shutdown_gracefully()
                     .await
-                    .map_err(|error| CleanupError::Process(Arc::new(error)))
+                    .map_err(CleanupError::process)
             } else {
                 Ok(())
             };

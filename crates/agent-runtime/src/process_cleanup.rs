@@ -46,7 +46,7 @@ impl ProcessCleanup {
             commands
                 .shutdown_gracefully()
                 .await
-                .map_err(|error| CleanupError::Process(Arc::new(error)))
+                .map_err(CleanupError::process)
         }
         .boxed()
         .shared()
