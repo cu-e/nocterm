@@ -487,3 +487,42 @@ fn an_absolute_deadline_ends_a_silent_command_with_unknown_exit(cx: &mut TestApp
     assert_eq!(payload["state"], "timed_out");
     assert!(payload["exit_status"].is_null());
 }
+
+#[gpui_kit::test]
+fn a_joined_reconnect_command_does_not_hold_input_until_its_process_exits(cx: &mut TestAppContext) {
+    let (f, thread, programs, terminal) = setup(cx);
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let command = submit(
+        &f,
+        &thread,
+        TerminalCall::ExecCommand(request(&terminal)),
+        true,
+        cx,
+    );
+    let input = submit(
+        &f,
+        &thread,
+        TerminalCall::SendInput(nocterm_ai::SendInput {
+            terminal_id: terminal.clone(),
+            text: "following input".into(),
+            press_enter: true,
+        }),
+        true,
+        cx,
+    );
+    assert_eq!(f.access.link().reconnects().get(), 1);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    let command = result(command).unwrap();
+    assert!(matches!(
+        command["state"].as_str(),
+        Some("starting" | "running")
+    ));
+    assert!(result(input).is_ok());
+    assert_eq!(*f.access.sent().borrow(), ["following input\r"]);
+    assert_eq!(programs.requests.lock().unwrap().len(), 1);
+    assert!(!programs.closed(0), "the first command is still running");
+    programs.finish(0, b"finished", 0, "");
+    cx.run_until_parked();
+}

@@ -12,9 +12,7 @@ use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure, acp};
 use nocterm_session::ExecRequest;
 use nocterm_ui::ActiveAi as _;
 use nocterm_ui::SettingsExt as _;
-use nocterm_workspace::{
-    ExpectedSession, TerminalCapability, TerminalEntry, TerminalError, TerminalStatus,
-};
+use nocterm_workspace::{ExpectedSession, TerminalEntry, TerminalStatus};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -22,18 +20,8 @@ use std::sync::{
 
 use super::{AgentThread, Attachment};
 
-/// Why a message was not queued; shown in the composer.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum SubmitError {
-    #[error("Wait for the saved chat to finish loading.")]
-    Loading,
-    #[error("This message was already sent.")]
-    AlreadySent,
-    #[error("Too many queued messages, images or attachments in this chat.")]
-    TooMany,
-    #[error(transparent)]
-    Storage(#[from] nocterm_ai::history::HistoryCodecError),
-}
+mod submit_error;
+pub(crate) use submit_error::SubmitError;
 
 #[derive(Clone)]
 pub(crate) struct QueuedPrompt {
@@ -208,46 +196,44 @@ impl AgentThread {
         self.wait_command(terminal, id, yield_ms, call, cx);
     }
 
-    /// Connects the closed session `entry` again, or joins a reconnect
-    /// already under way; resolves with its descriptor once connected.
+    fn reconnect_target(
+        &mut self,
+        entry: &TerminalEntry,
+        expected: ExpectedSession,
+        cx: &mut Context<Self>,
+    ) -> Result<WaitTarget, ConnectionWaitError> {
+        let window = self
+            .bindings
+            .window()
+            .ok_or(ConnectionWaitError::WorkspaceClosed)?;
+        let receipt = self.tools.prepare_reconnect(entry, expected, cx)?;
+        Ok(WaitTarget::new(
+            self.host.workspace().clone(),
+            window,
+            receipt,
+            self.session.ticket(),
+            self.registration().as_ref().map(|value| value.id),
+        ))
+    }
+    /// Open-terminal waits keep their original guard through the complete wait.
     fn reconnect(
         &mut self,
         entry: &TerminalEntry,
         expected: ExpectedSession,
         cx: &mut Context<Self>,
     ) -> Task<Result<(ExpectedSession, serde_json::Value), ConnectionWaitError>> {
-        let Some(window) = self.bindings.window() else {
-            return Task::ready(Err(ConnectionWaitError::WorkspaceClosed));
+        let target = match self.reconnect_target(entry, expected, cx) {
+            Ok(target) => target,
+            Err(error) => return Task::ready(Err(error)),
         };
-        let receipt = match self.tools.reconnect_receipt(expected) {
-            Some(receipt) => receipt,
-            None => {
-                let result = entry
-                    .capabilities
-                    .reconnect()
-                    .ok_or(TerminalError::Unsupported(TerminalCapability::Reconnect))
-                    .and_then(|port| port.reconnect(expected, cx));
-                match result {
-                    Ok(receipt) => {
-                        self.tools.accept_reconnect(receipt);
-                        receipt
-                    }
-                    Err(error) => return Task::ready(Err(ConnectionWaitError::Terminal(error))),
-                }
-            }
-        };
-        let workspace = self.host.workspace().clone();
-        let ticket = self.session.ticket();
-        let registration = self.registration().as_ref().map(|value| value.id);
-        let operation = super::tool_runtime::reconnect_operation::ReconnectOperation::new(
-            WaitTarget::new(workspace, window, receipt, ticket, registration),
-            self.hold_operation(),
-        );
-        cx.spawn(async move |this, cx| operation.run(&this, cx).await)
+        let guard = self.hold_operation();
+        let operation = super::tool_runtime::reconnect_operation::ReconnectOperation::new(target);
+        cx.spawn(async move |this, cx| {
+            let _guard = guard;
+            operation.run(&this, cx).await
+        })
     }
-
-    /// Reconnects `entry` in place, then carries out `call` once more. The
-    /// user's tab stays open if connecting fails.
+    /// Accepted calls wait independently but commit dispatch in receipt order.
     fn reconnect_then_execute(
         &mut self,
         call: BoundToolCall,
@@ -255,11 +241,18 @@ impl AgentThread {
         expected: ExpectedSession,
         cx: &mut Context<Self>,
     ) {
-        let connected = self.reconnect(entry, expected, cx);
+        let target = match self.reconnect_target(entry, expected, cx) {
+            Ok(target) => target,
+            Err(error) => return self.finish(call.into_call(), Err(error.into_failure())),
+        };
+        let scope = super::tool_runtime::reconnect_dispatch::DispatchScope::new(&target);
+        let guard = self.hold_operation();
+        let identity = self.tools.admit_reconnect(scope, call, guard);
+        let operation = super::tool_runtime::reconnect_operation::ReconnectOperation::new(target);
         cx.spawn(async move |this, cx| {
-            let result = connected.await;
+            let result = operation.run(&this, cx).await.map(|(receipt, _)| receipt);
             let _ = this.update(cx, |this, cx| {
-                this.on_reconnect_complete(call, result, cx);
+                this.on_reconnect_complete(identity, result, cx)
             });
         })
         .detach();
@@ -481,13 +474,36 @@ impl AgentThread {
 
     fn on_reconnect_complete(
         &mut self,
-        call: BoundToolCall,
-        result: Result<(ExpectedSession, serde_json::Value), ConnectionWaitError>,
+        identity: super::tool_runtime::reconnect_dispatch::DispatchTicket,
+        result: Result<ExpectedSession, ConnectionWaitError>,
         cx: &mut Context<Self>,
     ) {
-        match result {
-            Ok((receipt, _)) => self.execute_tool_with(call.reconnected(receipt), false, cx),
-            Err(error) => self.finish(call.into_call(), Err(error.into_failure())),
+        let Some(scope) = self.tools.ready_reconnect(&identity, result) else {
+            return;
+        };
+        while let Some(effect) = self.tools.take_ready_reconnect(scope) {
+            let (accepted, call, result, guard) = effect.into_parts();
+            let current = self.session.accepts_updates()
+                && cx.ai_enabled()
+                && accepted.is_current(
+                    self.host.workspace(),
+                    self.bindings.window(),
+                    self.session.session_current(accepted.ticket()),
+                    self.registration().as_ref().map(|value| value.id),
+                    cx,
+                );
+            let result = result.and_then(|receipt| {
+                if current && receipt == accepted.receipt() {
+                    Ok(receipt)
+                } else {
+                    Err(ConnectionWaitError::Stopped)
+                }
+            });
+            match result {
+                Ok(receipt) => self.execute_tool_with(call.reconnected(receipt), false, cx),
+                Err(error) => self.finish(call.into_call(), Err(error.into_failure())),
+            }
+            drop(guard);
         }
         cx.notify();
     }

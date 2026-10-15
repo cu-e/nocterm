@@ -16,6 +16,7 @@ mod command_jobs;
 pub(in crate::thread) mod dispatch;
 mod live_observations;
 pub(in crate::thread) mod presentation;
+pub(in crate::thread) mod reconnect_dispatch;
 pub(in crate::thread) mod reconnect_operation;
 pub(in crate::thread) mod resolution;
 mod terminal_sessions;
@@ -23,6 +24,7 @@ mod turn_context;
 use command_jobs::CommandJobs;
 pub(super) use command_jobs::{CommandSnapshot, CommandStart};
 use live_observations::LiveObservations;
+use reconnect_dispatch::{DispatchEffect, DispatchScope, DispatchTicket, ReconnectDispatch};
 use terminal_sessions::TerminalSessions;
 use turn_context::TurnContext;
 #[derive(Default)]
@@ -33,8 +35,47 @@ pub(super) struct ToolRuntime {
     live: LiveObservations,
     terminals: TerminalSessions,
     displays: super::tool_display::ToolDisplays,
+    reconnect_dispatch: ReconnectDispatch,
 }
 impl ToolRuntime {
+    pub(super) fn prepare_reconnect(
+        &mut self,
+        entry: &nocterm_workspace::TerminalEntry,
+        expected: ExpectedSession,
+        cx: &mut gpui_kit::App,
+    ) -> Result<ExpectedSession, super::connection_wait::ConnectionWaitError> {
+        if let Some(receipt) = self.reconnect_receipt(expected) {
+            return Ok(receipt);
+        }
+        let receipt = entry
+            .capabilities
+            .reconnect()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::Reconnect,
+            ))
+            .and_then(|port| port.reconnect(expected, cx))
+            .map_err(super::connection_wait::ConnectionWaitError::Terminal)?;
+        self.accept_reconnect(receipt);
+        Ok(receipt)
+    }
+    pub(super) fn admit_reconnect(
+        &mut self,
+        scope: DispatchScope,
+        call: BoundToolCall,
+        guard: super::session_driver::OperationGuard,
+    ) -> DispatchTicket {
+        self.reconnect_dispatch.admit(scope, call, guard)
+    }
+    pub(super) fn ready_reconnect(
+        &mut self,
+        ticket: &DispatchTicket,
+        result: Result<ExpectedSession, super::connection_wait::ConnectionWaitError>,
+    ) -> Option<DispatchScope> {
+        self.reconnect_dispatch.ready(ticket, result)
+    }
+    pub(super) fn take_ready_reconnect(&mut self, scope: DispatchScope) -> Option<DispatchEffect> {
+        self.reconnect_dispatch.take_ready(scope)
+    }
     pub(super) fn revoke_replaced_executors(
         &mut self,
         current: &[(String, Option<Arc<dyn nocterm_session::HostExec>>)],
@@ -367,13 +408,17 @@ impl ToolRuntime {
         self.approvals.tool(token)
     }
     pub(super) fn approval_cancel_pending(&mut self) -> Vec<BridgeCall> {
-        self.approvals.cancel_pending()
+        let mut calls = self.approvals.cancel_pending();
+        calls.extend(self.reconnect_dispatch.cancel());
+        calls
     }
     pub(super) fn approval_revoke_scope(&mut self) {
         self.approvals.revoke_scope()
     }
     pub(super) fn approval_end_session(&mut self) -> Vec<BridgeCall> {
-        self.approvals.end_session()
+        let mut calls = self.approvals.end_session();
+        calls.extend(self.reconnect_dispatch.cancel());
+        calls
     }
     pub(super) fn approval_pending(&self) -> bool {
         self.approvals.pending()

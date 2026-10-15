@@ -620,3 +620,89 @@ fn terminal_calls_join_only_the_exact_accepted_reconnect_epoch(cx: &mut TestAppC
     assert!(second.try_recv().unwrap().unwrap().is_ok());
     assert_eq!(*f.access.sent().borrow(), ["first", "second"]);
 }
+
+#[gpui_kit::test]
+fn rendered_chat_dispatches_joined_reconnect_inputs_in_acceptance_order(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        let focus = f.panel.read(cx).composer_focus(cx);
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        window.click("agent-new-thread", cx);
+        window.render_frame(cx);
+        window.click("new-agent-codex", cx);
+        window.render_frame(cx);
+        let thread = f.panel.read(cx).current().unwrap();
+        crate::runtime::Runtime::global(cx).update(cx, |runtime, cx| {
+            runtime.register_document(crate::thread::client(&thread), cx);
+        });
+        thread.update(cx, |thread, cx| thread.request_activation(cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let mut first = input_request(&f, &owner, "first", cx);
+    click_tool(&f, "Allow once", cx);
+    let mut second = input_request(&f, &owner, "second", cx);
+    click_tool(&f, "Allow once", cx);
+    assert_eq!(f.access.link().reconnects().get(), 1);
+    assert!(first.try_recv().unwrap().is_none());
+    assert!(second.try_recv().unwrap().is_none());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(first.try_recv().unwrap().unwrap().is_ok());
+    assert!(second.try_recv().unwrap().unwrap().is_ok());
+    assert_eq!(*f.access.sent().borrow(), ["first", "second"]);
+}
+
+#[gpui_kit::test]
+fn stopping_joined_reconnect_calls_finishes_both_without_late_input(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let mut first = input_request(&f, &owner, "first", cx);
+    click_tool(&f, "Allow once", cx);
+    let mut second = input_request(&f, &owner, "second", cx);
+    click_tool(&f, "Allow once", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(crate::StopGeneration), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(first.try_recv().unwrap().unwrap().is_err());
+    assert!(second.try_recv().unwrap().unwrap().is_err());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(f.access.sent().borrow().is_empty());
+    cx.read(|cx| assert!(!owner.read(cx).session_busy()));
+}
+
+#[gpui_kit::test]
+fn closing_the_originating_window_refuses_joined_reconnect_inputs(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let mut first = input_request(&f, &owner, "first", cx);
+    click_tool(&f, "Allow once", cx);
+    let mut second = input_request(&f, &owner, "second", cx);
+    click_tool(&f, "Allow once", cx);
+    cx.update_window(f.handle, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(first.try_recv().unwrap().unwrap().is_err());
+    assert!(second.try_recv().unwrap().unwrap().is_err());
+    assert!(f.access.sent().borrow().is_empty());
+    cx.read(|cx| assert!(!owner.read(cx).session_busy()));
+}

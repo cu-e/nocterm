@@ -297,6 +297,16 @@ prompt epoch, reconnect cleanup retains its original receipt, and background cle
 preserves terminals promoted into ordinary tabs. Existing document, configuration,
 composer and archive owners remain separate from these responsibilities.
 
+A private reconnect dispatch owner moves accepted calls and their original busy
+operation guards into a receipt-scoped sequence. Each waiter keeps its own timing;
+readiness cannot overtake an earlier joined call. One ready head is consumed at a
+time, with original session, registration, workspace and live window checked again
+immediately before dispatch. Cancellation drains responders through recorded tool
+completion. Ordering ends at synchronous launch rather than process completion.
+This covers calls that joined the same accepted reconnect receipt; later directly
+admitted calls after connection retain their existing behavior. No new acceptance
+cap or absolute pending-memory bound is imposed.
+
 `ThreadNotice` owns status text and failure emphasis, while `ThreadBindings` retains
 the originating window and subscription lifetimes. Four `AgentThread` coordinator
 files route lifecycle, incoming events/completions, durable input/history actions

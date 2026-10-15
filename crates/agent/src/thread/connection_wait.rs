@@ -114,6 +114,9 @@ impl WaitTarget {
     pub(in crate::thread) fn workspace(&self) -> &WeakEntity<nocterm_workspace::Workspace> {
         &self.workspace
     }
+    pub(in crate::thread) fn window(&self) -> gpui_kit::AnyWindowHandle {
+        self.window
+    }
 
     pub(in crate::thread) fn new(
         workspace: WeakEntity<nocterm_workspace::Workspace>,

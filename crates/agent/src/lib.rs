@@ -28,6 +28,10 @@
 //! Session operations carry their original ticket, connection, session and registration
 //! authority. Tool work retains fixed prompt scope, original executor identities and
 //! workspace receipts; cancellation preserves readable job outcomes.
+//! Joined reconnect calls retain their original busy guards and dispatch in acceptance
+//! order after validating original session, registration, workspace and window authority.
+//! Ordering releases after synchronous launch; direct calls after connection retain
+//! their existing admission path and long-running commands remain independent.
 
 mod chat_host;
 mod image_deps;
