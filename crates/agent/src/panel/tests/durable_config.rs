@@ -124,7 +124,7 @@ fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) 
     })
     .unwrap();
     cx.run_until_parked();
-    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     assert_eq!(current_model(&thread, cx), "Opus");
 }

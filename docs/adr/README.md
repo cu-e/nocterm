@@ -43,6 +43,7 @@ acceptance; a later record supersedes an earlier one.
 | [0042](0042-terminal-installed-dependencies.md) | Terminal sessions retain explicit installed providers and settings across windows |
 | [0043](0043-retained-connections-installation.md) | Connection views retain explicit owners, settings and subscription lifetimes |
 | [0044](0044-private-thread-coordination.md) | Private chat owners return named coordination effects |
+| [0045](0045-private-panel-view-owners.md) | Private panel view owners retain controls and original completion authority |
 | [0046](0046-shared-concrete-error-causes.md) | Shared error causes retain the original concrete error in standard source chains |
 | [0047](0047-connection-publication-authority-service.md) | Connection publication service preserves committed profile authority histories |
 | [0048](0048-guarded-connection-facts.md) | Original-source guarded raw facts and bounded connection jobs |

@@ -304,10 +304,10 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     cx.update(|cx| owner.update(cx, |thread, cx| thread.send("check the disk".into(), cx)));
     new_chat(&f, cx);
     let (send, receive) = nocterm_ai::PermissionResponder::channel();
+    show_history(&f, cx);
     cx.update(|cx| {
         let session = owner.read(cx).session().clone().unwrap();
         let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Review pending request"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-        f.panel.update(cx, |panel, cx| { panel.history = true; cx.notify(); });
         f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
     });
     cx.run_until_parked();

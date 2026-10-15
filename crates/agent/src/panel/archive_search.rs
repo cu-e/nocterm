@@ -1,13 +1,20 @@
-//! Search archived transcripts without materializing them in GUI documents.
-use super::AgentPanel;
+//! The coordinator supplies original catalog identities and its existing reader capability.
+use super::{AgentPanel, history_column::SearchTicket};
 use crate::runtime::Runtime;
 use gpui_kit::Context;
+use std::collections::HashSet;
 impl AgentPanel {
     pub(super) fn search_archives(&mut self, cx: &mut Context<Self>) {
-        self.archive_search = None;
-        self.archive_matches.clear();
-        let query = self.history_search.read(cx).value().trim().to_lowercase();
-        if query.is_empty() {
+        self.on_history_catalog_changed(cx);
+    }
+    pub(super) fn on_history_query_changed(&mut self, cx: &mut Context<Self>) {
+        self.start_history_search(cx);
+    }
+    pub(super) fn on_history_catalog_changed(&mut self, cx: &mut Context<Self>) {
+        self.start_history_search(cx);
+    }
+    fn start_history_search(&mut self, cx: &mut Context<Self>) {
+        if !self.history.search_requested(cx) {
             return;
         }
         let ids = self
@@ -15,45 +22,24 @@ impl AgentPanel {
             .iter()
             .filter(|thread| thread.read(cx).is_archived())
             .map(|thread| thread.read(cx).document().chat_id().to_owned())
-            .collect::<Vec<_>>();
+            .collect();
         let reader = Runtime::global(cx).read(cx).history_reader();
-        let expected = query.clone();
-        let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = cancellation.clone();
-        let search = cx.background_executor().spawn(async move {
-            let mut matches = std::collections::HashSet::new();
-            for id in ids {
-                if flag.load(std::sync::atomic::Ordering::Acquire) {
-                    break;
-                }
-                let (loaded, _permit) = reader.load(id.clone()).await;
-                if let Ok(chat) = loaded {
-                    let state = nocterm_ai::thread::ThreadState {
-                        entries: chat.entries,
-                        ..Default::default()
-                    };
-                    if state.mentions(&query) {
-                        matches.insert(id);
-                    }
-                }
-            }
-            matches
-        });
-        self.archive_search = Some(cx.spawn(async move |this, cx| {
-            struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
-            impl Drop for Cancel {
-                fn drop(&mut self) {
-                    self.0.store(true, std::sync::atomic::Ordering::Release);
-                }
-            }
-            let _cancel = Cancel(cancellation);
-            let matches = search.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.history_search.read(cx).value().trim().to_lowercase() == expected {
-                    this.archive_matches = matches;
-                    cx.notify();
-                }
-            });
-        }));
+        let catalog = self
+            .threads
+            .iter()
+            .map(|thread| (thread.entity_id(), thread.read(cx).is_archived()))
+            .collect();
+        self.history.start_search(ids, reader, catalog, cx);
+        cx.notify();
+    }
+    pub(super) fn on_archive_search_completed(
+        &mut self,
+        ticket: SearchTicket,
+        matches: HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history.accept_matches(&ticket, matches) {
+            cx.notify();
+        }
     }
 }

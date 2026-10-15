@@ -3,8 +3,7 @@ use super::{AgentPanel, images::ImageAttachError};
 use crate::thread::AgentThread;
 use base64::Engine as _;
 use gpui_kit::{
-    AnyElement, Context, Entity, EntityId, Focusable as _, SharedString, Task, TestSupportExt as _,
-    Window,
+    AnyElement, Context, Entity, EntityId, SharedString, TestSupportExt as _, Window,
     base::motion::{Transition, transition},
     canvas,
     component::{
@@ -17,73 +16,46 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_ai::{acp, images::PromptImage};
-use nocterm_ui::{ActiveAi as _, IconName};
+use nocterm_ui::IconName;
 use std::time::Duration;
 
-#[derive(Default)]
-pub(super) struct ComposerState {
-    pub edit: Option<QueueEdit>,
-    /// Text still belongs to the previously displayed chat until hydration runs.
-    loading: Option<(EntityId, String)>,
-    pub revision: u64,
-    pub pending_images: usize,
-}
-pub(super) struct QueueEdit {
-    pub thread: EntityId,
-    pub id: u64,
-    draft: String,
-    ready: bool,
-    preparation: Option<Task<()>>,
-}
 impl AgentPanel {
     pub(super) fn preparing_images(&self) -> bool {
-        self.composer.pending_images > 0 || self.preparing_queue_edit()
+        self.composer.preparing()
     }
     pub(super) fn preparing_queue_edit(&self) -> bool {
-        self.composer.edit.as_ref().is_some_and(|edit| !edit.ready)
+        self.composer.preparing_edit()
     }
     pub(super) fn original_composer_text(&self, cx: &gpui_kit::App) -> String {
-        self.composer.edit.as_ref().map_or_else(
-            || {
-                let value = self.composer_text(cx).to_string();
-                if self
-                    .composer
-                    .loading
-                    .as_ref()
-                    .is_some_and(|(_, previous)| previous == &value)
-                {
-                    self.current()
-                        .and_then(|thread| thread.read(cx).draft_text().map(str::to_owned))
-                        .unwrap_or_default()
-                } else {
-                    value
-                }
-            },
-            |edit| edit.draft.clone(),
-        )
+        if let Some(draft) = self.composer.original_draft() {
+            return draft.to_owned();
+        }
+        let value = self.composer_text(cx).to_string();
+        if self.composer.waiting_for_draft(&value) {
+            self.current()
+                .and_then(|thread| thread.read(cx).draft_text().map(str::to_owned))
+                .unwrap_or_default()
+        } else {
+            value
+        }
     }
-    /// Restore the original composer without overriding any stop or error pause.
     fn restore_queue_edit(&mut self, resume: bool, cx: &mut Context<Self>) -> Option<String> {
-        let edit = self.composer.edit.take()?;
-        self.composer.revision = self.composer.revision.wrapping_add(1);
-        self.composer.pending_images = 0;
+        let (chat, draft) = self.composer.take_edit()?.into_parts();
         if let Some(thread) = self
             .threads
             .iter()
-            .find(|thread| thread.entity_id() == edit.thread)
+            .find(|thread| thread.entity_id() == chat)
             .cloned()
         {
             thread.update(cx, |thread, cx| thread.end_composer_edit(resume, cx));
         }
-        Some(edit.draft)
+        Some(draft)
     }
     pub(super) fn leave_composer(&mut self, cx: &mut Context<Self>) {
         self.leave_composer_with(false, cx);
     }
     pub(super) fn leave_composer_with(&mut self, discard: bool, cx: &mut Context<Self>) {
-        self.reset_commands();
-        self.composer.revision = self.composer.revision.wrapping_add(1);
-        self.composer.pending_images = 0;
+        self.composer.leave();
         let draft = self
             .restore_queue_edit(!discard, cx)
             .unwrap_or_else(|| self.original_composer_text(cx));
@@ -93,59 +65,62 @@ impl AgentPanel {
                 thread.save(cx);
             });
         }
-        self.queue_open = false;
     }
     pub(super) fn load_composer(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.current() else {
             return;
         };
-        let id = thread.entity_id();
-        let revision = self.composer.revision;
-        self.composer.loading = Some((id, self.input.read(cx).value().to_string()));
+        let binding = self.composer.bind_loading(thread.entity_id(), cx);
         let Some(window) = thread.read(cx).window() else {
             return;
         };
+        let owner = thread.downgrade();
         let panel = cx.weak_entity();
         cx.defer(move |cx| {
             let _ = cx.update_window(window, |_, window, cx| {
                 let _ = panel.update(cx, |panel, cx| {
-                    if panel
-                        .current()
-                        .is_some_and(|thread| thread.entity_id() == id)
-                        && panel.composer.revision == revision
-                    {
-                        panel.sync_composer_draft(cx);
-                        if panel.composer.revision != revision {
-                            return;
-                        }
-                        if panel.current().unwrap().read(cx).is_archived() {
-                            panel.composer.loading = Some((id, String::new()));
-                            panel
-                                .input
-                                .update(cx, |input, cx| input.set_value("", window, cx));
-                            return;
-                        }
-                        let draft = panel
-                            .current()
-                            .unwrap()
-                            .read(cx)
-                            .composer()
-                            .draft()
-                            .cloned()
-                            .unwrap_or_default();
-                        panel.composer.loading = None;
-                        panel
-                            .input
-                            .update(cx, |input, cx| input.set_value(draft, window, cx));
-                    }
+                    panel.on_draft_hydrated(binding, owner, window, cx)
                 });
             });
         });
     }
-
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
+    fn on_draft_hydrated(
+        &mut self,
+        binding: super::composer_view::ComposerBinding,
+        owner: gpui_kit::WeakEntity<AgentThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = owner.upgrade() else {
+            return;
+        };
+        if self
+            .current()
+            .is_none_or(|current| current.entity_id() != thread.entity_id())
+            || !self.composer.current(&binding)
+        {
+            return;
+        }
+        self.sync_composer_draft(cx);
+        if !self.composer.current(&binding) {
+            return;
+        }
+        let archived = thread.read(cx).is_archived();
+        let draft = if archived {
+            String::new()
+        } else {
+            thread
+                .read(cx)
+                .composer()
+                .draft()
+                .cloned()
+                .unwrap_or_default()
+        };
+        self.composer
+            .finish_loading(&binding, draft, archived, window, cx);
+    }
     fn edit_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.composer.edit.is_some() || self.preparing_images() {
+        if self.composer.editing() || self.preparing_images() {
             return;
         }
         let Some(thread) = self.current() else {
@@ -161,96 +136,95 @@ impl AgentPanel {
         else {
             return;
         };
-        self.composer.revision = self.composer.revision.wrapping_add(1);
-        self.composer.pending_images = 0;
-        let revision = self.composer.revision;
         let draft = self.original_composer_text(cx);
-        self.composer.loading = None;
-        thread.update(cx, |thread, cx| thread.set_draft(draft.clone(), cx));
-        let ticket = thread.read(cx).session_ticket();
         let ready = prompt.saved.images.is_empty();
-        self.composer.edit = Some(QueueEdit {
-            thread: thread.entity_id(),
-            id,
-            draft,
-            ready,
-            preparation: None,
-        });
+        let binding = self
+            .composer
+            .begin_edit(thread.entity_id(), id, draft.clone(), ready);
         thread.update(cx, |thread, cx| {
+            thread.set_draft(draft, cx);
             thread.begin_composer_edit(Vec::new(), prompt.attachments, cx);
             cx.notify();
         });
         if !ready {
-            let saved = prompt.saved.clone();
-            let inspector = self.image_cache.inspector();
-            let future = cx.background_executor().spawn(async move {
-                saved
-                    .images
-                    .iter()
-                    .filter_map(|block| match block {
-                        acp::ContentBlock::Image(image) => {
-                            Some(decode_saved_image(&image.data).and_then(|bytes| {
-                                PromptImage::validate(bytes, inspector.as_ref())
-                                    .map_err(ImageAttachError::from)
-                            }))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            });
-            let owner = thread.downgrade();
-            let task = cx.spawn(async move |this, cx| {
-                let result = future.await;
-                let _ = this.update(cx, |panel, cx| {
-                    if panel.composer.revision != revision
-                        || !panel
-                            .composer
-                            .edit
-                            .as_ref()
-                            .is_some_and(|edit| edit.id == id && !edit.ready)
-                    {
-                        return;
-                    }
-                    let _ = owner.update(cx, |thread, cx| {
-                        if !thread.session_request_current(ticket) || !cx.ai_enabled() {
-                            return;
-                        }
-                        match result {
-                            Ok(images) => {
-                                if let Err(error) = thread.accept_composer_images(images, cx) {
-                                    panel.error = Some(error.to_string());
-                                    return;
-                                }
-                                if let Some(edit) = &mut panel.composer.edit {
-                                    edit.ready = true;
-                                }
-                            }
-                            Err(error) => panel.error = Some(error.to_string()),
-                        }
-                        cx.notify();
-                    });
-                    cx.notify();
-                });
-            });
-            self.composer.edit.as_mut().unwrap().preparation = Some(task);
+            self.prepare_queue_images(&thread, id, binding, prompt.saved.clone(), cx);
         }
         self.reset_commands();
-        self.input.update(cx, |input, cx| {
-            input.set_value(prompt.saved.text.clone(), window, cx)
-        });
-        self.queue_open = true;
-        window.focus(&self.input.read(cx).focus_handle(cx), cx);
+        self.composer
+            .set_text(prompt.saved.text.clone(), window, cx);
+        self.composer.open_queue();
+        self.focus_composer(window, cx);
         cx.notify();
     }
-    /// Whether queued message `id` is open in the composer for editing.
+    fn prepare_queue_images(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        id: u64,
+        binding: super::composer_view::ComposerBinding,
+        saved: std::sync::Arc<nocterm_ai::history::SavedPrompt>,
+        cx: &mut Context<Self>,
+    ) {
+        let inspector = self.messages.inspector();
+        let future = cx.background_executor().spawn(async move {
+            saved
+                .images
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Image(image) => {
+                        Some(decode_saved_image(&image.data).and_then(|bytes| {
+                            PromptImage::validate(bytes, inspector.as_ref())
+                                .map_err(ImageAttachError::from)
+                        }))
+                    }
+                    _ => None,
+                })
+                .collect::<Result<Vec<_>, _>>()
+        });
+        let owner = thread.downgrade();
+        let ticket = thread.read(cx).session_ticket();
+        let completion_binding = binding.clone();
+        let task = cx.spawn(async move |panel, cx| {
+            let result = future.await;
+            let _ = panel.update(cx, |panel, cx| {
+                panel.on_queue_image_prepared(completion_binding, id, owner, ticket, result, cx)
+            });
+        });
+        self.composer.install_edit_preparation(&binding, id, task);
+    }
+    fn on_queue_image_prepared(
+        &mut self,
+        binding: super::composer_view::ComposerBinding,
+        id: u64,
+        owner: gpui_kit::WeakEntity<AgentThread>,
+        ticket: nocterm_ai::session::Ticket,
+        result: Result<Vec<PromptImage>, ImageAttachError>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer.edit_preparation_current(&binding, id)
+            || !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
+        {
+            return;
+        }
+        let _ = owner.update(cx, |thread, cx| {
+            if !thread.session_request_current(ticket) {
+                return;
+            }
+            match result {
+                Ok(images) => match thread.accept_composer_images(images, cx) {
+                    Ok(()) => self.composer.edit_images_accepted(&binding, id),
+                    Err(error) => self.error = Some(error.to_string()),
+                },
+                Err(error) => self.error = Some(error.to_string()),
+            }
+            cx.notify();
+        });
+        cx.notify();
+    }
     fn editing_queued(&self, id: u64) -> bool {
-        self.composer
-            .edit
-            .as_ref()
-            .is_some_and(|edit| edit.id == id)
+        self.composer.editing_id() == Some(id)
     }
     pub(super) fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
-        let editing = self.composer.edit.as_ref().map(|edit| edit.id);
+        let editing = self.composer.editing_id();
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.remove_queued(id, editing, cx));
         }
@@ -260,10 +234,8 @@ impl AgentPanel {
             return;
         };
         self.reset_commands();
-        self.input
-            .update(cx, |input, cx| input.set_value(draft, window, cx));
+        self.composer.set_text(draft, window, cx);
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_queue(
         &mut self,
         thread: &Entity<AgentThread>,
@@ -276,121 +248,27 @@ impl AgentPanel {
         }
         let count = thread.read(cx).queued_prompt_ids().count();
         let first = thread.read(cx).composer().queue()[0].saved.id;
-        let measured = self
-            .queue_heights
-            .get(&thread.entity_id())
-            .copied()
-            .unwrap_or(px(0.));
-        let target = measured.min(px(240.));
-        let height = transition(
-            (
-                SharedString::from(format!("agent-queue-{}", thread.entity_id())),
-                "height",
-            ),
-            if self.queue_open { target } else { px(0.) },
-            Transition::new(Duration::from_millis(220)).ease(|t| {
-                if t >= 1. {
-                    1.
-                } else {
-                    1. - 2_f32.powf(-10. * t)
-                }
-            }),
-            window,
-            cx,
-        );
-        let mut hood = v_flex()
-            .id("agent-queue")
-            .test_support()
-            .mx_3()
-            .mb(px(-28.))
-            .pb(px(16.))
-            .rounded_t(px(16.))
-            .bg(cx.theme().muted.blend(cx.theme().background.opacity(0.35)))
-            .border_1()
-            .border_color(cx.theme().border)
-            .min_w_0();
-        hood = hood.child(self.queue_header(count, first, cx));
-        if !self.queue_open && height <= px(0.) {
-            return Some(hood.into_any_element());
-        }
-        let mut rows = v_flex()
-            .id("agent-queue-rows")
-            .test_support()
-            .relative()
-            .w_full()
-            .flex_shrink_0()
-            .min_w_0()
-            .gap_2()
-            .p_2();
-        for prompt in thread.read(cx).composer().queue().to_vec() {
-            rows = rows.child(self.queue_row(&prompt, labels, cx));
-        }
-        // Measure the actual laid-out rows, including wrapping and image previews.
-        // The measurement element is absolute and never contributes height itself.
-        let owner = cx.weak_entity();
-        let thread_id = thread.entity_id();
-        rows = rows.child(
-            canvas(
-                move |bounds, _, cx| {
-                    let owner = owner.clone();
-                    cx.defer(move |cx| {
-                        let _ = owner.update(cx, |panel, cx| {
-                            if panel
-                                .queue_heights
-                                .get(&thread_id)
-                                .is_none_or(|old| (*old - bounds.size.height).abs() > px(0.5))
-                            {
-                                panel.queue_heights.insert(thread_id, bounds.size.height);
-                                cx.notify();
-                            }
-                        });
-                    });
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0(),
-        );
-        hood = hood.child(
-            div()
-                .id("agent-queue-reveal")
-                .test_support()
-                .h(height)
-                .overflow_hidden()
-                .opacity(if target > px(0.) {
-                    (height / target).clamp(0., 1.)
-                } else {
-                    0.
-                })
-                .child(
-                    div()
-                        .id("agent-queue-scroll")
-                        .test_support()
-                        .max_h(px(240.))
-                        .overflow_y_scroll()
-                        .child(rows),
-                ),
-        );
-        if let Some(edit) = &self.composer.edit
-            && edit.thread == thread.entity_id()
-        {
-            hood = hood.child(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .child(div().text_xs().child("Editing queued message"))
-                    .child(
-                        Button::new(SharedString::from("queue-cancel-edit"))
-                            .ghost()
-                            .xsmall()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.finish_queue_edit(window, cx)
-                            })),
-                    ),
+        let renderer = QueueRenderer {
+            chat: thread.entity_id(),
+            open: self.composer.queue_open(),
+            measured: self.composer.queue_height(thread.entity_id()),
+            editing: self.composer.editing_chat() == Some(thread.entity_id()),
+        };
+        let height = renderer.height(window, cx);
+        let header = self.queue_header(count, first, cx);
+        if !renderer.open && height <= px(0.) {
+            return Some(
+                QueueRenderer::hood(header, cx)
+                    .test_support()
+                    .into_any_element(),
             );
         }
-        Some(hood.into_any_element())
+        let prompts = thread.read(cx).composer().queue().to_vec();
+        let rows = prompts
+            .iter()
+            .map(|prompt| self.queue_row(prompt, labels, cx))
+            .collect();
+        Some(renderer.render(header, rows, height, cx))
     }
     fn queue_header(&mut self, count: usize, first: u64, cx: &mut Context<Self>) -> AnyElement {
         h_flex()
@@ -409,13 +287,13 @@ impl AgentPanel {
                         "{count} {} queued",
                         if count == 1 { "message" } else { "messages" }
                     ))
-                    .icon(if self.queue_open {
+                    .icon(if self.composer.queue_open() {
                         IconName::ChevronDown
                     } else {
                         IconName::ChevronUp
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.queue_open = !this.queue_open;
+                        this.composer.toggle_queue();
                         cx.notify();
                     })),
             )
@@ -425,7 +303,7 @@ impl AgentPanel {
                     .small()
                     .icon(IconName::ArrowUp)
                     .tooltip("Send now · stop current response")
-                    .disabled(self.composer.edit.is_some())
+                    .disabled(self.composer.editing())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(thread) = this.current() {
                             thread.update(cx, |thread, cx| thread.send_now(first, cx));
@@ -484,7 +362,7 @@ impl AgentPanel {
                             .xsmall()
                             .icon(IconName::ArrowUp)
                             .tooltip("Send now")
-                            .disabled(self.composer.edit.is_some())
+                            .disabled(self.composer.editing())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(thread) = this.current() {
                                     thread.update(cx, |thread, cx| thread.send_now(id, cx));
@@ -538,18 +416,22 @@ impl AgentPanel {
 }
 
 impl AgentPanel {
+    fn on_queue_height_observed(
+        &mut self,
+        chat: EntityId,
+        height: gpui_kit::Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer.observe_queue_height(chat, height) {
+            cx.notify();
+        }
+    }
     pub(super) fn sync_composer_draft(&mut self, cx: &mut Context<Self>) {
-        if self.composer.edit.is_none()
-            && let Some(thread) = self.current()
-        {
-            let text = self.input.read(cx).value().to_string();
-            if let Some((owner, previous)) = &self.composer.loading {
-                if *owner != thread.entity_id() || previous == &text {
-                    return;
-                }
-                self.composer.loading = None;
-                self.composer.revision = self.composer.revision.wrapping_add(1);
-            }
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let text = self.composer.text(cx).to_string();
+        if self.composer.draft_changed(thread.entity_id(), &text) {
             thread.update(cx, |thread, cx| thread.set_draft(text, cx));
         }
     }
@@ -560,4 +442,128 @@ fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError> {
         return Err(nocterm_ai::images::PromptImageError::TooLarge.into());
     }
     Ok(base64::engine::general_purpose::STANDARD.decode(data)?)
+}
+
+/// One immutable frame of the queue, without authoritative queued messages.
+struct QueueRenderer {
+    chat: EntityId,
+    open: bool,
+    measured: gpui_kit::Pixels,
+    editing: bool,
+}
+impl QueueRenderer {
+    fn height(&self, window: &mut Window, cx: &mut Context<AgentPanel>) -> gpui_kit::Pixels {
+        transition(
+            (
+                SharedString::from(format!("agent-queue-{}", self.chat)),
+                "height",
+            ),
+            if self.open {
+                self.measured.min(px(240.))
+            } else {
+                px(0.)
+            },
+            Transition::new(Duration::from_millis(220)).ease(|t| {
+                if t >= 1. {
+                    1.
+                } else {
+                    1. - 2_f32.powf(-10. * t)
+                }
+            }),
+            window,
+            cx,
+        )
+    }
+    fn hood(header: AnyElement, cx: &gpui_kit::App) -> gpui_kit::Stateful<gpui_kit::Div> {
+        v_flex()
+            .id("agent-queue")
+            .mx_3()
+            .mb(px(-28.))
+            .pb(px(16.))
+            .rounded_t(px(16.))
+            .bg(cx.theme().muted.blend(cx.theme().background.opacity(0.35)))
+            .border_1()
+            .border_color(cx.theme().border)
+            .min_w_0()
+            .child(header)
+    }
+    fn rows(&self, rows: Vec<AnyElement>, cx: &mut Context<AgentPanel>) -> AnyElement {
+        let owner = cx.weak_entity();
+        let chat = self.chat;
+        v_flex()
+            .id("agent-queue-rows")
+            .test_support()
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .min_w_0()
+            .gap_2()
+            .p_2()
+            .children(rows)
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let owner = owner.clone();
+                        cx.defer(move |cx| {
+                            let _ = owner.update(cx, |panel, cx| {
+                                panel.on_queue_height_observed(chat, bounds.size.height, cx)
+                            });
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .into_any_element()
+    }
+    fn render(
+        &self,
+        header: AnyElement,
+        rows: Vec<AnyElement>,
+        height: gpui_kit::Pixels,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
+        let target = self.measured.min(px(240.));
+        let rows = self.rows(rows, cx);
+        let hood = Self::hood(header, cx).child(
+            div()
+                .id("agent-queue-reveal")
+                .test_support()
+                .h(height)
+                .overflow_hidden()
+                .opacity(if target > px(0.) {
+                    (height / target).clamp(0., 1.)
+                } else {
+                    0.
+                })
+                .child(
+                    div()
+                        .id("agent-queue-scroll")
+                        .test_support()
+                        .max_h(px(240.))
+                        .overflow_y_scroll()
+                        .child(rows),
+                ),
+        );
+        hood.when(self.editing, |hood| {
+            hood.child(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .child(div().text_xs().child("Editing queued message"))
+                    .child(
+                        Button::new(SharedString::from("queue-cancel-edit"))
+                            .ghost()
+                            .xsmall()
+                            .label("Cancel")
+                            .on_click(cx.listener(|panel, _, window, cx| {
+                                panel.finish_queue_edit(window, cx)
+                            })),
+                    ),
+            )
+        })
+        .test_support()
+        .into_any_element()
+    }
 }

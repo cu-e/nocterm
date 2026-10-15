@@ -1,4 +1,7 @@
 //! Agent chat presentation and session coordination through injected contracts.
+//! PanelDeps supplies the actual image, shared layout and settings collaborators.
+//! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
+//! disposable presentation transitions and their subscription/task lifetimes.
 //!
 //! Owns: panel views, private Composer/ChatConfig/ChatDocument owners, AgentThread
 //! coordination, private SessionDriver and ToolRuntime owners, and the session-scoped
@@ -35,6 +38,8 @@
 
 mod chat_host;
 mod image_deps;
+mod panel_deps;
+pub use panel_deps::PanelDeps;
 mod panel;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
@@ -153,14 +158,18 @@ gpui_kit::actions!(
 /// Installs a window-local panel with an initially empty chat history.
 pub fn register(
     workspace: &mut nocterm_workspace::Workspace,
-    images: ImageDeps,
+    deps: PanelDeps,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) {
     let owner = cx.entity().downgrade();
     let host = chat_host::ChatHost::new(owner, metadata);
-    let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, images, window, panel_cx));
+    let enabled = deps
+        .settings()
+        .setting::<nocterm_ai::AiSettings>(cx)
+        .enabled;
+    let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, deps, window, panel_cx));
     workspace.set_right_panel(panel, window, cx);
-    workspace.set_right_panel_available(nocterm_ui::ActiveAi::ai_enabled(&**cx), window, cx);
+    workspace.set_right_panel_available(enabled, window, cx);
 }

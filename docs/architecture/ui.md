@@ -170,8 +170,13 @@ an explicitly injected `nocterm_ui::LayoutHandle`, keyed by name and saved to
 `layout.json` in the state directory. Its private `nocterm_store::Persisted` entity
 keeps changes immediately visible and coalesces pending snapshots into the latest
 arrangement. Bootstrap retains that same handle in the workspace dependencies for
-every new window. The legacy `LayoutMemory` global retains the same entity for the
-agent's history-column width; it creates no second writer or shutdown participant.
+every new window. Agent presentation receives the same handle through `PanelDeps`.
+`observe_size` projects only changes to one normalized visible scalar; caller-owned
+subscriptions exclude unrelated keys, flags and persistence-only notifications.
+Shared history split updates are applied at the next native group rebuild, preserving
+its existing entity and subscriptions without another persistence write.
+The legacy `LayoutMemory` compatibility shell retains that same entity and creates
+no second writer or shutdown participant.
 The explicitly injected `ShutdownCoordinator` captures layout before background
 drain and shares one deadline across its registered participants (ADR 0013).
 Settings also uses `nocterm-store`, with durable publication rather than optimistic

@@ -1,26 +1,21 @@
 use crate::{runtime::Runtime, thread::AgentThread};
 use gpui_kit::{
     Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
-    Task, TestSupportExt as _, Window,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         floating::FloatingCards,
-        h_flex,
-        input::{InputEvent, InputState, TextareaState},
-        v_flex,
+        h_flex, v_flex,
     },
     div,
     prelude::*,
     px,
 };
 use nocterm_ai::acp;
-use nocterm_ui::{ActiveAi as _, IconName, SettingsExt as _, SettingsStore};
+use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::HashMap;
 use widgets::HEADER_HEIGHT;
 
 mod approvals;
@@ -30,13 +25,18 @@ mod attachments;
 mod chat;
 pub(crate) mod commands;
 mod composer;
+mod composer_view;
 mod entries;
 mod history;
+mod history_column;
 mod image_pipeline;
 mod images;
+mod layout;
 mod lifecycle;
 mod menu;
+mod menu_view;
 mod message_actions;
+mod message_list;
 mod navigation;
 mod queue;
 mod servers;
@@ -56,217 +56,203 @@ enum MenuKind {
 }
 
 pub(crate) struct AgentPanel {
-    image_cache: image_pipeline::ImagePipeline,
     focus: FocusHandle,
     host: crate::chat_host::ChatHost,
     threads: Vec<Entity<AgentThread>>,
     active: Option<usize>,
-    /// Whether the history column is beside the chat; it starts open.
-    history: bool,
-    /// How much opening the history column widened the panel.
-    widened: Option<gpui_kit::Pixels>,
-    /// The chat and history split, with the history on the right and on the left.
-    splits: [Entity<gpui_kit::component::ResizableState>; 2],
-    /// Whether the panel is on the left of the tabs.
-    docked_left: bool,
-    maximized: bool,
-    input: Entity<TextareaState>,
-    search: Entity<InputState>,
-    history_search: Entity<InputState>,
-    archive_search: Option<Task<()>>,
-    archive_matches: HashSet<String>,
-    renaming: Option<history::Renaming>,
-    menu: Option<MenuKind>,
-    usage_focus: FocusHandle,
-    list: Entity<gpui_kit::component::message_scroller::MessageScrollerState>,
-    stream: stream::StreamReveal,
-    stream_tick: Option<Task<()>>,
-    queue_open: bool,
-    queue_heights: HashMap<gpui_kit::EntityId, gpui_kit::Pixels>,
-    composer: queue::ComposerState,
-    commands: commands::CommandState,
-    list_count: usize,
-    navigation: navigation::MessageNavigation,
-    expanded: HashSet<usize>,
     error: Option<String>,
     subscriptions: Vec<Subscription>,
     notify_queued: bool,
     approval_notice: Option<Vec<(gpui_kit::EntityId, u64)>>,
-    history_tick: Option<Task<()>>,
-    /// Password fields of the sign-in cards, by background session.
     sign_in_inputs: HashMap<gpui_kit::EntityId, approvals::SignInInput>,
+    messages: message_list::MessageList,
+    composer: composer_view::ComposerView,
+    history: history_column::HistoryColumn,
+    layout: layout::PanelLayout,
+    menus: menu_view::MenuView,
+    settings: nocterm_store::SettingsHandle,
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 impl AgentPanel {
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(crate) fn new(
         host: crate::chat_host::ChatHost,
-        images: crate::ImageDeps,
+        deps: crate::PanelDeps,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(1, 10)
-                .submit_on_enter(true)
-                .placeholder("Ask about your terminals…")
-        });
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search models…"));
-        let submit = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
-            if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                this.send(window, cx);
-            }
-        });
-        let search_observer = cx.subscribe(&search, |_, _, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        });
-        let input_observer = cx.observe_in(&input, window, |this, _, window, cx| {
-            let value = this.input.read(cx).value().to_string();
-            if value == this.commands.input_value {
-                return;
-            }
-            if this.menu == Some(MenuKind::Usage) {
-                this.close_usage(window, cx);
-            }
-            this.sync_composer_draft(cx);
-            this.commands.input_value = value;
-            if !this
-                .commands
-                .cycle
-                .as_ref()
-                .is_some_and(|cycle| cycle.inserted == this.input.read(cx).value().as_ref())
-            {
-                this.commands.cycle = None;
-                this.commands.selected = 0;
-                this.commands.reveal(0);
-                this.commands.dismissed = None;
-            }
-            this.sync_command_token(window, cx);
-            cx.notify();
-        });
-        let history_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
-        let history_search_observer = cx.subscribe(&history_search, |this, _, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.search_archives(cx);
-                cx.notify();
-            }
-        });
-        let settings = cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-            let enabled = cx.ai_enabled();
-            if !enabled {
-                this.clear_chats(window, cx);
-            }
-            let workspace = this.host.workspace().clone();
-            window.defer(cx, move |window, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
-                    workspace.set_right_panel_available(enabled, window, cx)
-                });
-            });
-            cx.notify();
-        });
-        let workspace_observer = host.workspace().upgrade().map(|workspace| {
-            cx.subscribe_in(
-                &workspace,
-                window,
-                |this, _, event, window, cx| match event {
-                    WorkspaceEvent::ItemsChanged
-                    | WorkspaceEvent::ActiveItemChanged
-                    | WorkspaceEvent::ActiveSessionChanged
-                    | WorkspaceEvent::LocalDirectoryChanged
-                    | WorkspaceEvent::ConnectionsChanged => cx.notify(),
-                    WorkspaceEvent::RightPanelVisibilityChanged => {
-                        if !this
-                            .host
-                            .workspace()
-                            .upgrade()
-                            .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
-                        {
-                            this.sync_composer_draft(cx);
-                            if let Some(thread) = this.current() {
-                                thread.update(cx, |thread, cx| thread.flush_draft(cx));
-                            }
-                        }
-                        this.sync_approval_attention(window, cx);
-                        cx.notify();
-                    }
-                },
-            )
-        });
-        let runtime_observer =
-            cx.observe_in(&Runtime::global(cx), window, |this, _, window, cx| {
-                this.adopt_saved_chats(window, cx);
-                cx.notify();
-            });
-        // Chats read before this panel existed.
+        let (images, layout, settings) = deps.into_parts();
+        let composer = composer_view::ComposerView::new(window, cx);
+        let menus = menu_view::MenuView::new(composer.focus(cx), window, cx);
+        let history = history_column::HistoryColumn::new(window, cx);
+        let layout = layout::PanelLayout::new(layout, cx);
+        let messages = message_list::MessageList::new(images, cx);
+        let subscriptions = Self::bind_panel(&host, &settings, window, cx);
         let panel = cx.weak_entity();
         window.defer(cx, move |window, cx| {
-            let _ = panel.update(cx, |panel, cx| panel.adopt_saved_chats(window, cx));
-        });
-        let (right_split, right_subscription) = split::split_state(1, cx);
-        let (left_split, left_subscription) = split::split_state(0, cx);
-        let usage_focus = cx.focus_handle();
-        let usage_blur = cx.on_focus_out(&usage_focus, window, |this, _, _, cx| {
-            this.dismiss_usage(cx);
-        });
-        let input_focus = input.read(cx).focus_handle(cx);
-        let usage_input_blur = cx.on_focus_out(&input_focus, window, |this, _, window, cx| {
-            if !this.usage_focus.contains_focused(window, cx) {
-                this.dismiss_usage(cx);
-            }
+            let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
         });
         Self {
-            image_cache: image_pipeline::ImagePipeline::new(images),
-            sign_in_inputs: HashMap::new(),
             focus: cx.focus_handle(),
             host,
             threads: Vec::new(),
             active: None,
-            history: true,
-            widened: None,
-            splits: [right_split, left_split],
-            docked_left: false,
-            maximized: false,
-            input,
-            search,
-            history_search,
-            archive_search: None,
-            archive_matches: Default::default(),
-            renaming: None,
-            menu: None,
-            usage_focus,
-            list: cx
-                .new(|cx| gpui_kit::component::message_scroller::MessageScrollerState::new(0, cx)),
-            stream: Default::default(),
-            stream_tick: None,
-            queue_open: false,
-            queue_heights: HashMap::new(),
-            composer: Default::default(),
-            commands: Default::default(),
-            list_count: 0,
-            navigation: Default::default(),
-            expanded: HashSet::new(),
             error: None,
-            subscriptions: [
-                Some(submit),
-                Some(input_observer),
-                Some(search_observer),
-                Some(history_search_observer),
-                Some(settings),
-                Some(runtime_observer),
-                Some(right_subscription),
-                Some(left_subscription),
-                Some(usage_blur),
-                Some(usage_input_blur),
-                workspace_observer,
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
+            subscriptions,
             notify_queued: false,
             approval_notice: None,
-            history_tick: None,
+            sign_in_inputs: HashMap::new(),
+            messages,
+            composer,
+            history,
+            layout,
+            menus,
+            settings,
+        }
+    }
+    fn bind_panel(
+        host: &crate::chat_host::ChatHost,
+        settings: &nocterm_store::SettingsHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let panel = cx.weak_entity();
+        let originating_window = window.window_handle();
+        let settings = settings.observe(cx, move |cx| {
+            let _ = cx.update_window(originating_window, |_, window, cx| {
+                let _ = panel.update(cx, |panel, cx| panel.on_panel_settings_changed(window, cx));
+            });
+        });
+        let workspace = host.workspace().upgrade().map(|workspace| {
+            cx.subscribe_in(&workspace, window, |panel, _, event, window, cx| {
+                panel.on_workspace_event(*event, window, cx);
+            })
+        });
+        let runtime = cx.observe_in(&Runtime::global(cx), window, |panel, _, window, cx| {
+            panel.on_runtime_changed(window, cx);
+        });
+        [Some(settings), workspace, Some(runtime)]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+    fn on_runtime_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.adopt_saved_chats(window, cx);
+        cx.notify();
+    }
+    fn on_workspace_event(
+        &mut self,
+        event: WorkspaceEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event == WorkspaceEvent::RightPanelVisibilityChanged {
+            let visible = self.history_is_visible(cx);
+            self.history.set_visible(visible, cx);
+            if !self
+                .host
+                .workspace()
+                .upgrade()
+                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+            {
+                self.sync_composer_draft(cx);
+                if let Some(thread) = self.current() {
+                    thread.update(cx, |thread, cx| thread.flush_draft(cx));
+                }
+            }
+            self.sync_approval_attention(window, cx);
+        }
+        cx.notify();
+    }
+    fn on_panel_settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let enabled = self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled;
+        if !enabled {
+            self.clear_chats(window, cx);
+        }
+        let workspace = self.host.workspace().clone();
+        window.defer(cx, move |window, cx| {
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.set_right_panel_available(enabled, window, cx)
+            });
+        });
+        cx.notify();
+    }
+    fn on_composer_input_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer.observe_input(cx) {
+            return;
+        }
+        if self.menus.is_open(&MenuKind::Usage) {
+            self.close_usage(window, cx);
+        }
+        self.sync_composer_draft(cx);
+        self.sync_command_token(window, cx);
+        cx.notify();
+    }
+    fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send(window, cx);
+    }
+    fn on_config_query_changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+    }
+    fn on_usage_dismiss_requested(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_usage(cx);
+    }
+    fn on_usage_focus_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.menus.usage_contains_focus(window, cx) {
+            self.dismiss_usage(cx);
+        }
+    }
+    fn on_history_clock_tick(
+        &mut self,
+        ticket: &history_column::HistoryClockTicket,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.history.clock_current(ticket) {
+            return false;
+        }
+        if !self.history_is_visible(cx) {
+            self.history.stop_clock(ticket);
+            return false;
+        }
+        cx.notify();
+        true
+    }
+    fn history_is_visible(&self, cx: &App) -> bool {
+        self.layout.history()
+            && !self.threads.is_empty()
+            && self
+                .host
+                .workspace()
+                .upgrade()
+                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+    }
+    fn on_history_split_settling(
+        &mut self,
+        slot: usize,
+        ticket: &std::sync::Arc<()>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history_is_visible(cx) && self.layout.settling_current(slot, ticket) {
+            cx.notify();
+        }
+    }
+    fn on_history_split_resized(
+        &mut self,
+        _index: usize,
+        size: gpui_kit::Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.layout.on_split_resized(size, cx) {
+            self.error = Some(error.to_string());
+            cx.notify();
+        }
+    }
+    fn on_shared_history_width_changed(
+        &mut self,
+        value: Option<gpui_kit::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.layout.on_shared_width_changed(value, cx) {
+            cx.notify();
         }
     }
     pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
@@ -278,10 +264,10 @@ impl AgentPanel {
         self.threads.iter()
     }
     pub(crate) fn composer_text(&self, cx: &App) -> SharedString {
-        self.input.read(cx).value()
+        self.composer.text(cx)
     }
     pub(crate) fn composer_focus(&self, cx: &App) -> FocusHandle {
-        self.input.read(cx).focus_handle(cx)
+        self.composer.focus(cx)
     }
     pub(crate) fn focus_composer(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.composer_focus(cx), cx);
@@ -289,7 +275,8 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>());
+        let registry =
+            nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx));
         let known = |id: &&String| registry.get(id).is_some();
         Runtime::global(cx)
             .read(cx)
@@ -297,8 +284,9 @@ impl AgentPanel {
             .last_agent
             .as_ref()
             .filter(known)
-            .or(cx
-                .setting::<nocterm_ai::AiSettings>()
+            .or(self
+                .settings
+                .setting::<nocterm_ai::AiSettings>(cx)
                 .default_agent
                 .as_ref()
                 .filter(known))
@@ -312,22 +300,16 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        let text = if self.composer.edit.is_some() {
-            self.input.read(cx).value().to_string()
+        let text = if self.composer.editing() {
+            self.composer.text(cx).to_string()
         } else {
             self.original_composer_text(cx)
         };
-        let replace = self
-            .composer
-            .edit
-            .as_ref()
-            .filter(|edit| edit.thread == thread.entity_id())
-            .map(|edit| edit.id);
+        let replace = self.composer.replacement_for(thread.entity_id());
         let result = thread.update(cx, |thread, cx| thread.submit(text, replace, cx));
         match result {
             Ok(true) => {
-                self.input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.composer.set_text("", window, cx);
                 self.finish_queue_edit(window, cx);
             }
             Ok(false) => return,
@@ -337,15 +319,11 @@ impl AgentPanel {
                 return;
             }
         }
-        self.menu = None;
+        self.menus.reset();
         cx.notify();
     }
     fn toggle_menu(&mut self, menu: MenuKind, cx: &mut Context<Self>) {
-        self.menu = if self.menu.as_ref() == Some(&menu) {
-            None
-        } else {
-            Some(menu)
-        };
+        self.menus.toggle(menu);
         cx.notify();
     }
     fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -438,11 +416,11 @@ impl Panel for AgentPanel {
 }
 impl RightPanel for AgentPanel {
     fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.maximized = maximized;
+        self.layout.set_maximized(maximized);
         cx.notify();
     }
     fn set_docked_left(&mut self, left: bool, cx: &mut Context<Self>) {
-        self.docked_left = left;
+        self.layout.set_docked_left(left);
         cx.notify();
     }
 }
@@ -450,30 +428,7 @@ impl Render for AgentPanel {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
-        if self.history && !self.threads.is_empty() {
-            if self.history_tick.is_none() {
-                self.history_tick = Some(cx.spawn(async move |this, cx| {
-                    loop {
-                        cx.background_executor()
-                            .timer(Duration::from_secs(30))
-                            .await;
-                        if !this
-                            .update(cx, |this, cx| {
-                                if this.history {
-                                    cx.notify();
-                                }
-                                this.history
-                            })
-                            .unwrap_or(false)
-                        {
-                            break;
-                        }
-                    }
-                }));
-            }
-        } else {
-            self.history_tick = None;
-        }
+        self.history.set_visible(self.history_is_visible(cx), cx);
         let mut body = v_flex()
             .id("agent-panel")
             .test_support()
@@ -532,7 +487,7 @@ impl Render for AgentPanel {
                 }),
             )
             .on_action(cx.listener(|this, _: &crate::ShowHistory, _, cx| {
-                this.set_history(!this.history, cx)
+                this.set_history(!this.layout.history(), cx)
             }))
             .on_action(cx.listener(|this, _: &crate::StopGeneration, _, cx| {
                 if let Some(thread) = this.current() {
@@ -597,10 +552,10 @@ impl Render for AgentPanel {
                             .small()
                             .icon(IconName::Clock)
                             .tooltip("Chat history")
-                            .selected(self.history)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.set_history(!this.history, cx)),
-                            ),
+                            .selected(self.layout.history())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_history(!this.layout.history(), cx)
+                            })),
                     )
                     .child(
                         self.menu_popover(
@@ -619,12 +574,12 @@ impl Render for AgentPanel {
                         Button::new("agent-maximize")
                             .ghost()
                             .small()
-                            .icon(if self.maximized {
+                            .icon(if self.layout.maximized() {
                                 IconName::Minimize2
                             } else {
                                 IconName::Maximize2
                             })
-                            .tooltip(if self.maximized {
+                            .tooltip(if self.layout.maximized() {
                                 "Restore panel"
                             } else {
                                 "Expand chat"
@@ -638,7 +593,7 @@ impl Render for AgentPanel {
             );
         body = match current {
             None => body.child(self.render_history(cx)),
-            Some(thread) if self.history => {
+            Some(thread) if self.layout.history() => {
                 let chat = self.render_chat(thread, window, cx);
                 body.child(self.render_split(chat, window, cx))
             }

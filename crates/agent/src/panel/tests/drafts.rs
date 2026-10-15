@@ -4,11 +4,7 @@ use std::time::Duration;
 
 fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -26,15 +22,12 @@ fn unsent_chat_survives_switching_and_restores_its_composer(cx: &mut TestAppCont
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     set_input(&f, "draft\n界", cx);
     new_chat(&f, cx);
-    cx.update(|cx| assert_eq!(f.panel.read(cx).threads.len(), 2));
+    cx.update(|cx| assert_eq!(f.panel.read(cx).chat_documents().len(), 2));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(first.entity_id(), cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "draft\n界"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "draft\n界");
         assert!(first.read(cx).transcript().entries.is_empty());
         assert_eq!(first.read(cx).title(), "New Agent");
     });
@@ -96,14 +89,11 @@ fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut
     reinstall_history(&mut f, vec![chat], cx);
     let panel = f.panel.clone();
     cx.run_until_parked();
-    let thread = cx.update(|cx| panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| panel.read(cx).chat_documents().next().unwrap().clone());
     panel.update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(
-            panel.read(cx).input.read(cx).value().as_ref(),
-            "restored\ntext"
-        );
+        assert_eq!(panel.read(cx).composer_text(cx).as_ref(), "restored\ntext");
         assert!(thread.read(cx).transcript().entries.is_empty());
     });
 }
@@ -208,7 +198,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).composer().draft().is_none());
-        assert!(f.panel.read(cx).input.read(cx).value().is_empty());
+        assert!(f.panel.read(cx).composer_text(cx).is_empty());
         assert_eq!(thread.read(cx).transcript().entries.len(), 1);
     });
     let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
@@ -225,7 +215,7 @@ fn rapid_new_chats_do_not_copy_the_previous_visible_text(cx: &mut TestAppContext
         f.panel.update(cx, |panel, cx| {
             panel.new_thread("codex".into(), window, cx);
             panel.new_thread("codex".into(), window, cx);
-            assert_eq!(panel.threads.len(), 2);
+            assert_eq!(panel.chat_documents().len(), 2);
             assert!(
                 panel
                     .current()
@@ -240,7 +230,7 @@ fn rapid_new_chats_do_not_copy_the_previous_visible_text(cx: &mut TestAppContext
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(f.panel.read(cx).input.read(cx).value().is_empty());
+        assert!(f.panel.read(cx).composer_text(cx).is_empty());
         assert_eq!(
             first.read(cx).composer().draft().map(String::as_str),
             Some("owner A")
@@ -261,10 +251,13 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.open_thread(first.entity_id(), cx);
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("new user text", window, cx));
         });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "new user text",
+            window,
+            cx,
+        );
     })
     .unwrap();
     cx.run_until_parked();
@@ -277,16 +270,16 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
             second.read(cx).composer().draft().map(String::as_str),
             Some("B draft")
         );
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "new user text"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "new user text");
     });
     cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "restart last character",
+            window,
+            cx,
+        );
         f.panel.update(cx, |panel, cx| {
-            panel.input.update(cx, |input, cx| {
-                input.set_value("restart last character", window, cx)
-            });
             panel.restart(window, cx);
         });
     })
@@ -294,7 +287,7 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "restart last character"
         )
     });
@@ -396,11 +389,12 @@ async fn disabling_ai_keeps_the_transcript_with_the_final_pending_composer_text(
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel.input.update(cx, |input, cx| {
-                input.set_value("last pending edit", window, cx)
-            });
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "last pending edit",
+            window,
+            cx,
+        );
     })
     .unwrap();
     cx.update(|cx| {

@@ -5,7 +5,6 @@ use crate::{
     thread::{AgentThread, Attachment},
 };
 use gpui_kit::{AppContext as _, Context, Entity, Window};
-use nocterm_ui::{ActiveAi as _, SettingsExt as _};
 use std::time::Duration;
 enum ThreadStart {
     New(String),
@@ -13,15 +12,9 @@ enum ThreadStart {
 }
 impl AgentPanel {
     pub(super) fn reset_chat_view(&mut self, cx: &mut Context<Self>) {
-        self.stream_tick = None;
-        self.stream = Default::default();
-        self.list.update(cx, |list, cx| list.reset(0, cx));
-        self.list_count = 0;
-        self.navigation.clear();
-        self.expanded.clear();
-        self.image_cache.clear();
+        self.messages.reset(cx);
         self.reset_commands();
-        self.menu = None;
+        self.menus.reset();
     }
     pub(super) fn select_thread(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
         if let Some(previous) = self.current() {
@@ -40,7 +33,7 @@ impl AgentPanel {
             .filter(|thread| thread.read(cx).is_archived())
         {
             let panel = cx.weak_entity();
-            let revision = self.composer.revision;
+            let revision = self.composer.revision();
             thread.update(cx, |thread, cx| {
                 thread.load_archive(
                     crate::thread::archive::ArchiveIntent::Open {
@@ -66,10 +59,11 @@ impl AgentPanel {
             .current()
             .is_some_and(|thread| thread.entity_id() == source)
         {
-            if self.composer.revision == revision {
+            self.messages.reset(cx);
+            if self.composer.revision() == revision {
                 self.load_composer(cx);
             } else {
-                let text = self.input.read(cx).value().to_string();
+                let text = self.composer.text(cx).to_string();
                 if let Some(thread) = self.current() {
                     thread.update(cx, |thread, cx| thread.set_draft(text, cx));
                 }
@@ -106,21 +100,17 @@ impl AgentPanel {
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
         }
-        self.leave_composer_with(true, cx);
         self.retain_threads(|_, _| false, cx);
         if !self.threads.is_empty() {
             return;
         }
         self.active = None;
-        self.composer = Default::default();
-        self.queue_heights.clear();
-        self.queue_open = false;
+        self.composer.clear();
         self.sign_in_inputs.clear();
-        self.renaming = None;
+        self.history.cancel_rename();
         self.error = None;
         self.reset_chat_view(cx);
-        self.input
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.composer.set_text("", window, cx);
         self.sync_approval_attention(window, cx);
     }
 
@@ -138,9 +128,10 @@ impl AgentPanel {
             ThreadStart::New(id) => id.clone(),
             ThreadStart::Restart(data) => data.agent_id().to_owned(),
         };
-        let Some(_launch) = nocterm_ai::AgentRegistry::new(cx.setting::<nocterm_ai::AiSettings>())
-            .get(&id)
-            .cloned()
+        let Some(_launch) =
+            nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx))
+                .get(&id)
+                .cloned()
         else {
             return;
         };
@@ -169,6 +160,7 @@ impl AgentPanel {
         self.track(&thread, window, cx);
 
         self.threads.push(thread);
+        self.on_history_catalog_changed(cx);
         let id = self.threads.last().unwrap().entity_id();
         self.select_thread(id, cx);
         self.focus_composer(window, cx);
@@ -209,7 +201,7 @@ impl AgentPanel {
     /// Shows the chats saved in earlier runs, oldest first, before the
     /// chats of this run.
     pub(super) fn adopt_saved_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() {
+        if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
             return;
         }
         let (chats, catalog) = Runtime::global(cx).update(cx, |runtime, _| {
@@ -263,13 +255,13 @@ impl AgentPanel {
                 continue;
             }
             let bytes = thread.read(cx).resident_history_bytes();
-            let query = self.history_search.read(cx).value().trim().to_lowercase();
+            let query = self.history.query(cx);
             let matched = !query.is_empty() && thread.read(cx).transcript().mentions(&query);
             let chat_id = thread.read(cx).document().chat_id().to_owned();
             if thread.update(cx, |thread, cx| thread.evict_history(cx)) {
                 resident = resident.saturating_sub(bytes);
                 if matched {
-                    self.archive_matches.insert(chat_id);
+                    self.history.record_loaded_match(chat_id);
                 }
             }
         }
@@ -294,9 +286,15 @@ impl AgentPanel {
         // Background sessions the chat opens belong to this window.
         let handle = window.window_handle();
         thread.update(cx, |thread, _| thread.bind_window(handle));
-        self.subscriptions
-            .push(cx.observe_in(thread, window, |this, loaded, window, cx| {
+        let mut archived = thread.read(cx).is_archived();
+        self.subscriptions.push(
+            cx.observe_in(thread, window, move |this, loaded, window, cx| {
                 this.trim_resident_history(cx);
+                let current_archived = loaded.read(cx).is_archived();
+                if archived != current_archived {
+                    archived = current_archived;
+                    this.on_history_catalog_changed(cx);
+                }
                 loaded.update(cx, |thread, _| {
                     thread.release_history_delivery();
                 });
@@ -319,6 +317,7 @@ impl AgentPanel {
                     });
                 })
                 .detach();
-            }));
+            }),
+        );
     }
 }

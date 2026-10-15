@@ -46,6 +46,7 @@ fn shutdown_runtime(cx: &mut TestAppContext) {
     cx.foreground_executor().block_test(task);
 }
 mod config_responses;
+mod process_commands;
 
 #[derive(Default)]
 struct Commands {
@@ -197,6 +198,7 @@ impl AgentCommands for Commands {
     }
 }
 struct Connector {
+    distinct_process_handles: AtomicBool,
     commands: Arc<Commands>,
     events: async_channel::Receiver<AgentEvent>,
     connects: AtomicUsize,
@@ -210,6 +212,9 @@ struct Connector {
     info: Mutex<AgentInfo>,
 }
 impl Connector {
+    fn use_distinct_process_handles(&self) {
+        self.distinct_process_handles.store(true, Ordering::SeqCst);
+    }
     fn report_auth_methods(&self, methods: Vec<acp::AuthMethod>) {
         self.info.lock().unwrap().auth_methods = methods;
     }
@@ -232,7 +237,14 @@ impl AgentConnector for Connector {
             .unwrap()
             .push((request.working_directory, request.sandbox));
         self.connects.fetch_add(1, Ordering::SeqCst);
-        let commands = self.commands.clone();
+        let commands: Arc<dyn AgentCommands> =
+            if self.distinct_process_handles.load(Ordering::SeqCst) {
+                Arc::new(process_commands::ProcessCommands::new(
+                    self.commands.clone(),
+                ))
+            } else {
+                self.commands.clone()
+            };
         let info = self.info.lock().unwrap().clone();
         let (sender, events) = async_channel::bounded(256);
         self.event_senders.lock().unwrap().push(sender);
@@ -349,6 +361,7 @@ fn fixture_with_width(
             rejections,
         });
         let connector = Arc::new(Connector {
+            distinct_process_handles: AtomicBool::new(false),
             commands: commands.clone(),
             events: rx,
             connects: AtomicUsize::new(0),
@@ -420,8 +433,14 @@ fn fixture_with_width(
                     terminal = Some(item.entity_id());
                     workspace.add_item(item, window, cx);
                     let owner = cx.entity().downgrade();
-                    let view =
-                        cx.new(|cx| AgentPanel::new(directory.host(owner), images, window, cx));
+                    let view = cx.new(|cx| {
+                        AgentPanel::new(
+                            directory.host(owner),
+                            crate::PanelDeps::new(images, layout.clone(), ui.settings().clone()),
+                            window,
+                            cx,
+                        )
+                    });
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
                     workspace.toggle_right_panel(window, cx);
@@ -496,7 +515,11 @@ fn install_fixture(
             let panel = cx.new(|cx| {
                 AgentPanel::new(
                     f._directory.host(f.workspace.downgrade()),
-                    image_deps(),
+                    crate::PanelDeps::new(
+                        image_deps(),
+                        f.layout.clone(),
+                        f.ready.settings().clone(),
+                    ),
                     window,
                     cx,
                 )
@@ -535,17 +558,8 @@ fn lazy_start(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 }
-fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
-    cx.update_window(fixture.handle, |_, window, cx| {
-        fixture.panel.update(cx, |panel, cx| {
-            panel.new_thread("codex".into(), window, cx);
-            let thread = panel.current().unwrap();
-            panel.wake(&thread, cx);
-        })
-    })
-    .unwrap();
-    cx.run_until_parked();
-}
+mod panel_actions;
+use panel_actions::{new_chat, open_queue, replace_composer_value, replace_textbox, show_history};
 fn complete_active(f: &Fixture, cx: &mut TestAppContext) {
     f.commands
         .pending

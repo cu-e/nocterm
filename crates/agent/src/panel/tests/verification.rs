@@ -67,11 +67,13 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
     complete_active(&f, cx);
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel.input.update(cx, |input, cx| {
-                input.set_value("edited after completion", window, cx)
-            });
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "edited after completion",
+            window,
+            cx,
+        );
+
         window.render_frame(cx);
         window.click("agent-send", cx);
     })
@@ -87,7 +89,6 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
@@ -106,10 +107,9 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
                 );
                 cx.notify();
             });
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("/", window, cx));
         });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
+
         window.render_frame(cx);
         assert!(window.try_find("agent-slash-commands").is_some());
     })
@@ -119,27 +119,17 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("agent-slash-commands").is_none());
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/");
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("/r", window, cx));
-        });
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/r", window, cx);
+
         window.render_frame(cx);
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "tab");
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/review ");
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.render_frame(cx);
     })
     .unwrap();
@@ -147,33 +137,19 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
     cx.simulate_keystrokes(f.handle, "shift-tab");
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/rename ");
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/rename ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.render_frame(cx);
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "tab enter");
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/review ");
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.input("these changes", cx);
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "/review these changes"
         );
     })
@@ -240,12 +216,17 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     }
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        f.panel.read(cx).list.clone().update(cx, |list, cx| {
-            list.scroll_to_item(0, cx);
-        });
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(1_000_000.),
+            )),
+            cx,
+        );
         window.render_frame(cx);
-        assert!(!f.panel.read(cx).list.read(cx).is_following_tail());
-        assert!(f.panel.read(cx).list.read(cx).is_scrolled_up());
+        assert!(window.try_find("agent-message-navigation").is_some());
+        assert!(window.find(("agent-entry", 0usize)).visible());
     })
     .unwrap();
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -263,8 +244,8 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!f.panel.read(cx).list.read(cx).is_following_tail());
-        assert!(f.panel.read(cx).list.read(cx).is_scrolled_up());
+        assert!(window.try_find("agent-message-navigation").is_some());
+        assert!(window.find(("agent-entry", 0usize)).visible());
         window.click(
             (
                 gpui_kit::ElementId::from("agent-transcript"),
@@ -273,8 +254,7 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
             cx,
         );
         window.render_frame(cx);
-        assert!(f.panel.read(cx).list.read(cx).is_following_tail());
-        assert!(!f.panel.read(cx).list.read(cx).is_scrolled_up());
+        assert!(window.try_find("agent-message-navigation").is_none());
     })
     .unwrap();
     complete_active(&f, cx);
@@ -383,7 +363,7 @@ fn reopen(
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
     f.panel.update(cx, |panel, cx| {
-        for thread in &panel.threads {
+        for thread in panel.chat_documents() {
             if thread.read(cx).document().chat_id() == saved.id {
                 thread.update(cx, |thread, cx| thread.release_resources(cx));
             }

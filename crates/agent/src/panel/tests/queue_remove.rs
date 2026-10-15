@@ -46,10 +46,7 @@ fn the_queue_removes_a_message_and_keeps_the_rest_in_order(cx: &mut TestAppConte
     assert_eq!(queued(&thread, cx), ["second", "third"]);
 
     // An open queue removes any message.
-    f.panel.update(cx, |panel, cx| {
-        panel.queue_open = true;
-        cx.notify();
-    });
+    open_queue(&f, cx);
     render(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click(("queued-remove", second), cx)
@@ -97,7 +94,7 @@ fn a_message_being_edited_cannot_be_removed(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert!(f.panel.read(cx).composer.edit.is_some()));
+    cx.update(|cx| assert!(thread.read(cx).composer().editing_queue()));
     assert_eq!(queued(&thread, cx), ["queued"]);
 }
 
@@ -125,7 +122,7 @@ fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppC
     })
     .unwrap();
     cx.run_until_parked();
-    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     thread.update(cx, |thread, cx| thread.remove_queued(4, None, cx));
     cx.run_until_parked();
     assert!(f.repository.transcript(&id).unwrap().queue.is_empty());

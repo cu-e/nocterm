@@ -63,16 +63,37 @@ pub(super) fn escape_markdown(text: &str) -> String {
     escaped.replace('\n', "  \n")
 }
 
-impl AgentPanel {
-    pub(super) fn render_message_actions(
-        &self,
+pub(super) struct MessageRowActions {
+    thread: EntityId,
+    index: usize,
+    text: String,
+    time: Option<u64>,
+    user: bool,
+}
+impl MessageRowActions {
+    pub(super) fn new(
         thread: EntityId,
         index: usize,
         text: String,
         time: Option<u64>,
         user: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Self {
+        Self {
+            thread,
+            index,
+            text,
+            time,
+            user,
+        }
+    }
+    pub(super) fn render(self, cx: &Context<AgentPanel>) -> AnyElement {
+        let Self {
+            thread,
+            index,
+            text,
+            time,
+            user,
+        } = self;
         let muted = cx.theme().muted_foreground;
         h_flex()
             .id(("message-actions", index))

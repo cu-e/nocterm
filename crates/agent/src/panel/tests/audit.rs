@@ -4,11 +4,8 @@ use nocterm_ai::thread::Entry;
 
 fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
+
         window.render_frame(cx);
     })
     .unwrap();
@@ -62,8 +59,12 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
     cx.update(|cx| {
         let panel = f.panel.read(cx);
         assert_eq!(panel.current().unwrap().entity_id(), owner.entity_id());
-        assert_eq!(panel.input.read(cx).value().as_ref(), "owner draft");
-        assert!(panel.composer.edit.is_none());
+        assert_eq!(panel.composer_text(cx).as_ref(), "owner draft");
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
         assert!(!editing.read(cx).composer().editing_queue());
         assert_eq!(
             editing.read(cx).composer().attachments(),
@@ -75,7 +76,7 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "editing chat draft"
         )
     });
@@ -108,11 +109,14 @@ fn delete_edit_owner_then_review_does_not_keep_dangling_edit(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.update(|cx| {
         let panel = f.panel.read(cx);
-        assert!(panel.composer.edit.is_none());
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
         assert!(
             !panel
-                .threads
-                .iter()
+                .chat_documents()
                 .any(|thread| thread.entity_id() == editing.entity_id())
         );
         assert_eq!(panel.current().unwrap().entity_id(), owner.entity_id());
@@ -159,12 +163,15 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
         let panel = f.panel.read(cx);
         let current = panel.current().unwrap();
         assert_ne!(current.entity_id(), old.entity_id());
-        assert_eq!(panel.input.read(cx).value().as_ref(), "original draft");
-        assert!(panel.composer.edit.is_none());
+        assert_eq!(panel.composer_text(cx).as_ref(), "original draft");
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
         assert!(
             !panel
-                .threads
-                .iter()
+                .chat_documents()
                 .any(|thread| thread.entity_id() == old.entity_id())
         );
         assert_eq!(
@@ -238,15 +245,11 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         images: Vec::new(),
         attachments: refs.clone(),
     }];
-    let thread = cx.new(|cx| {
-        crate::thread::AgentThread::restored(saved, f._directory.host(f.workspace.downgrade()), cx)
-    });
+    let thread = super::archive::archived(&f, &saved, cx);
+    show_history(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel.track(&thread, window, cx);
-            panel.threads.push(thread.clone());
-            panel.open_thread(thread.entity_id(), cx);
-        });
+        window.render_frame(cx);
+        window.click(("history-thread", thread.entity_id().as_u64()), cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -269,11 +272,8 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
                 .contains("unavailable")
         );
         window.click("queue-edit-first", cx);
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("edited", window, cx))
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "edited", window, cx);
+
         window.render_frame(cx);
         window.click("agent-send", cx);
     })
@@ -361,13 +361,28 @@ fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAp
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     complete_active(&f, cx);
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            let height = window.find(("agent-entry", 1usize)).bounds().size.height;
+            window.hover(("agent-entry", 1usize), cx);
+            window.click(("copy-message", 1usize), cx);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), full);
+            height
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(f.panel.read(cx).stream.pending());
+        assert!(
+            window.find(("agent-entry", 1usize)).bounds().size.height > before,
+            "visible streamed text must continue revealing after copy"
+        );
         window.hover(("agent-entry", 1usize), cx);
         window.click(("copy-message", 1usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), full);
-        assert!(f.panel.read(cx).stream.pending());
     })
     .unwrap();
 }
@@ -397,12 +412,11 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
     });
 }
 
-#[gpui_kit::test]
-fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
+fn expanded_thought_and_tool(
+    f: &Fixture,
     cx: &mut TestAppContext,
-) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
+) -> Entity<crate::thread::AgentThread> {
+    new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         let mut entries = vec![
@@ -414,24 +428,48 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
                 format!("question {i}"),
             ))])
         }));
-        restore_entries(&f, thread, entries, cx);
+        restore_entries(f, thread, entries, cx);
         for index in 0..thread.transcript().entries.len() {
             thread.mark_dirty(index);
         }
         cx.notify();
     });
-    f.panel.update(cx, |panel, cx| {
-        panel.expanded.extend([0, 1]);
-        cx.notify();
-    });
+    super::navigation::scroll_to(f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(("thought", 0usize), cx);
+        window.render_frame(cx);
+        window.click(("tool-call", 1usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    thread
+}
+
+fn assert_static_row(f: &Fixture, index: usize, cx: &mut TestAppContext) {
     let before = cx
         .update_window(f.handle, |_, window, cx| {
             window.render_frame(cx);
-            f.panel
-                .read(cx)
-                .list
-                .clone()
-                .update(cx, |list, cx| list.scroll_to_item(0, cx));
+            window.find(("agent-entry", index)).bounds()
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(("agent-entry", index)).bounds(), before);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let thread = expanded_thought_and_tool(&f, cx);
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
             window.render_frame(cx);
             window.find(("agent-entry", 0usize)).bounds().size.height
         })
@@ -448,13 +486,21 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
         let thought = window.find(("agent-entry", 0usize)).bounds();
         assert!(thought.size.height > before);
         assert!(window.find(("agent-entry", 1usize)).bounds().origin.y >= thought.bottom());
-        assert!(!f.panel.read(cx).stream.pending());
-        f.panel
-            .read(cx)
-            .list
-            .clone()
-            .update(cx, |list, cx| list.scroll_to_item(30, cx));
-        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_static_row(&f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(
+            (
+                gpui_kit::ElementId::from("agent-transcript"),
+                "jump-to-latest",
+            ),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, _| {
         assert!(window.try_find(("tool-output", 1usize)).is_none());
     })
     .unwrap();
@@ -465,20 +511,15 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
         thread.mark_dirty(1);
         cx.notify();
     });
+    super::navigation::scroll_to(&f, 1, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        f.panel
-            .read(cx)
-            .list
-            .clone()
-            .update(cx, |list, cx| list.scroll_to_item(1, cx));
         window.render_frame(cx);
         let tool = window.find(("agent-entry", 1usize)).bounds();
         assert!(tool.size.height > gpui_kit::px(160.));
         assert!(window.find(("agent-entry", 2usize)).bounds().origin.y >= tool.bottom());
-        assert!(!f.panel.read(cx).stream.pending());
     })
     .unwrap();
+    assert_static_row(&f, 1, cx);
 }
 
 #[gpui_kit::test]
@@ -508,7 +549,7 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
     cx.update(|cx| {
         let panel = f.panel.read(cx);
         assert!(!panel.preparing_images());
-        assert_eq!(panel.input.read(cx).value().as_ref(), "second chat draft");
+        assert_eq!(panel.composer_text(cx).as_ref(), "second chat draft");
         assert!(
             panel
                 .current()
@@ -525,7 +566,7 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "image owner draft"
         )
     });
@@ -548,17 +589,13 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
         cx.notify();
     });
     set_input(&f, "/обзор args", cx);
-    f.panel.update(cx, |panel, cx| {
-        panel.input.update(cx, |input, cx| {
-            input.set_selected_range("/обзор ar".len().."/обзор ar".len(), cx)
-        })
-    });
-    cx.run_until_parked();
-    let selection = cx.update(|cx| {
-        let input = f.panel.read(cx).input.read(cx);
-        assert_eq!(input.tokens().len(), 1);
-        input.selected_range()
-    });
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("composer-command-token").is_some());
+    })
+    .unwrap();
     thread.update(cx, |thread, cx| {
         report_control(
             thread,
@@ -572,19 +609,12 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        let input = f.panel.read(cx).input.read(cx);
-        assert_eq!(input.value().as_ref(), "/обзор args");
-        assert_eq!(input.selected_range(), selection);
-        assert!(input.tokens().is_empty());
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
+        assert!(window.try_find("composer-command-token").is_none());
         window.input("界", cx);
     })
     .unwrap();
-    cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "/обзор ar界gs"
-        )
-    });
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
 }
 
 #[gpui_kit::test]
@@ -615,9 +645,13 @@ fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
     cx.run_until_parked();
     cx.update(|cx| {
         let panel = f.panel.read(cx);
-        assert!(panel.composer.edit.is_none());
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
         assert!(!panel.preparing_images());
-        assert_eq!(panel.input.read(cx).value().as_ref(), "");
+        assert_eq!(panel.composer_text(cx).as_ref(), "");
         assert!(
             panel
                 .current()
@@ -644,11 +678,8 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
     set_input(&f, "draft", cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click("queue-edit-first", cx);
-        f.panel.update(cx, |panel, _| {
-            panel
-                .queue_heights
-                .insert(owner.entity_id(), gpui_kit::px(99.));
-        });
+        window.render_frame(cx);
+        assert!(window.find("agent-queue").bounds().size.height > gpui_kit::px(0.));
     })
     .unwrap();
     cx.update(|cx| {
@@ -660,13 +691,16 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let panel = f.panel.read(cx);
-        assert!(panel.threads.is_empty());
-        assert!(panel.composer.edit.is_none());
+        assert!(panel.chat_documents().len() == 0);
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
 
-        assert!(panel.queue_heights.is_empty());
-        assert!(!panel.stream.pending());
-        assert!(panel.stream_tick.is_none());
-        assert!(panel.input.read(cx).value().is_empty());
+        assert!(window.try_find("agent-queue").is_none());
+        assert!(window.try_find("agent-transcript-area").is_none());
+        assert!(panel.composer_text(cx).is_empty());
         assert!(!owner.read(cx).composer().editing_queue());
     })
     .unwrap();
@@ -703,30 +737,36 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
         );
         window.press("up", cx);
         window.render_frame(cx);
-        assert_eq!(f.panel.read(cx).commands.selected, 999);
-        let row = window.find(("slash-command", 999usize)).bounds();
-        let viewport = f.panel.read(cx).commands.scroll.viewport_bounds();
-        assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
-        assert_eq!(f.panel.read(cx).input.read(cx).selected_range(), 1..1);
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
-        window.press("tab", cx);
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "/skill0999 "
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
         );
-        window.press("tab", cx);
+        let row = window.find(("slash-command", 999usize)).bounds();
+        let viewport = window.find("agent-slash-commands").bounds();
+        assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
+        window.input("?", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/?");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("backspace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("up", cx);
         window.render_frame(cx);
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "/skill0000 "
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
         );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.press("tab", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0999 ");
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0000 ");
         assert!(window.try_find(("slash-command", 0usize)).is_some());
     })
     .unwrap();

@@ -1,20 +1,18 @@
 //! The composer: attachments, images, the message field and the controls
 //! under it.
 use gpui_kit::{
-    Anchor, AnyElement, App, ClipboardEntry, ClipboardItem, Context, Entity, Focusable as _,
-    SharedString, TestSupportExt as _, WeakEntity,
+    Anchor, AnyElement, App, ClipboardEntry, ClipboardItem, Context, Entity, SharedString,
+    TestSupportExt as _, WeakEntity,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        h_flex,
-        input::Textarea,
-        v_flex,
+        h_flex, v_flex,
     },
     div,
     prelude::*,
     px, rems,
 };
-use nocterm_ai::{acp, thread::ThreadState};
+use nocterm_ai::acp;
 use nocterm_ui::IconName;
 
 use super::{
@@ -24,17 +22,25 @@ use super::{
 use crate::thread::{AgentThread, config_label};
 
 impl AgentPanel {
+    fn on_command_token_clicked(
+        &mut self,
+        range: std::ops::Range<usize>,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.select_command_token(range, window, cx);
+    }
     pub(super) fn render_composer(
         &mut self,
         thread: &Entity<AgentThread>,
-        state: &ThreadState,
+        usage: Option<&acp::UsageUpdate>,
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let chips = self.render_attachment_chips(thread, labels, cx);
         let images = self.render_image_strip(thread, cx);
         let input = self.render_input(cx);
-        let footer = self.render_footer(thread, state, cx);
+        let footer = self.render_footer(thread, usage, cx);
         let notices = self.render_notices(thread, cx);
         v_flex()
             .id("agent-composer")
@@ -166,7 +172,7 @@ impl AgentPanel {
                 let key = (image.bytes().as_ptr() as usize, image.bytes().len(), false);
                 (
                     key,
-                    (!self.image_cache.contains_key(&key)).then(|| image.bytes().to_vec()),
+                    (!self.messages.has_preview(&key)).then(|| image.bytes().to_vec()),
                 )
             })
             .collect::<Vec<_>>();
@@ -201,8 +207,9 @@ impl AgentPanel {
     fn render_input(&self, cx: &mut Context<Self>) -> AnyElement {
         let weak = cx.weak_entity();
         let command_panel = cx.weak_entity();
-        let command_input = self.input.clone();
-        Textarea::new(&self.input)
+        let command_input = cx.weak_entity();
+        self.composer
+            .textarea()
             .appearance(false)
             .bordered(false)
             .token(move |token, _, cx| {
@@ -222,9 +229,8 @@ impl AgentPanel {
                     })
             })
             .on_token_click(move |event, window, cx| {
-                command_input.update(cx, |input, cx| {
-                    input.set_selected_range(event.range(), cx);
-                    window.focus(&input.focus_handle(cx), cx);
+                let _ = command_input.update(cx, |panel, cx| {
+                    panel.on_command_token_clicked(event.range(), window, cx)
                 });
             })
             .on_paste(move |clipboard, _, cx| paste(&weak, clipboard, cx))
@@ -235,7 +241,7 @@ impl AgentPanel {
     fn render_footer(
         &mut self,
         thread: &Entity<AgentThread>,
-        state: &ThreadState,
+        usage: Option<&acp::UsageUpdate>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let context_tooltip = format!(
@@ -274,7 +280,7 @@ impl AgentPanel {
                     .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
             )
             .child(div().flex_1().min_w_0().child(controls))
-            .child(self.usage_button(state.usage.as_ref(), cx))
+            .child(self.usage_button(usage, cx))
             .child(self.render_send(thread, cx))
             .into_any_element()
     }
@@ -282,9 +288,9 @@ impl AgentPanel {
     /// Whether the send button stops the running turn instead.
     fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
         thread.read(cx).session_generating()
-            && self.input.read(cx).value().trim().is_empty()
+            && self.composer.text(cx).trim().is_empty()
             && thread.read(cx).composer().images().is_empty()
-            && self.composer.edit.is_none()
+            && !self.composer.editing()
     }
 
     fn render_send(&self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) -> AnyElement {

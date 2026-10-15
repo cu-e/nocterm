@@ -137,24 +137,26 @@ fn queue_edit_restores_the_unsent_composer_draft(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("unsent draft", window, cx));
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "unsent draft",
+            window,
+            cx,
+        );
+
         window.render_frame(cx);
         window.click("queue-edit-first", cx);
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "queued");
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "queued");
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "replacement",
+            window,
+            cx,
+        );
         f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("replacement", window, cx));
             panel.send(window, cx);
         });
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "unsent draft"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "unsent draft");
         assert_eq!(
             f.panel
                 .read(cx)
@@ -197,18 +199,15 @@ fn slash_popup_keyboard_completion_keeps_commands_as_raw_prompts(cx: &mut TestAp
             });
     });
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("/", window, cx));
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
+
         window.render_frame(cx);
         assert!(window.try_find("agent-slash-commands").is_some());
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "down enter");
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/review ");
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
         assert!(f.commands.prompts.lock().unwrap().is_empty());
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
@@ -444,11 +443,8 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("old draft", window, cx))
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "old draft", window, cx);
+
         window.render_frame(cx);
         window.click("queue-edit-first", cx);
         f.panel
@@ -457,8 +453,13 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(f.panel.read(cx).composer.edit.is_none());
-        assert!(f.panel.read(cx).input.read(cx).value().is_empty());
+        assert!(
+            f.panel
+                .read(cx)
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
+        assert!(f.panel.read(cx).composer_text(cx).is_empty());
         assert_eq!(old.read(cx).composer().queue()[0].saved.text, "queued");
         assert_eq!(
             old.read(cx).composer().attachments(),
@@ -468,12 +469,7 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
     f.panel
         .update(cx, |panel, cx| panel.open_thread(old.entity_id(), cx));
     cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "old draft"
-        )
-    });
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "old draft"));
     complete_active(&f, cx);
     complete_active(&f, cx);
 }
@@ -580,10 +576,13 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
     let bytes = image_bytes();
     let codec = image_codec();
     cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "with image",
+            window,
+            cx,
+        );
         f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("with image", window, cx));
             panel.prepare_images(
                 async move {
                     wait.await.unwrap();
@@ -596,7 +595,7 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
             );
             panel.send(window, cx);
             assert!(panel.preparing_images());
-            assert_eq!(panel.input.read(cx).value().as_ref(), "with image");
+            assert_eq!(panel.composer_text(cx).as_ref(), "with image");
         });
     })
     .unwrap();

@@ -96,15 +96,20 @@ fn failed_layout_save_retains_the_shared_visible_arrangement(cx: &mut TestAppCon
     let directory = tempfile::tempdir().unwrap();
     let blocked = directory.path().join("not-a-directory");
     std::fs::write(&blocked, b"unmodified backend").unwrap();
-    let layout = cx.update(|cx| {
+    let observed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let (layout, _observation) = cx.update(|cx| {
         let layout = LayoutMemory::init(
             Some(blocked.join("layout.json")),
             &ShutdownCoordinator::default(),
             cx,
         );
+        let changes = observed.clone();
+        let observation = layout.observe_size("sidebar", cx, move |value, _| {
+            changes.borrow_mut().push(value);
+        });
         layout.set("sidebar", px(320.), cx).unwrap();
         layout.set_flag("swapped", true, cx).unwrap();
-        layout
+        (layout, observation)
     });
     cx.run_until_parked();
     cx.read(|cx| {
@@ -112,5 +117,67 @@ fn failed_layout_save_retains_the_shared_visible_arrangement(cx: &mut TestAppCon
         assert!(layout.flag("swapped", cx));
         assert_eq!(LayoutMemory::get("sidebar", cx), Some(px(320.)));
     });
+    assert_eq!(*observed.borrow(), [Some(px(320.))]);
     assert_eq!(std::fs::read(blocked).unwrap(), b"unmodified backend");
+}
+
+#[gpui_kit::test]
+fn size_observation_tracks_only_the_named_shared_scalar(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let (layout, _subscription) = cx.update(|cx| {
+        let layout = LayoutHandle::in_memory(cx);
+        let same = layout.clone();
+        let observed = observed.clone();
+        let subscription = layout.observe_size("history", cx, move |value, cx| {
+            assert_eq!(same.get("history", cx), value);
+            same.set_flag("callback", true, cx).unwrap();
+            observed.borrow_mut().push(value);
+        });
+        (layout, subscription)
+    });
+    cx.run_until_parked();
+    assert!(observed.borrow().is_empty());
+    cx.update(|cx| {
+        layout.set("other", px(999.), cx).unwrap();
+        layout.set_flag("right", true, cx).unwrap();
+        LayoutHandle::in_memory(cx)
+            .set("history", px(321.), cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+    assert!(observed.borrow().is_empty());
+    cx.update(|cx| layout.set("history", px(280.4), cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(*observed.borrow(), [Some(px(280.))]);
+    cx.update(|cx| {
+        layout.set("history", px(280.1), cx).unwrap();
+        layout.set("history", px(f32::NAN), cx).unwrap();
+        layout.set("history", px(f32::INFINITY), cx).unwrap();
+        layout.set("history", px(0.), cx).unwrap();
+    });
+    cx.run_until_parked();
+    assert_eq!(*observed.borrow(), [Some(px(280.))]);
+}
+
+#[gpui_kit::test]
+fn dropping_size_observation_releases_only_that_observer(cx: &mut TestAppContext) {
+    use std::{cell::Cell, rc::Rc};
+    let calls = Rc::new(Cell::new(0));
+    let (layout, subscription) = cx.update(|cx| {
+        let layout = LayoutHandle::in_memory(cx);
+        let calls = calls.clone();
+        let subscription = layout.observe_size("history", cx, move |_, _| {
+            calls.set(calls.get() + 1);
+        });
+        (layout, subscription)
+    });
+    cx.update(|cx| layout.set("history", px(240.), cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 1);
+    drop(subscription);
+    cx.update(|cx| layout.set("history", px(320.), cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 1);
+    cx.read(|cx| assert_eq!(layout.get("history", cx), Some(px(320.))));
 }

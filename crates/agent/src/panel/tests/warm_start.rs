@@ -179,7 +179,7 @@ fn a_saved_chat_connects_when_opened_and_its_queue_still_waits(cx: &mut TestAppC
         0,
         "listed history stays asleep"
     );
-    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();

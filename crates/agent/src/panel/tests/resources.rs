@@ -267,7 +267,16 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
                         Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
                     let view = cx.new(|cx| {
-                        AgentPanel::new(f._directory.host(owner), image_deps(), window, cx)
+                        AgentPanel::new(
+                            f._directory.host(owner),
+                            crate::PanelDeps::new(
+                                image_deps(),
+                                f.layout.clone(),
+                                f.ready.settings().clone(),
+                            ),
+                            window,
+                            cx,
+                        )
                     });
                     workspace.set_right_panel(view.clone(), window, cx);
                     panel = Some(view);
@@ -327,7 +336,7 @@ async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
         assert!(!first.read(cx).is_leased());
         assert!(second.read(cx).is_leased());
         assert!(third.read(cx).is_leased());
-        assert_eq!(f.panel.read(cx).threads.len(), 3);
+        assert_eq!(f.panel.read(cx).chat_documents().len(), 3);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert_eq!(
@@ -702,10 +711,12 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     .unwrap();
     let thread = draft(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let input = f.panel.read(cx).input.clone();
-        input.update(cx, |input, cx| {
-            input.set_value("draft before activation", window, cx)
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "draft before activation",
+            window,
+            cx,
+        );
     })
     .unwrap();
     tick(cx, 1);
@@ -722,10 +733,12 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     complete_active(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let input = f.panel.read(cx).input.clone();
-        input.update(cx, |input, cx| {
-            input.set_value("draft retained after idle", window, cx)
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "draft retained after idle",
+            window,
+            cx,
+        );
     })
     .unwrap();
     // Another chat is shown; the shown one keeps its session.
@@ -751,7 +764,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "draft retained after idle"
         )
     });

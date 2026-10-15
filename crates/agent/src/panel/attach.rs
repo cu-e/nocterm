@@ -132,7 +132,7 @@ impl AgentPanel {
                     .label("Show")
                     .tooltip("Opened by an agent in the background. Show it in a tab.")
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.menu = None;
+                        this.menus.reset();
                         let workspace = workspace.clone();
                         window.defer(cx, move |window, cx| {
                             let _ = workspace.update(cx, |workspace, cx| {
@@ -246,7 +246,7 @@ impl AgentPanel {
                     .accessibility_label(format!("Open {} in a new tab", summary.name))
                     .tooltip("Open in a new tab")
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.menu = None;
+                        this.menus.reset();
                         let directory = directory.clone();
                         let workspace = workspace.clone();
                         let id = id.clone();

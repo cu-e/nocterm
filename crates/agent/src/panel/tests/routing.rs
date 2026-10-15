@@ -128,11 +128,7 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
         window.render_frame(cx);
         assert!(window.find("agent-approvals").visible());
         f.panel.update(cx, |panel, cx| {
-            panel.active = panel
-                .threads
-                .iter()
-                .position(|thread| thread.entity_id() == first.entity_id());
-            cx.notify();
+            panel.open_thread(first.entity_id(), cx);
         });
         window.render_frame(cx);
         assert!(

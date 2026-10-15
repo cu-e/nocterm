@@ -4,11 +4,7 @@ use std::time::Duration;
 
 fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
-        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -68,8 +64,8 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(f.panel.read(cx).threads.is_empty());
-        assert!(f.panel.read(cx).input.read(cx).value().is_empty());
+        assert!(f.panel.read(cx).chat_documents().len() == 0);
+        assert!(f.panel.read(cx).composer_text(cx).is_empty());
     });
     let value = disk_value(&f.repository, &id);
     assert_eq!(value["draft"], "draft before disabling AI");
@@ -105,7 +101,7 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
     saved.draft = Some("saved text".into());
     adopt(&mut f, saved, cx);
     let shutdown = cx.update(|cx| {
-        let thread = f.panel.read(cx).threads[0].clone();
+        let thread = f.panel.read(cx).chat_documents().next().unwrap().clone();
         assert!(thread.read(cx).dormant());
         assert!(thread.read(cx).session().is_none());
         thread.update(cx, |thread, cx| {
@@ -132,7 +128,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
     let id = saved.id.clone();
     saved.draft = Some("previous text".into());
     adopt(&mut f, saved, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).threads[0].clone());
+    let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     cx.update(|cx| assert!(!thread.read(cx).has_status_error()));
     // Listing history stays lazy; opening the chat connects, which reports
     // the missing provider.
@@ -186,7 +182,7 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
     assert_eq!(after["queue"][0]["text"], "replacement being edited");
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "separate unsent draft"
         );
     });

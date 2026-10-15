@@ -122,8 +122,12 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
     cx.update(|cx| {
         assert_eq!(directory.opened.get(), 1);
         assert_eq!(f.workspace.read(cx).items().count(), 2);
-        assert!(f.panel.read(cx).menu.is_none(), "the menu closes");
     });
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-picker").is_none(), "the menu closes");
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -343,14 +347,13 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
-    let item = cx.update(|cx| thread.read(cx).sign_in_waits()[0].item);
     cx.update_window(f.handle, |_, window, cx| {
         assert!(!thread.read(cx).sign_in_waits()[0].vault);
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find(("vault-unlock", 0usize)).is_none());
-        let input = f.panel.read(cx).sign_in_inputs[&item].input.clone();
-        input.update(cx, |input, cx| input.set_value("hunter2", window, cx));
+        window.click(("sign-in-input", 0usize), cx);
+        window.input("hunter2", cx);
         window.click(("sign-in-submit", 0usize), cx);
     })
     .unwrap();

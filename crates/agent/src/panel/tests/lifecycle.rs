@@ -48,7 +48,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
         window.render_frame(cx);
         assert!(!f.workspace.read(cx).right_panel_is_open());
         assert!(window.try_find("toggle-right-panel").is_none());
-        assert!(f.panel.read(cx).threads.is_empty());
+        assert!(f.panel.read(cx).chat_documents().len() == 0);
     })
     .unwrap();
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
@@ -115,6 +115,7 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
+    f.connector.use_distinct_process_handles();
     new_chat(&f, cx);
     cx.update(|cx| {
         cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
@@ -166,7 +167,16 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
                         Workspace::new(nocterm_workspace::Deps::new(f.layout.clone()), window, cx);
                     let owner = cx.entity().downgrade();
                     let view = cx.new(|cx| {
-                        AgentPanel::new(f._directory.host(owner), image_deps(), window, cx)
+                        AgentPanel::new(
+                            f._directory.host(owner),
+                            crate::PanelDeps::new(
+                                image_deps(),
+                                f.layout.clone(),
+                                f.ready.settings().clone(),
+                            ),
+                            window,
+                            cx,
+                        )
                     });
                     workspace.set_right_panel(view.clone(), window, cx);
                     workspace.set_right_panel_available(true, window, cx);
@@ -189,8 +199,8 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(f.panel.read(cx).threads.is_empty());
-        assert!(panel.read(cx).threads.is_empty());
+        assert!(f.panel.read(cx).chat_documents().len() == 0);
+        assert!(panel.read(cx).chat_documents().len() == 0);
         assert!(!f.workspace.read(cx).right_panel_is_open());
         assert!(!workspace.read(cx).right_panel_is_open());
     });

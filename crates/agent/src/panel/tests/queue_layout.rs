@@ -20,10 +20,7 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
         thread.send("active".into(), cx);
         thread.send("short".into(), cx);
     });
-    f.panel.update(cx, |panel, cx| {
-        panel.queue_open = true;
-        cx.notify();
-    });
+    open_queue(&f, cx);
     settle(&f, cx);
     let one = cx
         .update_window(f.handle, |_, window, _| {
@@ -86,10 +83,7 @@ fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestApp
             cx,
         );
     });
-    f.panel.update(cx, |panel, cx| {
-        panel.queue_open = true;
-        cx.notify();
-    });
+    open_queue(&f, cx);
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, _| {
         let content = window.find("agent-queue-rows").bounds();

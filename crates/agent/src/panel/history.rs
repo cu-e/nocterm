@@ -2,12 +2,12 @@
 //! rename, fork, pin and delete.
 
 use gpui_kit::{
-    Anchor, App, Context, Entity, Focusable as _, Subscription, TestSupportExt as _, Window,
+    Anchor, App, Context, Entity, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{Input, InputEvent, InputState},
+        input::Input,
         v_flex,
     },
     div,
@@ -26,13 +26,6 @@ use gpui_kit::{
     EntityId, MouseButton,
     component::menu::{DropdownMenu as _, PopupMenuItem},
 };
-
-/// A chat being renamed in place.
-pub(super) struct Renaming {
-    thread: EntityId,
-    pub(super) input: Entity<InputState>,
-    _subscriptions: [Subscription; 2],
-}
 
 /// The order chats are listed in: pinned first, then the most recently
 /// changed. `chats` holds each chat's pin and change time.
@@ -71,18 +64,20 @@ impl AgentPanel {
             .collect::<Vec<_>>();
         if self
             .composer
-            .edit
-            .as_ref()
-            .is_some_and(|edit| removed.contains(&edit.thread))
+            .editing_chat()
+            .is_some_and(|chat| removed.contains(&chat))
         {
             self.leave_composer_with(true, cx);
         }
-        self.queue_heights.retain(|id, _| !removed.contains(id));
+        self.composer.removed_chats(&removed);
         self.threads
             .retain(|thread| !removed.contains(&thread.entity_id()));
         self.active = active.and_then(|id| self.index_of(id));
         if active.is_some_and(|id| removed.contains(&id)) {
             self.reset_chat_view(cx);
+        }
+        if !removed.is_empty() {
+            self.on_history_catalog_changed(cx);
         }
     }
 
@@ -118,8 +113,7 @@ impl AgentPanel {
             Runtime::global(cx).update(cx, |runtime, cx| runtime.delete_chat(chat, cx));
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
             if self.current().is_none() {
-                self.input
-                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.composer.set_text("", window, cx);
             }
         }
         self.sync_approval_attention(window, cx);
@@ -174,6 +168,7 @@ impl AgentPanel {
         self.track(&thread, window, cx);
         let id = thread.entity_id();
         self.threads.push(thread);
+        self.on_history_catalog_changed(cx);
         self.open_thread(id, cx);
     }
 
@@ -205,37 +200,37 @@ impl AgentPanel {
             return;
         };
         let title = self.threads[index].read(cx).title();
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(title));
-        let enter = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
-            if matches!(event, InputEvent::PressEnter { .. }) {
-                this.finish_rename(true, window, cx);
-            }
-        });
-        let focus = input.read(cx).focus_handle(cx);
-        let blur = cx.on_blur(&focus, window, |this, window, cx| {
-            this.finish_rename(true, window, cx)
-        });
-        self.renaming = Some(Renaming {
-            thread: id,
-            input,
-            _subscriptions: [enter, blur],
-        });
-        window.focus(&focus, cx);
+        self.history.begin_rename(id, title.to_string(), window, cx);
         cx.notify();
     }
-
     pub(super) fn finish_rename(
         &mut self,
         accept: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(renaming) = self.renaming.take() else {
+        if accept {
+            if let Some(binding) = self.history.rename_binding() {
+                self.commit_history_rename(binding, window, cx);
+            }
+        } else {
+            self.history.cancel_rename();
+            window.focus(&self.focus, cx);
+            cx.notify();
+        }
+    }
+    pub(super) fn commit_history_rename(
+        &mut self,
+        binding: super::history_column::RenameBinding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self.history.rename_submission(binding, cx) else {
             return;
         };
-        if accept && let Some(index) = self.index_of(renaming.thread) {
-            let name = renaming.input.read(cx).value().to_string();
-            self.threads[index].update(cx, |thread, cx| thread.rename(Some(name), cx));
+        let (chat, title) = request.into_parts();
+        if let Some(index) = self.index_of(chat) {
+            self.threads[index].update(cx, |thread, cx| thread.rename(Some(title), cx));
         }
         window.focus(&self.focus, cx);
         cx.notify();
@@ -243,7 +238,7 @@ impl AgentPanel {
 
     /// The chats to list, in order, matching the search.
     fn listed_threads(&self, cx: &App) -> Vec<Entity<AgentThread>> {
-        let query = self.history_search.read(cx).value().trim().to_lowercase();
+        let query = self.history.query(cx);
         let chats: Vec<(bool, u64)> = self
             .threads
             .iter()
@@ -262,7 +257,7 @@ impl AgentPanel {
                 query.is_empty()
                     || thread.title().to_lowercase().contains(&query)
                     || thread.transcript().mentions(&query)
-                    || self.archive_matches.contains(thread.document().chat_id())
+                    || self.history.matches(thread.document().chat_id())
             })
             .cloned()
             .collect()
@@ -292,8 +287,8 @@ impl AgentPanel {
         }
         history = history.child(
             div().pb_1().child(
-                Input::new(&self.history_search)
-                    .small()
+                self.history
+                    .query_input()
                     .prefix(gpui_kit::component::Icon::new(IconName::Search).small())
                     .cleanable(true),
             ),
@@ -316,20 +311,13 @@ impl AgentPanel {
         history.into_any_element()
     }
 
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render_history_row(
         &self,
         thread: &Entity<AgentThread>,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
         let id = thread.entity_id();
-        let key = id.as_u64();
         let chat = thread.read(cx);
-        let title = chat.title();
-        let pinned = chat.document().pinned();
-        let selected = self
-            .current()
-            .is_some_and(|current| current.entity_id() == id);
         let when = if chat.archive_summary().is_none_or(|row| !row.has_content)
             && chat.history_entries().is_empty()
             && chat.draft_text().is_none()
@@ -340,39 +328,142 @@ impl AgentPanel {
                 self.host.timestamp().saturating_sub(chat.updated_at()),
             )))
         };
-        let model = chat.model().unwrap_or_default();
-        let hover = cx.theme().muted.blend(cx.theme().foreground.opacity(0.04));
-        let renaming = self
-            .renaming
-            .as_ref()
-            .filter(|renaming| renaming.thread == id)
-            .map(|renaming| renaming.input.clone());
-        let name: gpui_kit::AnyElement = match renaming {
+        let row = HistoryRow {
+            id,
+            title: chat.title().to_string(),
+            pinned: chat.document().pinned(),
+            selected: self
+                .current()
+                .is_some_and(|current| current.entity_id() == id),
+            when,
+            model: chat.model().unwrap_or_default(),
+            generating: chat.session_generating(),
+            agent: chat.document().agent_id().to_owned(),
+            rename: self.history.rename_input(id),
+        };
+        HistoryRowRenderer::render(row, cx)
+    }
+    fn on_history_selected(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        if !self.history.renaming() {
+            self.open_thread(id, cx);
+        }
+    }
+    fn on_history_rename_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "escape" {
+            cx.stop_propagation();
+            self.finish_rename(false, window, cx);
+        }
+    }
+    fn release_history_resources(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        if let Some(index) = self.index_of(id) {
+            self.threads[index].update(cx, |thread, cx| thread.release_resources(cx));
+        }
+    }
+}
+
+struct HistoryRow {
+    id: EntityId,
+    title: String,
+    pinned: bool,
+    selected: bool,
+    when: String,
+    model: String,
+    generating: bool,
+    agent: String,
+    rename: Option<Input>,
+}
+struct HistoryRowRenderer;
+impl HistoryRowRenderer {
+    fn name(
+        title: &str,
+        input: Option<Input>,
+        cx: &mut Context<AgentPanel>,
+    ) -> gpui_kit::AnyElement {
+        match input {
             Some(input) => div()
                 .flex_1()
                 .min_w_0()
                 .key_context("AgentChatRename")
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_key_down(
-                    cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "escape" {
-                            cx.stop_propagation();
-                            this.finish_rename(false, window, cx);
-                        }
+                    cx.listener(|panel, event: &gpui_kit::KeyDownEvent, window, cx| {
+                        panel.on_history_rename_key(event, window, cx)
                     }),
                 )
-                .child(Input::new(&input).xsmall())
+                .child(input)
                 .into_any_element(),
             None => div()
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .child(single_line_label(&title))
+                .child(single_line_label(title))
                 .into_any_element(),
+        }
+    }
+    fn details(row: &HistoryRow, name: gpui_kit::AnyElement, cx: &gpui_kit::App) -> gpui_kit::Div {
+        let icon = if row.generating {
+            gpui_kit::component::spinner::Spinner::new()
+                .small()
+                .color(cx.theme().muted_foreground)
+                .into_any_element()
+        } else {
+            nocterm_ui::agent_icon(&row.agent)
+                .small()
+                .into_any_element()
         };
-        let panel = cx.weak_entity();
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .child(icon)
+                    .when(row.pinned, |line| {
+                        line.child(
+                            gpui_kit::component::Icon::new(IconName::Pin)
+                                .xsmall()
+                                .flex_shrink_0()
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                    })
+                    .child(name),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        div()
+                            .id(("history-when", row.id.as_u64()))
+                            .test_support()
+                            .aria_label(row.when.clone())
+                            .flex_shrink_0()
+                            .child(row.when.clone()),
+                    )
+                    .child(div().flex_1())
+                    .child(div().min_w_0().truncate().child(row.model.clone())),
+            )
+    }
+    fn render(mut row: HistoryRow, cx: &mut Context<AgentPanel>) -> gpui_kit::AnyElement {
+        let id = row.id;
+        let title = row.title.clone();
+        let hover = cx.theme().muted.blend(cx.theme().foreground.opacity(0.04));
+        let name = Self::name(&row.title, row.rename.take(), cx);
+        let details = Self::details(&row, name, cx);
+        let actions = Self::actions(row.id, row.pinned, cx);
         h_flex()
-            .id(("history-thread", key))
+            .id(("history-thread", id.as_u64()))
             .test_support()
             .role(gpui_kit::Role::Button)
             .aria_label(title.clone())
@@ -385,129 +476,86 @@ impl AgentPanel {
             .rounded(px(8.))
             .cursor_pointer()
             .text_sm()
-            .when(selected, |row| row.bg(cx.theme().muted))
-            .when(!selected, |row| row.hover(move |style| style.bg(hover)))
+            .when(row.selected, |row| row.bg(cx.theme().muted))
+            .when(!row.selected, |row| row.hover(move |style| style.bg(hover)))
             .tooltip(move |_, cx| {
                 cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(title.clone()))
                     .into()
             })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.renaming.is_none() {
-                    this.open_thread(id, cx);
-                }
-            }))
+            .on_click(cx.listener(move |panel, _, _, cx| panel.on_history_selected(id, cx)))
+            .child(details)
+            .child(actions)
+            .into_any_element()
+    }
+    fn actions(id: EntityId, pinned: bool, cx: &mut Context<AgentPanel>) -> gpui_kit::AnyElement {
+        let panel = cx.weak_entity();
+        h_flex()
+            .flex_shrink_0()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_0p5()
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_1()
-                            .child(if chat.session_generating() {
-                                gpui_kit::component::spinner::Spinner::new()
-                                    .small()
-                                    .color(cx.theme().muted_foreground)
-                                    .into_any_element()
-                            } else {
-                                nocterm_ui::agent_icon(chat.document().agent_id())
-                                    .small()
-                                    .into_any_element()
-                            })
-                            .when(pinned, |row| {
-                                row.child(
-                                    gpui_kit::component::Icon::new(IconName::Pin)
-                                        .xsmall()
-                                        .flex_shrink_0()
-                                        .text_color(cx.theme().muted_foreground),
-                                )
-                            })
-                            .child(name),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(div().flex_shrink_0().child(when))
-                            .child(div().flex_1())
-                            .child(div().min_w_0().truncate().child(model)),
-                    ),
+                Button::new(("history-actions", id.as_u64()))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Ellipsis)
+                    .tooltip("Chat actions")
+                    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                        Self::menu(menu, id, pinned, panel.clone())
+                    }),
             )
             .child(
-                // The row's own click must not fire for its buttons.
-                h_flex()
-                    .flex_shrink_0()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        Button::new(("history-actions", key))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Ellipsis)
-                            .tooltip("Chat actions")
-                            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                                let rename = panel.clone();
-                                let fork = panel.clone();
-                                let pin = panel.clone();
-                                let release = panel.clone();
-                                menu.item(
-                                    PopupMenuItem::new("Rename")
-                                        .icon(IconName::Pencil)
-                                        .on_click(move |_, window, cx| {
-                                            let _ = rename.update(cx, |panel, cx| {
-                                                panel.start_rename(id, window, cx)
-                                            });
-                                        }),
-                                )
-                                .item(PopupMenuItem::new("Fork").icon(IconName::GitFork).on_click(
-                                    move |_, window, cx| {
-                                        let _ = fork.update(cx, |panel, cx| {
-                                            panel.fork_thread(id, window, cx)
-                                        });
-                                    },
-                                ))
-                                .item(PopupMenuItem::new("Release agent resources").on_click(
-                                    move |_, _, cx| {
-                                        let _ = release.update(cx, |panel, cx| {
-                                            if let Some(index) = panel.index_of(id) {
-                                                panel.threads[index].update(cx, |thread, cx| {
-                                                    thread.release_resources(cx)
-                                                });
-                                            }
-                                        });
-                                    },
-                                ))
-                                .item(
-                                    PopupMenuItem::new(if pinned { "Unpin" } else { "Pin" })
-                                        .icon(if pinned {
-                                            IconName::PinOff
-                                        } else {
-                                            IconName::Pin
-                                        })
-                                        .on_click(move |_, _, cx| {
-                                            let _ = pin.update(cx, |panel, cx| {
-                                                panel.set_pinned(id, !pinned, cx)
-                                            });
-                                        }),
-                                )
-                            }),
-                    )
-                    .child(
-                        Button::new(("delete-thread", key))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Trash)
-                            .tooltip("Delete chat")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.delete_thread(id, window, cx)
-                            })),
+                Button::new(("delete-thread", id.as_u64()))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Trash)
+                    .tooltip("Delete chat")
+                    .on_click(
+                        cx.listener(move |panel, _, window, cx| {
+                            panel.delete_thread(id, window, cx)
+                        }),
                     ),
             )
             .into_any_element()
+    }
+    fn menu(
+        menu: gpui_kit::component::menu::PopupMenu,
+        id: EntityId,
+        pinned: bool,
+        panel: gpui_kit::WeakEntity<AgentPanel>,
+    ) -> gpui_kit::component::menu::PopupMenu {
+        let rename = panel.clone();
+        let fork = panel.clone();
+        let pin = panel.clone();
+        let release = panel;
+        menu.item(
+            PopupMenuItem::new("Rename")
+                .icon(IconName::Pencil)
+                .on_click(move |_, window, cx| {
+                    let _ = rename.update(cx, |panel, cx| panel.start_rename(id, window, cx));
+                }),
+        )
+        .item(
+            PopupMenuItem::new("Fork")
+                .icon(IconName::GitFork)
+                .on_click(move |_, window, cx| {
+                    let _ = fork.update(cx, |panel, cx| panel.fork_thread(id, window, cx));
+                }),
+        )
+        .item(
+            PopupMenuItem::new("Release agent resources").on_click(move |_, _, cx| {
+                let _ = release.update(cx, |panel, cx| panel.release_history_resources(id, cx));
+            }),
+        )
+        .item(
+            PopupMenuItem::new(if pinned { "Unpin" } else { "Pin" })
+                .icon(if pinned {
+                    IconName::PinOff
+                } else {
+                    IconName::Pin
+                })
+                .on_click(move |_, _, cx| {
+                    let _ = pin.update(cx, |panel, cx| panel.set_pinned(id, !pinned, cx));
+                }),
+        )
     }
 }
 

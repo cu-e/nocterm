@@ -2,14 +2,15 @@
 //!
 //! Owns: named layout values and their JSON encoding.
 //! Does not own: persistence queues, write ordering or shutdown deadlines.
-//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: layout values.
+//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: layout values and
+//! caller-owned observation of one normalized visible size.
 //! Settings section: none. Globals: existing `LayoutMemory` compatibility shell.
 //! Invariants: valid user changes are immediately visible; failed persistence
 //! leaves the desired arrangement intact.
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use gpui_kit::{App, AppContext as _, Entity, Global, Pixels, px};
+use gpui_kit::{App, AppContext as _, Entity, Global, Pixels, Subscription, px};
 use nocterm_core::persist;
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,26 @@ impl LayoutHandle {
             .get(key)
             .filter(|size| size.is_finite() && **size > 0.)
             .map(|size| px(*size))
+    }
+
+    /// Observes the latest visible size for one key, excluding unrelated changes.
+    /// The caller owns the subscription; initial state is available through `get`.
+    pub fn observe_size(
+        &self,
+        key: &str,
+        cx: &mut App,
+        mut on_change: impl FnMut(Option<Pixels>, &mut App) + 'static,
+    ) -> Subscription {
+        let key = key.to_owned();
+        let handle = self.clone();
+        let mut last = self.get(&key, cx);
+        cx.observe(&self.persisted, move |_, cx| {
+            let current = handle.get(&key, cx);
+            if current != last {
+                last = current;
+                on_change(current, cx);
+            }
+        })
     }
 
     pub fn flag(&self, key: &str, cx: &App) -> bool {

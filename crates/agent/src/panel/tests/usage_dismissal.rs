@@ -36,17 +36,10 @@ fn usage_escape_dismisses_only_the_card_then_restores_composer(cx: &mut TestAppC
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
         assert_eq!(escaped.load(Ordering::SeqCst), 0);
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.input("draft after closing", cx);
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "draft after closing"
         );
         window.press("escape", cx);
@@ -72,16 +65,15 @@ fn usage_escape_precedes_slash_suggestions(cx: &mut TestAppContext) {
                 );
                 cx.notify();
             });
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value("/", window, cx));
         });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
     })
     .unwrap();
     cx.run_until_parked();
     open_usage(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        assert!(f.panel.read(cx).commands.dismissed.is_none());
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_some());
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
@@ -89,7 +81,7 @@ fn usage_escape_precedes_slash_suggestions(cx: &mut TestAppContext) {
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-slash-commands").is_none());
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/");
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
     })
     .unwrap();
 }
@@ -107,19 +99,9 @@ fn usage_composer_click_dismisses_and_preserves_the_click_and_draft(cx: &mut Tes
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.input("kept draft", cx);
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "kept draft"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "kept draft");
     })
     .unwrap();
     assert!(f.commands.prompts.lock().unwrap().is_empty());
@@ -159,13 +141,13 @@ fn usage_inside_click_and_tab_keep_card_open_until_focus_leaves(cx: &mut TestApp
         window.press("tab", cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_some());
-        let input_focus = f.panel.read(cx).input.read(cx).focus_handle(cx);
+        let input_focus = f.panel.read(cx).composer_focus(cx);
         window.focus(&input_focus, cx);
     })
     .unwrap();
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let input_focus = f.panel.read(cx).input.read(cx).focus_handle(cx);
+        let input_focus = f.panel.read(cx).composer_focus(cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
         assert!(input_focus.is_focused(window));
@@ -201,10 +183,12 @@ fn usage_stays_above_a_multiline_composer_in_a_narrow_panel(cx: &mut TestAppCont
     let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let input = f.panel.read(cx).input.clone();
-        input.update(cx, |input, cx| {
-            input.set_value("A draft line\n".repeat(10), window, cx);
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "A draft line\n".repeat(10),
+            window,
+            cx,
+        );
         window.render_frame(cx);
     })
     .unwrap();
@@ -224,17 +208,10 @@ fn usage_stays_above_a_multiline_composer_in_a_narrow_panel(cx: &mut TestAppCont
     cx.update_window(f.handle, |_, window, cx| {
         assert!(window.try_find("agent-usage").is_none());
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "A draft line\n".repeat(10)
         );
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
     })
     .unwrap();
 }
@@ -244,19 +221,22 @@ fn usage_keyboard_tab_leaving_the_card_dismisses_without_trapping_focus(cx: &mut
     let f = fixture(cx);
     new_chat(&f, cx);
     open_usage(&f, cx);
-    cx.update_window(f.handle, |_, window, cx| {
-        window.click_at("agent-usage", point(px(20.), px(55.)), cx);
-        window.render_frame(cx);
-        window.press("tab", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("agent-usage").is_some());
-        window.press("tab", cx);
-    })
-    .unwrap();
+    let card_focus = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.click_at("agent-usage", point(px(20.), px(55.)), cx);
+            window.render_frame(cx);
+            let card_focus = window.focused(cx).unwrap();
+            window.press("tab", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("agent-usage").is_some());
+            window.press("tab", cx);
+            card_focus
+        })
+        .unwrap();
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         assert!(window.try_find("agent-usage").is_none());
-        assert!(!f.panel.read(cx).usage_focus.contains_focused(window, cx));
+        assert!(!card_focus.contains_focused(window, cx));
         assert!(window.focused(cx).is_some());
     })
     .unwrap();
@@ -338,19 +318,9 @@ fn usage_closes_when_typing_starts_without_requiring_a_composer_click(cx: &mut T
     .unwrap();
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "Пишу черновик"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "Пишу черновик");
         assert!(window.try_find("agent-usage").is_none());
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
     })
     .unwrap();
     assert!(f.commands.prompts.lock().unwrap().is_empty());
@@ -378,14 +348,7 @@ fn usage_trigger_remains_keyboard_accessible(cx: &mut TestAppContext) {
         window.press("escape", cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
     })
     .unwrap();
     assert!(f.commands.prompts.lock().unwrap().is_empty());

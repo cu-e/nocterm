@@ -2,8 +2,7 @@
 //! the context window is, the session's tokens and the plan's limits.
 
 use gpui_kit::{
-    App, ClickEvent, Context, Focusable as _, MouseButton, PathBuilder, TestSupportExt as _,
-    Window, canvas,
+    App, ClickEvent, Context, MouseButton, PathBuilder, TestSupportExt as _, Window, canvas,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -32,19 +31,18 @@ struct Report {
 
 impl AgentPanel {
     pub(super) fn dismiss_usage(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.menu != Some(MenuKind::Usage) {
+        if !self.menus.dismiss_usage() {
             return false;
         }
-        self.menu = None;
         cx.notify();
         true
     }
 
     pub(super) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let restore = self.usage_focus.contains_focused(window, cx);
+        let restore = self.menus.usage_contains_focus(window, cx);
         self.dismiss_usage(cx);
         if restore {
-            window.focus(&self.input.read(cx).focus_handle(cx), cx);
+            window.focus(&self.composer.focus(cx), cx);
         }
     }
 
@@ -55,7 +53,7 @@ impl AgentPanel {
     ) -> Button {
         // Match native popovers: toggle on mouse-down, using the rendered state.
         // Outside dismissal may already have run in this event's capture phase.
-        let open = self.menu == Some(MenuKind::Usage);
+        let open = self.menus.is_open(&MenuKind::Usage);
         context_ring(usage, cx)
             .selected(open)
             .on_mouse_down(
@@ -76,10 +74,10 @@ impl AgentPanel {
             self.close_usage(window, cx);
         } else {
             self.refresh_usage(cx);
-            self.menu = Some(MenuKind::Usage);
+            self.menus.open(MenuKind::Usage);
             // Read-only information must not interrupt composing.
-            if !self.input.read(cx).focus_handle(cx).is_focused(window) {
-                window.focus(&self.usage_focus, cx);
+            if !self.composer.focus(cx).is_focused(window) {
+                window.focus(self.menus.usage_focus(), cx);
             }
             cx.notify();
         }
@@ -124,16 +122,26 @@ impl AgentPanel {
         })
     }
 
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(report) = self.usage_report(cx) else {
             return div().into_any_element();
         };
-        let muted = cx.theme().muted_foreground;
-        let mut card = v_flex()
+        UsageCard::render(&report, self.menus.usage_focus(), self.host.timestamp(), cx)
+    }
+}
+
+struct UsageCard;
+impl UsageCard {
+    fn render(
+        report: &Report,
+        focus: &gpui_kit::FocusHandle,
+        now: u64,
+        cx: &mut Context<AgentPanel>,
+    ) -> gpui_kit::AnyElement {
+        let card = v_flex()
             .id("agent-usage")
             .test_support()
-            .track_focus(&self.usage_focus)
+            .track_focus(focus)
             .tab_group()
             .key_context("Popover")
             .on_action(
@@ -171,6 +179,27 @@ impl AgentPanel {
                     ),
             );
 
+        card.child(Self::context(report, cx))
+            .children(Self::tokens(report, cx))
+            .children(
+                report
+                    .context
+                    .as_ref()
+                    .and_then(|usage| usage.cost.as_ref())
+                    .map(|cost| {
+                        legend_row(
+                            "Session cost",
+                            format!("{:.2} {}", cost.amount, cost.currency),
+                            None,
+                            cx,
+                        )
+                    }),
+            )
+            .children(Self::limits(report, now, cx))
+            .into_any_element()
+    }
+    fn context(report: &Report, cx: &App) -> gpui_kit::Div {
+        let muted = cx.theme().muted_foreground;
         let mut context = v_flex().gap_2();
         match &report.context {
             Some(usage) => {
@@ -217,8 +246,9 @@ impl AgentPanel {
                 );
             }
         }
-        card = card.child(context);
-
+        context
+    }
+    fn tokens(report: &Report, cx: &App) -> Option<gpui_kit::Div> {
         if let Some(tokens) = &report.tokens {
             let rows = [
                 ("Input", Some(tokens.input_tokens)),
@@ -228,7 +258,7 @@ impl AgentPanel {
                 ("Reasoning", tokens.thought_tokens),
                 ("Total", Some(tokens.total_tokens)),
             ];
-            card = card.child(
+            return Some(
                 section("Session tokens", cx).children(
                     rows.into_iter()
                         .filter_map(|(label, value)| Some((label, value?)))
@@ -237,31 +267,21 @@ impl AgentPanel {
                 ),
             );
         }
-        if let Some(cost) = report
-            .context
-            .as_ref()
-            .and_then(|usage| usage.cost.as_ref())
-        {
-            card = card.child(legend_row(
-                "Session cost",
-                format!("{:.2} {}", cost.amount, cost.currency),
-                None,
-                cx,
-            ));
-        }
-
+        None
+    }
+    fn limits(report: &Report, now: u64, cx: &App) -> Option<gpui_kit::Div> {
+        let muted = cx.theme().muted_foreground;
         if !report.limits.is_empty() || report.limits_hint.is_some() {
             let mut limits = section("Plan limits", cx);
-            let now = self.host.timestamp();
             for limit in &report.limits {
                 limits = limits.child(limit_row(limit, now, cx));
             }
             if let Some(hint) = report.limits_hint {
                 limits = limits.child(div().text_xs().text_color(muted).child(hint));
             }
-            card = card.child(limits);
+            return Some(limits);
         }
-        card.into_any_element()
+        None
     }
 }
 

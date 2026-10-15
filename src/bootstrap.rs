@@ -56,7 +56,7 @@ pub(crate) struct Booted {
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
     settings_ui: nocterm_settings_ui::Deps,
-    images: nocterm_agent::ImageDeps,
+    panel: nocterm_agent::PanelDeps,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
@@ -147,7 +147,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         local_host,
         terminal,
         settings_ui,
-        images,
+        panel: nocterm_agent::PanelDeps::new(images, layout.clone(), ui.settings().clone()),
         metadata,
         connections,
         vault,
@@ -285,7 +285,7 @@ pub(crate) fn build_workspace(
     nocterm_monitor_ui::register(booted.local_host.clone(), workspace, window, cx);
     nocterm_agent::register(
         workspace,
-        booted.images.clone(),
+        booted.panel.clone(),
         booted.metadata.clone(),
         window,
         cx,

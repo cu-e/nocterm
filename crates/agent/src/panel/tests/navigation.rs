@@ -56,11 +56,12 @@ fn scrolled_chat_exposes_previous_and_first_controls_alongside_existing_latest(
     transcript(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        f.panel.read(cx).list.clone().update(cx, |list, cx| {
-            assert!(list.scroll_to_item(5, cx));
-        });
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(point(px(0.), px(500.))),
+            cx,
+        );
         window.render_frame(cx);
-        assert!(f.panel.read(cx).list.read(cx).is_scrolled_up());
         assert!(
             window.try_find("agent-message-navigation").is_some(),
             "scrolled chat is missing the message-navigation pill"
@@ -79,18 +80,95 @@ fn scrolled_chat_exposes_previous_and_first_controls_alongside_existing_latest(
     .unwrap();
 }
 
-fn scroll_to(f: &Fixture, index: usize, cx: &mut TestAppContext) {
+pub(super) fn scroll_to(f: &Fixture, index: usize, cx: &mut TestAppContext) {
+    let mut previous = None;
+    let mut unchanged = 0;
+    for _ in 0..1000 {
+        let (done, rows, viewport) = cx
+            .update_window(f.handle, |_, window, cx| {
+                window.render_frame(cx);
+                let viewport = window.find("agent-transcript-area").bounds();
+                let count = f
+                    .panel
+                    .read(cx)
+                    .current()
+                    .unwrap()
+                    .read(cx)
+                    .transcript()
+                    .entries
+                    .len();
+                let rows: Vec<_> = (0..count)
+                    .filter_map(|row| {
+                        let bounds = window.try_find(("agent-entry", row))?.bounds();
+                        (bounds.bottom() > viewport.top() && bounds.top() < viewport.bottom())
+                            .then_some((row, bounds.top(), bounds.bottom()))
+                    })
+                    .collect();
+                let top = viewport.top() + px(8.);
+                let delta = window
+                    .try_find(("agent-entry", index))
+                    .map(|row| top - row.bounds().top())
+                    .unwrap_or_else(|| {
+                        let direction = if rows.first().is_some_and(|row| index < row.0) {
+                            1.
+                        } else {
+                            -1.
+                        };
+                        viewport.size.height * (0.7 * direction)
+                    });
+                if delta.abs() <= px(0.5) {
+                    return (true, rows, viewport);
+                }
+                window.scroll(
+                    "agent-transcript-area",
+                    gpui_kit::ScrollDelta::Pixels(point(px(0.), delta)),
+                    cx,
+                );
+                (false, rows, viewport)
+            })
+            .unwrap();
+        if done {
+            return;
+        }
+        if previous.as_ref() == Some(&rows) {
+            unchanged += 1;
+        } else {
+            unchanged = 0;
+        }
+        assert!(
+            unchanged < 3,
+            "native scroll made no progress toward entry {index}: visible {rows:?}, viewport {viewport:?}"
+        );
+        previous = Some(rows);
+        cx.run_until_parked();
+    }
+    panic!("native wheel did not reveal transcript entry {index}");
+}
+
+fn top(f: &Fixture, cx: &mut TestAppContext) -> ListOffset {
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        f.panel.read(cx).list.clone().update(cx, |list, cx| {
-            assert!(list.scroll_to_item(index, cx));
-        });
-        window.render_frame(cx);
+        let top = window.find("agent-transcript-area").bounds().top() + px(8.);
+        let count = f
+            .panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .transcript()
+            .entries
+            .len();
+        (0..count)
+            .find_map(|index| {
+                let row = window.try_find(("agent-entry", index))?;
+                (row.bounds().bottom() > top).then_some(ListOffset {
+                    item_ix: index,
+                    offset_in_item: (top - row.bounds().top()).max(px(0.)),
+                })
+            })
+            .expect("a rendered message intersects the viewport")
     })
-    .unwrap();
-}
-fn top(f: &Fixture, cx: &mut TestAppContext) -> ListOffset {
-    cx.update(|cx| f.panel.read(cx).list.read(cx).logical_scroll_top())
+    .unwrap()
 }
 fn click(f: &Fixture, button: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
@@ -135,7 +213,12 @@ fn previous_rewinds_a_partial_tall_user_message_then_skips_all_other_rows(cx: &m
     click(&f, "agent-previous-message", cx);
     click(&f, "agent-first-message", cx);
     assert_eq!(top(&f, cx).item_ix, 0);
-    assert!(!cx.update(|cx| f.panel.read(cx).list.read(cx).is_following_tail()));
+    assert!(
+        cx.update_window(f.handle, |_, window, _| window
+            .try_find("agent-message-navigation")
+            .is_some())
+            .unwrap()
+    );
 }
 
 #[gpui_kit::test]
@@ -165,7 +248,7 @@ fn previous_from_assistant_first_and_latest_keep_distinct_targets_and_follow_mod
     click(&f, "agent-first-message", cx);
     assert_eq!(top(&f, cx).item_ix, 0);
     cx.update_window(f.handle, |_, window, cx| {
-        assert!(!f.panel.read(cx).list.read(cx).is_following_tail());
+        assert!(window.try_find("agent-message-navigation").is_some());
         window.click(
             (
                 gpui_kit::ElementId::from("agent-transcript"),
@@ -174,7 +257,7 @@ fn previous_from_assistant_first_and_latest_keep_distinct_targets_and_follow_mod
             cx,
         );
         window.render_frame(cx);
-        assert!(f.panel.read(cx).list.read(cx).is_following_tail());
+        assert!(window.try_find("agent-message-navigation").is_none());
         assert!(window.try_find("agent-message-navigation").is_none());
     })
     .unwrap();
@@ -187,6 +270,16 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
     let f = fixture(cx);
     let thread = transcript(&f, cx);
     scroll_to(&f, 5, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-80.))),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    click(&f, "agent-previous-message", cx);
     let before = top(&f, cx);
     thread.update(cx, |thread, cx| {
         let mut entries = thread.history_entries().to_vec();
@@ -206,14 +299,19 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
         .unwrap();
     assert_eq!(top(&f, cx).item_ix, before.item_ix);
     assert_eq!(top(&f, cx).offset_in_item, before.offset_in_item);
-    assert!(!cx.update(|cx| f.panel.read(cx).list.read(cx).is_following_tail()));
+    assert!(
+        cx.update_window(f.handle, |_, window, _| window
+            .try_find("agent-message-navigation")
+            .is_some())
+            .unwrap()
+    );
     click(&f, "agent-previous-message", cx);
     assert_eq!(top(&f, cx).item_ix, 0);
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(f.panel.read(cx).list.read(cx).is_following_tail());
-        assert_eq!(f.panel.read(cx).list.read(cx).item_count(), 0);
+        assert!(window.try_find("agent-message-navigation").is_none());
+        assert!(window.try_find(("agent-entry", 0usize)).is_none());
         assert!(window.try_find("agent-message-navigation").is_none());
     })
     .unwrap();

@@ -103,3 +103,9 @@ to resource-monitor and container registration. New windows clone the retained
 capability; test composition supplies an inert fake or None before installation.
 Workspace host resolution uses the provided capability while preserving the active
 remote session's executor and connection authority. It stores no global runner.
+
+Bootstrap retains immutable agent `PanelDeps` instead of a standalone image slot.
+They combine the prepared image ports, exact shared layout handle and installed
+settings handle, and are cloned for every workspace window. Agent view owners
+retain these supplied collaborators while existing runtime/authentication
+compatibility acquisition remains in the panel coordinator.

@@ -16,7 +16,7 @@ fn adopt_json(
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.adopt_saved_chats(window, cx);
-            let thread = panel.threads[0].clone();
+            let thread = panel.chat_documents().next().unwrap().clone();
             panel.open_thread(thread.entity_id(), cx);
             thread
         })

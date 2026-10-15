@@ -150,68 +150,48 @@ fn image_preparation_runs_once_and_renders_a_cached_small_static_preview(cx: &mu
         workspace_resolver(),
         crate::ImageDeps::new(codec.clone(), codec.clone()),
     );
+    f.connector.support_images();
+    new_chat(&f, cx);
     let data = image_bytes();
-    let key = (1usize, data.len(), false);
     let expected = Arc::new(gpui_kit::Image::from_bytes(
         gpui_kit::ImageFormat::Png,
-        data.clone(),
+        data,
     ));
-    cx.update(|cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel.cached_image(key, || data, false, cx);
-        })
+    cx.update(|cx| assert!(!expected.is_asset_cached(cx)));
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
     });
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
     cx.run_until_parked();
     assert_eq!(codec.requests().len(), 1);
-    let window = cx.add_empty_window();
-    window.update(|_, cx| assert!(!expected.is_asset_cached(cx)));
-    struct PreviewView {
-        panel: Entity<AgentPanel>,
-        key: (usize, usize, bool),
-    }
-    impl gpui_kit::Render for PreviewView {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            self.panel.update(cx, |panel, cx| {
-                panel.cached_image(
-                    self.key,
-                    || panic!("cache hit must not decode again"),
-                    false,
-                    cx,
-                )
-            })
-        }
-    }
-    let view = window.new(|_| PreviewView {
-        panel: f.panel.clone(),
-        key,
-    });
-    let draw_preview = |_: &mut Window, _: &mut App| view.clone().into_any_element();
-    window.draw(
-        gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)),
-        gpui_kit::size(gpui_kit::px(160.), gpui_kit::px(160.)),
-        draw_preview,
-    );
-    window.run_until_parked();
-    let rendered = window.update(|window, cx| {
-        assert!(expected.is_asset_cached(cx));
-        expected
-            .clone()
-            .get_render_image(window, cx)
-            .expect("successful preview rendering must load its supplied PNG")
-    });
+    // Draw the real composer strip, then deliver its image asset completion.
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let rendered = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(expected.is_asset_cached(cx));
+            expected
+                .clone()
+                .get_render_image(window, cx)
+                .expect("successful preview rendering must load its supplied PNG")
+        })
+        .unwrap();
     assert_eq!(rendered.frame_count(), 1);
     assert_eq!(rendered.size(0), gpui_kit::size(2u32.into(), 2u32.into()));
     assert_eq!(rendered.as_bytes(0).unwrap().len(), 2 * 2 * 4);
-    window.draw(
-        gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)),
-        gpui_kit::size(gpui_kit::px(160.), gpui_kit::px(160.)),
-        draw_preview,
-    );
-    window.update(|window, cx| {
+    cx.update_window(f.handle, |_, window, cx| {
+        window.draw(cx).clear(cx);
         assert!(window.has_image_atlas_entry(&rendered));
         let reused = expected.clone().get_render_image(window, cx).unwrap();
         assert!(Arc::ptr_eq(&rendered, &reused));
-    });
+    })
+    .unwrap();
     assert_eq!(codec.requests().len(), 1);
 }
 
@@ -474,10 +454,16 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
             assert!(bounds.origin.x >= panel.origin.x);
         }
         // Wrapped, the output is tall enough to push the header out of view.
-        f.panel.update(cx, |panel, cx| {
-            panel.expanded.clear();
-            cx.notify();
-        });
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(1_000_000.),
+            )),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click(("tool-call", 0usize), cx);
         window.render_frame(cx);
         assert!(window.try_find(("tool-output", 0usize)).is_none());
     })

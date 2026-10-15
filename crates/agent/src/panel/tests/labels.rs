@@ -102,22 +102,17 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.start_rename(thread.entity_id(), window, cx);
-            assert_eq!(
-                panel
-                    .renaming
-                    .as_ref()
-                    .unwrap()
-                    .input
-                    .read(cx)
-                    .value()
-                    .as_ref(),
-                long.replace('\n', "")
-            );
-            panel.finish_rename(false, window, cx);
-            panel
-                .history_search
-                .update(cx, |search, cx| search.set_value("second line", window, cx));
         });
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(("history-rename", thread.entity_id().as_u64()))
+                .value(),
+            Some(long.replace('\n', "").as_str())
+        );
+        window.press("escape", cx);
+        window.render_frame(cx);
+        replace_textbox("agent-history-search", "second line", window, cx);
         window.render_frame(cx);
         assert!(
             window

@@ -4,14 +4,12 @@ use super::{
     widgets::{chat_markdown, safe_markdown},
 };
 use gpui_kit::{
-    AnyElement, AnyView, App, Context, Focusable as _, KeyBinding, ListAlignment, ListOffset,
-    ListSizingBehavior, ListState, TestSupportExt as _, WeakEntity, Window,
+    AnyElement, AnyView, App, Context, KeyBinding, ListAlignment, ListOffset, ListSizingBehavior,
+    ListState, TestSupportExt as _, WeakEntity, Window,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        input::{
-            IndentInline, InlineToken, InputContent, MoveDown, MoveUp, OutdentInline, RopeExt as _,
-        },
+        input::{IndentInline, MoveDown, MoveUp, OutdentInline},
         tooltip::Tooltip,
         v_flex,
     },
@@ -22,13 +20,13 @@ use gpui_kit::{
 use nocterm_ai::acp;
 
 pub(super) struct CommandState {
-    pub selected: usize,
-    pub scroll: ListState,
+    selected: usize,
+    scroll: ListState,
     visible_matches: Vec<usize>,
-    pub dismissed: Option<String>,
-    pub cycle: Option<CommandCycle>,
-    pub token_prefix: Option<String>,
-    pub input_value: String,
+    dismissed: Option<String>,
+    cycle: Option<CommandCycle>,
+    token_prefix: Option<String>,
+    input_value: String,
     advertisement: Option<(gpui_kit::EntityId, u64)>,
 }
 impl Default for CommandState {
@@ -46,6 +44,142 @@ impl Default for CommandState {
     }
 }
 impl CommandState {
+    pub(super) fn reset(&mut self) {
+        self.selected = 0;
+        self.reveal(0);
+        self.cycle = None;
+        self.dismissed = None;
+        self.token_prefix = None;
+        self.input_value.clear();
+        self.advertisement = None;
+        self.visible_matches.clear();
+        self.scroll.reset(0);
+    }
+    pub(super) fn observe_input(&mut self, value: String) -> bool {
+        if self.input_value == value {
+            return false;
+        }
+        self.input_value = value.clone();
+        if !self
+            .cycle
+            .as_ref()
+            .is_some_and(|cycle| cycle.inserted == value)
+        {
+            self.cycle = None;
+            self.selected = 0;
+            self.reveal(0);
+            self.dismissed = None;
+        }
+        true
+    }
+    pub(super) fn observe_advertisement(&mut self, key: (gpui_kit::EntityId, u64)) -> bool {
+        if self.advertisement == Some(key) {
+            return false;
+        }
+        self.advertisement = Some(key);
+        self.visible_matches.clear();
+        self.scroll.reset(0);
+        self.cycle = None;
+        self.selected = 0;
+        self.reveal(0);
+        self.token_prefix = None;
+        true
+    }
+    pub(super) fn matches(&self, value: &str, commands: &[acp::AvailableCommand]) -> Vec<usize> {
+        if self.dismissed.as_deref() == Some(value) {
+            return Vec::new();
+        }
+        let filter = self
+            .cycle
+            .as_ref()
+            .filter(|cycle| cycle.inserted == value)
+            .map(|cycle| cycle.filter.as_str())
+            .unwrap_or(value);
+        let Some(prefix) = nocterm_ai::commands::prefix(filter) else {
+            return Vec::new();
+        };
+        let prefix = prefix.to_lowercase();
+        commands
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| {
+                command
+                    .name
+                    .to_lowercase()
+                    .starts_with(&prefix)
+                    .then_some(index)
+            })
+            .collect()
+    }
+    pub(super) fn observe_token(&mut self, prefix: Option<String>) -> bool {
+        if self.token_prefix == prefix {
+            return false;
+        }
+        self.token_prefix = prefix;
+        true
+    }
+    pub(super) fn action(&mut self, key: &str, value: &str, names: &[String]) -> Option<String> {
+        if names.is_empty() {
+            return None;
+        }
+        let index = self.selected.min(names.len() - 1);
+        let chosen = match key {
+            "up" => {
+                self.selected = (index + names.len() - 1) % names.len();
+                None
+            }
+            "down" => {
+                self.selected = (index + 1) % names.len();
+                None
+            }
+            "escape" => {
+                self.dismissed = Some(value.to_owned());
+                self.cycle = None;
+                None
+            }
+            "tab" | "shift-tab" => {
+                let filter = self
+                    .cycle
+                    .as_ref()
+                    .map(|cycle| cycle.filter.clone())
+                    .unwrap_or_else(|| value.to_owned());
+                let next = if key == "shift-tab" {
+                    (index + names.len() - 1) % names.len()
+                } else if self.cycle.is_some() {
+                    (index + 1) % names.len()
+                } else {
+                    index
+                };
+                self.selected = next;
+                self.cycle = Some(CommandCycle {
+                    filter,
+                    inserted: format!("/{} ", names[next]),
+                });
+                Some(names[next].clone())
+            }
+            "enter" => {
+                self.cycle = None;
+                Some(names[index].clone())
+            }
+            _ => None,
+        };
+        self.reveal(self.selected);
+        chosen
+    }
+    pub(super) fn confirm(&mut self) {
+        self.cycle = None;
+    }
+    pub(super) fn selected(&self) -> usize {
+        self.selected
+    }
+    pub(super) fn list_state(&mut self, matches: &[usize]) -> ListState {
+        if self.visible_matches != matches {
+            self.scroll.reset(matches.len());
+            self.visible_matches = matches.to_vec();
+            self.reveal(self.selected.min(matches.len().saturating_sub(1)));
+        }
+        self.scroll.clone()
+    }
     pub(super) fn reveal(&self, index: usize) {
         if self.scroll.bounds_for_item(index).is_some() {
             self.scroll.scroll_to_reveal_item(index);
@@ -60,7 +194,7 @@ impl CommandState {
 }
 pub(super) struct CommandCycle {
     filter: String,
-    pub(super) inserted: String,
+    inserted: String,
 }
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
@@ -225,15 +359,7 @@ pub(super) fn tooltip(name: String, panel: WeakEntity<AgentPanel>, cx: &mut App)
 }
 impl AgentPanel {
     pub(super) fn reset_commands(&mut self) {
-        self.commands.selected = 0;
-        self.commands.reveal(0);
-        self.commands.cycle = None;
-        self.commands.dismissed = None;
-        self.commands.token_prefix = None;
-        self.commands.input_value.clear();
-        self.commands.advertisement = None;
-        self.commands.visible_matches.clear();
-        self.commands.scroll.reset(0);
+        self.composer.reset_commands();
     }
     pub(super) fn refresh_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.current() else {
@@ -243,128 +369,28 @@ impl AgentPanel {
             thread.entity_id(),
             thread.read(cx).configuration().commands_revision(),
         );
-        if self.commands.advertisement == Some(key) {
-            return;
+        let commands = thread.read(cx).configuration().commands().to_vec();
+        if self.composer.refresh_commands(key, &commands, window, cx) {
+            cx.notify();
         }
-        self.commands.advertisement = Some(key);
-        self.commands.visible_matches.clear();
-        self.commands.scroll.reset(0);
-        self.commands.cycle = None;
-        self.commands.selected = 0;
-        self.commands.reveal(0);
-        self.commands.token_prefix = None;
-        let value = self.input.read(cx).value().to_string();
-        let removed = self
-            .input
-            .read(cx)
-            .tokens()
-            .iter()
-            .filter(|span| {
-                !thread
-                    .read(cx)
-                    .configuration()
-                    .commands()
-                    .iter()
-                    .any(|command| command.name == span.token().id().as_ref())
-            })
-            .map(|span| span.range())
-            .collect::<Vec<_>>();
-        if !removed.is_empty() {
-            self.input.update(cx, |input, cx| {
-                use gpui_kit::EntityInputHandler as _;
-                let selection = input.selected_range();
-                for range in removed {
-                    let utf16 = value[..range.start].encode_utf16().count()
-                        ..value[..range.end].encode_utf16().count();
-                    input.replace_text_in_range(Some(utf16), &value[range], window, cx);
-                }
-                input.set_selected_range(selection, cx);
-            });
-        }
-        self.sync_command_token(window, cx);
-        cx.notify();
     }
     pub(super) fn command_matches(&self, cx: &App) -> Vec<usize> {
-        let value = self.input.read(cx).value();
-        if self.commands.dismissed.as_deref() == Some(value.as_ref()) {
-            return Vec::new();
-        }
-        let filter = self
-            .commands
-            .cycle
-            .as_ref()
-            .filter(|cycle| cycle.inserted == value.as_ref())
-            .map(|cycle| cycle.filter.as_str())
-            .unwrap_or(value.as_ref());
-        let Some(prefix) = nocterm_ai::commands::prefix(filter) else {
-            return Vec::new();
-        };
-        let prefix = prefix.to_lowercase();
         self.current()
             .map(|thread| {
-                thread
-                    .read(cx)
-                    .configuration()
-                    .commands()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, command)| {
-                        command
-                            .name
-                            .to_lowercase()
-                            .starts_with(&prefix)
-                            .then_some(index)
-                    })
-                    .collect()
+                self.composer
+                    .command_matches(thread.read(cx).configuration().commands(), cx)
             })
             .unwrap_or_default()
     }
-    /// Annotate only the transition to an advertised command followed by whitespace.
-    /// Keeping the prefix after undo avoids immediately recreating an undone token.
     pub(super) fn sync_command_token(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.input.read(cx).value().to_string();
-        let invocation = self
+        let commands = self
             .current()
-            .and_then(|thread| {
-                nocterm_ai::commands::invocation(&value, thread.read(cx).configuration().commands())
-            })
-            .filter(|invocation| invocation.has_arguments);
-        let Some(invocation) = invocation else {
-            self.commands.token_prefix = None;
-            return;
-        };
-        let range = invocation.range;
-        let name = invocation.name.to_string();
-        let prefix = value[range.clone()].to_string();
-        if self.commands.token_prefix.as_ref() == Some(&prefix) {
-            return;
-        }
-        self.commands.token_prefix = Some(prefix.clone());
-        self.input.update(cx, |input, cx| {
-            if input.tokens().iter().any(|span| span.range() == range) {
-                return;
-            }
-            let selection = input.selected_range();
-            if input
-                .replace_range_with_token(range, InlineToken::new(name, prefix), window, cx)
-                .is_ok()
-            {
-                input.set_selected_range(selection, cx);
-            }
-        });
+            .map(|thread| thread.read(cx).configuration().commands().to_vec())
+            .unwrap_or_default();
+        self.composer.sync_command_token(&commands, window, cx);
     }
     fn complete_command(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        let prefix = format!("/{name}");
-        let value = format!("{prefix} ");
-        self.commands.token_prefix = Some(prefix.clone());
-        self.input.update(cx, |input, cx| {
-            let content = InputContent::new(value.clone())
-                .with_token(0..prefix.len(), InlineToken::new(name, prefix))
-                .unwrap_or_else(|_| InputContent::new(value.clone()));
-            input.set_value(content, window, cx);
-            let end = input.text().offset_to_position(value.len());
-            input.set_cursor_position(end, window, cx);
-        });
+        self.composer.confirm_command(name, window, cx);
         cx.notify();
     }
     pub(super) fn command_action(
@@ -373,58 +399,30 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.input.read(cx).focus_handle(cx).is_focused(window) {
+        if !self.composer.focus(cx).is_focused(window) {
             return;
         }
-        let commands = self.command_matches(cx);
-        if commands.is_empty() {
+        let indices = self.command_matches(cx);
+        if indices.is_empty()
+            || !matches!(
+                key,
+                "up" | "down" | "escape" | "tab" | "shift-tab" | "enter"
+            )
+        {
             return;
         }
-        let index = self.commands.selected.min(commands.len() - 1);
-        let names = commands
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let names = indices
             .iter()
             .map(|index| {
-                self.current().unwrap().read(cx).configuration().commands()[*index]
+                thread.read(cx).configuration().commands()[*index]
                     .name
                     .clone()
             })
             .collect::<Vec<_>>();
-        match key {
-            "up" => self.commands.selected = (index + commands.len() - 1) % commands.len(),
-            "down" => self.commands.selected = (index + 1) % commands.len(),
-            "escape" => {
-                self.commands.dismissed = Some(self.input.read(cx).value().to_string());
-                self.commands.cycle = None;
-            }
-            "tab" | "shift-tab" => {
-                let cycling = self.commands.cycle.is_some();
-                let filter = self
-                    .commands
-                    .cycle
-                    .as_ref()
-                    .map(|cycle| cycle.filter.clone())
-                    .unwrap_or_else(|| self.input.read(cx).value().to_string());
-                let next = if key == "shift-tab" {
-                    (index + commands.len() - 1) % commands.len()
-                } else if cycling {
-                    (index + 1) % commands.len()
-                } else {
-                    index
-                };
-                self.commands.selected = next;
-                self.commands.cycle = Some(CommandCycle {
-                    filter,
-                    inserted: format!("/{} ", names[next]),
-                });
-                self.complete_command(names[next].clone(), window, cx);
-            }
-            "enter" => {
-                self.commands.cycle = None;
-                self.complete_command(names[index].clone(), window, cx);
-            }
-            _ => return,
-        }
-        self.commands.reveal(self.commands.selected);
+        self.composer.command_action(key, &names, window, cx);
         cx.stop_propagation();
         cx.notify();
     }
@@ -433,23 +431,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.input.read(cx).focus_handle(cx).is_focused(window) {
+        if !self.composer.focus(cx).is_focused(window) {
             return None;
         }
         let commands = self.command_matches(cx);
-        let value = self.input.read(cx).value().to_string();
-        if self.commands.dismissed.as_ref() == Some(&value) {
-            return None;
-        }
         if commands.is_empty() {
             return None;
         }
-        if commands != self.commands.visible_matches {
-            self.commands.scroll.reset(commands.len());
-            self.commands.visible_matches = commands.clone();
-            self.commands
-                .reveal(self.commands.selected.min(commands.len() - 1));
-        }
+        let scroll = self.composer.command_list_state(&commands);
         let indices = commands;
         let menu = div()
             .id("agent-slash-commands")
@@ -460,7 +449,7 @@ impl AgentPanel {
             .min_w_0()
             .child(
                 list(
-                    self.commands.scroll.clone(),
+                    scroll,
                     cx.processor(move |this, index, _, cx| {
                         this.render_command_row(index, indices[index], cx)
                     }),
@@ -480,12 +469,55 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return div().into_any_element();
         };
-        let command = &thread.read(cx).configuration().commands()[command_index];
+        let command = thread.read(cx).configuration().commands()[command_index].clone();
+        let origin = CommandOrigin {
+            chat: thread.entity_id(),
+            advertisement: thread.read(cx).configuration().commands_revision(),
+        };
+        CommandRenderer::row(
+            index,
+            &command,
+            index == self.composer.selected_command(),
+            origin,
+            cx,
+        )
+    }
+    fn on_command_selected(
+        &mut self,
+        origin: CommandOrigin,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current().is_some_and(|thread| {
+            thread.entity_id() == origin.chat
+                && thread.read(cx).configuration().commands_revision() == origin.advertisement
+        }) {
+            self.complete_command(name, window, cx);
+        }
+    }
+}
+#[derive(Clone, Copy)]
+struct CommandOrigin {
+    chat: gpui_kit::EntityId,
+    advertisement: u64,
+}
+struct CommandRenderer;
+impl CommandRenderer {
+    fn row(
+        index: usize,
+        command: &acp::AvailableCommand,
+        selected: bool,
+        origin: CommandOrigin,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
         let name = command.name.clone();
         let hover = name.clone();
         let owner = cx.weak_entity();
         div()
             .id(("command-hover", index))
+            .test_support()
+            .aria_selected(selected)
             .pb_1()
             .w_full()
             .hoverable_tooltip(move |_, cx| tooltip(hover.clone(), owner.clone(), cx))
@@ -496,9 +528,7 @@ impl AgentPanel {
                     .w_full()
                     .h_auto()
                     .accessibility_label(format!("/{}", command.name))
-                    .when(index == self.commands.selected, |button| {
-                        button.bg(cx.theme().accent)
-                    })
+                    .when(selected, |button| button.bg(cx.theme().accent))
                     .child(
                         v_flex()
                             .id(("command-summary", index))
@@ -528,8 +558,7 @@ impl AgentPanel {
                             }),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.commands.cycle = None;
-                        this.complete_command(name.clone(), window, cx);
+                        this.on_command_selected(origin, name.clone(), window, cx);
                     })),
             )
             .into_any_element()
