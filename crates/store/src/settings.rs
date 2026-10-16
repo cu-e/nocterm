@@ -157,6 +157,54 @@ impl SettingsHandle {
         })
     }
 
+    /// Validate an edit at its actual ordered base before any publication or write.
+    /// Mutations made by a rejected callback are discarded with their candidate.
+    pub fn edit_checked(
+        &self,
+        cx: &mut App,
+        edit: impl FnOnce(&mut SettingsDocument) -> Result<(), StoreError> + 'static,
+    ) -> Task<Result<u64, StoreError>> {
+        let published_revision = Rc::new(Cell::new(0));
+        let observed = published_revision.clone();
+        let edit = move |snapshot: &mut SettingsSnapshot| {
+            let before = snapshot.document.clone();
+            edit(&mut snapshot.document)?;
+            snapshot.revision += u64::from(snapshot.document != before);
+            observed.set(snapshot.revision);
+            Ok(())
+        };
+        if !self.persistent {
+            let result = self
+                .state
+                .update(cx, |state, cx| state.update_immediate_checked(edit, cx));
+            return Task::ready(result.map(|()| published_revision.get()));
+        }
+        let receipt = self
+            .state
+            .update(cx, |state, cx| state.update_checked(edit, cx));
+        match receipt {
+            Err(error) => Task::ready(Err(error)),
+            Ok(receipt) => {
+                cx.spawn(async move |_| receipt.wait().await.map(|_| published_revision.get()))
+            }
+        }
+    }
+
+    /// Validate a typed section edit before inserting its sanitized result.
+    pub fn update_checked<S: SettingsSection>(
+        &self,
+        cx: &mut App,
+        edit: impl FnOnce(&mut S) -> Result<(), StoreError> + 'static,
+    ) -> Task<Result<u64, StoreError>> {
+        self.edit_checked(cx, move |document| {
+            document.register::<S>();
+            let mut section = document.get::<S>().clone();
+            edit(&mut section)?;
+            document.set(section);
+            Ok(())
+        })
+    }
+
     /// Observe published revisions only, excluding queue admission and failures.
     pub fn observe(
         &self,
@@ -183,3 +231,6 @@ impl SettingsHandle {
         self.state.update(cx, |state, _| state.capture_shutdown())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -177,3 +177,14 @@ capture retains only the runtime handle and returns the existing App-free work.
 No runtime global selects the recipient of a deferred operation. Protocol and
 physical history signatures remain ACP/version one. See
 [ADR0052](../adr/0052-retained-agent-installation.md).
+
+SettingsHandle supplies additive edit_checked and update_checked operations over the
+same Persisted worker. Checked callbacks run at the actual ordered document base;
+an error discards all candidate mutations before semantic revision bookkeeping or
+physical write. Typed section edits register/read their section, apply the callback
+to a clone and insert its sanitized value only on success. Memory edits publish
+synchronously; durable receipts retain the existing queue/backend timing and return
+semantic settings revisions, including unchanged revisions for successful no-ops.
+The original infallible edits and their consumers retain their behavior. Dev-only
+store test-support supplies the shared first-write gate and snapshot recording used
+by service and UI persistence fixtures.

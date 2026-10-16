@@ -8,6 +8,7 @@
 //! Invariants: final work is immutable before App teardown; one disk gate orders
 //! normal and final writes; durable state advances only after successful writes;
 //! ready-key capacity bounds dispatch tokens and never drops accepted dirty keys.
+//! Checked settings edits reject their whole ordered candidate before revision/publication.
 //! Edit/backend causes retain their concrete errors through core shared ownership.
 //! Joined failures preserve their original primary cause and separate secondary diagnostic.
 
@@ -30,3 +31,6 @@ pub use shutdown::{SHUTDOWN_BUDGET, ShutdownCoordinator, ShutdownReport};
 pub use keyed::{
     CapturedKeys, KeyedOutcome, KeyedPersisted, KeyedRetention, KeyedStamp, KeyedWriter,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

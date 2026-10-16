@@ -9,6 +9,9 @@ publish = false
 [package.metadata.nocterm]
 layer = "service"
 
+[features]
+test-support = []
+
 [dependencies]
 nocterm-core.workspace = true
 nocterm-session.workspace = true

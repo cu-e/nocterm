@@ -26,6 +26,7 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 toml.workspace = true

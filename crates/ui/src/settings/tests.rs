@@ -35,21 +35,7 @@ fn gated_writer(
     Arc<Mutex<Vec<SettingsDocument>>>,
 ) {
     let document = cx.update(|cx| cx.global::<SettingsStore>().document(cx).clone());
-    let (release, receive) = oneshot::channel::<Result<(), StoreError>>();
-    let gate = Arc::new(Mutex::new(Some(receive)));
-    let writes = Arc::new(Mutex::new(Vec::new()));
-    let observed = writes.clone();
-    let writer: SnapshotWriter<SettingsDocument> = Arc::new(move |value| {
-        observed.lock().unwrap().push(value);
-        let gate = gate.lock().unwrap().take();
-        async move {
-            match gate {
-                Some(gate) => gate.await.unwrap(),
-                None => Ok(()),
-            }
-        }
-        .boxed()
-    });
+    let (writer, release, writes) = nocterm_store::test_support::gated_writer().into_parts();
     install(
         SettingsStore::from_config(SettingsConfig::with_writer(document, writer)),
         cx,
