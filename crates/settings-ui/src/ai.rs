@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use gpui_kit::{
-    AnyElement, Context, Entity, SharedString, Window,
+    AnyElement, Context, Entity, SharedString, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -19,7 +19,7 @@ use nocterm_ai::{
     registry::AgentRegistry,
     sandbox::{Availability, SandboxProbe},
 };
-use nocterm_ui::{IconName, SettingsExt as _, form};
+use nocterm_ui::{IconName, form};
 
 use crate::{
     SettingsView,
@@ -101,7 +101,7 @@ pub(crate) fn add_fields(
 
 /// Adds fields for agents that appeared and drops those of removed ones.
 pub(crate) fn sync(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsView>) {
-    let ids = agent_ids(cx.setting::<AiSettings>());
+    let ids = agent_ids(view.installed.settings().setting::<AiSettings>(cx));
     for id in view.ai.agents.clone() {
         if !ids.contains(&id) {
             view.remove_fields(&format!("agent.{id}."));
@@ -263,7 +263,7 @@ fn save_checked(
     edit: impl Fn(&mut AiSettings) -> Result<(), FieldError> + 'static,
     cx: &mut Context<SettingsView>,
 ) {
-    let mut probe = cx.setting::<AiSettings>().clone();
+    let mut probe = view.installed.settings().setting::<AiSettings>(cx).clone();
     match edit(&mut probe) {
         Ok(()) => {
             view.ai.error = None;
@@ -283,7 +283,7 @@ fn save_checked(
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
-    let ai = cx.setting::<AiSettings>().clone();
+    let ai = view.installed.settings().setting::<AiSettings>(cx).clone();
     let off = !ai.enabled;
     let mut page = v_flex()
         .w_full()
@@ -491,6 +491,7 @@ fn agent(
         .child(
             h_flex()
                 .id(SharedString::from(format!("ai-agent-{id}")))
+                .test_support()
                 .flex_1()
                 .min_w_0()
                 .gap_2()
@@ -608,13 +609,15 @@ fn add_agent(view: &SettingsView, off: bool, cx: &mut Context<SettingsView>) -> 
                 .child(
                     div()
                         .w(gpui_kit::rems(10.))
-                        .child(Input::new(&id).small().disabled(off)),
+                        .child(Input::new(&id).id("ai-new-id").small().disabled(off)),
                 )
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(Input::new(&command).small().disabled(off)),
+                    div().flex_1().min_w_0().child(
+                        Input::new(&command)
+                            .id("ai-new-command")
+                            .small()
+                            .disabled(off),
+                    ),
                 )
                 .child(
                     Button::new("ai-add-agent")
@@ -625,7 +628,12 @@ fn add_agent(view: &SettingsView, off: bool, cx: &mut Context<SettingsView>) -> 
                 ),
         )
         .when_some(view.ai.add_error.clone(), |row, error| {
-            row.child(form::error_text(error, cx))
+            row.child(
+                div()
+                    .id("ai-add-error")
+                    .test_support()
+                    .child(form::error_text(error, cx)),
+            )
         })
         .into_any_element()
 }
@@ -663,28 +671,6 @@ fn add(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsVi
         Err(error) => view.ai.add_error = Some(error.to_string().into()),
     }
     cx.notify();
-}
-
-#[cfg(test)]
-impl AiPage {
-    pub(crate) fn new_id_input(&self) -> Entity<InputState> {
-        self.new_id.clone().expect("created with the page")
-    }
-    pub(crate) fn new_command_input(&self) -> Entity<InputState> {
-        self.new_command.clone().expect("created with the page")
-    }
-    pub(crate) fn has_add_error(&self) -> bool {
-        self.add_error.is_some()
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn add_for_test(
-    view: &mut SettingsView,
-    window: &mut Window,
-    cx: &mut Context<SettingsView>,
-) {
-    add(view, window, cx);
 }
 
 #[cfg(test)]

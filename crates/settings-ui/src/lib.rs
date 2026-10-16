@@ -4,13 +4,15 @@
 //! on Enter and when the field loses focus. There is no draft and no Apply.
 //! Owns: settings tab presentation, field editing and lazy guest page lifetimes.
 //! Does not own: native sandbox probing, settings persistence or guest feature rules.
-//! Ports used: injected SandboxProbe, ThemeUi, SettingsPageSpec and settings contracts.
+//! Ports used: Installed supplies SettingsHandle and SandboxProbe; ThemeUi and guest pages.
 //! Ports provided: workspace settings Item. Settings section: none. Globals: none.
 //! Invariants: sandbox availability is display evidence; native launch validates freshly.
 
 mod ai;
 mod deps;
+mod installation;
 pub use deps::Deps;
+pub use installation::Installed;
 mod appearance;
 mod field;
 mod pages;
@@ -27,7 +29,7 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_settings::{SettingsDocument, SettingsSection};
-use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, edit_settings, form};
+use nocterm_ui::{IconName, form};
 use nocterm_ui::{SettingsPageHandle, SettingsPageSpec};
 use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
 
@@ -79,7 +81,7 @@ impl Page {
 }
 
 /// Installs Settings with its built-in pages.
-pub fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi, deps: Deps) {
+pub fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi, deps: Installed) {
     register_with_pages(workspace, Vec::new(), themes, deps);
 }
 /// Installs Settings and feature-owned pages supplied by the application.
@@ -87,9 +89,9 @@ pub fn register_with_pages(
     workspace: &mut Workspace,
     pages: Vec<SettingsPageSpec>,
     themes: nocterm_ui::ThemeUi,
-    deps: Deps,
+    deps: Installed,
 ) {
-    appearance::commands::register(workspace, themes.clone());
+    appearance::commands::register(workspace, themes.clone(), deps.settings().clone());
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
@@ -110,7 +112,7 @@ pub fn open_page(
     id: &str,
     pages: &[SettingsPageSpec],
     themes: nocterm_ui::ThemeUi,
-    deps: Deps,
+    deps: Installed,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -130,6 +132,7 @@ pub fn open_page(
 }
 
 pub struct SettingsView {
+    installed: Installed,
     selected_page: usize,
     /// Pages supplied by other features, created when first shown.
     pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
@@ -152,7 +155,7 @@ impl SettingsView {
         Self::with_pages(
             Vec::new(),
             crate::tests::theme_ui(cx),
-            crate::tests::settings_deps(),
+            crate::tests::settings_deps(cx),
             window,
             cx,
         )
@@ -160,24 +163,30 @@ impl SettingsView {
     fn with_pages(
         pages: Vec<SettingsPageSpec>,
         themes: nocterm_ui::ThemeUi,
-        deps: Deps,
+        deps: Installed,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let session_options = pages::new_session_options(window, cx);
-        let sync = cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-            this.sync(window, cx);
+        let session_options = pages::new_session_options(deps.settings(), window, cx);
+        let view = cx.weak_entity();
+        let window_handle = window.window_handle();
+        let sync = deps.settings().observe(cx, move |cx| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = view.update(cx, |this, cx| this.sync(window, cx));
+            });
         });
         let options = cx.observe_in(&session_options, window, |this, _, window, cx| {
             this.schedule_session_options(window, cx);
         });
-        let appearance = appearance::AppearancePage::new(themes, window, cx);
+        let appearance =
+            appearance::AppearancePage::new(themes, deps.settings().clone(), window, cx);
         let mut this = Self {
             selected_page: 0,
             pages: pages.into_iter().map(|spec| (spec, None)).collect(),
             focus: cx.focus_handle(),
             fields: BTreeMap::new(),
             ai: ai::AiPage::new(deps.sandbox_probe()),
+            installed: deps,
             appearance,
             session_options,
             session_options_error: None,
@@ -248,9 +257,14 @@ impl SettingsView {
     ) {
         let key = key.into();
         let event_key = key.clone();
-        let field = Field::new(read, write, window, cx, move |this, event, window, cx| {
-            this.field_event(&event_key, event, window, cx)
-        });
+        let field = Field::new(
+            self.installed.settings().clone(),
+            read,
+            write,
+            window,
+            cx,
+            move |this, event, window, cx| this.field_event(&event_key, event, window, cx),
+        );
         self.fields.insert(key, field);
     }
     pub(crate) fn remove_fields(&mut self, prefix: &str) {
@@ -315,7 +329,7 @@ impl SettingsView {
         edit: impl FnOnce(&mut S) + 'static,
         cx: &mut Context<Self>,
     ) {
-        let task = cx.update_setting::<S>(edit);
+        let task = self.installed.settings().update::<S>(cx, edit);
         self.report(task, cx);
     }
 
@@ -325,7 +339,7 @@ impl SettingsView {
         edit: impl FnOnce(&mut SettingsDocument) + 'static,
         cx: &mut Context<Self>,
     ) {
-        let task = edit_settings(cx, edit);
+        let task = self.installed.settings().edit(cx, edit);
         self.report(task, cx);
     }
 
@@ -461,9 +475,7 @@ impl Render for SettingsView {
                 .map(|page| page.view().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
         };
-        let section_errors: Vec<_> = cx
-            .global::<SettingsStore>()
-            .section_errors(cx)
+        let section_errors: Vec<_> = self.installed.settings().section_errors(cx)
             .iter()
             .map(|error| {
                 format!(
@@ -483,7 +495,13 @@ impl Render for SettingsView {
                     .map(|error| form::error_text(error, cx)),
             )
             .when_some(self.error.clone(), |content, error| {
-                content.child(form::error_text(error, cx))
+                content.child(
+                    div()
+                        .id("settings-save-error")
+                        .aria_label(error.clone())
+                        .test_support()
+                        .child(form::error_text(error, cx)),
+                )
             })
             .child(content);
         h_flex()

@@ -50,7 +50,7 @@ fn setup(
                     SettingsView::with_pages(
                         Vec::new(),
                         supplied,
-                        crate::tests::settings_deps(),
+                        crate::tests::settings_deps(cx),
                         window,
                         cx,
                     )

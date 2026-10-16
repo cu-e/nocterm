@@ -31,7 +31,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
 | `nocterm-session` | domain | `nocterm-core`, `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: typed sections and the file that holds them. |
-| `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-session`, `nocterm-settings`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
+| `nocterm-settings-ui` | feature | `nocterm-ai`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
 | `nocterm-snippets-ui` | feature | `nocterm-core`, `nocterm-session`, `nocterm-snippets`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-core`, `nocterm-session` | SSH and SFTP transport, implemented with russh. |
@@ -153,6 +153,7 @@ graph TD
     nocterm_settings_ui --> nocterm_ai
     nocterm_settings_ui --> nocterm_session
     nocterm_settings_ui --> nocterm_settings
+    nocterm_settings_ui --> nocterm_store
     nocterm_settings_ui --> nocterm_theme_service
     nocterm_settings_ui --> nocterm_themes
     nocterm_settings_ui --> nocterm_ui

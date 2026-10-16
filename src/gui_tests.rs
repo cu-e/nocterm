@@ -122,6 +122,22 @@ fn fixture_with_keymap(
     Arc<MockTransport>,
     nocterm_keymap::KeymapHandle,
 ) {
+    fixture_with_settings(cx, vault_ready, themes, with_local, None)
+}
+
+fn fixture_with_settings(
+    cx: &mut TestAppContext,
+    vault_ready: bool,
+    themes: Option<Arc<nocterm_themes::test_support::InMemoryThemes>>,
+    with_local: bool,
+    settings_override: Option<nocterm_ui::SettingsStore>,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<TerminalView>,
+    Arc<MockTransport>,
+    nocterm_keymap::KeymapHandle,
+) {
     let transport = Arc::new(MockTransport::default());
     let (window, workspace, terminal, keymap) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
@@ -139,7 +155,7 @@ fn fixture_with_keymap(
         });
         let booted = boot_with_ports(
             directory,
-            settings,
+            settings_override.unwrap_or_else(|| nocterm_ui::SettingsStore::in_memory(settings)),
             (
                 transport.clone(),
                 if with_local {
@@ -219,7 +235,7 @@ fn boot_with_files(
 ) -> crate::bootstrap::Booted {
     boot_with_ports(
         directory,
-        settings,
+        nocterm_ui::SettingsStore::in_memory(settings),
         (
             transport,
             nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
@@ -232,7 +248,7 @@ fn boot_with_files(
 }
 fn boot_with_ports(
     directory: tempfile::TempDir,
-    settings: nocterm_settings::SettingsDocument,
+    settings: nocterm_ui::SettingsStore,
     terminal: (Arc<MockTransport>, nocterm_terminal::LocalSessions),
     vault: bool,
     files: Option<nocterm_files::Deps>,
@@ -260,7 +276,7 @@ fn boot_with_ports(
                 nocterm_agent::ImageDeps::new(codec.clone(), codec)
             },
             tokens: nocterm_ui::DesignTokens::builtin(),
-            settings: nocterm_ui::SettingsStore::in_memory(settings),
+            settings,
             settings_ui: nocterm_settings_ui::Deps::new(Arc::new(
                 nocterm_ai::testing::ScriptedSandboxProbe::new(
                     nocterm_ai::sandbox::Availability::Unsupported,

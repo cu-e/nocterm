@@ -12,7 +12,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_settings::{SettingsDocument, SettingsSection};
-use nocterm_ui::{SettingsStore, edit_settings};
+use nocterm_store::SettingsHandle;
 
 type Read = Rc<dyn Fn(&SettingsDocument) -> String>;
 type Write = Rc<dyn Fn(&mut SettingsDocument, &str) -> Result<(), FieldError>>;
@@ -52,6 +52,7 @@ pub(crate) enum FieldError {
 }
 
 pub(crate) struct Field {
+    settings: SettingsHandle,
     pub input: Entity<InputState>,
     read: Read,
     write: Write,
@@ -66,6 +67,7 @@ pub(crate) struct Field {
 impl Field {
     /// A field showing `read` of section `S` and saving through `write`.
     pub(crate) fn new<S: SettingsSection, V: 'static>(
+        settings: SettingsHandle,
         read: impl Fn(&S) -> String + 'static,
         write: impl Fn(&mut S, &str) -> Result<(), FieldError> + 'static,
         window: &mut Window,
@@ -79,12 +81,13 @@ impl Field {
             document.set(section);
             Ok(())
         });
-        let saved = read(document(cx));
+        let saved = read(settings.document(cx));
         let input = cx.new(|cx| InputState::new(window, cx).default_value(saved.clone()));
         let subscription = cx.subscribe_in(&input, window, move |view, _, event, window, cx| {
             on_event(view, event, window, cx)
         });
         Self {
+            settings,
             input,
             read,
             write,
@@ -102,7 +105,7 @@ impl Field {
         if text == self.saved && self.error.is_none() {
             return;
         }
-        let mut probe = document(cx).clone();
+        let mut probe = self.settings.document(cx).clone();
         if let Err(error) = (self.write)(&mut probe, &text) {
             self.error = Some(error.to_string().into());
             return;
@@ -110,17 +113,18 @@ impl Field {
         self.error = None;
         self.saved = text.clone();
         let write = self.write.clone();
-        edit_settings(cx, move |settings| {
-            // Checked above; the settings may have changed since, so a
-            // value that no longer fits is left out rather than forced in.
-            let _ = write(settings, &text);
-        })
-        .detach();
+        self.settings
+            .edit(cx, move |settings| {
+                // Checked above; the settings may have changed since, so a
+                // value that no longer fits is left out rather than forced in.
+                let _ = write(settings, &text);
+            })
+            .detach();
     }
 
     /// Shows a value saved elsewhere, unless the user is editing this field.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut App) {
-        let value = (self.read)(document(cx));
+        let value = (self.read)(self.settings.document(cx));
         if value == self.saved || self.debounce.is_some() || self.error.is_some() {
             return;
         }
@@ -132,10 +136,6 @@ impl Field {
         self.input
             .update(cx, |input, cx| input.set_value(value, window, cx));
     }
-}
-
-fn document(cx: &App) -> &SettingsDocument {
-    cx.global::<SettingsStore>().document(cx)
 }
 
 /// An optional value: empty text means unset.

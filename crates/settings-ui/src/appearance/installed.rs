@@ -15,25 +15,24 @@ use std::collections::BTreeSet;
 
 pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<SettingsView>) {
     let themes = view.appearance.themes.clone();
+    let settings = view.appearance.settings.clone();
     let task = themes.themes().uninstall(id.clone(), cx);
     cx.spawn(async move |this, cx| match task.await {
         Ok(change) => {
             let save = cx.update(|cx| {
-                themes
-                    .settings()
-                    .update::<nocterm_ui::AppearanceSettings>(cx, move |settings| {
-                        for (slot, appearance) in [
-                            (&mut settings.light_theme, Appearance::Light),
-                            (&mut settings.dark_theme, Appearance::Dark),
-                        ] {
-                            if slot.as_ref().is_some_and(|name| {
-                                change.removed.contains(&(name.clone(), appearance))
-                                    && change.catalog.find(name, appearance).is_none()
-                            }) {
-                                *slot = None;
-                            }
+                settings.update::<nocterm_ui::AppearanceSettings>(cx, move |settings| {
+                    for (slot, appearance) in [
+                        (&mut settings.light_theme, Appearance::Light),
+                        (&mut settings.dark_theme, Appearance::Dark),
+                    ] {
+                        if slot.as_ref().is_some_and(|name| {
+                            change.removed.contains(&(name.clone(), appearance))
+                                && change.catalog.find(name, appearance).is_none()
+                        }) {
+                            *slot = None;
                         }
-                    })
+                    }
+                })
             });
             if let Err(error) = save.await {
                 let _ = this.update(cx, |this, cx| {

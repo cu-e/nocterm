@@ -15,6 +15,7 @@ nocterm-themes.workspace = true
 nocterm-theme-service.workspace = true
 nocterm-ai.workspace = true
 nocterm-settings.workspace = true
+nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 gpui-kit.workspace = true

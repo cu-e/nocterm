@@ -261,20 +261,21 @@ fn theme_commands_are_available_with_only_nocterm_default(cx: &mut TestAppContex
 fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     cx: &mut TestAppContext,
 ) {
-    let (handle, _, _, _) = fixture(cx);
     let directory = tempfile::tempdir().unwrap();
-    let before = cx.update(|cx| {
-        let settings = cx
-            .global::<nocterm_ui::SettingsStore>()
-            .document(cx)
-            .clone();
-        let service = nocterm_store::SettingsConfig::new(
-            settings.clone(),
+    let (handle, _, _, _, _) = super::super::fixture_with_settings(
+        cx,
+        false,
+        None,
+        false,
+        Some(nocterm_ui::SettingsStore::new(
+            Default::default(),
             nocterm_settings::SettingsFile::new(directory.path()),
-        )
-        .install(cx);
-        cx.set_global(nocterm_ui::SettingsStore::from_handle(service));
-        settings
+        )),
+    );
+    let before = cx.update(|cx| {
+        cx.global::<nocterm_ui::SettingsStore>()
+            .document(cx)
+            .clone()
     });
     let notices = cx
         .update_window(handle, |_, window, cx| {

@@ -5323,6 +5323,7 @@ dependencies = [
  "nocterm-ai",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-theme-service",
  "nocterm-themes",
  "nocterm-ui",

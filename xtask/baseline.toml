@@ -29,7 +29,6 @@ nocterm-workspace = 4
 
 [global_reads]
 nocterm = 1
-nocterm-settings-ui = 2
 nocterm-ui = 5
 
 [globals]

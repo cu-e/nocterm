@@ -57,7 +57,7 @@ pub(crate) struct Booted {
     keymap: nocterm_keymap::KeymapHandle,
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
-    settings_ui: nocterm_settings_ui::Deps,
+    settings_ui: nocterm_settings_ui::Installed,
     agent: nocterm_agent::Installed,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
@@ -76,7 +76,7 @@ impl Booted {
     pub(crate) fn agent_installation(&self) -> &nocterm_agent::Installed {
         &self.agent
     }
-    pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Deps {
+    pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Installed {
         self.settings_ui.clone()
     }
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
@@ -150,6 +150,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
+    let settings_ui = nocterm_settings_ui::Installed::new(ui.settings().clone(), settings_ui);
     let booted = Booted {
         keymap,
         local_host,

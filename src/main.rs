@@ -99,7 +99,7 @@ fn register_settings(
     workspace: &mut Workspace,
     vault: Option<&nocterm_vault_ui::Installed>,
     themes: nocterm_ui::ThemeUi,
-    deps: nocterm_settings_ui::Deps,
+    deps: nocterm_settings_ui::Installed,
     keymap: nocterm_keymap::KeymapHandle,
 ) {
     let mut pages = vec![
@@ -122,7 +122,7 @@ fn register_settings(
         id: &'static str,
         pages: &[nocterm_ui::SettingsPageSpec],
         themes: nocterm_ui::ThemeUi,
-        deps: nocterm_settings_ui::Deps,
+        deps: nocterm_settings_ui::Installed,
     ) {
         let pages = pages.to_vec();
         workspace.register_action(move |_, _: &A, window, cx| {

@@ -128,3 +128,9 @@ LoggingOptions changes affect the next native open and Some(empty) stays explici
 Directory authority comes only from captured paths and settings. The existing native
 create/open background lifecycle and notices remain unchanged. See
 [ADR0051](../adr/0051-retained-keymap-installation.md).
+
+Bootstrap combines prepared settings-page capabilities with the exact UI settings
+owner into settings-ui Installed. Booted retains that installation in its existing
+settings slot and supplies it to ordinary Settings, guest-page deep links and the
+startup vault page. Opening another window does not install another document or
+rediscover a compatibility settings global for these builtin consumers.

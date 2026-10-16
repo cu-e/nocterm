@@ -51,3 +51,4 @@ acceptance; a later record supersedes an earlier one.
 | [0050](0050-retained-snippet-installation.md) | Snippet views retain their original installation and private draft controls |
 | [0051](0051-retained-keymap-installation.md) | Keymap pages and directory actions retain supplied ownership across windows |
 | [0052](0052-retained-agent-installation.md) | Agent views retain runtime, policy and host installation authority |
+| [0053](0053-retained-settings-ui-installation.md) | Settings UI retains its supplied settings installation |

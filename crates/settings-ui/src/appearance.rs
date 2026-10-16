@@ -10,7 +10,7 @@ use gpui_kit::{
 };
 use nocterm_themes::Appearance;
 use nocterm_ui::{AppearanceMode, UiLayout};
-use nocterm_ui::{SettingsExt as _, ThemeUi, form};
+use nocterm_ui::{ThemeUi, form};
 use std::collections::BTreeMap;
 mod browser;
 pub(crate) mod commands;
@@ -22,6 +22,7 @@ use browser::ThemeBrowser;
 type Picker = Entity<SelectState<SearchableVec<String>>>;
 pub(crate) struct AppearancePage {
     themes: ThemeUi,
+    settings: nocterm_store::SettingsHandle,
     light: Picker,
     dark: Picker,
     browser: Entity<ThemeBrowser>,
@@ -32,12 +33,13 @@ pub(crate) struct AppearancePage {
 impl AppearancePage {
     pub(crate) fn new(
         themes: ThemeUi,
+        settings: nocterm_store::SettingsHandle,
         window: &mut Window,
         cx: &mut Context<SettingsView>,
     ) -> Self {
         let picker = |appearance, window: &mut Window, cx: &mut Context<SettingsView>| {
             let items = choices(&themes, appearance, cx);
-            let selected = selection(&themes, appearance, cx);
+            let selected = selection(&themes, &settings, appearance, cx);
             let index = items.iter().position(|name| name == &selected).unwrap_or(0);
             cx.new(|cx| {
                 SelectState::new(
@@ -76,6 +78,7 @@ impl AppearancePage {
         let browser = cx.new(|cx| ThemeBrowser::new(themes.clone(), window, cx));
         Self {
             themes,
+            settings,
             light,
             dark,
             browser,
@@ -90,7 +93,7 @@ impl AppearancePage {
             (&self.dark, Appearance::Dark),
         ] {
             let items = choices(&self.themes, appearance, cx);
-            let selected = selection(&self.themes, appearance, cx);
+            let selected = selection(&self.themes, &self.settings, appearance, cx);
             picker.update(cx, |state, cx| {
                 state.set_items(SearchableVec::new(items), window, cx);
                 state.set_selected_value(&selected, window, cx);
@@ -98,17 +101,20 @@ impl AppearancePage {
         }
     }
 }
-fn selection(themes: &ThemeUi, appearance: Appearance, cx: &App) -> String {
+fn selection(
+    themes: &ThemeUi,
+    settings: &nocterm_store::SettingsHandle,
+    appearance: Appearance,
+    cx: &App,
+) -> String {
     let name = match appearance {
         Appearance::Light => {
-            &themes
-                .settings()
+            &settings
                 .setting::<nocterm_ui::AppearanceSettings>(cx)
                 .light_theme
         }
         Appearance::Dark => {
-            &themes
-                .settings()
+            &settings
                 .setting::<nocterm_ui::AppearanceSettings>(cx)
                 .dark_theme
         }
@@ -172,7 +178,11 @@ fn layout(
 }
 
 pub(crate) fn render(view: &mut SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let settings = cx.setting::<nocterm_ui::AppearanceSettings>().clone();
+    let settings = view
+        .installed
+        .settings()
+        .setting::<nocterm_ui::AppearanceSettings>(cx)
+        .clone();
     let mut sections = vec![form::section(
         "Theme",
         [

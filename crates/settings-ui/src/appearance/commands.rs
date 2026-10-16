@@ -22,19 +22,32 @@ enum Choice {
     Scheme(AppearanceMode),
 }
 
-pub(crate) fn register(workspace: &mut Workspace, themes: nocterm_ui::ThemeUi) {
+pub(crate) fn register(
+    workspace: &mut Workspace,
+    themes: nocterm_ui::ThemeUi,
+    settings: nocterm_store::SettingsHandle,
+) {
     let picker = themes.clone();
+    let theme_settings = settings.clone();
     workspace.register_action(move |_, _: &ChangeTheme, window, cx| {
         let themes = picker.clone();
-        window.defer(cx, move |window, cx| open_theme(&themes, window, cx));
+        let settings = theme_settings.clone();
+        window.defer(cx, move |window, cx| {
+            open_theme(&themes, &settings, window, cx)
+        });
     });
     workspace.register_action(move |_, _: &ChangeColorScheme, window, cx| {
-        let themes = themes.clone();
-        window.defer(cx, move |window, cx| open_scheme(&themes, window, cx));
+        let settings = settings.clone();
+        window.defer(cx, move |window, cx| open_scheme(&settings, window, cx));
     });
 }
 
-fn open_theme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
+fn open_theme(
+    themes: &nocterm_ui::ThemeUi,
+    settings: &nocterm_store::SettingsHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
     // Snapshot the appearance at open: an OS change in System mode while the
     // picker is open must not redirect a light selection into the dark slot.
     let dark = cx.theme().is_dark();
@@ -43,7 +56,7 @@ fn open_theme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
     } else {
         nocterm_themes::Appearance::Light
     };
-    let selected = selection(themes, appearance, cx);
+    let selected = selection(themes, settings, appearance, cx);
     let options = choices(themes, appearance, cx)
         .into_iter()
         .map(|name| {
@@ -56,7 +69,7 @@ fn open_theme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
         })
         .collect();
     open(
-        themes.clone(),
+        settings.clone(),
         if dark {
             "Choose dark theme…"
         } else {
@@ -68,11 +81,8 @@ fn open_theme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
     );
 }
 
-fn open_scheme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
-    let current = themes
-        .settings()
-        .setting::<nocterm_ui::AppearanceSettings>(cx)
-        .mode;
+fn open_scheme(settings: &nocterm_store::SettingsHandle, window: &mut Window, cx: &mut App) {
+    let current = settings.setting::<nocterm_ui::AppearanceSettings>(cx).mode;
     let options = [
         ("System", AppearanceMode::System),
         ("Light", AppearanceMode::Light),
@@ -81,11 +91,17 @@ fn open_scheme(themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) 
     .into_iter()
     .map(|(label, mode)| (label.to_owned(), mode == current, Choice::Scheme(mode)))
     .collect();
-    open(themes.clone(), "Choose color scheme…", options, window, cx);
+    open(
+        settings.clone(),
+        "Choose color scheme…",
+        options,
+        window,
+        cx,
+    );
 }
 
 fn open(
-    themes: nocterm_ui::ThemeUi,
+    settings: nocterm_store::SettingsHandle,
     placeholder: &'static str,
     options: Vec<(String, bool, Choice)>,
     window: &mut Window,
@@ -97,7 +113,7 @@ fn open(
     let field = state.clone();
     window.open_dialog(cx, move |dialog, _, _| {
         let confirm = options.clone();
-        let themes = themes.clone();
+        let settings = settings.clone();
         let origin = origin.clone();
         dialog.w(px(560.)).p_0().close_button(false).child(
             Command::new(&state)
@@ -121,33 +137,31 @@ fn open(
                     if let Some(origin) = &origin {
                         window.focus(origin, cx);
                     }
-                    save(choice, &themes, window, cx);
+                    save(choice, &settings, window, cx);
                 }),
         )
     });
     field.update(cx, |state, cx| state.focus(window, cx));
 }
 
-fn save(choice: Choice, themes: &nocterm_ui::ThemeUi, window: &mut Window, cx: &mut App) {
-    let settings_handle = cx
-        .try_global::<nocterm_ui::SettingsStore>()
-        .and_then(|s| s.handle().cloned())
-        .unwrap_or_else(|| themes.settings().clone());
+fn save(
+    choice: Choice,
+    settings: &nocterm_store::SettingsHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let task =
-        settings_handle.update::<nocterm_ui::AppearanceSettings>(
-            cx,
-            move |settings| match choice {
-                Choice::Theme { dark, name } => {
-                    let name = (name != "Nocterm Default").then_some(name);
-                    if dark {
-                        settings.dark_theme = name;
-                    } else {
-                        settings.light_theme = name;
-                    }
+        settings.update::<nocterm_ui::AppearanceSettings>(cx, move |settings| match choice {
+            Choice::Theme { dark, name } => {
+                let name = (name != "Nocterm Default").then_some(name);
+                if dark {
+                    settings.dark_theme = name;
+                } else {
+                    settings.light_theme = name;
                 }
-                Choice::Scheme(mode) => settings.mode = mode,
-            },
-        );
+            }
+            Choice::Scheme(mode) => settings.mode = mode,
+        });
     window
         .spawn(cx, async move |cx| {
             let result = task.await;

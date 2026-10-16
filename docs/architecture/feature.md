@@ -126,9 +126,9 @@ and comments on retained keys round-trip through the existing atomic writer.
 contributes a single settings Item with a page list. Every control saves itself:
 switches and choices at once, text when typing pauses, on Enter and on blur.
 Invalid text stays in its field with the error and is never written. Each save is
-an edit of one section (`update_setting`) queued and applied to the settings
+an edit of one section through its supplied SettingsHandle queued and applied to the settings
 current when the write runs, so quick successive edits and other windows never
-conflict; changes are published through SettingsStore only after a successful
+conflict; changes are published through the retained settings owner only after a successful
 write, observers of other sections are not woken, and fields not being edited
 follow changes made elsewhere. Persistent writes run through bounded ordered
 background queues; profile drafts carry the original snapshot, so another window
@@ -480,3 +480,13 @@ per-window subscriptions retain weak views and original window handles. There is
 no runtime/auth or shared-UI AI policy compatibility lookup. Shutdown registration
 status remains separately typed and does not discard a usable installation. See
 [ADR0052](../adr/0052-retained-agent-installation.md).
+
+Settings tab installation retains the supplied SettingsHandle and SandboxProbe
+capability. Builtin fields, page controls, section diagnostics and settings observation
+use that exact owner; window/page factories clone the installation. Per-window
+observation keeps a weak view and originating window. Appearance picker callbacks
+retain the same supplied policy through deferred opening and completion. Text fields
+keep their current 600 ms debounce, Enter/blur/deactivate/close behavior: validation
+probes the published document, then existing unchecked replay is detached. Other
+shared UI/feature consumers still have SettingsStore compatibility access. See
+[ADR0053](../adr/0053-retained-settings-ui-installation.md).

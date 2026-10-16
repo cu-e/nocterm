@@ -1,6 +1,6 @@
 //! AppearanceSettings, Terminal, Local shell and SSH pages.
 use gpui_kit::{
-    AnyElement, App, Context, Entity, SharedString, Window,
+    AnyElement, App, Context, Entity, SharedString, TestSupportExt as _, Window,
     component::{
         Disableable as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -21,7 +21,7 @@ use nocterm_ui::{
     AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy, CursorShape,
     FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings,
 };
-use nocterm_ui::{SessionOptionsEditor, SettingsExt as _, form};
+use nocterm_ui::{SessionOptionsEditor, form};
 
 use crate::{
     Page, SettingsView,
@@ -29,20 +29,21 @@ use crate::{
 };
 
 pub(crate) fn new_session_options(
+    settings: &nocterm_store::SettingsHandle,
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) -> Entity<SessionOptionsEditor> {
-    let options = session_options(cx);
+    let options = session_options(settings, cx);
     cx.new(|cx| SessionOptionsEditor::new(options, false, window, cx))
 }
 
-fn session_options(cx: &App) -> SessionOptions {
-    let terminal = cx.setting::<TerminalSettings>();
+fn session_options(settings: &nocterm_store::SettingsHandle, cx: &App) -> SessionOptions {
+    let terminal = settings.setting::<TerminalSettings>(cx);
     SessionOptions {
         term: Some(terminal.term.clone()),
         charset: Some(terminal.charset),
-        proxy: Some(cx.setting::<SshSettings>().proxy.clone()),
-        logging: Some(cx.setting::<LoggingOptions>().clone()),
+        proxy: Some(settings.setting::<SshSettings>(cx).proxy.clone()),
+        logging: Some(settings.setting::<LoggingOptions>(cx).clone()),
     }
 }
 
@@ -282,13 +283,19 @@ pub(crate) fn text_row(
     cx: &App,
 ) -> AnyElement {
     let field = view.field(key);
-    form::stacked_row(
-        label,
-        description,
-        Input::new(&field.input).small(),
-        field.error.clone(),
-        cx,
-    )
+    gpui_kit::div()
+        .id(SharedString::from(format!("settings-field-{key}")))
+        .test_support()
+        .child(form::stacked_row(
+            label,
+            description,
+            Input::new(&field.input)
+                .id(SharedString::from(key.to_owned()))
+                .small(),
+            field.error.clone(),
+            cx,
+        ))
+        .into_any_element()
 }
 
 /// A short text input on the right of its label.
@@ -303,13 +310,17 @@ pub(crate) fn short_row(
     let row = form::row(
         label,
         description,
-        gpui_kit::div()
-            .w(rems(10.))
-            .child(Input::new(&field.input).small()),
+        gpui_kit::div().w(rems(10.)).child(
+            Input::new(&field.input)
+                .id(SharedString::from(key.to_owned()))
+                .small(),
+        ),
         cx,
     );
     match field.error.clone() {
         Some(error) => v_flex()
+            .id(SharedString::from(format!("settings-error-{key}")))
+            .test_support()
             .child(row)
             .child(form::error_text(error, cx))
             .into_any_element(),
@@ -319,7 +330,11 @@ pub(crate) fn short_row(
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let terminal = cx.setting::<TerminalSettings>().clone();
+    let terminal = view
+        .installed
+        .settings()
+        .setting::<TerminalSettings>(cx)
+        .clone();
     vec![
         form::section(
             "Text",
@@ -471,7 +486,11 @@ fn terminal(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEleme
 }
 
 fn local_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let integration = cx.setting::<LocalShellSettings>().integration;
+    let integration = view
+        .installed
+        .settings()
+        .setting::<LocalShellSettings>(cx)
+        .integration;
     vec![
         form::section(
             "Launch",
@@ -527,7 +546,6 @@ fn local_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyEl
 }
 
 fn ssh(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
-    let integration = cx.setting::<SshSettings>().launch.integration;
     vec![
         form::section(
             "Session defaults",
@@ -560,51 +578,61 @@ fn ssh(view: &SettingsView, cx: &mut Context<SettingsView>) -> Vec<AnyElement> {
             ],
             cx,
         ),
-        form::section(
-            "Remote shell",
-            [
-                text_row(
-                    view,
-                    "ssh.launch.program",
-                    "Executable",
-                    "Empty asks the server for its default shell. Connections may override this.",
-                    cx,
-                ),
-                text_row(
-                    view,
-                    "ssh.launch.args",
-                    "Arguments",
-                    "JSON array; applies on reconnect.",
-                    cx,
-                ),
-                text_row(
-                    view,
-                    "ssh.launch.cwd",
-                    "Start in",
-                    "Empty uses the remote home folder.",
-                    cx,
-                ),
-                text_row(
-                    view,
-                    "ssh.launch.env",
-                    "Environment",
-                    "JSON object; servers may refuse some variables.",
-                    cx,
-                ),
-                form::row(
-                    "Shell integration",
-                    "Track the current folder and prompt on remote hosts.",
-                    toggle(
-                        "remote-integration",
-                        integration,
-                        false,
-                        |s: &mut SshSettings, on| s.launch.integration = on,
-                        cx,
-                    ),
-                    cx,
-                ),
-            ],
-            cx,
-        ),
+        remote_shell(view, cx),
     ]
+}
+
+fn remote_shell(view: &SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
+    let integration = view
+        .installed
+        .settings()
+        .setting::<SshSettings>(cx)
+        .launch
+        .integration;
+    form::section(
+        "Remote shell",
+        [
+            text_row(
+                view,
+                "ssh.launch.program",
+                "Executable",
+                "Empty asks the server for its default shell. Connections may override this.",
+                cx,
+            ),
+            text_row(
+                view,
+                "ssh.launch.args",
+                "Arguments",
+                "JSON array; applies on reconnect.",
+                cx,
+            ),
+            text_row(
+                view,
+                "ssh.launch.cwd",
+                "Start in",
+                "Empty uses the remote home folder.",
+                cx,
+            ),
+            text_row(
+                view,
+                "ssh.launch.env",
+                "Environment",
+                "JSON object; servers may refuse some variables.",
+                cx,
+            ),
+            form::row(
+                "Shell integration",
+                "Track the current folder and prompt on remote hosts.",
+                toggle(
+                    "remote-integration",
+                    integration,
+                    false,
+                    |s: &mut SshSettings, on| s.launch.integration = on,
+                    cx,
+                ),
+                cx,
+            ),
+        ],
+        cx,
+    )
 }
