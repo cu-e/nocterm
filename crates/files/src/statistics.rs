@@ -101,10 +101,13 @@ pub(crate) struct Counter {
     progress: Arc<Mutex<Statistics>>,
     cancel: CancelFlag,
     /// What the view shows; caught up with the walk by [`Counter::poll`].
-    pub(crate) shown: Statistics,
+    shown: Statistics,
 }
 
 impl Counter {
+    pub(crate) fn shown(&self) -> &Statistics {
+        &self.shown
+    }
     /// Cancels the running walk and returns the handles of a new one.
     pub(crate) fn restart(&mut self) -> (CancelFlag, Arc<Mutex<Statistics>>) {
         self.stop();

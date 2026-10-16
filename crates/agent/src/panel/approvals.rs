@@ -21,22 +21,22 @@ use super::{AgentPanel, widgets::menu_variant};
 use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
 
 fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
-    let heading = if wait.vault {
+    let heading = if wait.vault() {
         "Unlock the vault to sign in".to_owned()
-    } else if wait.prompt.retry {
-        format!("That was not accepted. Sign in to {} again", wait.title)
+    } else if wait.prompt().retry {
+        format!("That was not accepted. Sign in to {} again", wait.title())
     } else {
-        format!("Sign in to {}", wait.title)
+        format!("Sign in to {}", wait.title())
     };
-    let detail = if wait.vault {
+    let detail = if wait.vault() {
         format!(
             "{} uses a password saved in the vault. Unlock it, or type the password here.",
-            wait.title
+            wait.title()
         )
     } else {
         format!(
             "{}. The agent continues once you are signed in.",
-            wait.prompt.label
+            wait.prompt().label
         )
     };
     (heading, detail)
@@ -66,7 +66,7 @@ impl ApprovalCardsRenderer {
     ) -> AnyElement {
         let (heading, detail) = sign_in_text(&wait);
         let field = Input::new(&input).id(("sign-in-input", index)).small();
-        let field = if wait.prompt.masked {
+        let field = if wait.prompt().masked {
             field.mask_toggle()
         } else {
             field
@@ -78,7 +78,7 @@ impl ApprovalCardsRenderer {
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .when(wait.prompt.retry && !wait.vault, |text| {
+                    .when(wait.prompt().retry && !wait.vault(), |text| {
                         text.text_color(cx.theme().danger)
                     })
                     .child(heading),
@@ -95,7 +95,7 @@ impl ApprovalCardsRenderer {
                     .w_full()
                     .min_w_0()
                     .gap_1()
-                    .when(wait.vault, |row| {
+                    .when(wait.vault(), |row| {
                         row.child(
                             Button::new(("vault-unlock", index))
                                 .primary()
@@ -110,8 +110,8 @@ impl ApprovalCardsRenderer {
                     .child(div().flex_1().min_w_0().child(field))
                     .child(
                         Button::new(("sign-in-submit", index))
-                            .when(wait.vault, |button| button.custom(menu_variant(cx)))
-                            .when(!wait.vault, |button| button.primary())
+                            .when(wait.vault(), |button| button.custom(menu_variant(cx)))
+                            .when(!wait.vault(), |button| button.primary())
                             .small()
                             .label("Sign in")
                             .on_click(move |_, window, cx| {

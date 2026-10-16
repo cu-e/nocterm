@@ -21,7 +21,7 @@ impl PathInput {
         let suggestions = self
             .completion
             .cycle()
-            .map_or(0, |cycle| cycle.candidates.len());
+            .map_or(0, |cycle| cycle.candidate_count());
         let available = (viewport.height - bounds.bottom()).max(bounds.top()) - px(14.);
         let width = bounds
             .size
@@ -92,14 +92,14 @@ impl PathInput {
     }
     fn render_suggestion(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let cycle = self.completion.cycle().expect("suggestions have a cycle");
-        let candidate = &cycle.candidates[index];
+        let candidate = cycle.candidate(index);
         div()
             .h(px(32.))
             .px_2()
             .flex()
             .items_center()
             .text_size(px(cx.design().typography.explorer_size.unwrap_or(12.)))
-            .when(cycle.selected == Some(index), |row| {
+            .when(cycle.selected() == Some(index), |row| {
                 row.bg(cx.theme().accent)
                     .text_color(cx.theme().accent_foreground)
             })
@@ -110,7 +110,7 @@ impl PathInput {
             .child(div().min_w_0().truncate().child(candidate.name.clone()))
             .id(("path-suggestion", index))
             .aria_label(candidate.name.clone())
-            .aria_selected(cycle.selected == Some(index))
+            .aria_selected(cycle.selected() == Some(index))
             .test_support()
             .cursor_pointer()
             .on_mouse_down(

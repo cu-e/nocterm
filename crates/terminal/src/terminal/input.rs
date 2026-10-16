@@ -95,7 +95,7 @@ impl TerminalInput {
         self.integration.borrow_mut().advance(bytes)
     }
     pub(super) fn cwd(&self) -> Option<std::path::PathBuf> {
-        self.integration.borrow().cwd.clone()
+        self.integration.borrow().cwd().map(Path::to_path_buf)
     }
     pub(super) fn text_error(&self) -> Option<String> {
         self.text_error
@@ -116,10 +116,7 @@ impl TerminalInput {
     }
     fn prompt_state(&self) -> (Option<bool>, bool) {
         let integration = self.integration.borrow();
-        (
-            integration.known.then_some(integration.at_prompt),
-            integration.dirty_input,
-        )
+        integration.prompt_state()
     }
     fn prepare_directory(
         &self,
@@ -143,7 +140,7 @@ impl TerminalInput {
             _ => return Err(LocalDirectoryError::UnsupportedShell),
         };
         let integration = self.integration.borrow();
-        if !integration.at_prompt || integration.dirty_input || alt_screen {
+        if !integration.at_prompt() || integration.dirty_input() || alt_screen {
             return Err(LocalDirectoryError::Busy { command });
         }
         Ok(PreparedInput {
@@ -165,7 +162,10 @@ impl TerminalInput {
                 return Err(TerminalError::CommandControlCharacters);
             }
             let integration = self.integration.borrow();
-            if alt_screen || !integration.known || !integration.at_prompt || integration.dirty_input
+            if alt_screen
+                || !integration.known()
+                || !integration.at_prompt()
+                || integration.dirty_input()
             {
                 return Err(TerminalError::CommandPromptUnavailable);
             }

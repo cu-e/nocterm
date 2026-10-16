@@ -52,11 +52,11 @@ impl State {
 
 #[derive(Clone, Debug)]
 pub(in crate::thread) struct Snapshot {
-    pub state: State,
-    pub stdout: Vec<u8>,
-    pub total_bytes: u64,
-    pub exit: Option<ExecExit>,
-    pub error: Option<String>,
+    state: State,
+    stdout: Vec<u8>,
+    total_bytes: u64,
+    exit: Option<ExecExit>,
+    error: Option<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -70,6 +70,22 @@ impl Default for Snapshot {
     }
 }
 impl Snapshot {
+    pub(in crate::thread) fn state(&self) -> State {
+        self.state
+    }
+    pub(in crate::thread) fn stdout(&self) -> &[u8] {
+        &self.stdout
+    }
+    pub(in crate::thread) fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+    pub(in crate::thread) fn exit(&self) -> Option<&ExecExit> {
+        self.exit.as_ref()
+    }
+    pub(in crate::thread) fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
     pub(in crate::thread) fn active(&self) -> bool {
         self.state.active()
     }
@@ -82,9 +98,9 @@ impl Snapshot {
     }
 }
 pub(in crate::thread) struct Job {
-    pub terminal_id: String,
-    pub executor: Arc<dyn HostExec>,
-    pub snapshot: Arc<Mutex<Snapshot>>,
+    terminal_id: String,
+    executor: Arc<dyn HostExec>,
+    snapshot: Arc<Mutex<Snapshot>>,
     cancel: async_channel::Sender<()>,
 }
 impl Job {
@@ -115,8 +131,31 @@ pub(in crate::thread) struct Jobs {
     jobs: BTreeMap<u64, Job>,
     next: u64,
 }
+pub(in crate::thread) struct CommandStart {
+    id: String,
+    run: futures::future::BoxFuture<'static, ()>,
+}
+impl CommandStart {
+    pub(in crate::thread) fn into_run(self) -> (String, futures::future::BoxFuture<'static, ()>) {
+        (self.id, self.run)
+    }
+}
 impl Jobs {
-    pub(in crate::thread) fn insert(
+    pub(in crate::thread) fn start(
+        &mut self,
+        terminal: String,
+        executor: Arc<dyn HostExec>,
+        request: ExecRequest,
+        deadline: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> Result<CommandStart, JobError> {
+        let (id, state, cancel) = self.insert(terminal, executor.clone())?;
+        Ok(CommandStart {
+            id,
+            run: Box::pin(run(executor, request, state, cancel, deadline)),
+        })
+    }
+
+    fn insert(
         &mut self,
         terminal_id: String,
         executor: Arc<dyn HostExec>,
@@ -182,7 +221,7 @@ impl Jobs {
 }
 
 /// Startup, stdin and continuous output draining all share one absolute deadline.
-pub(in crate::thread) async fn run(
+async fn run(
     executor: Arc<dyn HostExec>,
     request: ExecRequest,
     snapshot: Arc<Mutex<Snapshot>>,

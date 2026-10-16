@@ -10,15 +10,7 @@ pub(super) struct CommandJobs {
     jobs: jobs::Jobs,
     watch: Option<Task<()>>,
 }
-pub(in crate::thread) struct CommandStart {
-    id: String,
-    run: futures::future::BoxFuture<'static, ()>,
-}
-impl CommandStart {
-    pub(in crate::thread) fn into_run(self) -> (String, futures::future::BoxFuture<'static, ()>) {
-        (self.id, self.run)
-    }
-}
+pub(in crate::thread) use jobs::CommandStart;
 impl CommandJobs {
     pub(super) fn revoke_replaced(&self, current: &[(String, Option<Arc<dyn HostExec>>)]) {
         let revoked = self
@@ -45,11 +37,7 @@ impl CommandJobs {
         request: ExecRequest,
         deadline: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<CommandStart, ToolFailure> {
-        let (id, state, cancel) = self.jobs.insert(terminal, executor.clone())?;
-        Ok(CommandStart {
-            id,
-            run: Box::pin(jobs::run(executor, request, state, cancel, deadline)),
-        })
+        Ok(self.jobs.start(terminal, executor, request, deadline)?)
     }
     pub(super) fn snapshot(
         &self,
@@ -112,7 +100,7 @@ mod tests {
         assert!(jobs.snapshot(&id, "replacement terminal").is_err());
         jobs.cancel_all();
         assert_eq!(
-            jobs.snapshot(&id, "terminal").unwrap().state,
+            jobs.snapshot(&id, "terminal").unwrap().state(),
             jobs::State::Cancelled
         );
         assert!(jobs.active().next().is_none());

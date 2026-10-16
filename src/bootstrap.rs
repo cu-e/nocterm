@@ -65,12 +65,19 @@ pub(crate) struct Booted {
     workspace: nocterm_workspace::Deps,
     connections: Option<nocterm_connections::Installed>,
     snippets: Option<nocterm_snippets_ui::Installed>,
-    pub(crate) themes: nocterm_ui::ThemeUi,
+    themes: nocterm_ui::ThemeUi,
     /// The vault, when it opened; credentials and its settings depend on it.
-    pub(crate) vault: Option<Rc<nocterm_vault_ui::Installed>>,
+    vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
 
 impl Booted {
+    pub(crate) fn themes(&self) -> &nocterm_ui::ThemeUi {
+        &self.themes
+    }
+    pub(crate) fn vault(&self) -> Option<&Rc<nocterm_vault_ui::Installed>> {
+        self.vault.as_ref()
+    }
+
     #[cfg(test)]
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
@@ -375,14 +382,14 @@ pub(crate) fn build_workspace(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let vault = booted.vault.as_deref();
+    let vault = booted.vault().map(Rc::as_ref);
     nocterm_terminal::register(&booted.terminal, workspace);
     if let Some(connections) = &booted.connections {
         nocterm_connections::register(connections, workspace, window, cx);
     }
     booted
         .settings_ui
-        .register(workspace, booted.themes.clone());
+        .register(workspace, booted.themes().clone());
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     if let Some(snippets) = &booted.snippets {

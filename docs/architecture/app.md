@@ -160,3 +160,6 @@ phase, prepares its checked service state and supplies a repository-backed snaps
 writer to SnippetsHandle. Only successful shutdown registration exposes Installed to
 windows. The same installed library/settings and native identity capability are reused
 across windows; UUID acquisition occurs only for an actual new editor draft.
+
+Booted retains its original theme and optional vault installations privately;
+composition reads named borrowed projections when registering windows and settings.

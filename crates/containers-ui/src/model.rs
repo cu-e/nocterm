@@ -44,8 +44,14 @@ pub(crate) struct ActionIntent {
     host: Host,
     engine: Engine,
     epoch: Arc<()>,
-    pub(crate) action: Action,
+    action: Action,
     ids: Vec<String>,
+}
+
+impl ActionIntent {
+    pub(crate) fn action(&self) -> Action {
+        self.action
+    }
 }
 
 pub(crate) struct ContainersModel {

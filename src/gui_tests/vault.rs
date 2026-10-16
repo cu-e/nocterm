@@ -100,7 +100,7 @@ fn installed_vault_port_shares_credentials_and_pages_across_windows(cx: &mut Tes
             true,
             cx,
         );
-        let installed = booted.vault.clone().unwrap();
+        let installed = booted.vault().cloned().unwrap();
         let first = open_workspace(&booted, cx);
         let second = open_workspace(&booted, cx);
         (first, second, installed)

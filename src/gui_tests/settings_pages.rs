@@ -36,7 +36,7 @@ fn init_with_probe(
     SettingsFixture {
         installed: booted.settings_deps(),
         pages: booted.settings_pages(),
-        themes: booted.themes.clone(),
+        themes: booted.themes().clone(),
     }
 }
 fn init_with_settings(settings: SettingsConfig, cx: &mut App) -> SettingsFixture {
@@ -55,7 +55,7 @@ fn init_with_settings(settings: SettingsConfig, cx: &mut App) -> SettingsFixture
     SettingsFixture {
         installed: booted.settings_deps(),
         pages: booted.settings_pages(),
-        themes: booted.themes.clone(),
+        themes: booted.themes().clone(),
     }
 }
 pub(super) fn test_window_options() -> WindowOptions {

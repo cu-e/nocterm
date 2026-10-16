@@ -1,4 +1,5 @@
 //! Agent chat presentation and session coordination through injected contracts.
+//! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose immutable facts.
 //! Installed retains the actual runtime, image, layout, settings, metadata and auth collaborators.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.

@@ -7,21 +7,21 @@ impl TerminalView {
     pub(super) fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let field = self.find.as_ref()?;
         let find = self.terminal.read(cx).find();
-        let label = if let Some(error) = &find.error {
-            error.clone()
-        } else if find.query.is_empty() {
+        let label = if let Some(error) = find.error() {
+            error.to_owned()
+        } else if find.query().is_empty() {
             "".into()
-        } else if find.searching {
+        } else if find.searching() {
             "Searching…".into()
-        } else if find.result.count == 0 {
+        } else if find.result().count == 0 {
             "No matches".into()
         } else {
-            format!("{} of {}", find.result.ordinal, find.result.count)
+            format!("{} of {}", find.result().ordinal, find.result().count)
         };
-        let disabled = find.query.is_empty()
-            || find.searching
-            || find.result.count == 0
-            || find.error.is_some();
+        let disabled = find.query().is_empty()
+            || find.searching()
+            || find.result().count == 0
+            || find.error().is_some();
         Some(
             v_flex()
                 .flex_shrink_0()
@@ -54,7 +54,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label(".*")
-                                .selected(find.options.regex)
+                                .selected(find.options().regex)
                                 .tooltip("Use regular expression (per logical line)")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -69,7 +69,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label("Aa")
-                                .selected(find.options.case_sensitive)
+                                .selected(find.options().case_sensitive)
                                 .tooltip("Match case")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -84,7 +84,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label("ab")
-                                .selected(find.options.whole_word)
+                                .selected(find.options().whole_word)
                                 .tooltip("Match whole word")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -133,7 +133,7 @@ impl TerminalView {
                             .text_xs()
                             .min_w_0()
                             .truncate()
-                            .text_color(if find.error.is_some() {
+                            .text_color(if find.error().is_some() {
                                 cx.theme().danger
                             } else {
                                 cx.theme().muted_foreground

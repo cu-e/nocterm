@@ -448,10 +448,10 @@ fn home_and_navigation_sort_directories_first() {
     let mut browser = Browser::default();
     let request = browser.begin();
     assert!(browser.finish(request, block_on(listing(fs.clone(), None))));
-    assert_eq!(browser.path.as_deref(), Some("/home/test"));
+    assert_eq!(browser.path(), Some("/home/test"));
     assert_eq!(
         browser
-            .entries
+            .entries()
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<Vec<_>>(),
@@ -459,25 +459,24 @@ fn home_and_navigation_sort_directories_first() {
     );
     let request = browser.begin();
     browser.finish(request, block_on(listing(fs, Some("/home/test/b".into()))));
-    assert_eq!(browser.path.as_deref(), Some("/home/test/b"));
+    assert_eq!(browser.path(), Some("/home/test/b"));
 }
 #[test]
 fn permission_error_keeps_previous_directory_for_retry() {
-    let mut browser = Browser {
-        path: Some("/home/test".into()),
-        ..Browser::default()
-    };
+    let mut browser = Browser::default();
+    let initial = browser.begin();
+    browser.finish(initial, Ok(("/home/test".into(), vec![])));
     let request = browser.begin();
     browser.finish(
         request,
         block_on(listing(Arc::new(FakeFs), Some("/denied".into()))),
     );
     assert!(matches!(
-        browser.error,
+        browser.error(),
         Some(FsError::PermissionDenied { .. })
     ));
-    assert_eq!(browser.path.as_deref(), Some("/home/test"));
-    assert!(!browser.loading);
+    assert_eq!(browser.path(), Some("/home/test"));
+    assert!(!browser.loading());
 }
 #[test]
 fn stale_results_cannot_replace_new_session_or_navigation() {
@@ -485,12 +484,12 @@ fn stale_results_cannot_replace_new_session_or_navigation() {
     let old = browser.begin();
     let current = browser.begin();
     assert!(!browser.finish(old, Ok(("/old".into(), vec![]))));
-    assert!(browser.loading);
+    assert!(browser.loading());
     browser.finish(current, Ok(("/new".into(), vec![])));
     browser.clear();
     assert!(!browser.finish(current, Err(FsError::NotConnected)));
-    assert!(browser.path.is_none());
-    assert!(browser.error.is_none());
+    assert!(browser.path().is_none());
+    assert!(browser.error().is_none());
 }
 
 struct CwdShell {

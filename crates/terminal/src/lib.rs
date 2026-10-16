@@ -1,4 +1,5 @@
 //! The terminal tab: a session's screen, keyboard and prompts.
+//! Shell integration and live search facts stay private and expose immutable observations.
 //!
 //! Two layers, so that the screen can be read without a window:
 //!

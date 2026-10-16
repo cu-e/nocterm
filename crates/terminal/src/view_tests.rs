@@ -98,7 +98,7 @@ fn complete(cx: &mut TestAppContext, view: &Entity<TerminalView>) {
     for _ in 0..500 {
         cx.executor().advance_clock(Duration::from_millis(20));
         cx.run_until_parked();
-        if view.read_with(cx, |v, cx| !v.terminal.read(cx).find().searching) {
+        if view.read_with(cx, |v, cx| !v.terminal.read(cx).find().searching()) {
             return;
         }
     }
@@ -137,8 +137,8 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.count, 2);
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 1);
+        assert_eq!(v.terminal.read(cx).find().result().count, 2);
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 1);
     });
     cx.update_window(handle, |_, window, cx| {
         window.press("enter", cx);
@@ -147,7 +147,7 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 2)
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 2)
     });
     cx.update_window(handle, |_, window, cx| {
         window.press("shift-enter", cx);
@@ -156,7 +156,7 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 1)
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 1)
     });
     cx.update_window(handle, |_, window, cx| {
         window.dispatch_action(Box::new(native_input::SelectAll), cx);
@@ -212,7 +212,7 @@ fn selection_search_and_screen_native_actions_keep_independent_text(cx: &mut Tes
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
         let t = v.terminal.read(cx);
-        assert_eq!(t.find().result.ordinal, 2);
+        assert_eq!(t.find().result().ordinal, 2);
         assert_eq!(t.emulator().selection_text().as_deref(), Some("target"));
         let mut frame = Frame::default();
         t.emulator().snapshot(&mut frame);
@@ -333,7 +333,7 @@ fn rapid_output_invalidates_highlights_then_search_resumes_and_can_cancel(cx: &m
     }
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.count, 5)
+        assert_eq!(v.terminal.read(cx).find().result().count, 5)
     });
     emit(cx, &transport, 0, Event::Output(b"\r\nneedle".to_vec()));
     cx.update_window(handle, |_, window, cx| {
@@ -344,7 +344,7 @@ fn rapid_output_invalidates_highlights_then_search_resumes_and_can_cancel(cx: &m
     cx.run_until_parked();
     view.read_with(cx, |v, cx| {
         assert!(v.find.is_none());
-        assert!(v.terminal.read(cx).find().query.is_empty());
+        assert!(v.terminal.read(cx).find().query().is_empty());
         let mut frame = Frame::default();
         v.terminal.read(cx).emulator().snapshot(&mut frame);
         assert!(!frame.cells.iter().any(|c| c.search_hit));
@@ -466,7 +466,7 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     .unwrap();
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         2
     );
     for (button, count) in [
@@ -484,7 +484,7 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
         .unwrap();
         complete(cx, &view);
         assert_eq!(
-            view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+            view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
             count
         );
     }
@@ -497,12 +497,12 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     view.read_with(cx, |v, cx| {
         let find = v.terminal.read(cx).find();
         assert!(
-            find.error
+            find.error()
                 .as_ref()
                 .unwrap()
                 .contains("Invalid or oversized")
         );
-        assert_eq!(find.result.count, 0);
+        assert_eq!(find.result().count, 0);
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -510,7 +510,7 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     })
     .unwrap();
     complete(cx, &view);
-    assert!(view.read_with(cx, |v, cx| v.terminal.read(cx).find().error.is_none()));
+    assert!(view.read_with(cx, |v, cx| v.terminal.read(cx).find().error().is_none()));
     assert!(
         drain(&driver).is_empty(),
         "search switches leaked input to shell"
@@ -540,9 +540,9 @@ fn bounded_regex_failure_is_inline_and_a_new_search_clears_it(cx: &mut TestAppCo
     });
     complete(cx, &view);
     terminal.read_with(cx, |terminal, _| {
-        assert_eq!(terminal.find().error.as_deref(), Some("Regular expression search is limited to 65536 bytes per logical line. Use literal mode for longer lines."));
-        assert_eq!(terminal.find().result.count, 0);
-        assert!(!terminal.find().searching);
+        assert_eq!(terminal.find().error(), Some("Regular expression search is limited to 65536 bytes per logical line. Use literal mode for longer lines."));
+        assert_eq!(terminal.find().result().count, 0);
+        assert!(!terminal.find().searching());
     });
     terminal.update(cx, |terminal, cx| {
         terminal.set_find_options(Default::default(), cx);
@@ -550,9 +550,9 @@ fn bounded_regex_failure_is_inline_and_a_new_search_clears_it(cx: &mut TestAppCo
     });
     complete(cx, &view);
     terminal.read_with(cx, |terminal, _| {
-        assert!(terminal.find().error.is_none());
+        assert!(terminal.find().error().is_none());
         assert_eq!(
-            terminal.find().result.count,
+            terminal.find().result().count,
             (nocterm_vt::MAX_REGEX_LINE_BYTES - 1) as u64
         );
     });
@@ -560,9 +560,9 @@ fn bounded_regex_failure_is_inline_and_a_new_search_clears_it(cx: &mut TestAppCo
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     terminal.read_with(cx, |terminal, _| {
-        assert!(terminal.find().query.is_empty());
-        assert!(terminal.find().error.is_none());
-        assert!(!terminal.find().searching);
+        assert!(terminal.find().query().is_empty());
+        assert!(terminal.find().error().is_none());
+        assert!(!terminal.find().searching());
     });
     assert!(
         drain(&driver).is_empty(),
@@ -596,14 +596,14 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
     emit(cx, &transport, 0, Event::Output(b"ID4 ".to_vec()));
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         3
     );
     // Completed scans restart after the output throttle with the same options.
     emit(cx, &transport, 0, Event::Output(b"id5 ".to_vec()));
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         4
     );
     cx.update(|cx| {
@@ -616,8 +616,10 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
         let find = v.terminal.read(cx).find();
-        assert_eq!(find.result.count, 4);
-        assert!(find.options.regex && !find.options.case_sensitive && find.options.whole_word);
+        assert_eq!(find.result().count, 4);
+        assert!(
+            find.options().regex && !find.options().case_sensitive && find.options().whole_word
+        );
     });
 }
 

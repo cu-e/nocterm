@@ -543,3 +543,8 @@ flush before selection and before the current guest deactivates. A per-Item UI
 feedback handle preserves the shared save diagnostic without exposing the host view.
 The app retains workspace action registration for appearance pickers, preventing a
 UI-to-workspace dependency cycle.
+
+Live shell/search facts, remote listing generations, scan presentation and completion cursors
+remain private owners with immutable queries. Captured container/snippet operations retain
+their original host and paste authority. Agent jobs assemble their own original-executor
+runner and expose readable immutable outcomes; sign-in cards retain the original prompt.

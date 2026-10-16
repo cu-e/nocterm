@@ -179,7 +179,7 @@ fn fixture_with_settings(
             themes,
             cx,
         );
-        if let Some(installed) = booted.vault.as_ref() {
+        if let Some(installed) = booted.vault() {
             let service = installed.service();
             // Creates the vault with a master password and leaves it locked.
             cx.set_global(FixtureVault(Box::new(move || {

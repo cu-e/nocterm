@@ -28,11 +28,11 @@ pub(in crate::thread) fn command_payload(
         }
     };
     serde_json::json!({
-        "command_id": id, "state": state.state.as_str(),
-        "stdout": text(String::from_utf8_lossy(&state.stdout).into_owned()),
-        "stderr": text(state.exit.as_ref().map(|exit| exit.stderr.clone()).unwrap_or_default()),
-        "exit_status": state.exit.as_ref().and_then(|exit| exit.status),
-        "total_bytes": state.total_bytes, "truncated": state.total_bytes > state.stdout.len() as u64,
-        "error": state.error.map(|error| nocterm_ai::redact::redact(&error)),
+        "command_id": id, "state": state.state().as_str(),
+        "stdout": text(String::from_utf8_lossy(state.stdout()).into_owned()),
+        "stderr": text(state.exit().map(|exit| exit.stderr.clone()).unwrap_or_default()),
+        "exit_status": state.exit().and_then(|exit| exit.status),
+        "total_bytes": state.total_bytes(), "truncated": state.total_bytes() > state.stdout().len() as u64,
+        "error": state.error().map(nocterm_ai::redact::redact),
     })
 }

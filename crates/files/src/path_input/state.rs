@@ -158,7 +158,7 @@ impl CompletionState {
     }
     pub(super) fn continue_cycle(&mut self) -> bool {
         if let Some(cycle) = &self.cycle {
-            if cycle.candidates.len() != 1 || !cycle.candidates[0].directory {
+            if cycle.candidate_count() != 1 || !cycle.candidate(0).directory {
                 return true;
             }
             self.cycle = None;
@@ -195,10 +195,10 @@ impl CompletionState {
         let (query, position) = self.pending.take()?;
         self.cache = Some((query.directory.clone(), entries.clone()));
         let mut cycle = Cycle::new(query, &entries);
-        let value = if cycle.candidates.is_empty() {
+        let value = if cycle.candidate_count() == 0 {
             None
         } else {
-            cycle.choose(position.rem_euclid(cycle.candidates.len() as i64) as usize)
+            cycle.choose(position.rem_euclid(cycle.candidate_count() as i64) as usize)
         };
         self.cycle = Some(cycle);
         value
@@ -213,6 +213,6 @@ impl CompletionState {
         self.cycle.as_mut().and_then(|cycle| cycle.choose(index))
     }
     pub(super) fn selected(&self) -> Option<usize> {
-        self.cycle.as_ref().and_then(|cycle| cycle.selected)
+        self.cycle.as_ref().and_then(|cycle| cycle.selected())
     }
 }

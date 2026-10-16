@@ -61,18 +61,18 @@ impl RemotePane {
     }
     pub(super) fn listing(&self) -> ListingState<String> {
         ListingState {
-            path: self.browser.path.clone(),
+            path: self.browser.path().map(str::to_owned),
             requested: self.requested.clone(),
             names: self
                 .browser
-                .entries
+                .entries()
                 .iter()
                 .map(|entry| entry.name.clone())
                 .collect(),
             selected: self.selected.iter().copied().collect(),
-            loading: self.browser.loading,
-            error: self.browser.error.as_ref().map(ToString::to_string),
-            statistics: statistics::summary(&self.counter.shown),
+            loading: self.browser.loading(),
+            error: self.browser.error().map(ToString::to_string),
+            statistics: statistics::summary(self.counter.shown()),
         }
     }
     pub(super) fn access(&self) -> RemoteAccess {
@@ -90,7 +90,7 @@ impl RemotePane {
         Some((
             self.filesystem()?,
             self.session.as_ref()?.target.clone(),
-            destination.or_else(|| self.browser.path.clone())?,
+            destination.or_else(|| self.browser.path().map(str::to_owned))?,
         ))
     }
     pub(super) fn transfers(
@@ -102,7 +102,7 @@ impl RemotePane {
         cx: &mut Context<Self>,
     ) {
         if let Some(session) = &self.session
-            && let Some(shown) = &self.browser.path
+            && let Some(shown) = self.browser.path()
             && finished
                 .iter()
                 .any(|job| activity::changes_remote(job, &session.target, shown))
@@ -131,7 +131,7 @@ impl RemotePane {
             self.presentation.collisions = collisions;
             cx.notify();
         }
-        if self.stale && !self.browser.loading {
+        if self.stale && !self.browser.loading() {
             self.stale = false;
             self.load(self.requested.clone(), cx);
         }
@@ -143,17 +143,17 @@ impl RemotePane {
     }
     fn refresh_after_mutation(&self, cx: &Context<Self>) -> dialogs::Refresh {
         let pane = cx.entity().downgrade();
-        let generation = self.browser.generation;
+        let generation = self.browser.generation();
         let fs = self.filesystem();
         Rc::new(move |cx| {
             let _ = pane.update(cx, |this, cx| {
-                if this.browser.generation == generation
+                if this.browser.is_current(generation)
                     && fs
                         .as_ref()
                         .zip(this.filesystem().as_ref())
                         .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
                 {
-                    this.load(this.browser.path.clone(), cx);
+                    this.load(this.browser.path().map(str::to_owned), cx);
                 }
             });
         })
@@ -218,26 +218,29 @@ impl RemotePane {
             let error = this
                 .update(cx, |this, cx| {
                     if this.browser.finish(generation, result) {
-                        if this.browser.error.is_none() {
+                        if this.browser.error().is_none() {
                             if home_requested {
-                                this.browser.home = this.browser.path.clone();
+                                this.browser.remember_current_path_as_home();
                             }
-                            if let Some(path) = this.browser.path.clone() {
-                                let home =
-                                    this.browser.home.clone().map(path_input::Directory::Remote);
+                            if let Some(path) = this.browser.path().map(str::to_owned) {
+                                let home = this
+                                    .browser
+                                    .home()
+                                    .map(str::to_owned)
+                                    .map(path_input::Directory::Remote);
                                 this.path.update(cx, |input, cx| {
                                     input.accept(path_input::Directory::Remote(path), home, cx)
                                 });
                             }
                             this.count_remote(fs, cx);
                         }
-                        if let Some(error) = this.browser.error.as_ref() {
+                        if let Some(error) = this.browser.error() {
                             let error = error.to_string();
                             this.path
                                 .update(cx, |input, cx| input.navigation_failed(error, cx));
                         }
                         cx.notify();
-                        this.browser.error.as_ref().map(ToString::to_string)
+                        this.browser.error().map(ToString::to_string)
                     } else {
                         None
                     }
@@ -256,7 +259,7 @@ impl RemotePane {
                         "Retry",
                         move |_, cx| {
                             let _ = panel.update(cx, |this, cx| {
-                                if this.browser.generation == generation {
+                                if this.browser.is_current(generation) {
                                     this.load(retry_directory.clone(), cx);
                                 }
                             });
@@ -269,13 +272,13 @@ impl RemotePane {
 
     /// Counts the shown remote folder, as the indexing settings allow.
     fn count_remote(&mut self, fs: Arc<dyn RemoteFs>, cx: &mut Context<Self>) {
-        let Some(directory) = self.browser.path.clone() else {
+        let Some(directory) = self.browser.path().map(str::to_owned) else {
             return;
         };
         let indexing = indexing(&self.presentation.host.installed, cx);
-        let skip = statistics::remote_skip(&directory, self.browser.home.as_deref(), &indexing);
+        let skip = statistics::remote_skip(&directory, self.browser.home(), &indexing);
         if let Some(skip) = skip {
-            let kinds = self.browser.entries.iter().map(|entry| entry.kind);
+            let kinds = self.browser.entries().iter().map(|entry| entry.kind);
             self.counter.set(statistics::shallow(kinds, skip));
             return;
         }
@@ -289,19 +292,19 @@ impl RemotePane {
     }
 
     pub(super) fn remote_file_target(&self, index: usize) -> Option<FileTarget> {
-        let entry = self.browser.entries.get(index)?;
+        let entry = self.browser.entries().get(index)?;
         let session = self.session.as_ref()?;
         Some(FileTarget::Remote {
-            path: path::join(self.browser.path.as_deref()?, &entry.name),
+            path: path::join(self.browser.path()?, &entry.name),
             host: session.target.clone(),
             fs: session.fs.clone()?,
         })
     }
 
     pub(super) fn paths(&self, indices: impl Iterator<Item = usize>) -> Option<RemotePaths> {
-        let parent = self.browser.path.as_deref()?;
+        let parent = self.browser.path()?;
         let sources = indices
-            .filter_map(|index| self.browser.entries.get(index))
+            .filter_map(|index| self.browser.entries().get(index))
             .map(|entry| path::join(parent, &entry.name))
             .collect();
         Some(RemotePaths {
@@ -333,20 +336,19 @@ impl RemotePane {
         if event.click_count == 2
             && let Some(entry) = self
                 .browser
-                .entries
+                .entries()
                 .get(ix)
                 .filter(|entry| entry.kind == EntryKind::Directory)
         {
             let destination = self
                 .browser
-                .path
-                .as_deref()
+                .path()
                 .map(|parent| path::join(parent, &entry.name));
             self.load(destination, cx);
         } else if event.click_count == 2
             && self
                 .browser
-                .entries
+                .entries()
                 .get(ix)
                 .is_some_and(|entry| entry.kind == EntryKind::File)
             && let Some(target) = self.remote_file_target(ix)
@@ -381,7 +383,7 @@ impl RemotePane {
     }
 
     pub(super) fn render_remote_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let entry = &self.browser.entries[ix];
+        let entry = &self.browser.entries()[ix];
         let directory = entry.kind == EntryKind::Directory;
         let selected = self.selection_for_row(ix);
         let download = self.paths(selected.iter().copied());
@@ -395,11 +397,10 @@ impl RemotePane {
         let source = nocterm_ui::DragSource::default();
         let destination = self
             .browser
-            .path
-            .as_deref()
+            .path()
             .map(|parent| path::join(parent, &entry.name));
         let drop_path = destination;
-        let enabled = self.filesystem().is_some() && !self.browser.loading;
+        let enabled = self.filesystem().is_some() && !self.browser.loading();
         let target = self.remote_file_target(ix);
         let selected_targets = selected
             .into_iter()
@@ -540,15 +541,9 @@ impl RemotePane {
                     .small()
                     .ghost()
                     .label("Up")
-                    .disabled(!enabled || self.browser.path.as_deref().is_none_or(|p| p == "/"))
+                    .disabled(!enabled || self.browser.path().is_none_or(|p| p == "/"))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.load(
-                            this.browser
-                                .path
-                                .as_deref()
-                                .map(|p| path::parent(p).to_owned()),
-                            cx,
-                        )
+                        this.load(this.browser.path().map(|p| path::parent(p).to_owned()), cx)
                     })),
             )
             .child(
@@ -598,7 +593,7 @@ impl RemotePane {
             )
     }
     pub(super) fn render_remote(&self, cx: &mut Context<Self>) -> AnyElement {
-        let enabled = self.filesystem().is_some() && !self.browser.loading;
+        let enabled = self.filesystem().is_some() && !self.browser.loading();
         let hint = match &self.session {
             None => Some("Open a connection to browse remote files."),
             Some(s) if !s.connected => Some("Disconnected. Reconnect to browse files."),
@@ -623,10 +618,10 @@ impl RemotePane {
                         .child(hint),
                 )
             })
-            .when(self.browser.loading, |p| {
+            .when(self.browser.loading(), |p| {
                 p.child(div().text_sm().child("Loading directory…"))
             })
-            .when_some(self.browser.error.as_ref(), |p, e| {
+            .when_some(self.browser.error(), |p, e| {
                 p.child(
                     div()
                         .text_sm()
@@ -635,7 +630,7 @@ impl RemotePane {
                 )
             })
             .when(
-                enabled && self.browser.entries.is_empty() && self.browser.error.is_none(),
+                enabled && self.browser.entries().is_empty() && self.browser.error().is_none(),
                 |p| {
                     p.child(
                         div()
@@ -648,7 +643,7 @@ impl RemotePane {
             .child(
                 uniform_list(
                     "remote-file-list",
-                    self.browser.entries.len(),
+                    self.browser.entries().len(),
                     cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| this.render_remote_row(ix, cx))
@@ -663,13 +658,13 @@ impl RemotePane {
                 self.presentation.activity.iter(),
                 cx,
             ))
-            .when(self.browser.path.is_some() && enabled, |p| {
+            .when(self.browser.path().is_some() && enabled, |p| {
                 p.child(
                     div()
                         .id("remote-statistics")
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(statistics::summary(&self.counter.shown)),
+                        .child(statistics::summary(self.counter.shown())),
                 )
             })
             .child(self.collision_controls(cx));

@@ -1,4 +1,5 @@
 //! The active host's containers in the sidebar.
+//! Captured action intents expose their label without mutable host/action authority.
 //!
 //! The panel lists the containers of whichever machine the active tab is
 //! on — this computer or a remote host — grouped by Compose project, with

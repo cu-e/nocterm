@@ -183,3 +183,35 @@ fn cancelling_running_program_drops_output_and_keeps_exit_unknown() {
         assert!(state.exit.is_none());
     });
 }
+
+#[test]
+fn cancelling_an_owned_start_before_poll_never_requests_native_execution() {
+    futures::executor::block_on(async {
+        let executor = Arc::new(nocterm_session::testing::FakeExec::default());
+        let mut registry = Jobs::default();
+        let start = registry
+            .start(
+                "original terminal".into(),
+                executor.clone(),
+                ExecRequest::new("do-not-run"),
+                futures::future::pending(),
+            )
+            .unwrap();
+        let (id, owned_run) = start.into_run();
+        assert!(executor.requests().is_empty());
+        registry
+            .get(&id, "original terminal")
+            .unwrap()
+            .cancel(State::Cancelled);
+        owned_run.await;
+        assert!(executor.requests().is_empty());
+        assert_eq!(
+            registry
+                .get(&id, "original terminal")
+                .unwrap()
+                .snapshot()
+                .state(),
+            State::Cancelled
+        );
+    });
+}

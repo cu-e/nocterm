@@ -79,7 +79,7 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
     gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("Nocterm");
         // "System" appearance follows the desktop as it changes.
-        let themes = booted.themes.clone();
+        let themes = booted.themes().clone();
         window
             .observe_window_appearance(move |_, cx| themes.apply(cx))
             .detach();

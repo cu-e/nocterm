@@ -92,7 +92,7 @@ impl SnippetsPanel {
             return;
         };
         let workspace = workspace.read(cx);
-        let target = self.target(cx).ok().map(|target| target.info);
+        let target = self.target(cx).ok().map(run::RunTarget::into_info);
         self.run_enabled = target.as_ref().is_some_and(Self::ready);
         self.profile = target
             .as_ref()

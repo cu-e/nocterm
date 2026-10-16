@@ -105,7 +105,7 @@ impl LocalPane {
             selected: self.browser.selected.iter().copied().collect(),
             loading: self.browser.loading,
             error: self.browser.error.clone(),
-            statistics: statistics::summary(&self.browser.counter.shown),
+            statistics: statistics::summary(self.browser.counter.shown()),
         }
     }
     pub(super) fn directory(&self) -> Option<&std::path::Path> {
@@ -157,7 +157,7 @@ impl LocalPane {
             return;
         }
         cx.notify();
-        let statistics = &self.browser.counter.shown;
+        let statistics = self.browser.counter.shown();
         if !statistics.complete || statistics.inaccessible == 0 || self.statistics_reported {
             return;
         }
@@ -534,7 +534,7 @@ impl LocalPane {
             )
     }
     fn footer(&self, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> impl IntoElement {
-        let information = statistics::summary(&self.browser.counter.shown);
+        let information = statistics::summary(self.browser.counter.shown());
         v_flex()
             .gap_1()
             .border_t_1()

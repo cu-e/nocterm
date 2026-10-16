@@ -1,4 +1,5 @@
 //! Explorer navigation, file dialogs and transfer presentation.
+//! Browser generations, scan results and completion cursors remain private transition owners.
 //!
 //! Owns: independent pane views, path editors, selection and pinned operation dialogs.
 //! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.

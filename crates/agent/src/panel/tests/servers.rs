@@ -271,7 +271,7 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     let counter = unlocks.clone();
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(thread.read(cx).sign_in_waits().len(), 1);
-        assert!(thread.read(cx).sign_in_waits()[0].vault);
+        assert!(thread.read(cx).sign_in_waits()[0].vault());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
@@ -348,7 +348,7 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
     cx.update_window(f.handle, |_, window, cx| {
-        assert!(!thread.read(cx).sign_in_waits()[0].vault);
+        assert!(!thread.read(cx).sign_in_waits()[0].vault());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find(("vault-unlock", 0usize)).is_none());

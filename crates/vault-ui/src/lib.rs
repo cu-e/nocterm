@@ -1,4 +1,5 @@
 //! Vault settings and authentication views with explicit lifecycle dependencies.
+//! Unlock prompt facts and scan progress remain private to their original masked-control owner.
 //! Owns: settings page, private masked form controls, unlock dialog and credential presentation.
 //! Does not own: encrypted format, persistence, workers or native authentication.
 //! Ports used: supplied VaultAccess and SettingsHandle. Ports provided: CredentialStore, SettingsPageSpec.

@@ -4,9 +4,14 @@ use gpui_kit::{App, Context, EntityId, Window};
 use nocterm_workspace::{TerminalInfo, TerminalStatus, UserTerminalPaste};
 use std::rc::Rc;
 pub(super) struct RunTarget {
-    pub(super) info: TerminalInfo,
+    info: TerminalInfo,
     id: EntityId,
     paste: Rc<dyn UserTerminalPaste>,
+}
+impl RunTarget {
+    pub(super) fn into_info(self) -> TerminalInfo {
+        self.info
+    }
 }
 #[derive(Debug, thiserror::Error)]
 pub(super) enum TargetError {

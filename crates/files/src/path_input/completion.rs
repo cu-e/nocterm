@@ -88,11 +88,21 @@ pub(super) fn query(
 
 #[derive(Default)]
 pub(super) struct Cycle {
-    pub candidates: Vec<Candidate>,
-    pub selected: Option<usize>,
-    pub head: String,
+    candidates: Vec<Candidate>,
+    selected: Option<usize>,
+    head: String,
 }
 impl Cycle {
+    pub(super) fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+    pub(super) fn candidate(&self, index: usize) -> &Candidate {
+        &self.candidates[index]
+    }
+    pub(super) fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
     pub(super) fn new(query: Query, entries: &[Candidate]) -> Self {
         Self {
             candidates: entries

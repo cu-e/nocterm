@@ -1,4 +1,5 @@
 //! Contextual snippet library in the workspace sidebar.
+//! A checked run target consumes its original terminal facts without exposing mutable paste authority.
 //!
 //! Owns: retained service/settings/identity capabilities and editor/panel presentation.
 //! SnippetDraft owns literal native controls; AttachmentPicker owns search/folding/section state.

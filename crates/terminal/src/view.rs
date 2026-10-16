@@ -480,7 +480,7 @@ impl TerminalView {
                             .chars()
                             .take(nocterm_vt::MAX_SEARCH_QUERY + 1)
                             .collect();
-                        if query != this.terminal.read(cx).find().query {
+                        if query != this.terminal.read(cx).find().query() {
                             this.terminal.update(cx, |t, cx| {
                                 t.begin_find(query, SearchDirection::Next, None, cx)
                             });
@@ -529,7 +529,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut options = self.terminal.read(cx).find().options;
+        let mut options = self.terminal.read(cx).find().options();
         edit(&mut options);
         self.terminal
             .update(cx, |terminal, cx| terminal.set_find_options(options, cx));

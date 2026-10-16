@@ -93,7 +93,13 @@ impl AgentPanel {
         let asking: Vec<EntityId> = self
             .chats
             .iter()
-            .flat_map(|thread| thread.read(cx).sign_in_waits().iter().map(|wait| wait.item))
+            .flat_map(|thread| {
+                thread
+                    .read(cx)
+                    .sign_in_waits()
+                    .iter()
+                    .map(|wait| wait.item())
+            })
             .collect();
         self.sign_ins.reconcile(&asking);
         if pending == 0 {

@@ -43,6 +43,8 @@ mod tool_runtime;
 pub(crate) use restart::RestartData;
 mod document;
 mod saved;
+mod sign_in_wait;
+pub(crate) use sign_in_wait::SignInWait;
 mod session;
 mod tools;
 #[cfg(test)]
@@ -54,37 +56,6 @@ pub(crate) enum Attachment {
     Connection(String),
     Group(String),
     UnavailableLocal(String),
-}
-/// A background session asks for a secret. The user answers in the chat, or
-/// unlocks the vault when a saved secret answers it; no tab opens.
-#[derive(Clone)]
-pub(crate) struct SignInWait {
-    pub item: EntityId,
-    pub title: gpui_kit::SharedString,
-    prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
-    pub prompt: nocterm_workspace::SignInPrompt,
-    /// Unlocking the vault answers the prompt with a saved secret.
-    pub vault: bool,
-}
-impl SignInWait {
-    pub(crate) fn new(
-        item: EntityId,
-        title: gpui_kit::SharedString,
-        prompts: std::rc::Rc<dyn nocterm_workspace::SignInPrompts>,
-        prompt: nocterm_workspace::SignInPrompt,
-        vault: bool,
-    ) -> Self {
-        Self {
-            item,
-            title,
-            prompts,
-            prompt,
-            vault,
-        }
-    }
-    pub(crate) fn prompts(&self) -> std::rc::Rc<dyn nocterm_workspace::SignInPrompts> {
-        self.prompts.clone()
-    }
 }
 /// An agent session from a saved chat, to reopen on the next connection.
 #[derive(Clone, Debug)]

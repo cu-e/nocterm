@@ -75,15 +75,15 @@ pub(crate) struct UnlockPrompt {
     service: Arc<dyn VaultAccess>,
     password: Entity<InputState>,
     busy: bool,
-    pub(crate) error: Option<SharedString>,
+    error: Option<SharedString>,
     /// The device unlock label ("Fingerprint") once it is known to be enabled.
-    pub(crate) device: Option<SharedString>,
+    device: Option<SharedString>,
     /// A device authentication is waiting on the vault worker.
-    pub(crate) scanning: bool,
+    scanning: bool,
     /// Identifies the latest scan, so a cancelled one cannot report late.
     scan: u64,
-    pub(crate) attempts_remaining: Option<u8>,
-    pub(crate) device_locked: bool,
+    attempts_remaining: Option<u8>,
+    device_locked: bool,
 }
 
 impl UnlockPrompt {
@@ -194,7 +194,7 @@ impl UnlockPrompt {
         cx.notify();
     }
 
-    pub(crate) fn scan_progress(&mut self, scan: u64, remaining: u8) {
+    fn scan_progress(&mut self, scan: u64, remaining: u8) {
         if self.scanning && self.scan == scan {
             self.attempts_remaining = Some(remaining);
         }

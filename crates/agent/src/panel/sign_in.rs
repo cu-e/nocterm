@@ -40,8 +40,8 @@ impl SignInCards {
     ) -> SignInSubmission {
         SignInSubmission {
             thread: thread.downgrade(),
-            item: wait.item,
-            token: wait.prompt.token,
+            item: wait.item(),
+            token: wait.prompt().token,
             input,
             prompts: wait.prompts(),
         }
@@ -53,7 +53,7 @@ impl SignInCards {
         window: &mut Window,
         cx: &mut Context<AgentPanel>,
     ) -> (Entity<InputState>, SignInSubmission) {
-        let (item, masked, token) = (wait.item, wait.prompt.masked, wait.prompt.token);
+        let (item, masked, token) = (wait.item(), wait.prompt().masked, wait.prompt().token);
         if let Some(field) = self.inputs.get(&item)
             && field.masked == masked
             && field.token == token
@@ -117,7 +117,7 @@ impl SignInSubmission {
                 .read(cx)
                 .sign_in_waits()
                 .iter()
-                .any(|wait| wait.item == self.item && wait.prompt.token == self.token)
+                .any(|wait| wait.item() == self.item && wait.prompt().token == self.token)
         });
         if current {
             self.prompts

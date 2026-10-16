@@ -50,12 +50,29 @@ pub enum TerminalEvent {
 
 #[derive(Default)]
 pub struct FindState {
-    pub query: String,
-    pub options: SearchOptions,
-    pub searching: bool,
+    query: String,
+    options: SearchOptions,
+    searching: bool,
     /// Counts are final when `searching` is false; active may be an early preview.
-    pub result: SearchResult,
-    pub error: Option<String>,
+    result: SearchResult,
+    error: Option<String>,
+}
+impl FindState {
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+    pub fn options(&self) -> SearchOptions {
+        self.options
+    }
+    pub fn searching(&self) -> bool {
+        self.searching
+    }
+    pub fn result(&self) -> &SearchResult {
+        &self.result
+    }
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 type CommandCompletion = Box<dyn FnOnce(CloseReason, &mut gpui_kit::App)>;

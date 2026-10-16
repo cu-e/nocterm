@@ -17,7 +17,7 @@ impl TerminalView {
         let command = terminal.is_command();
         let connected = terminal.is_connected();
         let recording = terminal.is_recording();
-        let searchable = !terminal.find().query.is_empty() && terminal.find().error.is_none();
+        let searchable = !terminal.find().query().is_empty() && terminal.find().error().is_none();
         element
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::session_settings))

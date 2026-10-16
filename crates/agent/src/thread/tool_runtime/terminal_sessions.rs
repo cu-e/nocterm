@@ -33,11 +33,11 @@ impl TerminalSessions {
         &self.sign_ins
     }
     pub(super) fn observe_prompt(&mut self, item: EntityId, wait: Option<SignInWait>) -> bool {
-        let current = self.sign_ins.iter().position(|wait| wait.item == item);
+        let current = self.sign_ins.iter().position(|wait| wait.item() == item);
         match (current, wait) {
             (Some(index), Some(wait)) => {
                 let old = &self.sign_ins[index];
-                if old.prompt == wait.prompt && old.vault == wait.vault {
+                if old.prompt() == wait.prompt() && old.vault() == wait.vault() {
                     return false;
                 }
                 self.sign_ins[index] = wait;
@@ -56,7 +56,7 @@ impl TerminalSessions {
     }
     pub(super) fn clear_wait(&mut self, expected: ExpectedSession) {
         self.sign_ins.retain(|wait| {
-            wait.item != expected.item() || wait.prompt.token.expected() != expected
+            wait.item() != expected.item() || wait.prompt().token.expected() != expected
         });
     }
     pub(super) fn reconnecting(&self, item: &EntityId) -> bool {
