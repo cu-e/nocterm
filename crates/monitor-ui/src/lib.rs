@@ -7,12 +7,14 @@
 //! closed only what the summary shows is read, at the slow interval.
 //!
 //! Owns: active-host sampling lifecycle, status/details views and monitor settings controls.
-//! Local host execution is supplied explicitly at registration and retained by the model.
+//! Installation retains actual settings and optional supplied local host execution; models share it.
 //! Does not own: metric parsing, host execution or session establishment.
-//! Ports used: workspace active-session contracts and session `HostExec`; provided: `SettingsPageSpec`.
+//! Ports used: workspace active-session contracts and session `HostExec` and supplied SettingsHandle; provided: `SettingsPageSpec`.
 //! Settings section: `[monitor]`. Globals: none.
 //! Invariants: one host script collects the current metric union; retained history is bounded.
 mod details;
+mod installed;
+pub use installed::{Installed, install};
 mod graph;
 mod model;
 mod page;
@@ -20,10 +22,8 @@ mod settings;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
-use nocterm_session::HostExec;
 use nocterm_ui::SettingsPageSpec;
 use nocterm_workspace::Workspace;
-use std::sync::Arc;
 
 pub use page::MonitorPage;
 pub use settings::{
@@ -40,23 +40,23 @@ gpui_kit::actions!(
 
 /// Adds the monitor to the footer of `workspace`.
 pub fn register(
-    local: Option<Arc<dyn HostExec>>,
+    installed: &Installed,
     workspace: &mut Workspace,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    nocterm_ui::register_setting::<crate::MonitorSettings>(cx);
     let handle = cx.entity();
     let session = workspace.active_session(cx);
-    let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, local, cx));
+    let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, installed, cx));
     let status = cx.new(|cx| status::MonitorStatus::new(monitor, cx));
     workspace.add_leading_status_view(status, cx);
 }
 
 /// Supplies the lazy Monitor page to the application Settings host.
-pub fn settings_page() -> SettingsPageSpec {
-    SettingsPageSpec::new("monitor", "Monitor", |window, cx| {
-        cx.new(|cx| MonitorPage::new(window, cx))
+pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
+    let settings = installed.settings().clone();
+    SettingsPageSpec::new("monitor", "Monitor", move |window, cx| {
+        cx.new(|cx| MonitorPage::new(settings.clone(), window, cx))
     })
     .with_icon(nocterm_ui::IconName::Activity)
 }

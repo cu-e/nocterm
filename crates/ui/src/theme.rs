@@ -13,11 +13,11 @@ use gpui_kit::{
 use nocterm_design::{Color, DesignTokens};
 use serde_json::Value;
 
-use crate::{ActiveDesign, Design, SettingsExt};
+use crate::{ActiveDesign, Design};
 
 /// Rebuilds the component theme from the design tokens and the user's
 /// appearance setting, and repaints every window.
-pub fn apply_theme(cx: &mut App) {
+pub(crate) fn apply_theme_for(appearance: &crate::AppearanceSettings, cx: &mut App) {
     let tokens = cx.design().clone();
     let rem = tokens.typography.ui_size.unwrap_or(16.0);
     cx.set_global(ButtonMetrics {
@@ -25,7 +25,7 @@ pub fn apply_theme(cx: &mut App) {
         height: px(tokens.layout.button_height * rem),
         padding: px(tokens.layout.button_padding * rem),
     });
-    let dark = match cx.setting::<crate::AppearanceSettings>().mode {
+    let dark = match appearance.mode {
         AppearanceMode::System => matches!(
             cx.window_appearance(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark
@@ -59,7 +59,7 @@ pub fn apply_theme(cx: &mut App) {
     };
     Theme::change(mode, None, cx);
     // The cards take their colours from the theme just put in place.
-    crate::floating::apply_floating(cx);
+    crate::floating::apply_floating_for(appearance, cx);
     cx.refresh_windows();
 }
 

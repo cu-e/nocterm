@@ -9,7 +9,7 @@ use gpui_kit::{App, Context, Window};
 use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
-use nocterm_ui::{SettingsExt as _, SettingsStore};
+use nocterm_ui::SettingsStore;
 use nocterm_vault::VaultAccess;
 use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
@@ -58,6 +58,7 @@ pub(crate) struct Booted {
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
     settings_ui: nocterm_settings_ui::Installed,
+    monitor: nocterm_monitor_ui::Installed,
     agent: nocterm_agent::Installed,
     files: nocterm_files::Installed,
     workspace: nocterm_workspace::Deps,
@@ -109,12 +110,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let ui = nocterm_ui::init(tokens, settings, cx);
     let shutdown = nocterm_store::ShutdownCoordinator::default();
     report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
-    let (library, registry, catalog) = match themes {
-        Some(themes) => (Some(themes.library), Some(themes.registry), themes.catalog),
-        None => (None, None, nocterm_themes::ThemeCatalog::default()),
-    };
-    let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
-    let themes = nocterm_ui::ThemeUi::install(ui.settings().clone(), themes, base, cx);
+    let themes = install_themes(themes, ui.settings().clone(), base, cx);
     let layout = nocterm_ui::LayoutMemory::init(
         stored.map(|paths| paths.state_dir().join("layout.json")),
         &shutdown,
@@ -151,11 +147,13 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
     let settings_ui = nocterm_settings_ui::Installed::new(ui.settings().clone(), settings_ui);
+    let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
     let booted = Booted {
         keymap,
         local_host,
         terminal,
         settings_ui,
+        monitor,
         agent,
         connections,
         snippets,
@@ -166,6 +164,21 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     booted
+}
+
+/// Compose the supplied theme catalogue and its retained settings/paint projection.
+fn install_themes(
+    themes: Option<Themes>,
+    settings: nocterm_store::SettingsHandle,
+    base: DesignTokens,
+    cx: &mut App,
+) -> nocterm_ui::ThemeUi {
+    let (library, registry, catalog) = match themes {
+        Some(themes) => (Some(themes.library), Some(themes.registry), themes.catalog),
+        None => (None, None, nocterm_themes::ThemeCatalog::default()),
+    };
+    let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
+    nocterm_ui::ThemeUi::install(settings, themes, base, cx)
 }
 
 /// Retain only installations registered with the common shutdown coordinator.
@@ -315,6 +328,8 @@ pub(crate) fn build_workspace(
         booted.themes.clone(),
         booted.settings_deps(),
         booted.keymap(),
+        &booted.files,
+        &booted.monitor,
     );
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
@@ -322,12 +337,13 @@ pub(crate) fn build_workspace(
         nocterm_snippets_ui::register(workspace, snippets, window, cx);
     }
     nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
-    nocterm_monitor_ui::register(booted.local_host.clone(), workspace, window, cx);
+    nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx);
     nocterm_agent::register(workspace, booted.agent.clone(), window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(vault) = vault
-        && cx
-            .setting::<nocterm_vault_ui::VaultSettings>()
+        && vault
+            .settings()
+            .setting::<nocterm_vault_ui::VaultSettings>(cx)
             .prompt_on_startup
     {
         let pages = vec![nocterm_vault_ui::settings_page(vault)];

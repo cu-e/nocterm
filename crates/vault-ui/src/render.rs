@@ -6,7 +6,6 @@ use gpui_kit::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::Input,
         switch::Switch,
         tab::{Tab as TabButton, TabBar},
         v_flex,
@@ -15,7 +14,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_ui::{IconName, SettingsExt as _, form};
+use nocterm_ui::{IconName, form};
 use nocterm_vault::DeviceAvailability;
 
 use crate::view::{Tab, VaultView};
@@ -144,14 +143,14 @@ impl VaultView {
                 div()
                     .id("vault-password")
                     .test_support()
-                    .child(Input::new(&self.password)),
+                    .child(self.form.password_input()),
             )
             .when(!exists, |form| {
                 form.child(
                     div()
                         .id("vault-confirm")
                         .test_support()
-                        .child(Input::new(&self.confirm)),
+                        .child(self.form.confirm_input()),
                 )
             })
             .child(
@@ -258,13 +257,13 @@ impl VaultView {
                     div()
                         .id("vault-password")
                         .test_support()
-                        .child(Input::new(&self.password)),
+                        .child(self.form.password_input()),
                 )
                 .child(
                     div()
                         .id("vault-confirm")
                         .test_support()
-                        .child(Input::new(&self.confirm)),
+                        .child(self.form.confirm_input()),
                 )
                 .child(
                     h_flex().child(
@@ -338,10 +337,10 @@ impl VaultView {
                     .id("vault-auto-lock")
                     .test_support()
                     .w(rems(6.))
-                    .child(Input::new(&self.auto_lock).small()),
+                    .child(self.form.auto_lock_input()),
                 cx,
             ))
-            .when_some(self.auto_lock_error.clone(), |row, error| {
+            .when_some(self.form.auto_lock_error(), |row, error| {
                 row.child(form::error_text(error, cx))
             })
             .into_any_element();
@@ -349,13 +348,18 @@ impl VaultView {
             "Ask for the master password at startup",
             "Open this page when nocterm starts, so saved credentials are ready.",
             Switch::new("vault-prompt-on-startup")
-                .checked(cx.setting::<crate::VaultSettings>().prompt_on_startup)
-                .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                .checked(
+                    self.settings
+                        .setting::<crate::VaultSettings>(cx)
+                        .prompt_on_startup,
+                )
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
                     let checked = *checked;
-                    cx.update_setting::<crate::VaultSettings>(move |settings| {
-                        settings.prompt_on_startup = checked
-                    })
-                    .detach();
+                    this.settings
+                        .update::<crate::VaultSettings>(cx, move |settings| {
+                            settings.prompt_on_startup = checked
+                        })
+                        .detach();
                     cx.notify();
                 })),
             cx,

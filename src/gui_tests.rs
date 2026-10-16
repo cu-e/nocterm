@@ -90,8 +90,11 @@ fn fixture_with_themes(
     Entity<Workspace>,
     Entity<TerminalView>,
     Arc<MockTransport>,
+    nocterm_store::SettingsHandle,
 ) {
-    fixture_with_theme_option(cx, false, Some(themes), false)
+    let (window, workspace, terminal, transport, _, policy) =
+        fixture_with_settings(cx, false, Some(themes), false, None);
+    (window, workspace, terminal, transport, policy)
 }
 
 fn fixture_with_theme_option(
@@ -122,7 +125,9 @@ fn fixture_with_keymap(
     Arc<MockTransport>,
     nocterm_keymap::KeymapHandle,
 ) {
-    fixture_with_settings(cx, vault_ready, themes, with_local, None)
+    let (window, workspace, terminal, transport, keymap, _) =
+        fixture_with_settings(cx, vault_ready, themes, with_local, None);
+    (window, workspace, terminal, transport, keymap)
 }
 
 fn fixture_with_settings(
@@ -137,9 +142,10 @@ fn fixture_with_settings(
     Entity<TerminalView>,
     Arc<MockTransport>,
     nocterm_keymap::KeymapHandle,
+    nocterm_store::SettingsHandle,
 ) {
     let transport = Arc::new(MockTransport::default());
-    let (window, workspace, terminal, keymap) = cx.update(|cx| {
+    let (window, workspace, terminal, keymap, policy) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
         let directory = tempfile::tempdir().unwrap();
         settings.update::<nocterm_session::LocalShellSettings>(|section| {
@@ -193,7 +199,13 @@ fn fixture_with_settings(
                 workspace.read(cx).find_item::<TerminalView>().unwrap()
             })
             .unwrap();
-        (window, workspace, terminal, booted.keymap())
+        (
+            window,
+            workspace,
+            terminal,
+            booted.keymap(),
+            booted.settings_deps().settings().clone(),
+        )
     });
     emit(cx, &transport, 0, Event::Connected);
     cx.update_window(window, |_, window, cx| {
@@ -210,7 +222,7 @@ fn fixture_with_settings(
         assert!(terminal.read(cx).focus_handle(cx).is_focused(window));
     })
     .unwrap();
-    (window, workspace, terminal, transport, keymap)
+    (window, workspace, terminal, transport, keymap, policy)
 }
 
 /// Installs the application's globals as the application does, with the

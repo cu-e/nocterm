@@ -3,7 +3,7 @@
 //! Owns: independent pane views, path editors, selection and pinned operation dialogs.
 //! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.
 //! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `TransferService`, `ProgramOpener`,
-//! workspace `LocalTerminal`.
+//! workspace `LocalTerminal` and the retained settings service handle.
 //! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
 //! Invariants: native paths keep their original names; each pane rejects stale navigation;
 //! accepted operations retain their original capability while later navigation proceeds.
@@ -43,7 +43,7 @@ use gpui_kit::{
 use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
-use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _};
+use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{
     FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
 };
@@ -84,9 +84,10 @@ impl Deps {
     }
 }
 /// Supplies the lazy Explorer page to the application Settings host.
-pub fn settings_page() -> nocterm_ui::SettingsPageSpec {
-    nocterm_ui::SettingsPageSpec::new("explorer", "Explorer", |window, cx| {
-        cx.new(|cx| ExplorerPage::new(window, cx))
+pub fn settings_page(installed: &Installed) -> nocterm_ui::SettingsPageSpec {
+    let settings = installed.settings().clone();
+    nocterm_ui::SettingsPageSpec::new("explorer", "Explorer", move |window, cx| {
+        cx.new(|cx| ExplorerPage::new(settings.clone(), window, cx))
     })
     .with_icon(IconName::FolderTree)
 }
@@ -96,7 +97,7 @@ use local_pane::LocalPane;
 use remote_pane::RemotePane;
 #[derive(Clone)]
 struct PaneHost {
-    opener: Arc<dyn nocterm_session::ProgramOpener>,
+    installed: Installed,
     workspace: WeakEntity<Workspace>,
     window: AnyWindowHandle,
 }
@@ -125,7 +126,7 @@ pub struct FilesPanel {
     collisions: CollisionPolicy,
     window: AnyWindowHandle,
     _observers: PanelObservers,
-    deps: Deps,
+    installed: Installed,
 }
 /// A directory listing as presented by Explorer; paths retain native identity.
 #[derive(Clone, Debug)]
@@ -191,19 +192,20 @@ impl FilesPanel {
         self.remote.read(cx).access()
     }
     fn new(
-        deps: Deps,
+        installed: Installed,
         workspace: Entity<Workspace>,
         session: Option<SessionContext>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let host = PaneHost {
-            opener: deps.opener.clone(),
+            installed: installed.clone(),
             workspace: workspace.downgrade(),
             window: window.window_handle(),
         };
-        let local = cx.new(|cx| LocalPane::new(&deps, host.clone(), window, cx));
-        let remote = cx.new(|cx| RemotePane::new(deps.local.clone(), host, session, window, cx));
+        let local = cx.new(|cx| LocalPane::new(&installed, host.clone(), window, cx));
+        let remote =
+            cx.new(|cx| RemotePane::new(installed.local().clone(), host, session, window, cx));
         let local_events = cx.subscribe(&local, |this, _, event, cx| this.intent(event, cx));
         let remote_events = cx.subscribe(&remote, |this, _, event, cx| this.intent(event, cx));
         let workspace_events = cx.subscribe(&workspace, |this, workspace, event, cx| {
@@ -246,7 +248,7 @@ impl FilesPanel {
                 _subscriptions: vec![local_events, remote_events, workspace_events],
                 _tick: tick,
             },
-            deps,
+            installed,
         }
     }
     fn intent(&mut self, event: &PaneIntent, cx: &mut Context<Self>) {
@@ -265,7 +267,7 @@ impl FilesPanel {
                     .read(cx)
                     .transfer_target(destination.clone())
                     .map(|(fs, target, destination)| {
-                        self.deps.transfers.enqueue(UploadRequest {
+                        self.installed.transfers().enqueue(UploadRequest {
                             sources: sources.clone(),
                             target,
                             destination,
@@ -290,13 +292,15 @@ impl FilesPanel {
                 });
                 let result = destination
                     .map(|local_destination| {
-                        self.deps.transfers.enqueue_download(DownloadRequest {
-                            sources: files.sources.clone(),
-                            target: files.target.clone(),
-                            local_destination,
-                            fs: files.fs.clone(),
-                            collisions: self.collisions,
-                        })
+                        self.installed
+                            .transfers()
+                            .enqueue_download(DownloadRequest {
+                                sources: files.sources.clone(),
+                                target: files.target.clone(),
+                                local_destination,
+                                fs: files.fs.clone(),
+                                collisions: self.collisions,
+                            })
                     })
                     .transpose();
                 self.report_queue(
@@ -335,7 +339,7 @@ impl FilesPanel {
         });
     }
     fn synchronize(&mut self, finished: &[nocterm_transfers::Progress], cx: &mut Context<Self>) {
-        let jobs = self.deps.transfers.snapshot();
+        let jobs = self.installed.transfers().snapshot();
         self.local.update(cx, |local, cx| {
             local.transfers(
                 jobs.iter()
@@ -355,7 +359,7 @@ impl FilesPanel {
         });
     }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (_, finished) = self.activity.update(self.deps.transfers.snapshot());
+        let (_, finished) = self.activity.update(self.installed.transfers().snapshot());
         self.synchronize(&finished, cx);
         self.local
             .update(cx, |local, cx| local.poll_statistics(window, cx));
@@ -363,13 +367,13 @@ impl FilesPanel {
             .update(cx, |remote, cx| remote.poll_statistics(cx));
     }
 }
-/// The user's indexing settings; the defaults where none are installed.
-fn indexing(cx: &App) -> crate::IndexingSettings {
-    if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<crate::ExplorerSettings>().indexing.clone()
-    } else {
-        Default::default()
-    }
+/// Current published indexing policy from this installation.
+fn indexing(installed: &Installed, cx: &App) -> crate::IndexingSettings {
+    installed
+        .settings()
+        .setting::<crate::ExplorerSettings>(cx)
+        .indexing
+        .clone()
 }
 impl Focusable for FilesPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {

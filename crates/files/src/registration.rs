@@ -22,8 +22,27 @@ gpui_kit::actions!(
 #[derive(Clone)]
 pub struct Installed {
     deps: Deps,
+    settings: nocterm_store::SettingsHandle,
 }
 impl Installed {
+    pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
+        &self.settings
+    }
+    pub(crate) fn local(&self) -> &std::sync::Arc<dyn nocterm_session::local_fs::LocalFs> {
+        &self.deps.local
+    }
+    pub(crate) fn mutations(
+        &self,
+    ) -> &std::sync::Arc<dyn nocterm_session::local_fs::LocalMutations> {
+        &self.deps.mutations
+    }
+    pub(crate) fn transfers(&self) -> &std::sync::Arc<dyn nocterm_transfers::TransferService> {
+        &self.deps.transfers
+    }
+    pub(crate) fn opener(&self) -> &std::sync::Arc<dyn nocterm_session::ProgramOpener> {
+        &self.deps.opener
+    }
+
     /// Composition registers this independent future with its common shutdown
     /// coordinator. Admission closes synchronously before the future is polled.
     pub fn freeze_transfers(
@@ -32,10 +51,16 @@ impl Installed {
         self.deps.transfers.freeze_and_drain()
     }
 }
-pub fn install(deps: Deps, _: &nocterm_ui::UiReady, cx: &mut App) -> Installed {
-    nocterm_ui::register_setting::<crate::ExplorerSettings>(cx);
+pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Installed {
+    ready.settings().register::<crate::ExplorerSettings>(cx);
+    ready
+        .settings()
+        .register::<nocterm_session::LocalShellSettings>(cx);
     crate::path_input::install_bindings(cx);
-    Installed { deps }
+    Installed {
+        deps,
+        settings: ready.settings().clone(),
+    }
 }
 pub fn register(
     installed: &Installed,
@@ -45,7 +70,7 @@ pub fn register(
 ) {
     let active = workspace.active_session(cx);
     let handle = cx.entity();
-    let panel = cx.new(|cx| FilesPanel::new(installed.deps.clone(), handle, active, window, cx));
+    let panel = cx.new(|cx| FilesPanel::new(installed.clone(), handle, active, window, cx));
     workspace.add_panel(panel, cx);
     let status =
         cx.new(|cx| transfers::TransferStatus::new(installed.deps.transfers.clone(), window, cx));

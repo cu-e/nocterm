@@ -15,7 +15,12 @@ presenting a form error; malformed numeric text never becomes a saved override.
 
 `nocterm-ui` projects tokens/settings into the standard GPUI Kit theme and
 provides shared icons, terminal styling, standalone drag previews and operational
-notices. Optional toolkit button metrics are projected from design tokens once;
+notices. One retained ThemeUi owns catalog, settings and Design paint subscriptions.
+Catalog changes resolve effective tokens; published settings resolve and paint directly
+when tokens remain unchanged. Design observation paints only, preserving the one-way
+projection. Appearance callbacks apply the same supplied settings owner. UI initialization
+paints initial supplied policy; live changes require retaining ThemeUi. Terminal styling
+and form surfaces use supplied TerminalSettings plus the current paint tokens/theme. Optional toolkit button metrics are projected from design tokens once;
 views retain standard component variants. Notices use the toolkit's window-local
 notification list with stable operation keys and recovery actions, published by
 operation events rather than rendering. Drag previews capture painted source
@@ -244,9 +249,9 @@ a searchable table that records new shortcuts through a keystroke interceptor
 (so even bound keys are captured) and edits only through `nocterm-keymap`.
 
 `TerminalStyle::with_settings` projects an explicitly supplied terminal section
-using the same design and theme rules as `current`. Terminal views use the section
-from their model's installed SettingsHandle; the compatibility `current` helper
-remains available to other UI callers.
+through the current design and theme rules. Terminal views use their installed
+SettingsHandle; dialogs and settings surfaces capture their original supplied
+owner. Their backgrounds retain the same terminal colour and alpha conversion.
 
 Shared UI does not register or read the AI policy schema. Agent runtime registers
 its own supplied settings section; standalone settings-page compositions register

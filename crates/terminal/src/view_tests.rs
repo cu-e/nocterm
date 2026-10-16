@@ -707,6 +707,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
 #[gpui_kit::test]
 fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
+    let _projection = theme_fixture::projection(&view, cx);
     emit(
         cx,
         &transport,
@@ -791,3 +792,6 @@ mod pointer_tests;
 
 #[path = "view/interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[path = "view/theme_fixture.rs"]
+mod theme_fixture;

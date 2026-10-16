@@ -187,13 +187,26 @@ fn fixture(
     Entity<Workspace>,
     Entity<HostMonitor>,
 ) {
+    let (window, workspace, monitor, _) = fixture_with_installation(cx, local);
+    (window, workspace, monitor)
+}
+fn fixture_with_installation(
+    cx: &mut TestAppContext,
+    local: Option<Arc<dyn HostExec>>,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<HostMonitor>,
+    crate::Installed,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ready = nocterm_ui::init(
             DesignTokens::builtin(),
             SettingsStore::in_memory(SettingsDocument::default()),
             cx,
         );
+        let installed = crate::install(local, &ready, cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
@@ -203,8 +216,8 @@ fn fixture(
                 })
             })
             .unwrap();
-        let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, local, cx));
-        (window, workspace, monitor)
+        let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, &installed, cx));
+        (window, workspace, monitor, installed)
     })
 }
 
@@ -318,7 +331,9 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
         let (window, workspace, _) = fixture(cx, None);
         cx.update_window(window, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                crate::register(Some(host.clone()), workspace, window, cx);
+                let ready = nocterm_ui::UiReady::installed(cx).unwrap();
+                let installed = crate::install(Some(host.clone()), &ready, cx);
+                crate::register(&installed, workspace, window, cx);
             });
         })
         .unwrap();
@@ -330,3 +345,5 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
     assert!(first.reading(1));
     assert!(second.reading(0));
 }
+
+mod dependencies;

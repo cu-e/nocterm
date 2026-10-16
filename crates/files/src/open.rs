@@ -2,32 +2,27 @@
 //! Explorer, or the system's default application, and local entries in the
 //! system file manager.
 
-use crate::{OpenSettings, Opener};
+use crate::Opener;
 use gpui_kit::{
     App, SharedString, WeakEntity, Window,
     component::menu::{PopupMenu, PopupMenuItem},
 };
 use nocterm_session::fs::path;
 use nocterm_session::{ProgramOpenError, ProgramOpenRequest, ProgramOpener};
-use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::Workspace;
 use std::sync::Arc;
 
 use crate::operations::FileTarget;
 
-/// The user's opener settings; the defaults where none are installed.
-fn settings(cx: &App) -> OpenSettings {
-    if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<crate::ExplorerSettings>().open.clone()
-    } else {
-        OpenSettings::default()
-    }
-}
-
 /// The program that opens `target`; `None` means the system default.
-fn opener(target: &FileTarget, cx: &App) -> Option<Opener> {
+fn opener(target: &FileTarget, installed: &crate::Installed, cx: &App) -> Option<Opener> {
     let remote = matches!(target, FileTarget::Remote { .. });
-    settings(cx).opener_for(&target.name(), remote).cloned()
+    installed
+        .settings()
+        .setting::<crate::ExplorerSettings>(cx)
+        .open
+        .opener_for(&target.name(), remote)
+        .cloned()
 }
 
 /// Adds the ways to open `target` to the end of its context menu.
@@ -36,7 +31,7 @@ pub(crate) fn menu_items(
     target: &FileTarget,
     directory: bool,
     workspace: WeakEntity<Workspace>,
-    native: Arc<dyn ProgramOpener>,
+    installed: crate::Installed,
     cx: &App,
 ) -> PopupMenu {
     let mut menu = menu.separator();
@@ -45,19 +40,23 @@ pub(crate) fn menu_items(
         FileTarget::Remote { .. } => None,
     };
     if !directory {
-        let label: SharedString = match opener(target, cx) {
+        let label: SharedString = match opener(target, &installed, cx) {
             Some(opener) => format!("Open with {}", opener.program).into(),
             None if local.is_some() => "Open".into(),
             None => "Open (choose a program in Settings → Explorer)".into(),
         };
         let open = target.clone();
+        let captured = installed.clone();
         menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-            let (open, workspace, native) = (open.clone(), workspace.clone(), native.clone());
+            let (open, workspace, installed) = (open.clone(), workspace.clone(), captured.clone());
             window.defer(cx, move |window, cx| {
-                run(&open, &workspace, native, window, cx)
+                run(&open, &workspace, &installed, window, cx)
             });
         }));
-        if let Some(path) = local.clone().filter(|_| opener(target, cx).is_some()) {
+        if let Some(path) = local
+            .clone()
+            .filter(|_| opener(target, &installed, cx).is_some())
+        {
             menu = menu.item(
                 PopupMenuItem::new("Open with default application")
                     .on_click(move |_, _, cx| cx.open_with_system(&path)),
@@ -85,13 +84,13 @@ pub(crate) fn menu_items(
 pub(crate) fn later(
     target: FileTarget,
     workspace: WeakEntity<Workspace>,
-    native: Arc<dyn ProgramOpener>,
+    installed: crate::Installed,
     window: gpui_kit::AnyWindowHandle,
     cx: &mut App,
 ) {
     cx.defer(move |cx| {
         let _ = window.update(cx, |_, window, cx| {
-            run(&target, &workspace, native, window, cx)
+            run(&target, &workspace, &installed, window, cx)
         });
     });
 }
@@ -100,14 +99,20 @@ pub(crate) fn later(
 fn run(
     target: &FileTarget,
     workspace: &WeakEntity<Workspace>,
-    native: Arc<dyn ProgramOpener>,
+    installed: &crate::Installed,
     window: &mut Window,
     cx: &mut App,
 ) {
     match target {
         FileTarget::Local { path: file, .. } => {
-            match local_request(file, opener(target, cx).as_ref()) {
-                Ok(Some(request)) => launch(native, request, target.name(), window, cx),
+            match local_request(file, opener(target, installed, cx).as_ref()) {
+                Ok(Some(request)) => launch(
+                    installed.opener().clone(),
+                    request,
+                    target.name(),
+                    window,
+                    cx,
+                ),
                 Ok(None) => cx.open_with_system(file),
                 Err(error) => report(target.name(), error, window, cx),
             }
@@ -115,7 +120,7 @@ fn run(
         FileTarget::Remote {
             path: file, host, ..
         } => {
-            open_remote(target, file, host, workspace, window, cx);
+            open_remote(target, file, host, workspace, installed, window, cx);
         }
     }
 }
@@ -168,10 +173,11 @@ fn open_remote(
     file: &str,
     host: &nocterm_session::Target,
     workspace: &WeakEntity<Workspace>,
+    installed: &crate::Installed,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(opener) = opener(target, cx) else {
+    let Some(opener) = opener(target, installed, cx) else {
         report(target.name(), OpenError::MissingRemoteProgram, window, cx);
         return;
     };

@@ -7,7 +7,7 @@ use crate::{
 };
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
-    Task, Window,
+    Task, TestSupportExt as _, Window,
     component::{
         Sizable as _,
         input::{InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
@@ -20,7 +20,7 @@ use gpui_kit::{
 };
 use nocterm_monitor::MonitorMetric;
 use nocterm_ui::SettingsPage;
-use nocterm_ui::{SettingsExt as _, SettingsStore, form};
+use nocterm_ui::form;
 
 /// How long typing must pause before a number saves.
 const DEBOUNCE: Duration = Duration::from_millis(600);
@@ -40,13 +40,14 @@ struct Number {
 impl Number {
     /// The `index`th number on the page, editing `field`.
     fn new(
+        settings: &nocterm_store::SettingsHandle,
         index: usize,
         field: Field,
         range: RangeInclusive<u32>,
         window: &mut Window,
         cx: &mut Context<MonitorPage>,
     ) -> Self {
-        let value = *field(&mut cx.setting::<MonitorSettings>().clone());
+        let value = *field(&mut settings.setting::<MonitorSettings>(cx).clone());
         let input = cx.new(|cx| InputState::new(window, cx).default_value(value.to_string()));
         let typed = cx.subscribe_in(&input, window, move |page, _, event, window, cx| {
             let number = &mut page.numbers[index];
@@ -91,8 +92,13 @@ impl Number {
     }
 
     /// Shows a value saved elsewhere, unless the user is editing this field.
-    fn sync(&mut self, window: &mut Window, cx: &mut App) {
-        let value = (self.field)(&mut cx.setting::<MonitorSettings>().clone()).to_string();
+    fn sync(
+        &mut self,
+        settings: &nocterm_store::SettingsHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let value = (self.field)(&mut settings.setting::<MonitorSettings>(cx).clone()).to_string();
         let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         if focused || self.debounce.is_some() || self.input.read(cx).value() == value.as_str() {
             return;
@@ -104,15 +110,21 @@ impl Number {
 }
 
 pub struct MonitorPage {
+    settings: nocterm_store::SettingsHandle,
     focus: FocusHandle,
     numbers: Vec<Number>,
     _settings: Subscription,
 }
 
 impl MonitorPage {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: nocterm_store::SettingsHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let numbers = vec![
             Number::new(
+                &settings,
                 0,
                 |monitor| &mut monitor.interval_secs,
                 MONITOR_INTERVAL_RANGE,
@@ -120,6 +132,7 @@ impl MonitorPage {
                 cx,
             ),
             Number::new(
+                &settings,
                 1,
                 |monitor| &mut monitor.detail_interval_secs,
                 MONITOR_DETAIL_INTERVAL_RANGE,
@@ -127,6 +140,7 @@ impl MonitorPage {
                 cx,
             ),
             Number::new(
+                &settings,
                 2,
                 |monitor| &mut monitor.history_points,
                 MONITOR_HISTORY_RANGE,
@@ -134,16 +148,23 @@ impl MonitorPage {
                 cx,
             ),
         ];
-        let settings = cx.observe_global_in::<SettingsStore>(window, |page, window, cx| {
-            for number in &mut page.numbers {
-                number.sync(window, cx);
-            }
-            cx.notify();
+        let weak = cx.weak_entity();
+        let window_handle = window.window_handle();
+        let observed = settings.observe(cx, move |cx| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = weak.update(cx, |page, cx| {
+                    for number in &mut page.numbers {
+                        number.sync(&page.settings, window, cx);
+                    }
+                    cx.notify();
+                });
+            });
         });
         Self {
             focus: cx.focus_handle(),
             numbers,
-            _settings: settings,
+            settings,
+            _settings: observed,
         }
     }
 
@@ -157,8 +178,9 @@ impl MonitorPage {
         match text.parse::<u32>() {
             Ok(value) if number.range.contains(&value) => {
                 number.error = None;
-                if *field(&mut cx.setting::<MonitorSettings>().clone()) != value {
-                    cx.update_setting::<MonitorSettings>(move |settings| *field(settings) = value)
+                if *field(&mut self.settings.setting::<MonitorSettings>(cx).clone()) != value {
+                    self.settings
+                        .update::<MonitorSettings>(cx, move |settings| *field(settings) = value)
                         .detach();
                 }
             }
@@ -180,15 +202,25 @@ impl MonitorPage {
             .child(form::row(
                 label,
                 description,
-                div().w(rems(8.)).child(
-                    NumberInput::new(&number.input)
-                        .small()
-                        .suffix(div().text_xs().child(unit)),
-                ),
+                div()
+                    .id(("monitor-number", index))
+                    .test_support()
+                    .w(rems(8.))
+                    .child(
+                        NumberInput::new(&number.input)
+                            .small()
+                            .suffix(div().text_xs().child(unit)),
+                    ),
                 cx,
             ))
             .when_some(number.error.clone(), |row, error| {
-                row.child(form::error_text(error, cx))
+                row.child(
+                    div()
+                        .id(("monitor-number-error", index))
+                        .aria_label(error.clone())
+                        .test_support()
+                        .child(form::error_text(error, cx)),
+                )
             })
             .into_any_element()
     }
@@ -218,9 +250,10 @@ fn switch(
 ) -> Switch {
     Switch::new(id)
         .checked(checked)
-        .on_click(cx.listener(move |_, checked: &bool, _, cx| {
+        .on_click(cx.listener(move |page, checked: &bool, _, cx| {
             let (checked, edit) = (*checked, edit.clone());
-            cx.update_setting::<MonitorSettings>(move |monitor| edit(monitor, checked))
+            page.settings
+                .update::<MonitorSettings>(cx, move |monitor| edit(monitor, checked))
                 .detach();
             cx.notify();
         }))
@@ -244,7 +277,7 @@ fn description(metric: MonitorMetric) -> &'static str {
 impl Render for MonitorPage {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let monitor = cx.setting::<MonitorSettings>().clone();
+        let monitor = self.settings.setting::<MonitorSettings>(cx).clone();
         let general = [
             form::row(
                 "Show the host monitor",

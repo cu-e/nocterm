@@ -15,26 +15,37 @@ fn setup(
     Entity<VaultView>,
     Arc<ScriptedVaultAccess>,
 ) {
+    let (handle, view, service, _) =
+        setup_with_store(cx, nocterm_ui::SettingsStore::in_memory(Default::default()));
+    (handle, view, service)
+}
+fn setup_with_store(
+    cx: &mut TestAppContext,
+    store: nocterm_ui::SettingsStore,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<VaultView>,
+    Arc<ScriptedVaultAccess>,
+    std::rc::Rc<crate::Installed>,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         // The unlock dialog slides in on wall-clock time; a click whose press and release
         // land on different frames of that motion misses its button under load.
         cx.set_reduce_motion(true);
-        let ready = nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
-            cx,
-        );
+        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), store, cx);
         let service = Arc::new(ScriptedVaultAccess::default());
-        nocterm_ui::register_setting::<crate::VaultSettings>(cx);
-        let installed = crate::install(crate::Deps::new(service.clone()), &ready, cx);
+        let installed = std::rc::Rc::new(crate::install(
+            crate::Deps::new(service.clone()),
+            &ready,
+            cx,
+        ));
         // Application ownership is proved by bootstrap integration; a view receives its handle directly.
         let (handle, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| VaultView::new(service.clone(), window, cx))
+            cx.new(|cx| VaultView::new(service.clone(), installed.settings().clone(), window, cx))
         })
         .unwrap();
-        drop(installed);
-        (handle, view, service)
+        (handle, view, service, installed)
     })
 }
 fn drain(cx: &mut TestAppContext) {
@@ -398,3 +409,5 @@ fn closing_before_capability_probe_finishes_prevents_a_late_native_scan(cx: &mut
     })
     .unwrap();
 }
+
+mod settings_authority;

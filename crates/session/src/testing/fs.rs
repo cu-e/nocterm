@@ -371,7 +371,9 @@ impl InMemoryFs {
 }
 impl crate::local_fs::LocalFs for InMemoryFs {
     fn home(&self) -> crate::local_fs::LocalResult<Option<std::path::PathBuf>> {
-        Ok(Some(native::base()))
+        let home = native::base();
+        native::before(&self.shared, FsOperation::Home, &home)?;
+        Ok(Some(home))
     }
     fn resolve_source(
         &self,

@@ -1,9 +1,26 @@
 use super::*;
-use crate::{ActiveDesign, SettingsExt as _, SettingsStore, TerminalStyle, hsla, init};
+use crate::{ActiveDesign, SettingsStore, TerminalStyle, hsla, init};
 use crate::{AppearanceMode, AppearanceSettings};
 use gpui_kit::{TestAppContext, component::Theme};
 use nocterm_settings::SettingsDocument;
 use nocterm_themes::ThemeLibrary;
+fn install_test_projection(
+    backend: std::sync::Arc<nocterm_themes::test_support::InMemoryThemes>,
+    base: DesignTokens,
+    settings: SettingsStore,
+    cx: &mut App,
+) -> ThemeUi {
+    gpui_kit::init(cx);
+    let ready = init(base.clone(), settings, cx);
+    let service = nocterm_theme_service::ThemesHandle::install(
+        Some(backend.clone()),
+        None,
+        backend.scan(),
+        cx,
+    );
+    ThemeUi::install(ready.settings().clone(), service, base, cx)
+}
+
 #[gpui_kit::test]
 async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut TestAppContext) {
     let backend = std::sync::Arc::new(nocterm_themes::test_support::InMemoryThemes::default());
@@ -11,20 +28,12 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
     let base = DesignTokens::with_overrides("[dark.terminal]\nblue = '#abcdef'\n").unwrap();
     let expected = base.clone();
     let _themes = cx.update(|cx| {
-        gpui_kit::init(cx);
         let appearance = AppearanceSettings {
             mode: AppearanceMode::Dark,
             ..AppearanceSettings::default()
         };
         let settings = SettingsStore::in_memory(SettingsDocument::default()).with(appearance);
-        let ready = init(base.clone(), settings, cx);
-        let service = nocterm_theme_service::ThemesHandle::install(
-            Some(backend.clone()),
-            None,
-            backend.scan(),
-            cx,
-        );
-        ThemeUi::install(ready.settings().clone(), service, base, cx)
+        install_test_projection(backend.clone(), base, settings, cx)
     });
     let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
     cx.update(|cx| {
@@ -33,7 +42,9 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
             .detach();
     });
     cx.update(|cx| {
-        cx.update_setting::<AppearanceSettings>(|s| s.dark_theme = Some("Custom".into()))
+        _themes
+            .settings()
+            .update::<AppearanceSettings>(cx, |s| s.dark_theme = Some("Custom".into()))
     })
     .await
     .unwrap();
@@ -44,7 +55,11 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
             hsla("#112233".parse().unwrap())
         );
         assert_eq!(
-            TerminalStyle::current(cx).background,
+            TerminalStyle::with_settings(
+                _themes.settings().setting::<crate::TerminalSettings>(cx),
+                cx
+            )
+            .background,
             "#112233".parse().unwrap()
         );
         assert_eq!(
@@ -60,14 +75,20 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
     });
     assert_eq!(notifications.get(), 1);
     for name in [Some("Missing".to_owned()), None] {
-        cx.update(|cx| cx.update_setting::<AppearanceSettings>(move |s| s.dark_theme = name))
-            .await
-            .unwrap();
+        cx.update(|cx| {
+            _themes
+                .settings()
+                .update::<AppearanceSettings>(cx, move |s| s.dark_theme = name)
+        })
+        .await
+        .unwrap();
         cx.run_until_parked();
         cx.update(|cx| assert_eq!(cx.design(), &expected));
     }
     cx.update(|cx| {
-        cx.update_setting::<AppearanceSettings>(|s| s.light_theme = Some("Custom".into()))
+        _themes
+            .settings()
+            .update::<AppearanceSettings>(cx, |s| s.light_theme = Some("Custom".into()))
     })
     .await
     .unwrap();
@@ -113,46 +134,60 @@ async fn sparse_imports_composite_over_the_component_background_without_override
     )
     .unwrap();
     let _themes = cx.update(|cx| {
-        gpui_kit::init(cx);
-        let ready = init(
-            base.clone(),
+        install_test_projection(
+            backend.clone(),
+            base,
             SettingsStore::in_memory(SettingsDocument::default()),
             cx,
-        );
-        let service = nocterm_theme_service::ThemesHandle::install(
-            Some(backend.clone()),
-            None,
-            backend.scan(),
-            cx,
-        );
-        ThemeUi::install(ready.settings().clone(), service, base, cx)
+        )
     });
     for dark in [false, true] {
         for source in ["sparse", "interface", "terminal"] {
             let name = format!("{} {source}", if dark { "dark" } else { "light" });
-            cx.update(|cx| {
-                cx.update_setting::<AppearanceSettings>(move |s| {
-                    s.mode = if dark {
-                        AppearanceMode::Dark
-                    } else {
-                        AppearanceMode::Light
-                    };
-                    if dark {
-                        s.dark_theme = Some(name);
-                    } else {
-                        s.light_theme = Some(name);
-                    }
-                })
-            })
-            .await
-            .unwrap();
+            cx.update(|cx| select_variant(&_themes, dark, name, cx))
+                .await
+                .unwrap();
             cx.run_until_parked();
-            cx.update(|cx| verify_sparse_palette(dark, source, cx));
+            cx.update(|cx| {
+                verify_sparse_palette(
+                    dark,
+                    source,
+                    _themes.settings().setting::<crate::TerminalSettings>(cx),
+                    cx,
+                )
+            });
         }
     }
 }
 
-fn verify_sparse_palette(dark: bool, source: &str, cx: &gpui_kit::App) {
+fn select_variant(
+    projection: &ThemeUi,
+    dark: bool,
+    name: String,
+    cx: &mut App,
+) -> gpui_kit::Task<Result<u64, crate::SettingsError>> {
+    projection
+        .settings()
+        .update::<AppearanceSettings>(cx, move |s| {
+            s.mode = if dark {
+                AppearanceMode::Dark
+            } else {
+                AppearanceMode::Light
+            };
+            if dark {
+                s.dark_theme = Some(name);
+            } else {
+                s.light_theme = Some(name);
+            }
+        })
+}
+
+fn verify_sparse_palette(
+    dark: bool,
+    source: &str,
+    settings: &crate::TerminalSettings,
+    cx: &gpui_kit::App,
+) {
     use crate::terminal_style::color;
     use gpui_kit::component::ThemeColor;
     use nocterm_design::Color;
@@ -178,7 +213,7 @@ fn verify_sparse_palette(dark: bool, source: &str, cx: &gpui_kit::App) {
         expected_ui,
         "{dark}/{source} GUI"
     );
-    let style = TerminalStyle::current(cx);
+    let style = TerminalStyle::with_settings(settings, cx);
     assert_eq!(style.background, background, "{dark}/{source} terminal");
     assert_eq!(
         style.foreground,
@@ -202,3 +237,5 @@ fn verify_sparse_palette(dark: bool, source: &str, cx: &gpui_kit::App) {
         assert_eq!(cx.design().palette(dark).terminal.background, None);
     }
 }
+
+mod projection_authority;

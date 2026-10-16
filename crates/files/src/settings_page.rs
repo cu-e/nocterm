@@ -22,7 +22,7 @@ use gpui_kit::{
     rems,
 };
 use nocterm_ui::SettingsPage;
-use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, form};
+use nocterm_ui::{IconName, form};
 
 /// How long typing must pause before a field saves.
 const DEBOUNCE: Duration = Duration::from_millis(600);
@@ -187,6 +187,7 @@ struct Field {
 }
 
 pub struct ExplorerPage {
+    settings: nocterm_store::SettingsHandle,
     focus: FocusHandle,
     fields: BTreeMap<Key, Field>,
     /// How many rules the rule fields were made for.
@@ -194,21 +195,32 @@ pub struct ExplorerPage {
     _settings: Subscription,
 }
 
-fn explorer(cx: &App) -> ExplorerSettings {
-    cx.setting::<ExplorerSettings>().clone()
+fn explorer(settings: &nocterm_store::SettingsHandle, cx: &App) -> ExplorerSettings {
+    settings.setting::<ExplorerSettings>(cx).clone()
 }
 
 impl ExplorerPage {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = cx.observe_global_in::<SettingsStore>(window, |page, window, cx| {
-            page.sync(window, cx);
-            cx.notify();
+    pub fn new(
+        settings: nocterm_store::SettingsHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let view = cx.weak_entity();
+        let window_handle = window.window_handle();
+        let observed = settings.observe(cx, move |cx| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = view.update(cx, |page, cx| {
+                    page.sync(window, cx);
+                    cx.notify();
+                });
+            });
         });
         let mut page = Self {
             focus: cx.focus_handle(),
             fields: BTreeMap::new(),
             rules: 0,
-            _settings: settings,
+            settings,
+            _settings: observed,
         };
         for key in [
             Key::Excluded,
@@ -226,7 +238,7 @@ impl ExplorerPage {
     }
 
     fn add_field(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
-        let value = key.read(&explorer(cx));
+        let value = key.read(&explorer(&self.settings, cx));
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(value)
@@ -263,7 +275,7 @@ impl ExplorerPage {
 
     fn add_rule_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.fields.retain(|key, _| !key.is_rule());
-        self.rules = explorer(cx).open.rules.len();
+        self.rules = explorer(&self.settings, cx).open.rules.len();
         for ix in 0..self.rules {
             for key in [
                 Key::Extensions(ix),
@@ -279,7 +291,7 @@ impl ExplorerPage {
 
     /// Shows values saved elsewhere, except in fields being edited.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let explorer = explorer(cx);
+        let explorer = explorer(&self.settings, cx);
         if explorer.open.rules.len() != self.rules {
             self.add_rule_fields(window, cx);
         }
@@ -304,15 +316,16 @@ impl ExplorerPage {
         };
         field.debounce = None;
         let value = field.input.read(cx).value().to_string();
-        let mut candidate = explorer(cx);
+        let mut candidate = explorer(&self.settings, cx);
         match key.write(&mut candidate, &value) {
             Ok(()) => {
                 field.error = None;
-                if candidate != explorer(cx) {
-                    cx.update_setting::<ExplorerSettings>(move |settings| {
-                        let _ = key.write(settings, &value);
-                    })
-                    .detach();
+                if candidate != explorer(&self.settings, cx) {
+                    self.settings
+                        .update::<ExplorerSettings>(cx, move |settings| {
+                            let _ = key.write(settings, &value);
+                        })
+                        .detach();
                 }
             }
             Err(error) => field.error = Some(error.to_string().into()),
@@ -322,7 +335,23 @@ impl ExplorerPage {
 
     fn input(&self, key: Key) -> AnyElement {
         match self.fields.get(&key) {
-            Some(field) => Input::new(&field.input).small().into_any_element(),
+            Some(field) => {
+                let identity = match key {
+                    Key::Program(Side::Local) => {
+                        Some(("explorer-local-program", "Local editor program"))
+                    }
+                    Key::Program(Side::Remote) => {
+                        Some(("explorer-remote-program", "Remote editor program"))
+                    }
+                    _ => None,
+                };
+                Input::new(&field.input)
+                    .small()
+                    .when_some(identity, |input, (id, label)| {
+                        input.id(id).aria_label(label)
+                    })
+                    .into_any_element()
+            }
             None => div().into_any_element(),
         }
     }
@@ -376,13 +405,14 @@ impl ExplorerPage {
                             .ghost()
                             .icon(IconName::Trash)
                             .tooltip("Remove this file type")
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.update_setting::<ExplorerSettings>(move |settings| {
-                                    if ix < settings.open.rules.len() {
-                                        settings.open.rules.remove(ix);
-                                    }
-                                })
-                                .detach();
+                            .on_click(cx.listener(move |page, _, _, cx| {
+                                page.settings
+                                    .update::<ExplorerSettings>(cx, move |settings| {
+                                        if ix < settings.open.rules.len() {
+                                            settings.open.rules.remove(ix);
+                                        }
+                                    })
+                                    .detach();
                             })),
                     ),
             )
@@ -403,9 +433,10 @@ fn switch(
 ) -> Switch {
     Switch::new(id)
         .checked(checked)
-        .on_click(cx.listener(move |_, checked: &bool, _, cx| {
+        .on_click(cx.listener(move |page, checked: &bool, _, cx| {
             let checked = *checked;
-            cx.update_setting::<ExplorerSettings>(move |explorer| edit(explorer, checked))
+            page.settings
+                .update::<ExplorerSettings>(cx, move |explorer| edit(explorer, checked))
                 .detach();
             cx.notify();
         }))
@@ -428,18 +459,19 @@ fn presets(
                 .ghost()
                 .label(label)
                 .selected(current == program)
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.update_setting::<ExplorerSettings>(move |settings| {
-                        let open = &mut settings.open;
-                        let opener = match side {
-                            Side::Local => &mut open.local,
-                            Side::Remote => &mut open.remote,
-                        };
-                        if opener.program != program {
-                            *opener = Opener::new(program, &[]);
-                        }
-                    })
-                    .detach();
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    page.settings
+                        .update::<ExplorerSettings>(cx, move |settings| {
+                            let open = &mut settings.open;
+                            let opener = match side {
+                                Side::Local => &mut open.local,
+                                Side::Remote => &mut open.remote,
+                            };
+                            if opener.program != program {
+                                *opener = Opener::new(program, &[]);
+                            }
+                        })
+                        .detach();
                 }))
         }))
         .into_any_element()
@@ -448,7 +480,7 @@ fn presets(
 impl Render for ExplorerPage {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let explorer = explorer(cx);
+        let explorer = explorer(&self.settings, cx);
         let indexing = &explorer.indexing;
         let statistics = vec![
             form::row(
@@ -570,11 +602,12 @@ impl Render for ExplorerPage {
                         .small()
                         .icon(IconName::Plus)
                         .label("Add file type")
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.update_setting::<ExplorerSettings>(|settings| {
-                                settings.open.rules.push(OpenRule::default());
-                            })
-                            .detach();
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            page.settings
+                                .update::<ExplorerSettings>(cx, |settings| {
+                                    settings.open.rules.push(OpenRule::default());
+                                })
+                                .detach();
                         })),
                 )
                 .into_any_element(),

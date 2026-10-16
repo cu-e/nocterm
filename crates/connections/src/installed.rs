@@ -142,6 +142,9 @@ pub fn install(
     ready
         .settings()
         .register::<nocterm_ui::AppearanceSettings>(cx);
+    ready
+        .settings()
+        .register::<nocterm_ui::TerminalSettings>(cx);
     let (connections, inputs, facts) = prepared.into_owners();
     Installed::from_owners(
         connections,

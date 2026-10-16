@@ -1,14 +1,13 @@
 //! The Vault page's state and the operations it starts.
-use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, Window,
-    component::input::{InputEvent, InputState},
-    prelude::*,
-};
-use nocterm_session::Secret;
+use gpui_kit::{App, Context, FocusHandle, Focusable, SharedString, Subscription, Window};
 use nocterm_ui::SettingsPage;
-use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vault::{CredentialInfo, DeviceCapability, VaultAccess, VaultFuture};
 use std::sync::Arc;
+
+mod form;
+use form::VaultForm;
+#[path = "render.rs"]
+mod render;
 
 /// The page's tabs, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +20,7 @@ pub(crate) enum Tab {
 
 impl Tab {
     pub(crate) const ALL: [Tab; 4] = [Tab::Overview, Tab::Credentials, Tab::Security, Tab::Options];
-    pub(crate) fn title(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
             Tab::Credentials => "Credentials",
@@ -37,70 +36,47 @@ struct ViewBindings {
 }
 
 pub struct VaultView {
-    pub(crate) tab: Tab,
-    pub(crate) service: Arc<dyn VaultAccess>,
-    pub(crate) password: Entity<InputState>,
-    pub(crate) confirm: Entity<InputState>,
-    pub(crate) focus: FocusHandle,
-    pub(crate) busy: bool,
-    pub(crate) device: Option<DeviceCapability>,
-    pub(crate) device_busy: bool,
-    pub(crate) message: Option<(SharedString, bool)>,
-    pub(crate) records: Vec<CredentialInfo>,
-    pub(crate) unlocked: bool,
-    pub(crate) generation: u64,
-    /// Minutes before the vault locks itself, saved when the field is left.
-    pub(crate) auto_lock: Entity<InputState>,
-    pub(crate) auto_lock_error: Option<SharedString>,
+    tab: Tab,
+    service: Arc<dyn VaultAccess>,
+    form: VaultForm,
+    settings: nocterm_store::SettingsHandle,
+    focus: FocusHandle,
+    busy: bool,
+    device: Option<DeviceCapability>,
+    device_busy: bool,
+    message: Option<(SharedString, bool)>,
+    records: Vec<CredentialInfo>,
+    unlocked: bool,
+    generation: u64,
     _bindings: ViewBindings,
 }
 impl VaultView {
     pub(crate) fn new(
         service: Arc<dyn VaultAccess>,
+        settings: nocterm_store::SettingsHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let password = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .placeholder("Master password")
-        });
-        let confirm = cx.new(|cx| {
-            InputState::new(window, cx)
-                .masked(true)
-                .placeholder("Repeat master password")
-        });
-        let auto_lock = cx.new(|cx| {
-            InputState::new(window, cx).default_value(
-                cx.setting::<crate::VaultSettings>()
-                    .auto_lock_minutes
-                    .to_string(),
-            )
-        });
-        let subscriptions = vec![
-            cx.subscribe_in(&password, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) && !this.service.is_unlocked() {
-                    this.submit(window, cx);
-                }
-            }),
-            cx.subscribe_in(&auto_lock, window, |this, _, event, _, cx| {
-                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                    this.save_auto_lock(cx);
-                }
-            }),
-            cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-                let minutes = cx
-                    .setting::<crate::VaultSettings>()
-                    .auto_lock_minutes
-                    .to_string();
-                let focused = this.auto_lock.read(cx).focus_handle(cx).is_focused(window);
-                if !focused && this.auto_lock.read(cx).value() != minutes.as_str() {
-                    this.auto_lock
-                        .update(cx, |input, cx| input.set_value(minutes, window, cx));
-                }
-                cx.notify();
-            }),
-        ];
+        let form = VaultForm::new(
+            settings
+                .setting::<crate::VaultSettings>(cx)
+                .auto_lock_minutes,
+            window,
+            cx,
+        );
+        let mut subscriptions = form.subscriptions(window, cx);
+        let weak = cx.weak_entity();
+        let window_handle = window.window_handle();
+        let policy = settings.clone();
+        subscriptions.push(settings.observe(cx, move |cx| {
+            let minutes = policy.setting::<crate::VaultSettings>(cx).auto_lock_minutes;
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.form.sync_auto_lock(minutes, window, cx);
+                    cx.notify();
+                });
+            });
+        }));
         let status_service = service.clone();
         let mut seen = service.revision();
         let watch = cx.spawn_in(window, async move |this, cx| {
@@ -116,12 +92,10 @@ impl VaultView {
         });
         let mut this = Self {
             tab: Tab::Overview,
-            auto_lock,
-            auto_lock_error: None,
+            form,
+            settings,
             service,
             focus: cx.focus_handle(),
-            password,
-            confirm,
             busy: false,
             device: None,
             device_busy: false,
@@ -155,14 +129,11 @@ impl VaultView {
             self.generation = self.generation.wrapping_add(1);
             self.busy = false;
             self.device_busy = false;
-            self.password
-                .update(cx, |input, cx| input.set_value("", window, cx));
-            self.confirm
-                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.form.clear_passwords(window, cx);
         }
         cx.notify();
     }
-    pub(crate) fn refresh_device(&mut self, cx: &mut Context<Self>) {
+    fn refresh_device(&mut self, cx: &mut Context<Self>) {
         let future = self.service.probe_device_unlock();
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
@@ -178,7 +149,7 @@ impl VaultView {
         })
         .detach();
     }
-    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+    fn refresh(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
         let future = self.service.list();
         cx.spawn(async move |this, cx| {
@@ -196,22 +167,19 @@ impl VaultView {
         })
         .detach();
     }
-    pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
-        let password = Secret::new(self.password.read(cx).value().to_string());
+        let password = self.form.password(cx);
         if (!self.service.exists() || self.service.is_unlocked())
-            && password.expose() != self.confirm.read(cx).value().as_ref()
+            && !self.form.confirm_matches(&password, cx)
         {
             self.message = Some(("The master passwords do not match.".into(), true));
             cx.notify();
             return;
         }
-        self.password
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.confirm
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.form.clear_passwords(window, cx);
         let future = if self.service.is_unlocked() {
             self.service.change_password(password)
         } else if self.service.exists() {
@@ -221,14 +189,14 @@ impl VaultView {
         };
         self.operation(future, cx);
     }
-    pub(crate) fn device_operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
+    fn device_operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
         self.device_busy = true;
         self.operation(future, cx);
     }
-    pub(crate) fn operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
+    fn operation(&mut self, future: VaultFuture<()>, cx: &mut Context<Self>) {
         self.busy = true;
         self.message = None;
         let generation = self.generation;
@@ -257,56 +225,45 @@ impl VaultView {
         .detach();
         cx.notify();
     }
-    pub(crate) fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.service.lock();
         self.device_busy = false;
         self.unlocked = false;
         self.records.clear();
         self.generation = self.generation.wrapping_add(1);
         self.busy = false;
-        self.password
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.confirm
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.form.clear_passwords(window, cx);
         self.message = Some(("Vault locked.".into(), false));
         cx.notify();
     }
 }
 impl VaultView {
     /// Saves the automatic lock delay if it is a whole number of minutes in range.
-    pub(crate) fn save_auto_lock(&mut self, cx: &mut Context<Self>) {
-        let text = self.auto_lock.read(cx).value().trim().to_owned();
-        match text.parse::<u32>() {
-            Ok(minutes) if (1..=1440).contains(&minutes) => {
-                self.auto_lock_error = None;
-                if minutes != cx.setting::<crate::VaultSettings>().auto_lock_minutes {
-                    cx.update_setting::<crate::VaultSettings>(move |settings| {
-                        settings.auto_lock_minutes = minutes
-                    })
-                    .detach();
-                }
-            }
-            _ => {
-                self.auto_lock_error = Some("Enter a number of minutes from 1 to 1440.".into());
-            }
+    fn save_auto_lock(&mut self, cx: &mut Context<Self>) {
+        if let Some(minutes) = self.form.auto_lock_minutes(cx)
+            && minutes
+                != self
+                    .settings
+                    .setting::<crate::VaultSettings>(cx)
+                    .auto_lock_minutes
+        {
+            self.settings
+                .update::<crate::VaultSettings>(cx, move |settings| {
+                    settings.auto_lock_minutes = minutes
+                })
+                .detach();
         }
         cx.notify();
     }
-    pub(crate) fn select_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
         if self.tab == tab {
             return;
         }
         // Master passwords never wait in a hidden tab.
-        self.clear_passwords(window, cx);
+        self.form.clear_passwords(window, cx);
         self.message = None;
         self.tab = tab;
         cx.notify();
-    }
-    fn clear_passwords(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.password
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.confirm
-            .update(cx, |input, cx| input.set_value("", window, cx));
     }
 }
 
@@ -315,7 +272,7 @@ impl Focusable for VaultView {
         if self.busy {
             self.focus.clone()
         } else {
-            self.password.read(cx).focus_handle(cx)
+            self.form.focus_handle(cx)
         }
     }
 }
@@ -324,7 +281,7 @@ impl SettingsPage for VaultView {
         if self.device_busy {
             self.lock(window, cx);
         }
-        self.clear_passwords(window, cx);
+        self.form.clear_passwords(window, cx);
     }
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_deactivate(window, cx);

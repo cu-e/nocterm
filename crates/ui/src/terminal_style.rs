@@ -3,7 +3,7 @@
 use gpui_kit::{App, Hsla, Pixels, Rems, Rgba, SharedString, component::ActiveTheme, px, rems};
 use nocterm_design::Color;
 
-use crate::{ActiveDesign, SettingsExt};
+use crate::ActiveDesign;
 
 /// Everything a terminal view needs to paint, already resolved: a setting
 /// wins over a design token, which wins over the component theme.
@@ -27,10 +27,6 @@ pub struct TerminalStyle {
 }
 
 impl TerminalStyle {
-    pub fn current(cx: &App) -> Self {
-        Self::with_settings(cx.setting::<crate::TerminalSettings>(), cx)
-    }
-
     pub fn with_settings(settings: &crate::TerminalSettings, cx: &App) -> Self {
         let tokens = cx.design();
         let theme = cx.theme();
@@ -108,7 +104,10 @@ mod tests {
             let explicit = TerminalStyle::with_settings(&supplied, cx);
             assert_eq!(explicit.font_size, px(21.));
             assert!(explicit.show_line_numbers);
-            assert_ne!(explicit.font_size, TerminalStyle::current(cx).font_size);
+            assert_ne!(
+                explicit.font_size,
+                TerminalStyle::with_settings(&crate::TerminalSettings::default(), cx).font_size
+            );
         });
     }
 

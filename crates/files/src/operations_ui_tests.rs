@@ -169,7 +169,12 @@ fn row_point(window: &Window, local: bool, ix: usize) -> gpui_kit::Point<gpui_ki
         toolbar.bottom() + px(36. + ix as f32 * 32.),
     )
 }
-fn context_menu(cx: &mut TestAppContext, handle: AnyWindowHandle, local: bool, ix: usize) {
+pub(super) fn context_menu(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    local: bool,
+    ix: usize,
+) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let position = row_point(window, local, ix);
@@ -208,7 +213,7 @@ fn context_menu(cx: &mut TestAppContext, handle: AnyWindowHandle, local: bool, i
     .unwrap();
     cx.run_until_parked();
 }
-fn choose(cx: &mut TestAppContext, handle: AnyWindowHandle, ix: usize) {
+pub(super) fn choose(cx: &mut TestAppContext, handle: AnyWindowHandle, ix: usize) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.within("popup-menu").click(ix, cx);

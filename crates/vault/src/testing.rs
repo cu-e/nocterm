@@ -5,13 +5,26 @@ use futures::{
     channel::{mpsc as progress, oneshot},
     future::BoxFuture,
 };
+pub use nocterm_session::testing::Gate;
 use nocterm_session::{CredentialId, Secret};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+/// Labels only the next scripted request; no native work or view state is stored.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum VaultOperation {
+    Create,
+    Unlock,
+    ChangePassword,
+    List,
+    Delete,
+}
+
 #[derive(Clone)]
 pub struct ScriptedVaultAccess {
+    next_gate: Arc<Mutex<Option<(VaultOperation, Gate)>>>,
+    auto_lock: Arc<Mutex<Vec<Duration>>>,
     memory: Arc<Mutex<Memory>>,
 }
 struct Memory {
@@ -50,6 +63,8 @@ impl Memory {
 impl Default for ScriptedVaultAccess {
     fn default() -> Self {
         Self {
+            next_gate: Arc::default(),
+            auto_lock: Arc::default(),
             memory: Arc::new(Mutex::new(Memory {
                 last_password: None,
                 status: VaultStatus::Missing,
@@ -77,6 +92,40 @@ impl Default for ScriptedVaultAccess {
     }
 }
 impl ScriptedVaultAccess {
+    /// Suspends the next matching future using the common session test gate.
+    /// A later script does not alter requests that already captured their gate.
+    pub fn hold_next(&self, operation: VaultOperation, gate: Gate) {
+        *self.next_gate.lock().unwrap() = Some((operation, gate));
+    }
+    fn gated_request<T: Send + 'static>(
+        &self,
+        kind: VaultOperation,
+        operation: impl FnOnce(&mut Memory) -> Result<T, VaultError> + Send + 'static,
+    ) -> VaultFuture<T> {
+        let gate = {
+            let mut next = self.next_gate.lock().unwrap();
+            if next
+                .as_ref()
+                .is_some_and(|(operation, _)| *operation == kind)
+            {
+                next.take().map(|(_, gate)| gate)
+            } else {
+                None
+            }
+        };
+        let future = self.request(operation);
+        async move {
+            if let Some(gate) = gate {
+                gate.wait().await;
+            }
+            future.await
+        }
+        .boxed()
+    }
+    /// Observes only calls accepted by this fake port, never view state.
+    pub fn auto_lock_updates(&self) -> Vec<Duration> {
+        self.auto_lock.lock().unwrap().clone()
+    }
     pub fn last_password(&self) -> Option<String> {
         self.memory
             .lock()
@@ -165,7 +214,9 @@ impl VaultAccess for ScriptedVaultAccess {
         }
         .boxed()
     }
-    fn set_auto_lock(&self, _: Duration) {}
+    fn set_auto_lock(&self, duration: Duration) {
+        self.auto_lock.lock().unwrap().push(duration);
+    }
     fn lock(&self) {
         let mut memory = self.memory.lock().unwrap();
         let status = if memory.status == VaultStatus::Missing {
@@ -180,7 +231,7 @@ impl VaultAccess for ScriptedVaultAccess {
         }
     }
     fn create(&self, password: Secret) -> VaultFuture<()> {
-        self.request(move |memory| {
+        self.gated_request(VaultOperation::Create, move |memory| {
             memory.last_password = Some(password);
             if memory.status != VaultStatus::Missing {
                 return Err(VaultError::AlreadyExists);
@@ -190,7 +241,7 @@ impl VaultAccess for ScriptedVaultAccess {
         })
     }
     fn unlock(&self, password: Secret) -> VaultFuture<()> {
-        self.request(move |memory| {
+        self.gated_request(VaultOperation::Unlock, move |memory| {
             memory.last_password = Some(password);
             if let Some(error) = memory.next_unlock_error.take() {
                 return Err(error);
@@ -200,7 +251,7 @@ impl VaultAccess for ScriptedVaultAccess {
         })
     }
     fn change_password(&self, password: Secret) -> VaultFuture<()> {
-        self.request(move |memory| {
+        self.gated_request(VaultOperation::ChangePassword, move |memory| {
             memory.last_password = Some(password);
             if memory.status == VaultStatus::Unlocked {
                 Ok(())
@@ -210,7 +261,7 @@ impl VaultAccess for ScriptedVaultAccess {
         })
     }
     fn list(&self) -> VaultFuture<Vec<CredentialInfo>> {
-        self.request(|memory| {
+        self.gated_request(VaultOperation::List, |memory| {
             if memory.status != VaultStatus::Unlocked {
                 return Err(VaultError::Locked);
             }
@@ -258,7 +309,7 @@ impl VaultAccess for ScriptedVaultAccess {
         })
     }
     fn delete(&self, id: CredentialId) -> VaultFuture<()> {
-        self.request(move |memory| {
+        self.gated_request(VaultOperation::Delete, move |memory| {
             if memory.status != VaultStatus::Unlocked {
                 return Err(VaultError::Locked);
             }

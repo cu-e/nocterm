@@ -117,7 +117,16 @@ impl AppearanceFields {
             None => "Empty: grey.".to_owned(),
         };
         let tiles = self.tiles(detected, color, cx);
-        let icon = self.icon_grid(tiles, cx);
+        let background = nocterm_ui::hsla(
+            nocterm_ui::TerminalStyle::with_settings(
+                installed
+                    .settings()
+                    .setting::<nocterm_ui::TerminalSettings>(cx),
+                cx,
+            )
+            .background,
+        );
+        let icon = self.icon_grid(tiles, background, cx);
         let colour = self.color_control(cx);
         vec![
             form::stacked_row(
@@ -218,8 +227,12 @@ impl AppearanceFields {
             .map(IntoElement::into_any_element)
             .collect()
     }
-    fn icon_grid(&self, tiles: Vec<AnyElement>, cx: &mut Context<ConnectionEditor>) -> AnyElement {
-        let background = form::page_background(cx);
+    fn icon_grid(
+        &self,
+        tiles: Vec<AnyElement>,
+        background: gpui_kit::Hsla,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> AnyElement {
         let count = tiles.len();
         let expanded = self.expanded;
         let grid = div()

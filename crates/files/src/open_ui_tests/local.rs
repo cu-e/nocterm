@@ -5,6 +5,7 @@ use nocterm_session::{
 };
 
 struct OpenFixture {
+    installed: Installed,
     window: AnyWindowHandle,
     workspace: Entity<Workspace>,
     panel: Entity<FilesPanel>,
@@ -12,26 +13,38 @@ struct OpenFixture {
     native: Arc<FakeExec>,
 }
 fn fixture(cx: &mut TestAppContext, name: &std::ffi::OsStr, native: Arc<FakeExec>) -> OpenFixture {
+    fixture_with_store(
+        cx,
+        name,
+        native,
+        nocterm_ui::SettingsStore::in_memory(Default::default()),
+    )
+}
+fn fixture_with_store(
+    cx: &mut TestAppContext,
+    name: &std::ffi::OsStr,
+    native: Arc<FakeExec>,
+    store: nocterm_ui::SettingsStore,
+) -> OpenFixture {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(name), b"file").unwrap();
     let (mut deps, _) = fixture_deps_at(directory.path());
     deps.opener = native.clone();
-    let (window, workspace, _, panel) =
-        panel_fixture_with(cx, Arc::new(PendingFs::default()), deps);
-    cx.update(|cx| {
-        let settings = ExplorerSettings {
-            open: OpenSettings {
-                local: Opener::new("editor", &["--literal", "pre={file}:{file}"]),
-                ..Default::default()
-            },
+    let settings = ExplorerSettings {
+        open: OpenSettings {
+            local: Opener::new("editor", &["--literal", "pre={file}:{file}"]),
             ..Default::default()
-        };
-        cx.set_global(
-            nocterm_ui::SettingsStore::in_memory(Default::default())
-                .with(settings)
-                .with(nocterm_session::LocalShellSettings::default()),
-        );
-    });
+        },
+        ..Default::default()
+    };
+    let (window, workspace, _, panel, installed) = panel_fixture_with_settings(
+        cx,
+        Arc::new(PendingFs::default()),
+        deps,
+        store
+            .with(settings)
+            .with(nocterm_session::LocalShellSettings::default()),
+    );
     cx.update_window(window, |_, _, cx| {
         workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
         panel.update(cx, |panel, cx| {
@@ -42,6 +55,7 @@ fn fixture(cx: &mut TestAppContext, name: &std::ffi::OsStr, native: Arc<FakeExec
     cx.run_until_parked();
     cx.simulate_window_resize(window, gpui_kit::size(px(1400.), px(1100.)));
     OpenFixture {
+        installed,
         window,
         workspace,
         panel,
@@ -165,4 +179,99 @@ fn native_non_utf8_file_name_reports_before_calling_the_program_port(cx: &mut Te
     double_click(cx, fixture.window);
     assert!(fixture.native.opened_requests().is_empty());
     assert_eq!(notice_count(cx, fixture.window), 1);
+}
+
+#[gpui_kit::test]
+fn menu_snapshot_keeps_its_label_but_dispatch_uses_latest_original_published_policy(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+    let fixture = fixture(cx, "a b;$.txt".as_ref(), Arc::new(FakeExec::default()));
+    crate::tests::operations_ui::context_menu(cx, fixture.window, true, 0);
+    cx.update_window(fixture.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.within("popup-menu").find(9usize).label(),
+            Some("Open with editor")
+        );
+    })
+    .unwrap();
+    cx.update(|cx| {
+        fixture
+            .installed
+            .settings()
+            .update::<ExplorerSettings>(cx, |settings| {
+                settings.open.local =
+                    Opener::new("latest editor", &["--literal", "pre={file}:{file}"]);
+            })
+            .detach();
+        let other = nocterm_store::SettingsConfig::in_memory(Default::default())
+            .with(ExplorerSettings {
+                open: OpenSettings {
+                    local: Opener::new("wrong owner", &[]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .install(cx);
+        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+    });
+    crate::tests::operations_ui::choose(cx, fixture.window, 9);
+    let opened = fixture.native.opened_requests();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].program(), "latest editor");
+    let file = fixture.directory.path().join("a b;$.txt");
+    assert_eq!(
+        opened[0].args(),
+        [
+            "--literal".to_owned(),
+            format!("pre={}:{}", file.display(), file.display())
+        ]
+    );
+    assert_eq!(opened[0].cwd(), Some(fixture.directory.path()));
+}
+
+#[gpui_kit::test]
+async fn rejected_durable_opener_policy_keeps_the_original_published_selection(
+    cx: &mut TestAppContext,
+) {
+    let blocked = tempfile::tempdir().unwrap();
+    let store = nocterm_ui::SettingsStore::new(
+        Default::default(),
+        nocterm_settings::SettingsFile::new(blocked.path()),
+    );
+    let fixture = fixture_with_store(
+        cx,
+        "note.txt".as_ref(),
+        Arc::new(FakeExec::default()),
+        store,
+    );
+    crate::tests::operations_ui::context_menu(cx, fixture.window, true, 0);
+    let result = cx
+        .update(|cx| {
+            fixture
+                .installed
+                .settings()
+                .update::<ExplorerSettings>(cx, |settings| {
+                    settings.open.local = Opener::new("rejected editor", &[]);
+                })
+        })
+        .await;
+    assert!(matches!(result, Err(nocterm_store::StoreError::Backend(_))));
+    crate::tests::operations_ui::choose(cx, fixture.window, 9);
+    let requests = fixture.native.opened_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].program(), "editor");
+    cx.update(|cx| {
+        assert_eq!(
+            fixture
+                .installed
+                .settings()
+                .setting::<ExplorerSettings>(cx)
+                .open
+                .local
+                .program,
+            "editor"
+        )
+    });
 }

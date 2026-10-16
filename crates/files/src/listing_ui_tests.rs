@@ -431,3 +431,145 @@ fn partial_directory_download_refreshes(cx: &mut TestAppContext, cancelled: bool
         );
     });
 }
+
+fn wait_for_home_reply(observed: &std::sync::atomic::AtomicBool, cx: &mut TestAppContext) {
+    for _ in 0..1000 {
+        if observed.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        assert!(cx.executor().tick(), "home query must be scheduled");
+    }
+    panic!("native home query did not execute");
+}
+
+#[gpui_kit::test]
+fn delayed_home_keeps_the_original_initial_directory_after_published_policy_changes(
+    cx: &mut TestAppContext,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let original = tempfile::tempdir().unwrap();
+    let later = tempfile::tempdir().unwrap();
+    let (deps, local) = fixture_deps_at(original.path());
+    local.seed_native_directory(later.path()).unwrap();
+    let queried = Arc::new(AtomicBool::new(false));
+    let observed = queried.clone();
+    local.observe_local(Arc::new(move |operation, _: &std::path::Path| {
+        if operation == nocterm_session::testing::FsOperation::Home {
+            observed.store(true, Ordering::SeqCst);
+        }
+    }));
+    let store = nocterm_ui::SettingsStore::in_memory(Default::default()).with(
+        nocterm_session::LocalShellSettings(nocterm_session::ShellSettings {
+            cwd: Some(original.path().to_string_lossy().into_owned()),
+            ..Default::default()
+        }),
+    );
+    let (_, _, _, panel, installed) =
+        panel_fixture_with_settings(cx, Arc::new(PendingFs::default()), deps, store);
+    wait_for_home_reply(&queried, cx);
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.local_listing(cx).path().is_none())
+    });
+    cx.update(|cx| {
+        let later_path = later.path().to_string_lossy().into_owned();
+        installed
+            .settings()
+            .update::<nocterm_session::LocalShellSettings>(cx, move |s| {
+                s.cwd = Some(later_path.clone());
+            })
+            .detach();
+        let other = nocterm_store::SettingsConfig::in_memory(Default::default())
+            .with(nocterm_session::LocalShellSettings(
+                nocterm_session::ShellSettings {
+                    cwd: Some(later.path().to_string_lossy().into_owned()),
+                    ..Default::default()
+                },
+            ))
+            .install(cx);
+        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(original.path())
+        )
+    });
+}
+
+#[gpui_kit::test]
+fn delayed_home_cannot_replace_navigation_accepted_before_its_completion(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let original = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    let (deps, local) = fixture_deps_at(original.path());
+    local.seed_native_directory(destination.path()).unwrap();
+    let queried = Arc::new(AtomicBool::new(false));
+    let observed = queried.clone();
+    local.observe_local(Arc::new(move |operation, _: &std::path::Path| {
+        if operation == nocterm_session::testing::FsOperation::Home {
+            observed.store(true, Ordering::SeqCst);
+        }
+    }));
+    let (_, _, _, panel) = panel_fixture_with(cx, Arc::new(PendingFs::default()), deps);
+    wait_for_home_reply(&queried, cx);
+    panel.read_with(cx, |panel, cx| {
+        assert!(panel.local_listing(cx).path().is_none())
+    });
+    panel.update(cx, |panel, cx| {
+        panel.navigate_local(destination.path().to_owned(), cx)
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.local_listing(cx).requested().as_deref(),
+            Some(destination.path())
+        );
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(destination.path())
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn each_indexing_request_reads_latest_original_policy_after_an_unrelated_installation(
+    cx: &mut TestAppContext,
+) {
+    let (_, _, _, panel, installed) =
+        panel_fixture_with_installation(cx, Arc::new(SizedFs), fixture_deps());
+    cx.run_until_parked();
+    panel.update(cx, |panel, cx| {
+        panel.navigate_remote(Some("/home/test/srv".into()), cx)
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.remote_listing(cx).statistics(),
+            "1 files · 1 folders · 3.0 KiB"
+        )
+    });
+    cx.update(|cx| {
+        installed
+            .settings()
+            .update::<ExplorerSettings>(cx, |s| s.indexing.remote = false)
+            .detach();
+        let other = nocterm_store::SettingsConfig::in_memory(Default::default())
+            .with(ExplorerSettings::default())
+            .install(cx);
+        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+    });
+    cx.run_until_parked();
+    panel.update(cx, |panel, cx| {
+        panel.navigate_remote(Some("/home/test/srv".into()), cx)
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.remote_listing(cx).statistics(),
+            "1 files · 1 folders · size not counted"
+        )
+    });
+}

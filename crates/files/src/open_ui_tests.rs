@@ -59,8 +59,12 @@ fn remote_fixture(
     fs.seed_file("/etc/hosts", b"hosts".to_vec()).unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        path_input::install_bindings(cx);
-        cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
+        let ready = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            cx,
+        );
+        let installed = install(deps, &ready, cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
@@ -82,8 +86,9 @@ fn remote_fixture(
                 });
                 workspace.update(cx, |workspace, cx| workspace.add_item(item, window, cx));
                 let session = workspace.read(cx).active_session(cx);
-                let panel =
-                    cx.new(|cx| FilesPanel::new(deps, workspace.clone(), session, window, cx));
+                let panel = cx.new(|cx| {
+                    FilesPanel::new(installed.clone(), workspace.clone(), session, window, cx)
+                });
                 workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
                 panel
             })

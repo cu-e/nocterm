@@ -9,6 +9,10 @@ use nocterm_ui::{AppearanceMode, AppearanceSettings};
 
 use super::super::fixture;
 
+fn terminal_style(settings: &nocterm_store::SettingsHandle, cx: &gpui_kit::App) -> TerminalStyle {
+    TerminalStyle::with_settings(settings.setting::<nocterm_ui::TerminalSettings>(cx), cx)
+}
+
 fn frames(handle: AnyWindowHandle, cx: &mut TestAppContext) {
     cx.run_until_parked();
     for _ in 0..2 {
@@ -52,7 +56,7 @@ fn choose(handle: AnyWindowHandle, text: &str, cx: &mut TestAppContext) {
 async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_terminal(
     cx: &mut TestAppContext,
 ) {
-    let (handle, workspace, _, _) = theme_fixture(cx);
+    let (handle, workspace, _terminal, _, settings) = theme_fixture(cx);
     cx.update(|cx| {
         cx.update_setting::<AppearanceSettings>(|s| {
             s.mode = AppearanceMode::Dark;
@@ -109,7 +113,7 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
         );
         let background = "#123456".parse().unwrap();
         assert_eq!(Theme::global(cx).background, hsla(background));
-        assert_eq!(TerminalStyle::current(cx).background, background);
+        assert_eq!(terminal_style(&settings, cx).background, background);
         assert_eq!(
             cx.design().dark.terminal.normal.red,
             "#ff0000".parse().unwrap()
@@ -167,7 +171,7 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
             Some("GUI Light")
         );
         assert_eq!(
-            TerminalStyle::current(cx).background,
+            terminal_style(&settings, cx).background,
             "#f1e2d3".parse().unwrap()
         );
     });
@@ -177,7 +181,7 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
 async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
     cx: &mut TestAppContext,
 ) {
-    let (handle, _, _, _) = theme_fixture(cx);
+    let (handle, _, _terminal, _, settings) = theme_fixture(cx);
     cx.update(|cx| {
         cx.update_setting::<AppearanceSettings>(|s| {
             s.dark_theme = Some("GUI Dark".into());
@@ -213,7 +217,7 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
                 ),
             };
             let color = if dark { "#123456" } else { "#f1e2d3" }.parse().unwrap();
-            assert_eq!(TerminalStyle::current(cx).background, color);
+            assert_eq!(terminal_style(&settings, cx).background, color);
         });
     }
     for query in ["color scheme", "change theme"] {
@@ -227,12 +231,7 @@ async fn palette_schemes_apply_all_modes_and_cancel_keeps_the_selected_themes(
         cx.update_window(handle, |_, window, cx| window.press("escape", cx))
             .unwrap();
         frames(handle, cx);
-        cx.update(|cx| {
-            assert_eq!(
-                cx.global::<nocterm_ui::SettingsStore>().document(cx),
-                &before
-            )
-        });
+        cx.update(|cx| assert_eq!(settings.document(cx), &before));
         cx.update_window(handle, |_, window, _| {
             assert!(window.try_find("dialog").is_none())
         })
@@ -262,7 +261,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     cx: &mut TestAppContext,
 ) {
     let directory = tempfile::tempdir().unwrap();
-    let (handle, _, _, _, _) = super::super::fixture_with_settings(
+    let (handle, _, _, _, _, settings) = super::super::fixture_with_settings(
         cx,
         false,
         None,
@@ -272,11 +271,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
             nocterm_settings::SettingsFile::new(directory.path()),
         )),
     );
-    let before = cx.update(|cx| {
-        cx.global::<nocterm_ui::SettingsStore>()
-            .document(cx)
-            .clone()
-    });
+    let before = cx.update(|cx| settings.document(cx).clone());
     let notices = cx
         .update_window(handle, |_, window, cx| {
             nocterm_ui::notice::count(window, cx)
@@ -286,12 +281,7 @@ fn appearance_command_reports_a_failed_save_without_changing_the_active_scheme(
     enter(handle, cx);
     choose(handle, "Dark", cx);
     frames(handle, cx);
-    cx.update(|cx| {
-        assert_eq!(
-            cx.global::<nocterm_ui::SettingsStore>().document(cx),
-            &before
-        )
-    });
+    cx.update(|cx| assert_eq!(settings.document(cx), &before));
     cx.update_window(handle, |_, window, cx| {
         assert!(nocterm_ui::notice::count(window, cx) > notices)
     })
@@ -305,8 +295,70 @@ fn theme_fixture(
     gpui_kit::Entity<nocterm_workspace::Workspace>,
     gpui_kit::Entity<nocterm_terminal::TerminalView>,
     std::sync::Arc<super::super::MockTransport>,
+    nocterm_store::SettingsHandle,
 ) {
     let backend = std::sync::Arc::new(nocterm_themes::test_support::InMemoryThemes::default());
     backend.user_document("test.json".into(),br##"{"themes":[{"name":"GUI Dark","appearance":"dark","style":{"background":"#123456","text":"#eeeeee","terminal.ansi.red":"#ff0000"}},{"name":"GUI Light","appearance":"light","style":{"background":"#f1e2d3","text":"#112233"}}]}"##.to_vec());
     super::super::fixture_with_themes(cx, backend)
+}
+
+#[gpui_kit::test]
+async fn terminal_and_settings_paint_the_supplied_background_without_a_settings_alias(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, _terminal, _transport, _, settings) =
+        super::super::fixture_with_settings(cx, false, None, false, None);
+    cx.update(|cx| {
+        settings.update::<AppearanceSettings>(cx, |s| {
+            s.mode = AppearanceMode::Dark;
+            s.layout = nocterm_ui::UiLayout::Classic;
+        })
+    })
+    .await
+    .unwrap();
+    frames(handle, cx);
+    let custom = nocterm_ui::DesignTokens::with_overrides(
+        "[dark.terminal]\nbackground = '#123456'\n[dark.ui]\nbackground = '#abcdef'\n",
+    )
+    .unwrap();
+    let expected = hsla("#123456".parse::<nocterm_ui::Color>().unwrap());
+    cx.update(|cx| {
+        cx.set_global(nocterm_ui::Design::new(custom));
+        cx.remove_global::<nocterm_ui::SettingsStore>();
+    });
+    frames(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.background.as_solid() == Some(expected)),
+            "actual terminal background must be painted"
+        );
+        window.dispatch_action(Box::new(nocterm_workspace::OpenSettings), cx);
+    })
+    .unwrap();
+    frames(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            workspace
+                .read(cx)
+                .find_item::<nocterm_settings_ui::SettingsView>()
+                .is_some()
+        );
+        let bounds = window
+            .find("settings-view")
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == bounds && q.background.as_solid() == Some(expected)),
+            "the real Settings root paints its original terminal surface"
+        );
+    })
+    .unwrap();
 }

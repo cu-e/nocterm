@@ -20,24 +20,36 @@ impl ThemeUi {
         base: DesignTokens,
         cx: &mut App,
     ) -> Self {
+        settings.register::<crate::AppearanceSettings>(cx);
+        settings.register::<crate::TerminalSettings>(cx);
         resolve(&themes, &settings, &base, cx);
-        crate::apply_theme(cx);
+        apply(&settings, cx);
         let theme_projection = themes.clone();
         let settings_projection = settings.clone();
         let theme_base = base.clone();
         let theme_observer = themes.observe(cx, move |cx| {
-            resolve(&theme_projection, &settings_projection, &theme_base, cx)
+            resolve(&theme_projection, &settings_projection, &theme_base, cx);
         });
         let theme_projection = themes.clone();
         let settings_projection = settings.clone();
         let setting_observer = settings.observe(cx, move |cx| {
-            resolve(&theme_projection, &settings_projection, &base, cx)
+            if !resolve(&theme_projection, &settings_projection, &base, cx) {
+                apply(&settings_projection, cx);
+            }
+        });
+        let paint_settings = settings.clone();
+        let design_observer = cx.observe_global::<Design>(move |cx| {
+            apply(&paint_settings, cx);
         });
         Self(Rc::new(Installed {
             themes,
             settings,
-            _subscriptions: vec![theme_observer, setting_observer],
+            _subscriptions: vec![theme_observer, setting_observer, design_observer],
         }))
+    }
+    /// Repaints using this installation’s published policy and current system appearance.
+    pub fn apply(&self, cx: &mut App) {
+        apply(self.settings(), cx);
     }
     pub fn themes(&self) -> &ThemesHandle {
         &self.0.themes
@@ -46,7 +58,16 @@ impl ThemeUi {
         &self.0.settings
     }
 }
-fn resolve(themes: &ThemesHandle, settings: &SettingsHandle, base: &DesignTokens, cx: &mut App) {
+fn apply(settings: &SettingsHandle, cx: &mut App) {
+    let appearance = settings.setting::<crate::AppearanceSettings>(cx).clone();
+    crate::theme::apply_theme_for(&appearance, cx);
+}
+fn resolve(
+    themes: &ThemesHandle,
+    settings: &SettingsHandle,
+    base: &DesignTokens,
+    cx: &mut App,
+) -> bool {
     let catalog = themes.catalog(cx);
     let design = cx.global::<Design>();
     let mut tokens = base.clone();
@@ -88,6 +109,9 @@ fn resolve(themes: &ThemesHandle, settings: &SettingsHandle, base: &DesignTokens
             tokens,
             imported,
         });
+        true
+    } else {
+        false
     }
 }
 #[cfg(test)]

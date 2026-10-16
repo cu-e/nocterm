@@ -69,7 +69,6 @@ nocterm-ui = 5
 "nocterm_terminal::integration::ShellIntegration" = 4
 "nocterm_terminal::terminal::FindState" = 5
 "nocterm_vault_ui::unlock::UnlockPrompt" = 5
-"nocterm_vault_ui::view::VaultView" = 14
 
 [quit_handlers]
 "nocterm_ui::layout::LayoutMemory::init" = 1

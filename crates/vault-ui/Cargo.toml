@@ -15,12 +15,14 @@ nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 nocterm-settings.workspace = true
+nocterm-store.workspace = true
 gpui-kit.workspace = true
 futures.workspace = true
 [lints]
 workspace = true
 
 [dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-vault = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

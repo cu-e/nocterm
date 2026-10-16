@@ -42,12 +42,12 @@ pub(super) struct LocalPane {
 impl EventEmitter<PaneIntent> for LocalPane {}
 impl LocalPane {
     pub(super) fn new(
-        deps: &Deps,
+        installed: &Installed,
         host: PaneHost,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let path = cx.new(|cx| path_input::PathInput::new(deps.local.clone(), window, cx));
+        let path = cx.new(|cx| path_input::PathInput::new(installed.local().clone(), window, cx));
         let subscription = cx.subscribe(&path, |this, _, event: &path_input::Navigate, cx| {
             if let path_input::Directory::Local(path) = &event.directory {
                 this.load_local_with_navigation(path.clone(), event.mode, cx);
@@ -61,20 +61,19 @@ impl LocalPane {
             statistics_reported: false,
             stale: false,
             ports: LocalPorts {
-                fs: deps.local.clone(),
-                mutations: deps.mutations.clone(),
+                fs: installed.local().clone(),
+                mutations: installed.mutations().clone(),
             },
             host,
             activity: Vec::new(),
         };
-        let initial = cx
-            .has_global::<nocterm_ui::SettingsStore>()
-            .then(|| {
-                cx.setting::<nocterm_session::LocalShellSettings>()
-                    .cwd
-                    .clone()
-            })
-            .flatten()
+        let initial = pane
+            .host
+            .installed
+            .settings()
+            .setting::<nocterm_session::LocalShellSettings>(cx)
+            .cwd
+            .clone()
             .map(PathBuf::from);
         let local = pane.ports.fs.clone();
         pane.task = Some(cx.spawn(async move |this, cx| {
@@ -214,7 +213,7 @@ impl LocalPane {
         self.browser.requested = Some(directory.clone());
         self.statistics_reported = false;
         cx.emit(PaneIntent::Changed);
-        let indexing = indexing(cx);
+        let indexing = indexing(&self.host.installed, cx);
         cx.notify();
         let window = self.host.window;
         let local = self.ports.fs.clone();
@@ -363,7 +362,7 @@ impl LocalPane {
             open::later(
                 target,
                 self.host.workspace.clone(),
-                self.host.opener.clone(),
+                self.host.installed.clone(),
                 self.host.window,
                 cx,
             );
@@ -401,13 +400,7 @@ impl LocalPane {
     pub(super) fn render_local_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.browser.entries[ix];
         let paths = self.paths(ix);
-        let visual = ExplorerRow {
-            name: entry.name.clone(),
-            directory: entry.kind == EntryKind::Directory,
-            symlink: entry.symlink,
-            selected: self.browser.selected.contains(&ix),
-            font_size: cx.design().typography.explorer_size.unwrap_or(12.0),
-        };
+        let visual = ExplorerRow::local(entry, self.browser.selected.contains(&ix), cx);
         let source = nocterm_ui::DragSource::default();
         let destination = entry.path.clone();
         let directory = entry.kind == EntryKind::Directory && !entry.symlink;
@@ -419,7 +412,7 @@ impl LocalPane {
             .collect::<Vec<_>>();
         let refresh = self.refresh_after_mutation(cx);
         let workspace = self.host.workspace.clone();
-        let opener = self.host.opener.clone();
+        let installed = self.host.installed.clone();
         let folder = entry.kind == EntryKind::Directory;
         let enabled = !self.browser.loading;
         visual
@@ -472,7 +465,14 @@ impl LocalPane {
                     refresh.clone(),
                     enabled,
                 );
-                open::menu_items(menu, &target, folder, workspace.clone(), opener.clone(), cx)
+                open::menu_items(
+                    menu,
+                    &target,
+                    folder,
+                    workspace.clone(),
+                    installed.clone(),
+                    cx,
+                )
             })
             .into_any_element()
     }

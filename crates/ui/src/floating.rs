@@ -12,7 +12,7 @@ use gpui_kit::{
     hsla as gpui_hsla, px,
 };
 
-use crate::{ActiveDesign as _, SettingsExt as _, hsla, terminal_style::color};
+use crate::{ActiveDesign as _, hsla, terminal_style::color};
 
 /// How much darker than the cards the canvas is, as a share of their
 /// lightness for a dark surface and as a step down for a light one.
@@ -24,8 +24,8 @@ const NEAR_BLACK: f32 = 0.06;
 
 /// Installs the floating geometry the settings ask for, or removes it for the
 /// classic layout. Called with the theme already in place.
-pub(crate) fn apply_floating(cx: &mut App) {
-    match cards(cx) {
+pub(crate) fn apply_floating_for(appearance: &crate::AppearanceSettings, cx: &mut App) {
+    match cards(appearance, cx) {
         Some(cards) => cx.set_global(cards),
         None if cx.has_global::<FloatingCards>() => {
             cx.remove_global::<FloatingCards>();
@@ -35,8 +35,7 @@ pub(crate) fn apply_floating(cx: &mut App) {
 }
 
 /// The floating geometry for the current settings, tokens and theme.
-fn cards(cx: &App) -> Option<FloatingCards> {
-    let appearance = cx.setting::<crate::AppearanceSettings>();
+fn cards(appearance: &crate::AppearanceSettings, cx: &App) -> Option<FloatingCards> {
     if appearance.layout != UiLayout::Floating {
         return None;
     }

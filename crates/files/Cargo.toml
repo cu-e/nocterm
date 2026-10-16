@@ -15,6 +15,7 @@ schemars.workspace = true
 serde.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
+nocterm-store.workspace = true
 nocterm-transfers.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true

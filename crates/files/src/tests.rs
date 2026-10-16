@@ -221,10 +221,43 @@ fn panel_fixture_with(
     Entity<SessionItem>,
     Entity<FilesPanel>,
 ) {
+    let (window, workspace, item, panel, _) = panel_fixture_with_installation(cx, fs, deps);
+    (window, workspace, item, panel)
+}
+fn panel_fixture_with_installation(
+    cx: &mut TestAppContext,
+    fs: Arc<dyn RemoteFs>,
+    deps: Deps,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<SessionItem>,
+    Entity<FilesPanel>,
+    Installed,
+) {
+    panel_fixture_with_settings(
+        cx,
+        fs,
+        deps,
+        nocterm_ui::SettingsStore::in_memory(Default::default()),
+    )
+}
+fn panel_fixture_with_settings(
+    cx: &mut TestAppContext,
+    fs: Arc<dyn RemoteFs>,
+    deps: Deps,
+    settings: nocterm_ui::SettingsStore,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<SessionItem>,
+    Entity<FilesPanel>,
+    Installed,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        path_input::install_bindings(cx);
-        cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
+        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings, cx);
+        let installed = install(deps, &ready, cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
@@ -248,12 +281,13 @@ fn panel_fixture_with(
                     workspace.add_item(item.clone(), window, cx)
                 });
                 let session = workspace.read(cx).active_session(cx);
-                let panel =
-                    cx.new(|cx| FilesPanel::new(deps, workspace.clone(), session, window, cx));
+                let panel = cx.new(|cx| {
+                    FilesPanel::new(installed.clone(), workspace.clone(), session, window, cx)
+                });
                 (item, panel)
             })
             .unwrap();
-        (window, workspace, item, panel)
+        (window, workspace, item, panel, installed)
     })
 }
 

@@ -97,6 +97,7 @@ fn open_editor_view(
         "New Connection"
     };
     let width = rems(cx.design().layout.connection_editor_width).to_pixels(window.rem_size());
+    let settings = installed.settings().clone();
     let editor = cx.new(|cx| ConnectionEditor::new(installed, profile, workspace, window, cx));
     let footer = cx.new(|cx| EditorFooter {
         editor: editor.clone(),
@@ -111,7 +112,13 @@ fn open_editor_view(
         dialog
             .title(title)
             .w(width)
-            .bg(nocterm_ui::form::page_background(cx))
+            .bg(nocterm_ui::hsla(
+                nocterm_ui::TerminalStyle::with_settings(
+                    settings.setting::<nocterm_ui::TerminalSettings>(cx),
+                    cx,
+                )
+                .background,
+            ))
             .child(editor.clone())
             .footer(footer.clone())
             .on_close(move |_, _, _| dismissed.dismiss())

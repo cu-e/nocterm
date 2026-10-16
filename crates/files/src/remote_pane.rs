@@ -272,7 +272,7 @@ impl RemotePane {
         let Some(directory) = self.browser.path.clone() else {
             return;
         };
-        let indexing = indexing(cx);
+        let indexing = indexing(&self.presentation.host.installed, cx);
         let skip = statistics::remote_skip(&directory, self.browser.home.as_deref(), &indexing);
         if let Some(skip) = skip {
             let kinds = self.browser.entries.iter().map(|entry| entry.kind);
@@ -354,7 +354,7 @@ impl RemotePane {
             open::later(
                 target,
                 self.presentation.host.workspace.clone(),
-                self.presentation.host.opener.clone(),
+                self.presentation.host.installed.clone(),
                 self.presentation.host.window,
                 cx,
             );
@@ -407,7 +407,7 @@ impl RemotePane {
             .collect::<Vec<_>>();
         let refresh = self.refresh_after_mutation(cx);
         let workspace = self.presentation.host.workspace.clone();
-        let opener = self.presentation.host.opener.clone();
+        let installed = self.presentation.host.installed.clone();
         visual
             .render(false, cx)
             .id(("remote-entry", ix))
@@ -451,7 +451,7 @@ impl RemotePane {
                         target,
                         directory,
                         workspace.clone(),
-                        opener.clone(),
+                        installed.clone(),
                         cx,
                     )
                 }

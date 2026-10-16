@@ -478,9 +478,19 @@ impl Render for SettingsView {
             })
             .child(content);
         h_flex()
+            .id("settings-view")
+            .test_support()
             .size_full()
             .min_h_0()
-            .bg(form::page_background(cx))
+            .bg(nocterm_ui::hsla(
+                nocterm_ui::TerminalStyle::with_settings(
+                    self.installed
+                        .settings()
+                        .setting::<nocterm_ui::TerminalSettings>(cx),
+                    cx,
+                )
+                .background,
+            ))
             .track_focus(&self.focus)
             .child(self.render_nav(cx))
             .child(

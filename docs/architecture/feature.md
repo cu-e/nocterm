@@ -242,7 +242,7 @@ bar's metrics at the slow interval while the details are closed, and the union
 with the details' metrics at the fast interval while they are open. It adds a
 leading footer view through the workspace and supplies its Settings page as a
 `SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
-registration and retained by its model; active remote execution keeps precedence.
+installation and retained by its model; active remote execution keeps precedence.
 
 ## Containers
 
@@ -264,7 +264,10 @@ The vault feature receives `Deps::new(Arc<dyn VaultAccess>)`; `install`
 returns an owned `Installed` handle retained by the composition root and reused
 by every window. Settings page factories and action handlers capture that handle,
 so views and credential bridges do not read a vault global or import adapters.
-Each view owns its cancellable status subscription. The feature handles
+Installation retains the supplied settings service as well as the vault service
+and its published-policy subscription. Auto-lock changes read that exact published
+owner; page factories and the startup prompt retain the same authority. Each view
+owns its cancellable status subscription. The feature handles
 `workspace::UnlockVault` and `workspace::LockVault`
 application-wide, so the palette and a terminal's sign-in prompt can unlock the
 vault in a small dialog without opening Settings and without depending on the
@@ -491,7 +494,33 @@ capability. Builtin fields, page controls, section diagnostics and settings obse
 use that exact owner; window/page factories clone the installation. Per-window
 observation keeps a weak view and originating window. Appearance picker callbacks
 retain the same supplied policy through deferred opening and completion. Text fields
-keep their current 600 ms debounce, Enter/blur/deactivate/close behavior: validation
-probes the published document, then existing unchecked replay is detached. Other
-shared UI/feature consumers still have SettingsStore compatibility access. See
-[ADR0053](../adr/0053-retained-settings-ui-installation.md).
+keep their 600 ms debounce and Enter/blur/deactivate/close triggers. Shared
+SettingsTextField submits checked edits synchronously, observes physical receipts and
+preserves newer draft generations when older completions arrive. Parent presentation
+subscriptions render receipt diagnostics without requiring a settings publication.
+NumberInput and Vault auto-lock controls retain their existing detached persistence
+behavior. Other feature consumers still have SettingsStore compatibility access. See
+[ADR0053](../adr/0053-retained-settings-ui-installation.md) and
+[ADR0054](../adr/0054-checked-settings-text-receipts.md).
+Explorer panes and its settings page retain their original installation's settings
+owner. Indexing reads policy at the existing scan request phase, and a local pane
+captures initial configured cwd before resolving home while retaining the original
+navigation guard. Opening a context menu snapshots its label; selecting its file
+open action reads the latest published policy from that same installation during
+deferred execution. The pinned file target, native program opener and original
+workspace/window stay fixed. A failed settings publication cannot change that rule.
+
+Monitor installation registers its schema on the supplied settings owner before
+models/pages read it. Per-window models retain that handle with the exact supplied
+host, and weak publication subscriptions refresh the existing plan. Summary/details
+read through their model; page editors use the same supplied policy. One watch,
+metric union, host/session identity, eight retained histories and ten-second retry
+behavior remain the model's responsibility. Other SettingsStore compatibility
+consumers remain outside these feature boundaries.
+VaultView keeps its request generation, service and native-device authority private.
+A private VaultForm owns the actual masked password/confirmation and auto-lock inputs
+and local numeric validation. A confirmed submit clears both native password controls
+before constructing the service future. Tab/lock/deactivate/close transitions use that
+same control owner; late completion still checks the original view generation. Form
+state stores no extra plaintext copy or policy cache. Auto-lock retains its existing
+Enter/blur submission and detached physical-failure behavior.

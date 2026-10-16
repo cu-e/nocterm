@@ -80,8 +80,9 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
     gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("Nocterm");
         // "System" appearance follows the desktop as it changes.
+        let themes = booted.themes.clone();
         window
-            .observe_window_appearance(|_, cx| nocterm_ui::apply_theme(cx))
+            .observe_window_appearance(move |_, cx| themes.apply(cx))
             .detach();
 
         let workspace = cx.new(|cx| {
@@ -101,11 +102,13 @@ fn register_settings(
     themes: nocterm_ui::ThemeUi,
     deps: nocterm_settings_ui::Installed,
     keymap: nocterm_keymap::KeymapHandle,
+    files: &nocterm_files::Installed,
+    monitor: &nocterm_monitor_ui::Installed,
 ) {
     let mut pages = vec![
         nocterm_keymap_ui::settings_page(keymap),
-        nocterm_monitor_ui::settings_page(),
-        nocterm_files::settings_page(),
+        nocterm_monitor_ui::settings_page(monitor),
+        nocterm_files::settings_page(files),
     ];
     if let Some(vault) = vault {
         pages.push(nocterm_vault_ui::settings_page(vault));
