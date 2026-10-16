@@ -1,5 +1,6 @@
 //! Managed packs, original user files and catalogue diagnostics.
-use crate::SettingsView;
+use super::AppearanceSettingsPage;
+use crate::form;
 use gpui_kit::{
     AnyElement, Context,
     component::{
@@ -10,17 +11,20 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_themes::{Appearance, ThemeSource};
-use nocterm_ui::form;
 use std::collections::BTreeSet;
 
-pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<SettingsView>) {
-    let themes = view.appearance.themes.clone();
-    let settings = view.appearance.settings.clone();
+pub(super) fn remove(
+    view: &mut AppearanceSettingsPage,
+    id: String,
+    cx: &mut Context<AppearanceSettingsPage>,
+) {
+    let themes = view.themes.clone();
+    let settings = view.settings.clone();
     let task = themes.themes().uninstall(id.clone(), cx);
     cx.spawn(async move |this, cx| match task.await {
         Ok(change) => {
             let save = cx.update(|cx| {
-                settings.update::<nocterm_ui::AppearanceSettings>(cx, move |settings| {
+                settings.update::<crate::AppearanceSettings>(cx, move |settings| {
                     for (slot, appearance) in [
                         (&mut settings.light_theme, Appearance::Light),
                         (&mut settings.dark_theme, Appearance::Dark),
@@ -36,7 +40,7 @@ pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<Setti
             });
             if let Err(error) = save.await {
                 let _ = this.update(cx, |this, cx| {
-                    this.appearance.errors.insert(
+                    this.errors.insert(
                         id,
                         format!("Removed theme, but could not save selection: {error}").into(),
                     );
@@ -46,15 +50,15 @@ pub(super) fn remove(view: &mut SettingsView, id: String, cx: &mut Context<Setti
         }
         Err(error) => {
             let _ = this.update(cx, |this, cx| {
-                this.appearance.errors.insert(id, error.to_string().into());
+                this.errors.insert(id, error.to_string().into());
                 cx.notify();
             });
         }
     })
     .detach();
 }
-fn open_folder(view: &mut SettingsView, cx: &mut Context<SettingsView>) {
-    let Some(library) = view.appearance.themes.themes().library(cx) else {
+fn open_folder(view: &mut AppearanceSettingsPage, cx: &mut Context<AppearanceSettingsPage>) {
+    let Some(library) = view.themes.themes().library(cx) else {
         return;
     };
     let task = cx
@@ -65,11 +69,11 @@ fn open_folder(view: &mut SettingsView, cx: &mut Context<SettingsView>) {
         let _ = this.update(cx, |this, cx| {
             match result {
                 Ok(path) => {
-                    this.appearance.folder_error = None;
+                    this.folder_error = None;
                     cx.open_with_system(&path);
                 }
                 Err(error) => {
-                    this.appearance.folder_error =
+                    this.folder_error =
                         Some(format!("Could not open themes folder: {error}").into())
                 }
             }
@@ -78,17 +82,19 @@ fn open_folder(view: &mut SettingsView, cx: &mut Context<SettingsView>) {
     })
     .detach();
 }
-pub(super) fn render(view: &SettingsView, cx: &mut Context<SettingsView>) -> AnyElement {
-    let catalog = view.appearance.themes.themes().catalog(cx);
+pub(super) fn render(
+    view: &AppearanceSettingsPage,
+    cx: &mut Context<AppearanceSettingsPage>,
+) -> AnyElement {
+    let catalog = view.themes.themes().catalog(cx);
     let mut errors: std::collections::BTreeMap<String, gpui_kit::SharedString> = view
-        .appearance
         .themes
         .themes()
         .errors(cx)
         .into_iter()
         .map(|(id, error)| (id, error.to_string().into()))
         .collect();
-    errors.extend(view.appearance.errors.clone());
+    errors.extend(view.errors.clone());
     let mut rows = vec![form::row(
         "Theme files",
         "Drop Zed JSON files in the themes folder, then Reload. Color overrides in theme.toml apply to Nocterm Default; typography and layout always apply.",
@@ -99,9 +105,7 @@ pub(super) fn render(view: &SettingsView, cx: &mut Context<SettingsView>) -> Any
                     .small()
                     .ghost()
                     .label("Reload")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.appearance.themes.themes().reload(cx)),
-                    ),
+                    .on_click(cx.listener(|this, _, _, cx| this.themes.themes().reload(cx))),
             )
             .child(
                 Button::new("open-themes-folder")
@@ -112,12 +116,12 @@ pub(super) fn render(view: &SettingsView, cx: &mut Context<SettingsView>) -> Any
             ),
         cx,
     )];
-    if let Some(error) = view.appearance.folder_error.clone() {
+    if let Some(error) = view.folder_error.clone() {
         rows.push(form::error_text(error, cx));
     }
     for pack in catalog.packs() {
         let id = pack.id.clone();
-        let busy = view.appearance.themes.themes().busy(&id, cx);
+        let busy = view.themes.themes().busy(&id, cx);
         let row = form::row(
             pack.name.clone(),
             format!("{} · {}", pack.version, pack.authors.join(", ")),
@@ -152,7 +156,7 @@ pub(super) fn render(view: &SettingsView, cx: &mut Context<SettingsView>) -> Any
 fn append_diagnostics(
     catalog: &nocterm_themes::ThemeCatalog,
     rows: &mut Vec<AnyElement>,
-    cx: &mut Context<SettingsView>,
+    cx: &mut Context<AppearanceSettingsPage>,
 ) {
     let files: BTreeSet<_> = catalog
         .entries()

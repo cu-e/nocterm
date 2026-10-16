@@ -53,3 +53,4 @@ acceptance; a later record supersedes an earlier one.
 | [0052](0052-retained-agent-installation.md) | Agent views retain runtime, policy and host installation authority |
 | [0053](0053-retained-settings-ui-installation.md) | Settings UI retains its supplied settings installation |
 | [0054](0054-checked-settings-text-receipts.md) | Native settings text owns checked publication receipts |
+| [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |

@@ -21,6 +21,7 @@
 //! Native chat allocation and wall-clock facts are provided by ChatMetadataSource.
 //! Existing ACP-backed DTOs are explicit
 //! migration debt; storage ports add no new protocol-specific types.
+//! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
 pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
 pub mod commands;
@@ -49,7 +50,8 @@ pub use connection::*;
 pub use registry::{AgentLaunch, AgentRegistry};
 pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings, InvalidResourceLimits};
 pub use settings::{
-    AgentServerSettings, AiSettings, ApprovalPolicy, ApprovalSettings, SandboxMode,
+    AgentServerSettings, AgentValidationError, AiSettings, ApprovalPolicy, ApprovalSettings,
+    BUILTIN_AGENT_IDS, SandboxMode, validate_agent,
 };
 pub use tools::*;
 #[cfg(test)]

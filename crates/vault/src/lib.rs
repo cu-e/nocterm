@@ -4,6 +4,9 @@
 //! Ports provided: VaultAccess and DeviceUnlockProvider. Ports used: none.
 //! Settings: none. Globals: none. Invariants: secrets zeroize; candidates are
 //! installed only after the caller commits; encryption randomness is supplied.
+
+//! Settings schema: owned here, including defaults and sanitization; controls stay in the feature.
+//! Settings: vault defaults and sanitization; views and settings publication stay outside the domain.
 mod access;
 mod device_unlock;
 mod error;
@@ -21,3 +24,6 @@ pub use state::{DeviceEnrollment, EnvelopeInfo, PreparedUnlock, PreparedWrite, V
 
 #[cfg(feature = "test-support")]
 pub mod testing;
+
+mod settings;
+pub use settings::*;

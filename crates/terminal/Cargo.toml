@@ -10,6 +10,8 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-terminal-model.workspace = true
+
 encoding_rs.workspace = true
 regex.workspace = true
 nocterm-session.workspace = true

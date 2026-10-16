@@ -15,11 +15,11 @@ fn independent_settings(cx: &mut App) -> SettingsHandle {
 
 fn page(
     installed: Installed,
-    themes: nocterm_ui::ThemeUi,
+    pages: OwnerPages,
     cx: &mut App,
 ) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
     gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-        cx.new(|cx| SettingsView::with_pages(Vec::new(), themes, installed, window, cx))
+        cx.new(|cx| SettingsView::with_pages(pages, installed, window, cx))
     })
     .unwrap()
 }
@@ -29,9 +29,9 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
     cx: &mut TestAppContext,
 ) {
     let (installed, themes, other, first, first_view, second, second_view) = cx.update(|cx| {
-        init(cx);
-        let themes = theme_ui(cx);
-        let installed = settings_deps(cx);
+        let fixture = init(cx);
+        let themes = fixture.pages.clone();
+        let installed = fixture.installed.clone();
         let other = independent_settings(cx);
         let (first, a) = page(installed.clone(), themes.clone(), cx);
         let (second, b) = page(installed.clone(), themes.clone(), cx);
@@ -82,9 +82,9 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
 #[gpui_kit::test]
 fn native_ai_policy_and_text_edits_keep_the_supplied_handle(cx: &mut TestAppContext) {
     let (installed, other, handle, view) = cx.update(|cx| {
-        init(cx);
-        let installed = settings_deps(cx);
-        let (handle, view) = page(installed.clone(), theme_ui(cx), cx);
+        let fixture = init(cx);
+        let installed = fixture.installed.clone();
+        let (handle, view) = page(installed.clone(), fixture.pages.clone(), cx);
         let other = independent_settings(cx);
         cx.set_global(SettingsStore::from_handle(other.clone()));
         (installed, other, handle, view)
@@ -121,14 +121,19 @@ fn deferred_appearance_command_keeps_original_settings_without_global_redirect(
     cx: &mut TestAppContext,
 ) {
     let (installed, other, handle, workspace) = cx.update(|cx| {
-        init(cx);
-        let installed = settings_deps(cx);
-        let themes = theme_ui(cx);
+        let fixture = init(cx);
+        let installed = fixture.installed.clone();
+        let themes = fixture.pages.clone();
         let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         let supplied = installed.clone();
         let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(layout, window, cx);
+                crate::register_appearance_commands(
+                    &mut workspace,
+                    fixture.themes.clone(),
+                    supplied.settings().clone(),
+                );
                 register(&mut workspace, themes, supplied);
                 workspace
             })
@@ -177,19 +182,23 @@ struct GatedPage {
 fn gated_page(cx: &mut TestAppContext) -> GatedPage {
     let (writer, release, writes) = nocterm_store::test_support::gated_writer().into_parts();
     let (window, workspace, settings) = cx.update(|cx| {
-        init_with_settings(
+        let fixture = init_with_settings(
             SettingsStore::from_config(nocterm_store::SettingsConfig::with_writer(
                 Default::default(),
                 writer,
             )),
             cx,
         );
-        let settings = settings_deps(cx).settings().clone();
+        let settings = fixture.installed.settings().clone();
         let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         let (window, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
                 let mut workspace = Workspace::new(layout, window, cx);
-                register(&mut workspace, theme_ui(cx), settings_deps(cx));
+                register(
+                    &mut workspace,
+                    fixture.pages.clone(),
+                    fixture.installed.clone(),
+                );
                 workspace
             });
             window.activate_window();

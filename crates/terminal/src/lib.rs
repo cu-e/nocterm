@@ -30,6 +30,7 @@
 //! Invariants: captured connection/prompt authority precedes effects; input is admitted
 //! exactly once before integration/lease changes; paint snapshots track presentation revisions.
 
+//! Settings pages: terminal, local-shell and SSH controls retain the original Installed settings.
 mod access;
 mod codec;
 mod credentials;
@@ -148,6 +149,9 @@ pub fn open_program(
 pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Installed {
     ready
         .settings()
+        .register::<nocterm_terminal_model::TerminalSettings>(cx);
+    ready
+        .settings()
         .register::<nocterm_session::LoggingOptions>(cx);
     ready
         .settings()
@@ -237,3 +241,6 @@ pub fn open_session(
     let view = cx.new(|cx| TerminalView::new(installed.clone(), spec, window, cx));
     workspace.add_item(view, window, cx);
 }
+
+mod settings_page;
+pub use settings_page::settings_pages;

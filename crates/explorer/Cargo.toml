@@ -1,0 +1,17 @@
+[package]
+name = "nocterm-explorer"
+version = "0.0.0"
+description = "Explorer indexing policy and external program selection rules."
+edition.workspace = true
+license-file.workspace = true
+publish = false
+[package.metadata.nocterm]
+layer = "domain"
+[dependencies]
+nocterm-settings.workspace = true
+serde.workspace = true
+schemars.workspace = true
+[dev-dependencies]
+toml.workspace = true
+[lints]
+workspace = true

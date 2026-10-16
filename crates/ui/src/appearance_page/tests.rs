@@ -1,8 +1,8 @@
 //! Appearance behavior through rendered controls and explicit shared ports.
-use crate::SettingsView;
+use super::AppearanceSettingsPage;
+use crate::{AppearanceSettings, ThemeUi};
 use gpui_kit::{AppContext as _, Entity, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_themes::{Appearance, ExtensionInfo, ThemeLibrary, test_support::InMemoryThemes};
-use nocterm_ui::{AppearanceSettings, ThemeUi};
 use std::sync::Arc;
 fn info(id: &str) -> ExtensionInfo {
     serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{id}","version":"1"}}"#)).unwrap()
@@ -19,10 +19,19 @@ fn backend() -> Arc<InMemoryThemes> {
 fn setup(
     cx: &mut TestAppContext,
     backend: Arc<InMemoryThemes>,
-) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>, ThemeUi) {
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<AppearanceSettingsPage>,
+    ThemeUi,
+) {
     cx.update(|cx| {
-        crate::tests::init(cx);
-        let ready = nocterm_ui::UiReady::installed(cx).unwrap();
+        gpui_kit::init(cx);
+        crate::init(
+            crate::DesignTokens::builtin(),
+            crate::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
+            cx,
+        );
+        let ready = crate::UiReady::installed(cx).unwrap();
         let service = nocterm_theme_service::ThemesHandle::install(
             Some(backend.clone()),
             Some(backend.clone()),
@@ -32,7 +41,7 @@ fn setup(
         let themes = ThemeUi::install(
             ready.settings().clone(),
             service,
-            nocterm_ui::DesignTokens::builtin(),
+            crate::DesignTokens::builtin(),
             cx,
         );
         let supplied = themes.clone();
@@ -47,10 +56,12 @@ fn setup(
             cx,
             |window, cx| {
                 cx.new(|cx| {
-                    SettingsView::with_pages(
-                        Vec::new(),
+                    AppearanceSettingsPage::new(
                         supplied,
-                        crate::tests::settings_deps(cx),
+                        crate::SettingsPageContext::new(
+                            ready.settings().clone(),
+                            crate::SettingsPageFeedback::new(cx),
+                        ),
                         window,
                         cx,
                     )
@@ -138,10 +149,4 @@ fn shared_status_and_admitted_install_survive_the_originating_page(cx: &mut Test
         );
     });
     assert_eq!(backend.installs(), 1);
-}
-#[gpui_kit::test]
-fn plain_settings_without_ports_offer_default_and_do_not_fetch(cx: &mut TestAppContext) {
-    let (_, view) = crate::tests::open(cx);
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(view.read(cx).selected_page_id(), "appearance"));
 }

@@ -3,7 +3,7 @@
 Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
-on other domain crates and the foundation, never on GPUI: `nocterm-session`,
+on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
 `nocterm-vault` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
@@ -111,11 +111,11 @@ outside PTY columns/selection and hides it in alternate screen. See the
 loads user files and installed extension manifests, maps palettes, and provides a
 bounded registry client and archive installer. The installer accepts only direct
 regular `themes/*.json` files and publishes a validated pack through a staged
-rename. `nocterm-ui` resolves light/dark selections from SettingsStore and the
+rename. `nocterm-ui` resolves light/dark selections from its supplied SettingsHandle and the
 catalogue into effective Design tokens, retaining the base tokens for Nocterm
 Default. Imported component palettes start from empty configuration so the
-component fallback chain derives unmapped colors. Settings UI injects its registry
-client and runs explicit search/install/remove work on the background executor;
+component fallback chain derives unmapped colors. The UI Appearance page retains the theme
+service and runs explicit search/install/remove work on the background executor;
 startup loads the local catalogue without network requests.
 
 ## Running programs on a host
@@ -223,3 +223,14 @@ encoding and collection limits. ImageInspector supplies validated original bytes
 prompt admission checks their Arc identity and facts against its own preflight.
 ImageThumbnailer supplies bounded PNG previews, with pure checked dimensions and
 output-size contracts. Native decoding and PNG encoding belong to an adapter.
+
+## Display and Explorer settings
+
+`nocterm-terminal-model` owns the terminal display settings schema, ranges and
+sanitization without GPUI, emulation or native sessions. `nocterm-explorer` owns
+Explorer indexing settings, ordered opener matching and literal argument substitution;
+filesystem traversal and native program requests stay in the Files feature and its
+injected adapters. Monitor and Vault schemas belong to their existing domain crates.
+These schemas retain their established serialized names and public schema identities.
+The foundation settings schema builder supplies ordered property/default machinery;
+policy descriptions, constraints and defaults remain with each domain owner.

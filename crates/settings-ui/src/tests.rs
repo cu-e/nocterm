@@ -1,331 +1,95 @@
+//! Host lifecycle is exercised with supplied pages; cross-owner native controls live in app GUI tests.
 use super::*;
-use gpui_kit::{
-    Entity, TestAppContext, WindowOptions,
-    component::input::{Input, InputState},
-    test::TestWindowExt as _,
-};
-use nocterm_ai::AiSettings;
-use nocterm_session::LocalShellSettings;
-use nocterm_settings::SettingsDocument;
-use nocterm_ui::TerminalSettings;
-use nocterm_ui::{SettingsExt as _, SettingsPage, SettingsStore};
+use gpui_kit::{Entity, TestAppContext, WindowOptions};
+struct EmptyPage {
+    focus: FocusHandle,
+}
+impl Focusable for EmptyPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for EmptyPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+impl nocterm_ui::SettingsPage for EmptyPage {}
+#[gpui_kit::test]
+fn supplied_builtin_pages_are_created_eagerly_in_navigation_order(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+    let created = Rc::new(RefCell::new(Vec::new()));
+    let (_window, view) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let ready = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            cx,
+        );
+        let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
+            let created = created.clone();
+            SettingsPageSpec::contextual(id, id, move |_, _, cx| {
+                created.borrow_mut().push(id);
+                cx.new(|cx| EmptyPage {
+                    focus: cx.focus_handle(),
+                })
+            })
+        });
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| {
+                SettingsView::with_pages(
+                    OwnerPages::new(builtins, Vec::new()),
+                    Installed::new(ready.settings().clone()),
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap()
+    });
+    assert_eq!(
+        &*created.borrow(),
+        &["appearance", "terminal", "local-shell", "ssh", "ai"]
+    );
+    cx.update(|cx| assert_eq!(view.read(cx).selected_page_id(), "appearance"));
+}
+
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::test::TestWindowExt as _;
+use nocterm_ui::SettingsPage;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-
-pub(super) fn settings_deps(cx: &App) -> Installed {
-    Installed::new(
-        nocterm_ui::UiReady::installed(cx)
-            .unwrap()
-            .settings()
-            .clone(),
-        Deps::new(std::sync::Arc::new(
-            nocterm_ai::testing::ScriptedSandboxProbe::new(
-                nocterm_ai::sandbox::Availability::Unsupported,
-            ),
-        )),
-    )
+struct HostFixture {
+    installed: Installed,
+    pages: OwnerPages,
 }
-
-pub(super) fn init(cx: &mut App) {
-    init_with_settings(SettingsStore::in_memory(SettingsDocument::default()), cx);
-}
-
-fn init_with_settings(settings: SettingsStore, cx: &mut App) {
+fn host_fixture(cx: &mut App) -> HostFixture {
     gpui_kit::init(cx);
-    nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings, cx);
-    let settings = nocterm_ui::UiReady::installed(cx)
-        .unwrap()
-        .settings()
-        .clone();
-    settings.register::<AiSettings>(cx);
-    settings.register::<LocalShellSettings>(cx);
-    settings.register::<nocterm_session::SshSettings>(cx);
-    settings.register::<nocterm_session::LoggingOptions>(cx);
-}
-
-pub(super) fn theme_ui(cx: &mut App) -> nocterm_ui::ThemeUi {
-    let ready = nocterm_ui::UiReady::installed(cx).unwrap();
-    let themes = nocterm_theme_service::ThemesHandle::install(
-        None,
-        None,
-        nocterm_themes::ThemeCatalog::default(),
+    let ready = nocterm_ui::init(
+        nocterm_ui::DesignTokens::builtin(),
+        nocterm_ui::SettingsStore::in_memory(Default::default()),
         cx,
     );
-    nocterm_ui::ThemeUi::install(
-        ready.settings().clone(),
-        themes,
-        nocterm_ui::DesignTokens::builtin(),
-        cx,
-    )
-}
-pub(super) fn test_window_options() -> WindowOptions {
-    WindowOptions {
-        window_bounds: Some(gpui_kit::WindowBounds::Windowed(gpui_kit::Bounds::new(
-            gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)),
-            gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(5000.)),
-        ))),
-        ..WindowOptions::default()
+    let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
+        SettingsPageSpec::contextual(id, id, |_, _, cx| {
+            cx.new(|cx| EmptyPage {
+                focus: cx.focus_handle(),
+            })
+        })
+    });
+    HostFixture {
+        installed: Installed::new(ready.settings().clone()),
+        pages: OwnerPages::new(builtins, Vec::new()),
     }
 }
-pub(super) fn open(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
-    cx.update(|cx| {
-        init(cx);
-        let (handle, view) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-            cx.new(|cx| SettingsView::new(window, cx))
-        })
-        .unwrap();
-        (handle, view)
-    })
+fn with_guest(fixture: &HostFixture, guests: Vec<SettingsPageSpec>) -> OwnerPages {
+    fixture.pages.with_guests(guests)
 }
-
-/// Types `text` into the field `key` and leaves it, as a user would.
-fn type_and_leave(
-    cx: &mut TestAppContext,
-    handle: gpui_kit::AnyWindowHandle,
-    view: &Entity<SettingsView>,
-    key: &'static str,
-    text: &str,
-) {
-    cx.update_window(handle, |_, window, _| window.activate_window())
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        select_field_page(key, window, cx);
-        window.click(key, cx);
-        window.press("ctrl-a", cx);
-        window.press("backspace", cx);
-        window.input(text, cx);
-        assert_eq!(window.find(key).value(), Some(text));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.focus(&view.read(cx).focus_handle(cx), cx);
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+fn test_window_options() -> WindowOptions {
+    WindowOptions::default()
 }
-
-fn select_field_page(key: &str, window: &mut Window, cx: &mut App) {
-    let page = if key.starts_with("terminal.") {
-        1usize
-    } else if key.starts_with("local.") {
-        2
-    } else if key.starts_with("ssh.") {
-        3
-    } else if key.starts_with("ai.") || key.starts_with("agent.") {
-        4
-    } else {
-        0
-    };
-    window.render_frame(cx);
-    window.click(page, cx);
-    window.render_frame(cx);
-}
-
-#[gpui_kit::test]
-fn text_saves_when_the_field_is_left_and_invalid_text_is_kept_with_its_error(
-    cx: &mut TestAppContext,
-) {
-    let (handle, view) = open(cx);
-    type_and_leave(cx, handle, &view, "terminal.font_size", "100");
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(
-            cx.setting::<TerminalSettings>().font_size,
-            None,
-            "invalid text is not saved"
-        );
-        window.render_frame(cx);
-        assert!(
-            window
-                .try_find("settings-error-terminal.font_size")
-                .is_some()
-        );
-    })
-    .unwrap();
-    type_and_leave(cx, handle, &view, "terminal.font_size", "18");
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(cx.setting::<TerminalSettings>().font_size, Some(18.));
-        window.render_frame(cx);
-        assert!(
-            window
-                .try_find("settings-error-terminal.font_size")
-                .is_none()
-        );
-    })
-    .unwrap();
-    type_and_leave(cx, handle, &view, "local.args", r#"["-l"]"#);
-    type_and_leave(cx, handle, &view, "local.env", r#"{"BAD;NAME":"x"}"#);
-    cx.update(|cx| {
-        assert_eq!(cx.setting::<LocalShellSettings>().args, vec!["-l"]);
-        assert!(cx.setting::<LocalShellSettings>().env.is_empty());
-    });
-}
-
-#[gpui_kit::test]
-fn typing_saves_after_a_pause(cx: &mut TestAppContext) {
-    let (handle, _view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        select_field_page("terminal.scrollback", window, cx);
-        window.click("terminal.scrollback", cx);
-        window.press("ctrl-a", cx);
-        window.press("backspace", cx);
-        window.input("5000", cx);
-        assert_ne!(cx.setting::<TerminalSettings>().scrollback_lines, 5000);
-    })
-    .unwrap();
-    cx.executor()
-        .advance_clock(std::time::Duration::from_millis(1200));
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(cx.setting::<TerminalSettings>().scrollback_lines, 5000));
-}
-
-#[gpui_kit::test]
-fn switches_save_at_once_and_fields_follow_changes_made_elsewhere(cx: &mut TestAppContext) {
-    let (handle, _view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click(1usize, cx);
-        window.render_frame(cx);
-        window.click("copy-select", cx);
-        assert!(cx.setting::<TerminalSettings>().copy_on_select);
-        cx.update_setting::<TerminalSettings>(|s| s.font_family = Some("Iosevka".into()))
-            .detach();
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(window.find("terminal.font_family").value(), Some("Iosevka"));
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn ai_switches_and_agent_fields_save_validated_values(cx: &mut TestAppContext) {
-    let (handle, view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(5000.)));
-        select_field_page("ai.enabled", window, cx);
-        window.click("ai-read-approval", cx);
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.terminal_read,
-            nocterm_ai::ApprovalPolicy::Ask
-        );
-        window.render_frame(cx);
-        window.click("ai-agent-claude", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    type_and_leave(cx, handle, &view, "agent.claude.args", "bad JSON");
-    cx.update(|cx| assert!(cx.setting::<AiSettings>().agents.is_empty()));
-    type_and_leave(cx, handle, &view, "agent.claude.command", "/opt/claude");
-    cx.update(|cx| {
-        assert_eq!(
-            cx.setting::<AiSettings>().agents["claude"]
-                .command
-                .as_deref(),
-            Some("/opt/claude")
-        )
-    });
-    type_and_leave(cx, handle, &view, "agent.claude.command", "");
-    cx.update(|cx| {
-        assert!(
-            cx.setting::<AiSettings>().agents.is_empty(),
-            "defaults need no override"
-        )
-    });
-    cx.update_window(handle, |_, window, cx| {
-        window.click("ai-enabled", cx);
-        assert!(!cx.setting::<AiSettings>().enabled);
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn agent_permission_switch_is_independent_and_disabled_with_ai(cx: &mut TestAppContext) {
-    let (handle, _view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.resize(gpui_kit::size(gpui_kit::px(1000.), gpui_kit::px(1100.)));
-        window.render_frame(cx);
-        window.click(4usize, cx);
-        window.render_frame(cx);
-        let terminal_read = cx.setting::<AiSettings>().approval.terminal_read;
-        let terminal_write = cx.setting::<AiSettings>().approval.terminal_write;
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.agent_permissions,
-            nocterm_ai::ApprovalPolicy::Ask
-        );
-        window.click("ai-agent-permissions", cx);
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.agent_permissions,
-            nocterm_ai::ApprovalPolicy::Allow
-        );
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.terminal_read,
-            terminal_read
-        );
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.terminal_write,
-            terminal_write
-        );
-        window.render_frame(cx);
-        window.click("ai-agent-permissions", cx);
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.agent_permissions,
-            nocterm_ai::ApprovalPolicy::Ask
-        );
-        window.click("ai-enabled", cx);
-        window.render_frame(cx);
-        window.click("ai-agent-permissions", cx);
-        assert_eq!(
-            cx.setting::<AiSettings>().approval.agent_permissions,
-            nocterm_ai::ApprovalPolicy::Ask
-        );
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn custom_agents_are_added_with_an_executable_and_get_fields(cx: &mut TestAppContext) {
-    let (handle, _view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(5000.)));
-        select_field_page("ai.enabled", window, cx);
-        window.click("ai-new-id", cx);
-        window.input("mine", cx);
-        window.click("ai-add-agent", cx);
-        window.render_frame(cx);
-        assert!(
-            window.try_find("ai-add-error").is_some(),
-            "an executable is required"
-        );
-        window.click("ai-new-command", cx);
-        window.input("/opt/mine", cx);
-        window.click("ai-add-agent", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(
-            cx.setting::<AiSettings>().agents["mine"].command.as_deref(),
-            Some("/opt/mine")
-        );
-    });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(
-            window
-                .try_find("settings-field-agent.mine.command")
-                .is_some()
-        );
-    })
-    .unwrap();
-}
-
 struct GuestPage {
     input: Entity<InputState>,
     deactivations: Rc<Cell<usize>>,
@@ -376,22 +140,22 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
             entity
         }
     });
-    let (handle, workspace) = cx.update(|cx| {
-        init(cx);
+    let (handle, workspace, fixture) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
         let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
-        gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(deps, window, cx);
-                register_with_pages(
+                register(
                     &mut workspace,
-                    vec![descriptor.clone()],
-                    theme_ui(cx),
-                    settings_deps(cx),
+                    with_guest(&fixture, vec![descriptor.clone()]),
+                    fixture.installed.clone(),
                 );
                 workspace
             })
         })
-        .unwrap()
+        .unwrap();
+        (handle, workspace, fixture)
     });
     let guest_value = |cx: &App| {
         guest
@@ -409,9 +173,8 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
             open_page(
                 workspace,
                 "",
-                std::slice::from_ref(&descriptor),
-                theme_ui(cx),
-                settings_deps(cx),
+                &with_guest(&fixture, vec![descriptor.clone()]),
+                fixture.installed.clone(),
                 window,
                 cx,
             );
@@ -425,9 +188,8 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
             open_page(
                 workspace,
                 "vault",
-                std::slice::from_ref(&descriptor),
-                theme_ui(cx),
-                settings_deps(cx),
+                &with_guest(&fixture, vec![descriptor.clone()]),
+                fixture.installed.clone(),
                 window,
                 cx,
             )
@@ -446,9 +208,8 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
             open_page(
                 workspace,
                 "vault",
-                std::slice::from_ref(&descriptor),
-                theme_ui(cx),
-                settings_deps(cx),
+                &with_guest(&fixture, vec![descriptor.clone()]),
+                fixture.installed.clone(),
                 window,
                 cx,
             )
@@ -466,12 +227,16 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
     let (handle, workspace) = cx.update(|cx| {
-        init(cx);
+        let fixture = host_fixture(cx);
         let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
                 let mut workspace = Workspace::new(deps, window, cx);
-                register(&mut workspace, theme_ui(cx), settings_deps(cx));
+                register(
+                    &mut workspace,
+                    fixture.pages.clone(),
+                    fixture.installed.clone(),
+                );
                 workspace
             });
             window.focus(&workspace.read(cx).focus_handle(cx), cx);
@@ -496,228 +261,106 @@ fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+struct FlushPage {
+    focus: FocusHandle,
+    id: &'static str,
+    events: Rc<RefCell<Vec<&'static str>>>,
+}
+impl Focusable for FlushPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for FlushPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+impl SettingsPage for FlushPage {
+    fn flush(&mut self, _: &mut Window, _: &mut Context<Self>) {
+        self.events.borrow_mut().push(self.id);
+    }
+    fn on_deactivate(&mut self, _: &mut Window, _: &mut Context<Self>) {
+        if self.id == "guest" {
+            self.events.borrow_mut().push("guest-hidden");
+        }
+    }
+    fn on_close(&mut self, _: &mut Window, _: &mut Context<Self>) {
+        if self.id == "guest" {
+            self.events.borrow_mut().push("guest-closed");
+        }
+    }
+}
+fn flush_catalog(events: Rc<RefCell<Vec<&'static str>>>) -> OwnerPages {
+    let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
+        let events = events.clone();
+        SettingsPageSpec::contextual(id, id, move |_, _, cx| {
+            cx.new(|cx| FlushPage {
+                focus: cx.focus_handle(),
+                id,
+                events: events.clone(),
+            })
+        })
+    });
+    let guest = SettingsPageSpec::new("guest", "Guest", move |_, cx| {
+        cx.new(|cx| FlushPage {
+            focus: cx.focus_handle(),
+            id: "guest",
+            events: events.clone(),
+        })
+    });
+    OwnerPages::new(builtins, vec![guest])
+}
 #[gpui_kit::test]
-async fn a_failed_save_is_reported_and_keeps_the_active_settings(cx: &mut TestAppContext) {
-    let directory = tempfile::tempdir().unwrap();
-    let (handle, _view) = cx.update(|cx| {
-        gpui_kit::init(cx);
-        // A directory cannot be replaced with a settings file.
-        let file = nocterm_settings::SettingsFile::new(directory.path());
-        nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::new(SettingsDocument::default(), file),
-            cx,
-        );
-        let settings = nocterm_ui::UiReady::installed(cx)
-            .unwrap()
-            .settings()
-            .clone();
-        settings.register::<AiSettings>(cx);
-        settings.register::<LocalShellSettings>(cx);
-        settings.register::<nocterm_session::SshSettings>(cx);
-        settings.register::<nocterm_session::LoggingOptions>(cx);
+fn every_builtin_flushes_before_guest_deactivation_and_close(cx: &mut TestAppContext) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (handle, workspace) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let pages = flush_catalog(events.clone());
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-            cx.new(|cx| SettingsView::new(window, cx))
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(deps, window, cx);
+                open_page(
+                    &mut workspace,
+                    "guest",
+                    &pages,
+                    fixture.installed,
+                    window,
+                    cx,
+                );
+                workspace
+            })
         })
         .unwrap()
     });
+    events.borrow_mut().clear();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(1usize, cx);
-        window.render_frame(cx);
-        window.click("copy-select", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        assert!(!cx.setting::<TerminalSettings>().copy_on_select);
-    });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(
-            window
-                .find("settings-save-error")
-                .label()
-                .is_some_and(|error| error.starts_with("Could not save settings"))
-        );
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn terminal_highlighting_switch_saves_and_can_be_reenabled(cx: &mut TestAppContext) {
-    let (handle, _view) = open(cx);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click(1usize, cx);
-        window.render_frame(cx);
-        assert!(cx.setting::<TerminalSettings>().semantic_highlighting);
-        window.click("semantic-highlighting", cx);
-        assert!(!cx.setting::<TerminalSettings>().semantic_highlighting);
-        window.render_frame(cx);
-        window.click("semantic-highlighting", cx);
-        assert!(cx.setting::<TerminalSettings>().semantic_highlighting);
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppContext) {
-    use nocterm_ai::{sandbox::Availability, testing::ScriptedSandboxProbe};
-    for (availability, disabled) in [
-        (Availability::Available("/fake/bwrap".into()), false),
-        (Availability::Missing, true),
-        (Availability::Unsupported, true),
-    ] {
-        let probe = std::sync::Arc::new(ScriptedSandboxProbe::new(availability));
-        let (handle, workspace) = cx.update(|cx| {
-            init(cx);
-            let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
-            gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-                let workspace = cx.new(|cx| Workspace::new(layout, window, cx));
-                workspace.update(cx, |workspace, cx| {
-                    open_page(
-                        workspace,
-                        "ai",
-                        &[],
-                        theme_ui(cx),
-                        Installed::new(
-                            nocterm_ui::UiReady::installed(cx)
-                                .unwrap()
-                                .settings()
-                                .clone(),
-                            Deps::new(probe.clone()),
-                        ),
-                        window,
-                        cx,
-                    );
-                });
-                workspace
-            })
-            .unwrap()
-        });
-        cx.update_window(handle, |_, window, cx| {
-            window.resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(2400.)));
-            window.render_frame(cx);
-            window.click("ai-sandbox", cx);
-            assert_eq!(
-                cx.setting::<AiSettings>().sandbox,
-                if disabled {
-                    nocterm_ai::SandboxMode::Off
-                } else {
-                    nocterm_ai::SandboxMode::Workspace
-                }
-            );
-            assert_eq!(probe.calls(), 1);
-            assert_eq!(workspace.read(cx).items().count(), 1);
-        })
-        .unwrap();
-    }
-}
-
-mod dependencies;
-
-fn physical_field(
-    cx: &mut TestAppContext,
-) -> (
-    tempfile::TempDir,
-    gpui_kit::AnyWindowHandle,
-    nocterm_store::SettingsHandle,
-) {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("settings.toml");
-    std::fs::create_dir(&path).unwrap();
-    let (window, settings) = cx.update(|cx| {
-        init_with_settings(
-            SettingsStore::new(
-                Default::default(),
-                nocterm_settings::SettingsFile::new(path),
-            ),
-            cx,
-        );
-        let settings = nocterm_ui::UiReady::installed(cx)
-            .unwrap()
-            .settings()
-            .clone();
-        let (window, _) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-            cx.new(|cx| SettingsView::new(window, cx))
-        })
-        .unwrap();
-        (window, settings)
-    });
-    (directory, window, settings)
-}
-
-fn enter_font(handle: gpui_kit::AnyWindowHandle, text: Option<&str>, cx: &mut TestAppContext) {
-    cx.update_window(handle, |_, window, _| window.activate_window())
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        select_field_page("terminal.font_size", window, cx);
-        window.click("terminal.font_size", cx);
-        if let Some(text) = text {
-            window.press("ctrl-a", cx);
-            window.press("backspace", cx);
-            window.input(text, cx);
-            assert_eq!(window.find("terminal.font_size").value(), Some(text));
-        }
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
-        .unwrap();
-    cx.run_until_parked();
-}
-
-#[gpui_kit::test]
-fn text_physical_failure_is_visible_and_keeps_literal(cx: &mut TestAppContext) {
-    let (directory, handle, settings) = physical_field(cx);
-    enter_font(handle, Some("19"), cx);
-    assert!(directory.path().join("settings.toml").is_dir());
-    cx.update(|cx| assert_eq!(settings.setting::<TerminalSettings>(cx).font_size, None));
-    cx.update_window(handle, |_, window, _| {
-        assert_eq!(window.find("terminal.font_size").value(), Some("19"));
-        assert!(
-            window
-                .try_find("settings-error-terminal.font_size")
-                .and_then(|error| error.label().map(str::to_owned))
-                .is_some_and(|error| error.contains("Could not save settings")),
-            "actual field must render physical publication failure after its receipt"
-        );
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn text_physical_failure_retries_the_same_literal_after_enter(cx: &mut TestAppContext) {
-    let (directory, handle, settings) = physical_field(cx);
-    enter_font(handle, Some("19"), cx);
-    cx.update(|cx| assert_eq!(settings.setting::<TerminalSettings>(cx).font_size, None));
-    let path = directory.path().join("settings.toml");
-    std::fs::remove_dir(&path).unwrap();
-    enter_font(handle, None, cx);
-    assert!(
-        path.is_file(),
-        "same literal Enter must perform a new physical publication after failure"
-    );
-    let mut reloaded = nocterm_settings::SettingsFile::new(path).load().unwrap();
-    reloaded.register::<TerminalSettings>();
-    assert_eq!(reloaded.get::<TerminalSettings>().font_size, Some(19.));
-    cx.update(|cx| {
+        window.within("settings-pages").click(0usize, cx);
         assert_eq!(
-            settings.setting::<TerminalSettings>(cx).font_size,
-            Some(19.)
-        )
-    });
-    cx.update_window(handle, |_, window, _| {
-        assert_eq!(window.find("terminal.font_size").value(), Some("19"));
-        assert!(
-            window
-                .try_find("settings-error-terminal.font_size")
-                .is_none()
+            &*events.borrow(),
+            &[
+                "appearance",
+                "terminal",
+                "local-shell",
+                "ssh",
+                "ai",
+                "guest-hidden"
+            ]
+        );
+        events.borrow_mut().clear();
+        workspace.update(cx, |workspace, cx| workspace.close_item(0, window, cx));
+        assert_eq!(
+            &*events.borrow(),
+            &[
+                "appearance",
+                "terminal",
+                "local-shell",
+                "ssh",
+                "ai",
+                "guest-closed"
+            ]
         );
     })
     .unwrap();

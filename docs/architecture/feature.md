@@ -289,7 +289,7 @@ canonical directory shared by the process and session. Fresh launch validation
 rejects changed or protected directories and unavailable bubblewrap without an
 unisolated fallback. A changed isolation setting restarts running agents.
 
-The settings feature receives a `SandboxProbe` through its explicit dependencies.
+The Agent-owned settings page receives `SandboxProbe` from its retained installation.
 It reports availability while keeping the isolation controls visible; launch
 checks availability again rather than trusting the displayed result.
 
@@ -489,8 +489,9 @@ no runtime/auth or shared-UI AI policy compatibility lookup. Shutdown registrati
 status remains separately typed and does not discard a usable installation. See
 [ADR0052](../adr/0052-retained-agent-installation.md).
 
-Settings tab installation retains the supplied SettingsHandle and SandboxProbe
-capability. Builtin fields, page controls, section diagnostics and settings observation
+Settings tab installation retains the supplied SettingsHandle. Feature-owned
+pages retain their supplied settings and capabilities; Agent retains SandboxProbe.
+Builtin fields, page controls, section diagnostics and settings observation
 use that exact owner; window/page factories clone the installation. Per-window
 observation keeps a weak view and originating window. Appearance picker callbacks
 retain the same supplied policy through deferred opening and completion. Text fields
@@ -524,3 +525,16 @@ before constructing the service future. Tab/lock/deactivate/close transitions us
 same control owner; late completion still checks the original view generation. Form
 state stores no extra plaintext copy or policy cache. Auto-lock retains its existing
 Enter/blur submission and detached physical-failure behavior.
+
+## Owner settings pages
+
+Terminal supplies its terminal, local-shell and SSH pages. Agent supplies the AI
+page through its retained installation, including the pure SandboxProbe display
+port. Shared UI owns Appearance widgets and the theme browser. Settings UI hosts
+these supplied factories and feature guest pages; it does not own their controls,
+policy validators or native dependencies. Builtin controls are created eagerly with
+the Item, while guest pages retain their lazy creation and reuse. All builtin pages
+flush before selection and before the current guest deactivates. A per-Item UI
+feedback handle preserves the shared save diagnostic without exposing the host view.
+The app retains workspace action registration for appearance pickers, preventing a
+UI-to-workspace dependency cycle.

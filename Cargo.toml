@@ -118,6 +118,7 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
@@ -147,6 +148,8 @@ edition = "2024"
 license-file = "LICENSE"
 
 [workspace.dependencies]
+nocterm-terminal-model = { path = "crates/terminal-model" }
+nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }

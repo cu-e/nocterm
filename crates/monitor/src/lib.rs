@@ -17,7 +17,13 @@
 //!
 //! [`HostExec`]: nocterm_session::HostExec
 
+//! Settings schema: owned here, including defaults and sanitization; controls stay in the feature.
+//! Owns: host metric scripts, parsing, bounded histories and monitor settings rules.
+//! Does not own: GPUI views, native host execution or settings publication.
+//! Ports: HostExec. Settings: monitor. Globals: none.
+//! Invariant: sampling and schema rules accept supplied facts without native I/O.
 pub mod format;
+
 mod frame;
 mod history;
 mod linux;
@@ -39,3 +45,6 @@ pub use sampler::{DiskRates, NetworkRates, Sampler, Snapshot, Usage};
 pub use watch::Watch;
 
 pub use metric::MonitorMetric;
+
+mod settings;
+pub use settings::*;

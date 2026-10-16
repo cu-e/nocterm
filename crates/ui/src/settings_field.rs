@@ -1,18 +1,14 @@
 //! Membership owns both the shared field and its original form redraw subscription.
+use crate::SettingsTextField;
 use gpui_kit::{Context, Subscription, Window};
-use nocterm_ui::SettingsTextField;
 
-pub(crate) struct FieldPresentation {
+pub struct FieldPresentation {
     field: SettingsTextField,
     _notification: Subscription,
 }
 
 impl FieldPresentation {
-    pub(crate) fn new(
-        field: SettingsTextField,
-        window: &Window,
-        cx: &mut Context<crate::SettingsView>,
-    ) -> Self {
+    pub fn new<T: 'static>(field: SettingsTextField, window: &Window, cx: &mut Context<T>) -> Self {
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
         let notification = field.observe(cx, move |cx| {
@@ -26,7 +22,7 @@ impl FieldPresentation {
         }
     }
 
-    pub(crate) fn field(&self) -> &SettingsTextField {
+    pub fn field(&self) -> &SettingsTextField {
         &self.field
     }
 }

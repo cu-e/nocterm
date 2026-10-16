@@ -7,12 +7,13 @@ use std::{any::type_name, collections::BTreeSet, fs, path::Path};
 
 use anyhow::bail;
 use nocterm_ai::AiSettings;
-use nocterm_files::ExplorerSettings;
-use nocterm_monitor_ui::MonitorSettings;
+use nocterm_explorer::ExplorerSettings;
+use nocterm_monitor::MonitorSettings;
 use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
 use nocterm_settings::SettingsSection;
-use nocterm_ui::{AppearanceSettings, TerminalSettings};
-use nocterm_vault_ui::VaultSettings;
+use nocterm_terminal_model::TerminalSettings;
+use nocterm_ui::AppearanceSettings;
+use nocterm_vault::VaultSettings;
 use schemars::schema_for;
 
 /// A section's key, its type's name and its reference rows.

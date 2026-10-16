@@ -1,6 +1,8 @@
 //! Searchable appearance pickers reached from the workspace command palette.
 use std::rc::Rc;
 
+use crate::AppearanceMode;
+use crate::notice;
 use gpui_kit::{
     App, AppContext as _, Window,
     component::{
@@ -10,9 +12,6 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ui::AppearanceMode;
-use nocterm_ui::notice;
-use nocterm_workspace::{ChangeColorScheme, ChangeTheme, Workspace};
 
 use super::{choices, selection};
 
@@ -22,28 +21,8 @@ enum Choice {
     Scheme(AppearanceMode),
 }
 
-pub(crate) fn register(
-    workspace: &mut Workspace,
-    themes: nocterm_ui::ThemeUi,
-    settings: nocterm_store::SettingsHandle,
-) {
-    let picker = themes.clone();
-    let theme_settings = settings.clone();
-    workspace.register_action(move |_, _: &ChangeTheme, window, cx| {
-        let themes = picker.clone();
-        let settings = theme_settings.clone();
-        window.defer(cx, move |window, cx| {
-            open_theme(&themes, &settings, window, cx)
-        });
-    });
-    workspace.register_action(move |_, _: &ChangeColorScheme, window, cx| {
-        let settings = settings.clone();
-        window.defer(cx, move |window, cx| open_scheme(&settings, window, cx));
-    });
-}
-
-fn open_theme(
-    themes: &nocterm_ui::ThemeUi,
+pub fn open_theme_picker(
+    themes: &crate::ThemeUi,
     settings: &nocterm_store::SettingsHandle,
     window: &mut Window,
     cx: &mut App,
@@ -81,8 +60,12 @@ fn open_theme(
     );
 }
 
-fn open_scheme(settings: &nocterm_store::SettingsHandle, window: &mut Window, cx: &mut App) {
-    let current = settings.setting::<nocterm_ui::AppearanceSettings>(cx).mode;
+pub fn open_scheme_picker(
+    settings: &nocterm_store::SettingsHandle,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let current = settings.setting::<crate::AppearanceSettings>(cx).mode;
     let options = [
         ("System", AppearanceMode::System),
         ("Light", AppearanceMode::Light),
@@ -150,18 +133,17 @@ fn save(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let task =
-        settings.update::<nocterm_ui::AppearanceSettings>(cx, move |settings| match choice {
-            Choice::Theme { dark, name } => {
-                let name = (name != "Nocterm Default").then_some(name);
-                if dark {
-                    settings.dark_theme = name;
-                } else {
-                    settings.light_theme = name;
-                }
+    let task = settings.update::<crate::AppearanceSettings>(cx, move |settings| match choice {
+        Choice::Theme { dark, name } => {
+            let name = (name != "Nocterm Default").then_some(name);
+            if dark {
+                settings.dark_theme = name;
+            } else {
+                settings.light_theme = name;
             }
-            Choice::Scheme(mode) => settings.mode = mode,
-        });
+        }
+        Choice::Scheme(mode) => settings.mode = mode,
+    });
     window
         .spawn(cx, async move |cx| {
             let result = task.await;

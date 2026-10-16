@@ -7,11 +7,11 @@
 //! terminal styling accepts supplied settings; ThemeUi retains the original policy
 //! and paints Design changes without resolving back into Design.
 //!
-//! Owns: theme projections, shared assets/forms, checked native text editing, settings compatibility and layout.
+//! Owns: Appearance views, theme projections, shared controls and checked text receipts, settings compatibility and layout.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
-//! Settings sections: appearance, terminal.
+//! Settings section: appearance. Terminal styling uses the terminal-model domain schema.
 //! Globals: Design, SettingsStore, Notices.
 //! Imported themes use one retained ThemeUi projection over ThemesHandle and SettingsHandle.
 //! Design is paint data only; OS callbacks apply the retained projection.
@@ -44,8 +44,7 @@ pub use icons::{Assets, IconName, agent_icon};
 pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
 pub use sections::{
-    AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, ClipboardWritePolicy,
-    CursorShape, FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE, TerminalSettings, UiLayout,
+    AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, UiLayout,
 };
 pub use settings::{SettingsExt, SettingsStore, edit_settings, register_setting};
 pub use terminal_style::{TerminalStyle, hsla};
@@ -96,3 +95,18 @@ impl UiReady {
             .map(|settings| Self { settings })
     }
 }
+
+pub use nocterm_terminal_model::{
+    ClipboardWritePolicy, CursorShape, FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, SCROLLBACK_RANGE,
+    TerminalSettings,
+};
+
+mod settings_page_context;
+pub use settings_page_context::{SettingsPageContext, SettingsPageFeedback};
+mod settings_field;
+pub mod settings_input;
+pub use settings_field::FieldPresentation;
+
+mod appearance_page;
+pub use appearance_page::appearance_settings_page;
+pub use appearance_page::commands::{open_scheme_picker, open_theme_picker};

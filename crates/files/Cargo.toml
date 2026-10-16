@@ -10,11 +10,9 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-explorer.workspace = true
 thiserror.workspace = true
-schemars.workspace = true
-serde.workspace = true
 nocterm-session.workspace = true
-nocterm-settings.workspace = true
 nocterm-store.workspace = true
 nocterm-transfers.workspace = true
 nocterm-ui.workspace = true
@@ -25,6 +23,7 @@ parking_lot.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+nocterm-settings.workspace = true
 nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

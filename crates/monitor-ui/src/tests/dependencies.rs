@@ -320,7 +320,10 @@ fn installing_monitor_and_materializing_its_page_starts_no_sampling(cx: &mut Tes
             .unwrap();
         let page = window
             .update(cx, |_, window, cx| {
-                crate::settings_page(&installed).create(window, cx)
+                let feedback = nocterm_ui::SettingsPageFeedback::new(cx);
+                let context =
+                    nocterm_ui::SettingsPageContext::new(installed.settings().clone(), feedback);
+                crate::settings_page(&installed).create(context, window, cx)
             })
             .unwrap();
         (window, workspace, page)

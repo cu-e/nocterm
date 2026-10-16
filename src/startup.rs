@@ -105,9 +105,6 @@ impl PreparedApp {
                 images,
                 tokens: self.tokens,
                 settings: self.settings,
-                settings_ui: nocterm_settings_ui::Deps::new(Arc::new(
-                    nocterm_acp::NativeSandboxProbe,
-                )),
                 paths: self.paths,
                 persist: true,
                 transport: Arc::new(self.transport),
@@ -175,6 +172,8 @@ fn agent_services(
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
+        sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
+
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
         terminal_auth: None,

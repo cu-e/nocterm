@@ -1,21 +1,13 @@
-//! Settings presentation retains its actual store and native capability inputs.
-use nocterm_store::SettingsHandle;
-
-/// One settings UI installation reused by current and newly opened windows.
+//! A settings Item retains its actual document without native feature inputs.
 #[derive(Clone)]
 pub struct Installed {
-    settings: SettingsHandle,
-    deps: crate::Deps,
+    settings: nocterm_store::SettingsHandle,
 }
-
 impl Installed {
-    pub fn new(settings: SettingsHandle, deps: crate::Deps) -> Self {
-        Self { settings, deps }
+    pub fn new(settings: nocterm_store::SettingsHandle) -> Self {
+        Self { settings }
     }
-    pub fn settings(&self) -> &SettingsHandle {
+    pub fn settings(&self) -> &nocterm_store::SettingsHandle {
         &self.settings
-    }
-    pub(crate) fn sandbox_probe(&self) -> std::sync::Arc<dyn nocterm_ai::sandbox::SandboxProbe> {
-        self.deps.sandbox_probe()
     }
 }

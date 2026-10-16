@@ -267,6 +267,29 @@ fn boot_with_ports(
     themes: Option<crate::bootstrap::Themes>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    boot_with_ports_and_probe(
+        directory,
+        settings,
+        terminal,
+        vault,
+        files,
+        themes,
+        Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
+            nocterm_ai::sandbox::Availability::Unsupported,
+        )),
+        cx,
+    )
+}
+fn boot_with_ports_and_probe(
+    directory: tempfile::TempDir,
+    settings: nocterm_ui::SettingsStore,
+    terminal: (Arc<MockTransport>, nocterm_terminal::LocalSessions),
+    vault: bool,
+    files: Option<nocterm_files::Deps>,
+    themes: Option<crate::bootstrap::Themes>,
+    probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
+    cx: &mut gpui_kit::App,
+) -> crate::bootstrap::Booted {
     let (transport, local) = terminal;
     let local_host = local.is_available().then(|| {
         Arc::new(nocterm_session::testing::FakeExec::default())
@@ -289,11 +312,6 @@ fn boot_with_ports(
             },
             tokens: nocterm_ui::DesignTokens::builtin(),
             settings,
-            settings_ui: nocterm_settings_ui::Deps::new(Arc::new(
-                nocterm_ai::testing::ScriptedSandboxProbe::new(
-                    nocterm_ai::sandbox::Availability::Unsupported,
-                ),
-            )),
             persist: false,
             connections: crate::connection_setup::memory(),
             transport,
@@ -303,6 +321,7 @@ fn boot_with_ports(
             files,
             themes,
             agent: nocterm_agent::AgentServices {
+                sandbox_probe: probe,
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
@@ -776,3 +795,5 @@ fn agent_header_lines_up_with_the_tab_strip(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+mod settings_pages;

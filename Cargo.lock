@@ -4989,6 +4989,7 @@ dependencies = [
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-session",
+ "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
@@ -5182,12 +5183,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-explorer"
+version = "0.0.0"
+dependencies = [
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-files"
 version = "0.0.0"
 dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "nocterm-explorer",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
@@ -5195,8 +5207,6 @@ dependencies = [
  "nocterm-ui",
  "nocterm-workspace",
  "parking_lot",
- "schemars 1.2.2",
- "serde",
  "tempfile",
  "thiserror 2.0.21",
 ]
@@ -5270,8 +5280,10 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "nocterm-session",
+ "nocterm-settings",
  "schemars 1.2.2",
  "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5286,8 +5298,6 @@ dependencies = [
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "schemars 1.2.2",
- "serde",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
@@ -5314,6 +5324,7 @@ dependencies = [
  "nocterm-core",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
@@ -5323,18 +5334,9 @@ name = "nocterm-settings-ui"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
- "nocterm-ai",
- "nocterm-session",
- "nocterm-settings",
  "nocterm-store",
- "nocterm-theme-service",
- "nocterm-themes",
  "nocterm-ui",
  "nocterm-workspace",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5405,6 +5407,7 @@ dependencies = [
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
+ "nocterm-terminal-model",
  "nocterm-theme-service",
  "nocterm-themes",
  "nocterm-ui",
@@ -5414,6 +5417,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "nocterm-terminal-model"
+version = "0.0.0"
+dependencies = [
+ "nocterm-session",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5488,6 +5502,7 @@ dependencies = [
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
+ "nocterm-terminal-model",
  "nocterm-theme-service",
  "nocterm-themes",
  "schemars 1.2.2",
@@ -5507,9 +5522,12 @@ dependencies = [
  "chacha20poly1305",
  "futures",
  "nocterm-session",
+ "nocterm-settings",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
  "zeroize",
 ]
 
@@ -5552,8 +5570,6 @@ dependencies = [
  "nocterm-ui",
  "nocterm-vault",
  "nocterm-workspace",
- "schemars 1.2.2",
- "serde",
  "tempfile",
 ]
 
@@ -11062,12 +11078,13 @@ dependencies = [
  "anyhow",
  "nocterm-ai",
  "nocterm-design",
- "nocterm-files",
- "nocterm-monitor-ui",
+ "nocterm-explorer",
+ "nocterm-monitor",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-terminal-model",
  "nocterm-ui",
- "nocterm-vault-ui",
+ "nocterm-vault",
  "proc-macro2",
  "schemars 1.2.2",
  "serde",

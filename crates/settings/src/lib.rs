@@ -24,3 +24,5 @@ mod store;
 pub use document::{SectionError, SettingsDocument};
 pub use section::{SettingsSection, clamp_f32, trim_unset};
 pub use store::SettingsFile;
+
+pub mod schema;

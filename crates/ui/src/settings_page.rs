@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 /// An independent settings page. Hidden and closing pages can clear sensitive drafts.
 pub trait SettingsPage: Render + Focusable {
+    fn flush(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_deactivate(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_deactivate(window, cx);
@@ -16,6 +17,7 @@ pub trait SettingsPage: Render + Focusable {
 pub trait SettingsPageHandle: 'static {
     fn view(&self) -> AnyView;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
+    fn flush(&self, window: &mut Window, cx: &mut App);
     fn deactivate(&self, window: &mut Window, cx: &mut App);
     fn close(&self, window: &mut Window, cx: &mut App);
 }
@@ -27,6 +29,9 @@ impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.read(cx).focus_handle(cx)
     }
+    fn flush(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |page, cx| page.flush(window, cx));
+    }
     fn deactivate(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |page, cx| page.on_deactivate(window, cx));
     }
@@ -35,7 +40,8 @@ impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
     }
 }
 
-type PageFactory = dyn Fn(&mut Window, &mut App) -> Box<dyn SettingsPageHandle>;
+type PageFactory =
+    dyn Fn(SettingsPageContext, &mut Window, &mut App) -> Box<dyn SettingsPageHandle>;
 
 /// A lazy page factory supplied by the composition root.
 #[derive(Clone)]
@@ -57,16 +63,35 @@ impl SettingsPageSpec {
             id,
             title: title.into(),
             icon: crate::IconName::Wrench,
-            factory: Rc::new(move |window, cx| Box::new(factory(window, cx))),
+            factory: Rc::new(move |_, window, cx| Box::new(factory(window, cx))),
         }
     }
 
+    /// Builtin owner factories receive only the original settings and shared save feedback.
+    pub fn contextual<T: SettingsPage>(
+        id: &'static str,
+        title: impl Into<SharedString>,
+        factory: impl Fn(SettingsPageContext, &mut Window, &mut App) -> Entity<T> + 'static,
+    ) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            icon: crate::IconName::Wrench,
+            factory: Rc::new(move |context, window, cx| Box::new(factory(context, window, cx))),
+        }
+    }
+    pub fn create(
+        &self,
+        context: SettingsPageContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Box<dyn SettingsPageHandle> {
+        (self.factory)(context, window, cx)
+    }
     pub fn with_icon(mut self, icon: crate::IconName) -> Self {
         self.icon = icon;
         self
     }
-
-    pub fn create(&self, window: &mut Window, cx: &mut App) -> Box<dyn SettingsPageHandle> {
-        (self.factory)(window, cx)
-    }
 }
+
+use crate::SettingsPageContext;

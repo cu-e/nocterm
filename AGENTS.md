@@ -162,7 +162,8 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `vt` | terminal emulation and input encoding |
 | `ui` | shared UI theme, assets and settings globals |
 | `workspace` | window, tabs, panels and actions |
-| `terminal` | terminal model and view |
+| `terminal-model` | pure terminal display settings and validation |
+| `terminal` | terminal model, view and settings pages |
 | `connections` | connection UI, editor inputs and detected facts |
 | `connections-store` | ordered profile/recent publication and committed authority |
 | `connections-model` | connection formats, rules and capability ports |
@@ -176,6 +177,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `agent-storage` | history and preferences filesystem repositories |
 | `image-codec` | bounded native image inspection and preview encoding |
 | `agent` | agent panel, threads and composer |
+| `explorer` | pure Explorer indexing and opener rules |
 | `files` | local/remote Explorer and transfer UI |
 | `local` | local PTY, shell integration and external program opening |
 | `localfs` | native filesystem capabilities |

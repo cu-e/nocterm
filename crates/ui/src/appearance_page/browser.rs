@@ -1,4 +1,5 @@
 //! User-initiated Zed registry search and per-extension install feedback.
+use crate::{ThemeUi, form};
 use gpui_kit::{
     App, Context, Entity, SharedString, Subscription, Task, Window,
     component::{
@@ -11,7 +12,6 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_themes::ExtensionInfo;
-use nocterm_ui::{ThemeUi, form};
 use std::time::Duration;
 
 pub(super) struct ThemeBrowser {

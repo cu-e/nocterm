@@ -27,7 +27,8 @@ use gpui_kit::{
 };
 use nocterm_ui::SettingsStore;
 use nocterm_workspace::{
-    DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
+    ChangeColorScheme, ChangeTheme, DefaultSessionSettings, OpenAiSettings, OpenKeymap,
+    OpenSSHSettings, OpenVault, Workspace,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -104,6 +105,8 @@ fn register_settings(
     keymap: nocterm_keymap::KeymapHandle,
     files: &nocterm_files::Installed,
     monitor: &nocterm_monitor_ui::Installed,
+    terminal_pages: [nocterm_ui::SettingsPageSpec; 3],
+    ai_page: nocterm_ui::SettingsPageSpec,
 ) {
     let mut pages = vec![
         nocterm_keymap_ui::settings_page(keymap),
@@ -113,53 +116,36 @@ fn register_settings(
     if let Some(vault) = vault {
         pages.push(nocterm_vault_ui::settings_page(vault));
     }
-    nocterm_settings_ui::register_with_pages(
-        workspace,
-        pages.clone(),
-        themes.clone(),
-        deps.clone(),
-    );
+    register_appearance_commands(workspace, themes.clone(), deps.settings().clone());
+    let pages = settings_owner_pages(themes, terminal_pages, ai_page, pages);
+    nocterm_settings_ui::register(workspace, pages.clone(), deps.clone());
     /// Opens Settings at page `id` when `A` runs.
     fn open_on<A: gpui_kit::Action>(
         workspace: &mut Workspace,
         id: &'static str,
-        pages: &[nocterm_ui::SettingsPageSpec],
-        themes: nocterm_ui::ThemeUi,
+        pages: &nocterm_settings_ui::OwnerPages,
         deps: nocterm_settings_ui::Installed,
     ) {
-        let pages = pages.to_vec();
+        let pages = pages.clone();
         workspace.register_action(move |_, _: &A, window, cx| {
             let workspace = cx.entity().downgrade();
             let pages = pages.clone();
-            let themes = themes.clone();
             let deps = deps.clone();
             window.defer(cx, move |window, cx| {
                 let _ = workspace.update(cx, |workspace, cx| {
-                    nocterm_settings_ui::open_page(workspace, id, &pages, themes, deps, window, cx);
+                    nocterm_settings_ui::open_page(workspace, id, &pages, deps, window, cx);
                 });
             });
         });
     }
-    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages, themes.clone(), deps.clone());
-    open_on::<OpenAiSettings>(workspace, "ai", &pages, themes.clone(), deps.clone());
-    open_on::<OpenSSHSettings>(workspace, "ssh", &pages, themes.clone(), deps.clone());
-    open_on::<OpenKeymap>(workspace, "keymap", &pages, themes.clone(), deps.clone());
-    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(
-        workspace,
-        "monitor",
-        &pages,
-        themes.clone(),
-        deps.clone(),
-    );
-    open_on::<nocterm_files::OpenExplorerSettings>(
-        workspace,
-        "explorer",
-        &pages,
-        themes.clone(),
-        deps.clone(),
-    );
+    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages, deps.clone());
+    open_on::<OpenAiSettings>(workspace, "ai", &pages, deps.clone());
+    open_on::<OpenSSHSettings>(workspace, "ssh", &pages, deps.clone());
+    open_on::<OpenKeymap>(workspace, "keymap", &pages, deps.clone());
+    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages, deps.clone());
+    open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages, deps.clone());
     if vault.is_some() {
-        open_on::<OpenVault>(workspace, "vault", &pages, themes.clone(), deps.clone());
+        open_on::<OpenVault>(workspace, "vault", &pages, deps.clone());
     }
 }
 
@@ -169,4 +155,44 @@ fn report_settings_errors(cx: &App) {
     for error in cx.global::<SettingsStore>().section_errors(cx) {
         tracing::error!(%error, "a settings section is invalid; using its defaults");
     }
+}
+
+fn settings_owner_pages(
+    themes: nocterm_ui::ThemeUi,
+    terminal: [nocterm_ui::SettingsPageSpec; 3],
+    ai: nocterm_ui::SettingsPageSpec,
+    guests: Vec<nocterm_ui::SettingsPageSpec>,
+) -> nocterm_settings_ui::OwnerPages {
+    let [terminal, local, ssh] = terminal;
+    nocterm_settings_ui::OwnerPages::new(
+        [
+            nocterm_ui::appearance_settings_page(themes),
+            terminal,
+            local,
+            ssh,
+            ai,
+        ],
+        guests,
+    )
+}
+fn register_appearance_commands(
+    workspace: &mut Workspace,
+    themes: nocterm_ui::ThemeUi,
+    settings: nocterm_store::SettingsHandle,
+) {
+    let picker = themes.clone();
+    let theme_settings = settings.clone();
+    workspace.register_action(move |_, _: &ChangeTheme, window, cx| {
+        let themes = picker.clone();
+        let settings = theme_settings.clone();
+        window.defer(cx, move |window, cx| {
+            nocterm_ui::open_theme_picker(&themes, &settings, window, cx)
+        });
+    });
+    workspace.register_action(move |_, _: &ChangeColorScheme, window, cx| {
+        let settings = settings.clone();
+        window.defer(cx, move |window, cx| {
+            nocterm_ui::open_scheme_picker(&settings, window, cx)
+        });
+    });
 }

@@ -10,6 +10,8 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-terminal-model.workspace = true
+
 futures.workspace = true
 nocterm-core.workspace = true
 nocterm-store.workspace = true

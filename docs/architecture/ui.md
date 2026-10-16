@@ -256,3 +256,13 @@ owner. Their backgrounds retain the same terminal colour and alpha conversion.
 Shared UI does not register or read the AI policy schema. Agent runtime registers
 its own supplied settings section; standalone settings-page compositions register
 that section explicitly before constructing AI controls.
+
+## Shared settings presentation
+
+`SettingsTextField` owns native text, checked immutable admissions and the original
+store receipt. `FieldPresentation` retains that field and its weak redraw observation
+with the page membership. The small shared syntax helpers parse numbers and JSON;
+AI registry and credential policy remain in the AI domain and Agent page.
+`SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
+factories. The latter receive only their original SettingsHandle and per-Item save
+feedback. The additive flush operation leaves existing guest lifecycle contracts intact.

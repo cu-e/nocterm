@@ -3,7 +3,7 @@
 /// Why text typed into a field cannot be saved; `Display` is the message
 /// shown beside the field.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum FieldError {
+pub enum SettingsInputError {
     #[error("{name}: enter a number.")]
     NotANumber { name: String },
     #[error("{name}: enter a value from {start} to {end}.")]
@@ -24,38 +24,30 @@ pub(crate) enum FieldError {
     ExecutableContainsNul,
     #[error("Directory cannot contain NUL.")]
     DirectoryContainsNul,
-    #[error("Enter an absolute path, or leave empty for the private workspace.")]
-    InvalidWorkingDirectory,
-    #[error("Inherited variables: enter a JSON array of names.")]
-    InheritedNotNames,
-    #[error("An agent named `{0}` already exists.")]
-    DuplicateAgent(String),
-    #[error(transparent)]
-    Agent(#[from] crate::ai::AgentValidationError),
 }
 
 /// An optional value: empty text means unset.
-pub(crate) fn optional(text: &str) -> Option<String> {
+pub fn optional(text: &str) -> Option<String> {
     Some(text.trim().to_owned()).filter(|text| !text.is_empty())
 }
 
 /// A number within `range`, without silently clamping.
-pub(crate) fn number<T>(
+pub fn number<T>(
     text: &str,
     name: &str,
     range: std::ops::RangeInclusive<T>,
-) -> Result<T, FieldError>
+) -> Result<T, SettingsInputError>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
     let value = text
         .trim()
         .parse::<T>()
-        .map_err(|_| FieldError::NotANumber {
+        .map_err(|_| SettingsInputError::NotANumber {
             name: name.to_owned(),
         })?;
     if !range.contains(&value) {
-        return Err(FieldError::OutOfRange {
+        return Err(SettingsInputError::OutOfRange {
             name: name.to_owned(),
             start: range.start().to_string(),
             end: range.end().to_string(),
@@ -65,11 +57,11 @@ where
 }
 
 /// An optional number: empty text means the theme's value.
-pub(crate) fn optional_number<T>(
+pub fn optional_number<T>(
     text: &str,
     name: &str,
     range: std::ops::RangeInclusive<T>,
-) -> Result<Option<T>, FieldError>
+) -> Result<Option<T>, SettingsInputError>
 where
     T: std::str::FromStr + PartialOrd + std::fmt::Display,
 {
@@ -81,12 +73,13 @@ where
 }
 
 /// A JSON array of strings, such as program arguments.
-pub(crate) fn string_list(text: &str, name: &str) -> Result<Vec<String>, FieldError> {
-    let list: Vec<String> = serde_json::from_str(text).map_err(|_| FieldError::NotStringList {
-        name: name.to_owned(),
-    })?;
+pub fn string_list(text: &str, name: &str) -> Result<Vec<String>, SettingsInputError> {
+    let list: Vec<String> =
+        serde_json::from_str(text).map_err(|_| SettingsInputError::NotStringList {
+            name: name.to_owned(),
+        })?;
     if list.iter().any(|value| value.contains('\0')) {
-        return Err(FieldError::ContainsNul {
+        return Err(SettingsInputError::ContainsNul {
             name: name.to_owned(),
         });
     }
@@ -94,21 +87,21 @@ pub(crate) fn string_list(text: &str, name: &str) -> Result<Vec<String>, FieldEr
 }
 
 /// A JSON object of environment variables with shell-identifier names.
-pub(crate) fn environment(
+pub fn environment(
     text: &str,
     name: &str,
-) -> Result<std::collections::BTreeMap<String, String>, FieldError> {
+) -> Result<std::collections::BTreeMap<String, String>, SettingsInputError> {
     let env: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(text).map_err(|_| FieldError::NotStringMap {
+        serde_json::from_str(text).map_err(|_| SettingsInputError::NotStringMap {
             name: name.to_owned(),
         })?;
     if env.keys().any(|key| !is_identifier(key)) {
-        return Err(FieldError::InvalidEnvironmentName {
+        return Err(SettingsInputError::InvalidEnvironmentName {
             name: name.to_owned(),
         });
     }
     if env.values().any(|value| value.contains('\0')) {
-        return Err(FieldError::ContainsNul {
+        return Err(SettingsInputError::ContainsNul {
             name: name.to_owned(),
         });
     }
@@ -123,7 +116,7 @@ fn is_identifier(key: &str) -> bool {
 }
 
 /// Serializes a value shown as JSON text.
-pub(crate) fn json<T: serde::Serialize>(value: &T) -> String {
+pub fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).expect("settings values serialize")
 }
 
@@ -170,17 +163,5 @@ mod tests {
             "Environment: names must be shell identifiers."
         );
         assert!(environment(r#"{"1X":"x"}"#, "Environment").is_err());
-    }
-
-    #[test]
-    fn agent_field_errors_keep_their_messages() {
-        assert_eq!(
-            FieldError::DuplicateAgent("codex".into()).to_string(),
-            "An agent named `codex` already exists."
-        );
-        assert_eq!(
-            FieldError::from(crate::ai::AgentValidationError::InvalidId).to_string(),
-            "Agent ids use letters, numbers, underscore or dash, up to 64 characters."
-        );
     }
 }

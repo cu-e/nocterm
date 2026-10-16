@@ -19,7 +19,6 @@ use std::rc::Rc;
 pub(crate) struct Services {
     pub(crate) tokens: DesignTokens,
     pub(crate) settings: SettingsStore,
-    pub(crate) settings_ui: nocterm_settings_ui::Deps,
     pub(crate) paths: Paths,
     /// Whether connections, snippets, layout, recordings and the keymap are
     /// read from and written to `paths`; tests keep them in memory.
@@ -80,6 +79,18 @@ impl Booted {
     pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Installed {
         self.settings_ui.clone()
     }
+    pub(crate) fn settings_pages(
+        &self,
+        guests: Vec<nocterm_ui::SettingsPageSpec>,
+    ) -> nocterm_settings_ui::OwnerPages {
+        crate::settings_owner_pages(
+            self.themes.clone(),
+            nocterm_terminal::settings_pages(&self.terminal),
+            nocterm_agent::settings_page(&self.agent),
+            guests,
+        )
+    }
+
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
         self.workspace.clone()
     }
@@ -90,7 +101,6 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let Services {
         tokens,
         settings,
-        settings_ui,
         paths,
         persist,
         transport,
@@ -146,7 +156,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
-    let settings_ui = nocterm_settings_ui::Installed::new(ui.settings().clone(), settings_ui);
+    let settings_ui = nocterm_settings_ui::Installed::new(ui.settings().clone());
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
     let booted = Booted {
         keymap,
@@ -330,6 +340,8 @@ pub(crate) fn build_workspace(
         booted.keymap(),
         &booted.files,
         &booted.monitor,
+        nocterm_terminal::settings_pages(&booted.terminal),
+        nocterm_agent::settings_page(&booted.agent),
     );
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
@@ -350,8 +362,7 @@ pub(crate) fn build_workspace(
         nocterm_settings_ui::open_page(
             workspace,
             "vault",
-            &pages,
-            booted.themes.clone(),
+            &booted.settings_pages(pages),
             booted.settings_deps(),
             window,
             cx,
