@@ -37,7 +37,7 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.rename(Some("pending extracted snapshot".into()), cx);
@@ -182,7 +182,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = document(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.rename(Some("extracted old snapshot".into()), cx);
@@ -214,7 +214,7 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-000000000002".into(),
@@ -275,7 +275,7 @@ fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = super::resources::draft(&f, cx);
     let id = cx.update(|cx| thread.read(cx).chat_id().to_owned());
     let release = f
@@ -308,7 +308,7 @@ fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = super::resources::draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.set_draft("before 300 ms".into(), cx)

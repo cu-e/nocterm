@@ -1,17 +1,18 @@
 use super::*;
-use crate::{ActiveDesign, SettingsStore, TerminalStyle, hsla, init};
+use crate::{ActiveDesign, TerminalStyle, hsla, init};
 use crate::{AppearanceMode, AppearanceSettings};
 use gpui_kit::{TestAppContext, component::Theme};
 use nocterm_settings::SettingsDocument;
+use nocterm_store::SettingsConfig;
 use nocterm_themes::ThemeLibrary;
 fn install_test_projection(
     backend: std::sync::Arc<nocterm_themes::test_support::InMemoryThemes>,
     base: DesignTokens,
-    settings: SettingsStore,
+    settings: SettingsConfig,
     cx: &mut App,
 ) -> ThemeUi {
     gpui_kit::init(cx);
-    let ready = init(base.clone(), settings, cx);
+    let ready = init(base.clone(), settings.install(cx), cx);
     let service = nocterm_theme_service::ThemesHandle::install(
         Some(backend.clone()),
         None,
@@ -32,7 +33,7 @@ async fn selection_applies_ui_and_terminal_then_clears_without_a_loop(cx: &mut T
             mode: AppearanceMode::Dark,
             ..AppearanceSettings::default()
         };
-        let settings = SettingsStore::in_memory(SettingsDocument::default()).with(appearance);
+        let settings = SettingsConfig::in_memory(SettingsDocument::default()).with(appearance);
         install_test_projection(backend.clone(), base, settings, cx)
     });
     let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -137,7 +138,7 @@ async fn sparse_imports_composite_over_the_component_background_without_override
         install_test_projection(
             backend.clone(),
             base,
-            SettingsStore::in_memory(SettingsDocument::default()),
+            SettingsConfig::in_memory(SettingsDocument::default()),
             cx,
         )
     });

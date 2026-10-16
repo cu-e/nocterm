@@ -34,7 +34,7 @@ fn superseded_secret_recreates_masked_empty_field_and_clears_old_text(cx: &mut T
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = crate::install(
@@ -151,7 +151,7 @@ fn host_fixture(
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = crate::install(

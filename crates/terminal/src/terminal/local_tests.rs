@@ -18,7 +18,7 @@ fn command_dependencies(cx: &mut TestAppContext) -> crate::Installed {
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         crate::install(
@@ -43,7 +43,7 @@ fn command_completion_is_once_and_recording_is_disabled(cx: &mut TestAppContext)
         settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(settings),
+            (SettingsConfig::in_memory(settings)).install(cx),
             cx,
         );
         let installed = crate::install(
@@ -134,7 +134,7 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
         });
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(settings),
+            (SettingsConfig::in_memory(settings)).install(cx),
             cx,
         );
         let local = crate::LocalSessions::new(
@@ -223,7 +223,7 @@ fn directory_terminal(
         settings.update::<nocterm_ui::TerminalSettings>(|section| section.charset = charset);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(settings),
+            (SettingsConfig::in_memory(settings)).install(cx),
             cx,
         );
         let local = crate::LocalSessions::new(

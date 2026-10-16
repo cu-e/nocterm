@@ -3,13 +3,19 @@ use super::*;
 use std::time::Duration;
 
 fn another_settings(cx: &mut gpui_kit::App) -> nocterm_store::SettingsHandle {
-    nocterm_store::SettingsConfig::in_memory(Default::default())
+    let settings = nocterm_store::SettingsConfig::in_memory(Default::default())
         .with(crate::VaultSettings {
             auto_lock_minutes: 32,
             ..Default::default()
         })
-        .install(cx)
+        .install(cx);
+    let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
+    let service = Arc::new(ScriptedVaultAccess::default());
+    let installed = crate::install(crate::Deps::new(service), &ready, cx);
+    page(&installed, cx);
+    settings
 }
+
 fn page(
     installed: &crate::Installed,
     cx: &mut gpui_kit::App,
@@ -31,15 +37,13 @@ fn page(
 fn vault_policy_observer_survives_first_page_and_never_follows_unrelated_settings(
     cx: &mut TestAppContext,
 ) {
-    let (first, first_page, service, installed) =
-        setup_with_store(cx, nocterm_ui::SettingsStore::in_memory(Default::default()));
+    let (first, first_page, service, installed) = setup_with_store(
+        cx,
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
+    );
     let (second, _second_page) = cx.update(|cx| page(&installed, cx));
     tab(second, 3, cx);
-    let other = cx.update(|cx| {
-        let other = another_settings(cx);
-        cx.set_global(nocterm_ui::SettingsStore::from_handle(other.clone()));
-        other
-    });
+    let other = cx.update(another_settings);
     cx.update(|cx| {
         installed
             .settings()
@@ -82,7 +86,7 @@ async fn rejected_native_setting_write_keeps_old_service_delay_and_current_liter
     cx: &mut TestAppContext,
 ) {
     let refused = tempfile::tempdir().unwrap();
-    let store = nocterm_ui::SettingsStore::new(
+    let store = nocterm_store::SettingsConfig::new(
         Default::default(),
         nocterm_settings::SettingsFile::new(refused.path()),
     );
@@ -293,8 +297,10 @@ fn blur_auto_lock(handle: gpui_kit::AnyWindowHandle, cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn auto_lock_waits_for_native_enter_or_blur_and_preserves_its_bounds(cx: &mut TestAppContext) {
-    let (handle, _view, service, installed) =
-        setup_with_store(cx, nocterm_ui::SettingsStore::in_memory(Default::default()));
+    let (handle, _view, service, installed) = setup_with_store(
+        cx,
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
+    );
     cx.update_window(handle, |_, window, _| window.activate_window())
         .unwrap();
     drain(cx);

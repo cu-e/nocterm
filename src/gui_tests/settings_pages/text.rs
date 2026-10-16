@@ -11,16 +11,13 @@ fn physical_field(
     std::fs::create_dir(&path).unwrap();
     let (window, settings) = cx.update(|cx| {
         let fixture = init_with_settings(
-            SettingsStore::new(
+            SettingsConfig::new(
                 Default::default(),
                 nocterm_settings::SettingsFile::new(path),
             ),
             cx,
         );
-        let settings = nocterm_ui::UiReady::installed(cx)
-            .unwrap()
-            .settings()
-            .clone();
+        let settings = fixture.installed.settings().clone();
         let (window, _) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             cx.new(|cx| {
                 SettingsView::with_pages(

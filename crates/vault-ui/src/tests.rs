@@ -15,13 +15,15 @@ fn setup(
     Entity<VaultView>,
     Arc<ScriptedVaultAccess>,
 ) {
-    let (handle, view, service, _) =
-        setup_with_store(cx, nocterm_ui::SettingsStore::in_memory(Default::default()));
+    let (handle, view, service, _) = setup_with_store(
+        cx,
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
+    );
     (handle, view, service)
 }
 fn setup_with_store(
     cx: &mut TestAppContext,
-    store: nocterm_ui::SettingsStore,
+    store: nocterm_store::SettingsConfig,
 ) -> (
     gpui_kit::AnyWindowHandle,
     Entity<VaultView>,
@@ -33,7 +35,7 @@ fn setup_with_store(
         // The unlock dialog slides in on wall-clock time; a click whose press and release
         // land on different frames of that motion misses its button under load.
         cx.set_reduce_motion(true);
-        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), store, cx);
+        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), (store).install(cx), cx);
         let service = Arc::new(ScriptedVaultAccess::default());
         let installed = std::rc::Rc::new(crate::install(
             crate::Deps::new(service.clone()),
@@ -189,8 +191,10 @@ fn page_deactivation_and_close_clear_drafts_without_revoking_shared_credentials(
 }
 #[gpui_kit::test]
 fn options_save_lock_delay_and_reject_out_of_range(cx: &mut TestAppContext) {
-    use nocterm_ui::SettingsExt as _;
-    let (handle, _, _) = setup(cx);
+    let (handle, _, _, installed) = setup_with_store(
+        cx,
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
+    );
     drain(cx);
     tab(handle, 3, cx);
     type_field(handle, "vault-auto-lock", "0", cx);
@@ -198,7 +202,10 @@ fn options_save_lock_delay_and_reject_out_of_range(cx: &mut TestAppContext) {
         .unwrap();
     drain(cx);
     assert_eq!(
-        cx.update(|cx| cx.setting::<crate::VaultSettings>().auto_lock_minutes),
+        cx.update(|cx| installed
+            .settings()
+            .setting::<crate::VaultSettings>(cx)
+            .auto_lock_minutes),
         15
     );
     type_field(handle, "vault-auto-lock", "30", cx);
@@ -206,7 +213,10 @@ fn options_save_lock_delay_and_reject_out_of_range(cx: &mut TestAppContext) {
         .unwrap();
     drain(cx);
     assert_eq!(
-        cx.update(|cx| cx.setting::<crate::VaultSettings>().auto_lock_minutes),
+        cx.update(|cx| installed
+            .settings()
+            .setting::<crate::VaultSettings>(cx)
+            .auto_lock_minutes),
         30
     );
 }

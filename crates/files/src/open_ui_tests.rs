@@ -61,7 +61,7 @@ fn remote_fixture(
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = install(deps, &ready, cx);

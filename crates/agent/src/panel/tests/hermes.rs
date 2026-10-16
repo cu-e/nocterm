@@ -44,10 +44,13 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
     let program = Arc::new(Program::default());
     *f.access.executor().borrow_mut() = Some(program.clone());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.terminal_write = ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     new_chat(&f, cx);

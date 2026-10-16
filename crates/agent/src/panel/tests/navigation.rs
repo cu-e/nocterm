@@ -332,10 +332,11 @@ fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &m
         nocterm_ui::AppearanceMode::Light,
     ] {
         cx.update(|cx| {
-            cx.update_setting::<nocterm_ui::AppearanceSettings>(move |settings| {
-                settings.mode = mode
-            })
-            .detach()
+            f.installation
+                .ready
+                .settings()
+                .update::<nocterm_ui::AppearanceSettings>(cx, move |settings| settings.mode = mode)
+                .detach()
         });
         cx.run_until_parked();
         scroll_to(&f, 5, cx);

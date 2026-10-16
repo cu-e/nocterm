@@ -12,7 +12,8 @@ use gpui_kit::{
 use nocterm_monitor::MonitorMetric;
 use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Target};
 use nocterm_settings::SettingsDocument;
-use nocterm_ui::{DesignTokens, SettingsExt as _, SettingsStore};
+use nocterm_store::SettingsConfig;
+use nocterm_ui::DesignTokens;
 use nocterm_workspace::{HostKey, Item, ItemEvent, SessionContext, Workspace};
 
 use crate::model::{HostMonitor, Plan, Status, watched_host};
@@ -199,11 +200,24 @@ fn fixture_with_installation(
     Entity<HostMonitor>,
     crate::Installed,
 ) {
+    let (window, workspace, monitor, installed, _) = fixture_with_ready(cx, local);
+    (window, workspace, monitor, installed)
+}
+fn fixture_with_ready(
+    cx: &mut TestAppContext,
+    local: Option<Arc<dyn HostExec>>,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<HostMonitor>,
+    crate::Installed,
+    nocterm_ui::UiReady,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(SettingsDocument::default()),
+            (SettingsConfig::in_memory(SettingsDocument::default())).install(cx),
             cx,
         );
         let installed = crate::install(local, &ready, cx);
@@ -217,7 +231,7 @@ fn fixture_with_installation(
             })
             .unwrap();
         let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, &installed, cx));
-        (window, workspace, monitor, installed)
+        (window, workspace, monitor, installed, ready)
     })
 }
 
@@ -301,7 +315,8 @@ fn the_monitor_follows_the_active_session_and_collects_what_is_shown(cx: &mut Te
 #[gpui_kit::test]
 fn settings_switch_the_monitor_off_and_hosts_without_a_script_say_so(cx: &mut TestAppContext) {
     let local = FakeHost::new("Linux");
-    let (window, workspace, monitor) = fixture(cx, Some(local.clone()));
+    let (window, workspace, monitor, installed) =
+        fixture_with_installation(cx, Some(local.clone()));
     cx.run_until_parked();
     assert_eq!(
         monitor.read_with(cx, |monitor, _| monitor.host().cloned()),
@@ -315,7 +330,9 @@ fn settings_switch_the_monitor_off_and_hosts_without_a_script_say_so(cx: &mut Te
     assert!(!local.reading(0));
 
     cx.update(|cx| {
-        cx.update_setting::<crate::MonitorSettings>(|settings| settings.enabled = false)
+        installed
+            .settings()
+            .update::<crate::MonitorSettings>(cx, |settings| settings.enabled = false)
             .detach()
     });
     cx.run_until_parked();
@@ -328,10 +345,9 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
     let first = FakeHost::new("Linux");
     let second = FakeHost::new("Linux");
     for host in [first.clone(), second.clone(), first.clone()] {
-        let (window, workspace, _) = fixture(cx, None);
+        let (window, workspace, _, _, ready) = fixture_with_ready(cx, None);
         cx.update_window(window, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                let ready = nocterm_ui::UiReady::installed(cx).unwrap();
                 let installed = crate::install(Some(host.clone()), &ready, cx);
                 crate::register(&installed, workspace, window, cx);
             });

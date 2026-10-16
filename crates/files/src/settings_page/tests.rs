@@ -1,6 +1,6 @@
 use super::*;
 use gpui_kit::{TestAppContext, test::TestWindowExt as _};
-use nocterm_ui::{SettingsExt as _, SettingsStore};
+use nocterm_store::SettingsConfig;
 
 #[test]
 fn fields_read_and_write_the_settings_they_name() {
@@ -27,13 +27,10 @@ fn fields_read_and_write_the_settings_they_name() {
 
 #[gpui_kit::test]
 fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext) {
+    let settings = cx.update(|cx| SettingsConfig::in_memory(Default::default()).install(cx));
     let (_page, window) = cx.add_window_view(|window, cx| {
         gpui_kit::init(cx);
-        let ready = nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
-            cx,
-        );
+        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
         ready.settings().register::<crate::ExplorerSettings>(cx);
         ExplorerPage::new(ready.settings().clone(), window, cx)
     });
@@ -44,7 +41,7 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
     });
     window.run_until_parked();
     window.update(|window, cx| {
-        let explorer = cx.setting::<crate::ExplorerSettings>();
+        let explorer = settings.setting::<crate::ExplorerSettings>(cx);
         assert_eq!(explorer.open.remote.program, "nvim");
         assert_eq!(explorer.open.rules.len(), 1);
         window.render_frame(cx);
@@ -56,7 +53,8 @@ fn presets_and_file_types_save_and_rebuild_their_fields(cx: &mut TestAppContext)
         window.render_frame(cx);
         assert!(window.try_find("explorer-rule-remove-0").is_none());
         assert!(
-            cx.setting::<crate::ExplorerSettings>()
+            settings
+                .setting::<crate::ExplorerSettings>(cx)
                 .open
                 .rules
                 .is_empty()
@@ -83,7 +81,7 @@ fn shared_explorer_pages_keep_policy_after_unrelated_owner_and_source_window_clo
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let settings = ready.settings().clone();
@@ -93,7 +91,7 @@ fn shared_explorer_pages_keep_policy_after_unrelated_owner_and_source_window_clo
         let other = nocterm_store::SettingsConfig::in_memory(Default::default())
             .with(ExplorerSettings::default())
             .install(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
+        settings_window(other.clone(), cx);
         (settings, other, first, a, second, b)
     });
     let changes = Rc::new(Cell::new(0));

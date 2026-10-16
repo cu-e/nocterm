@@ -5,7 +5,8 @@ use nocterm_session::{
     Auth, CloseReason, Target,
     testing::{FakeCredentialStore, ScriptedTransport},
 };
-use nocterm_ui::{DesignTokens, SettingsStore};
+use nocterm_store::SettingsConfig;
+use nocterm_ui::DesignTokens;
 use nocterm_workspace::SessionSpec;
 use std::sync::Arc;
 
@@ -49,7 +50,7 @@ fn install_with_provider(
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let mut deps = Deps::new(transport, LocalSessions::disabled(program.into()));

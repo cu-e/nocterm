@@ -17,7 +17,7 @@ fn tick(cx: &mut TestAppContext, seconds: u64) {
 #[gpui_kit::test]
 fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let first = draft(&f, cx);
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
@@ -50,7 +50,10 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
 async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -84,9 +87,12 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.sessions.idle_timeout_secs = 2
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.sessions.idle_timeout_secs = 2
+            })
     })
     .await
     .unwrap();
@@ -141,7 +147,10 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
 async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -200,7 +209,7 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
 #[gpui_kit::test]
 fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = draft(&f, cx);
     let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     f.repository.fail_next(
@@ -235,7 +244,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
 #[gpui_kit::test]
 fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.set_draft("unsaved dormant edit".into(), cx);
@@ -251,7 +260,10 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
 async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();
@@ -311,7 +323,10 @@ async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
     let f = fixture(cx);
     // The shown chat is not counted.
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_idle = 1)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_idle = 1)
     })
     .await
     .unwrap();
@@ -351,10 +366,13 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.sessions.max_live = 1;
-            settings.sessions.idle_timeout_secs = 1;
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.sessions.max_live = 1;
+                settings.sessions.idle_timeout_secs = 1;
+            })
     })
     .await
     .unwrap();
@@ -434,7 +452,7 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
 #[gpui_kit::test]
 fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.set_draft("saved message".into(), cx);
@@ -587,7 +605,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let old = draft(&f, cx);
     old.update(cx, |thread, cx| {
         thread.set_draft("old message".into(), cx);
@@ -699,11 +717,14 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
 #[gpui_kit::test]
 async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.sessions.idle_timeout_secs = 2
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.sessions.idle_timeout_secs = 2
+            })
     })
     .await
     .unwrap();

@@ -14,7 +14,7 @@ presenting a form error; malformed numeric text never becomes a saved override.
 ## Theme, icons and notices
 
 `nocterm-ui` projects tokens/settings into the standard GPUI Kit theme and
-provides shared icons, terminal styling, standalone drag previews and operational
+accepts an explicitly installed SettingsHandle and returns its retained UiReady witness; it provides shared icons, terminal styling, standalone drag previews and operational
 notices. One retained ThemeUi owns catalog, settings and Design paint subscriptions.
 Catalog changes resolve effective tokens; published settings resolve and paint directly
 when tokens remain unchanged. Design observation paints only, preserving the one-way

@@ -45,7 +45,7 @@ pub(super) fn fixture_with_credentials(
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let mut deps = crate::Deps::new(

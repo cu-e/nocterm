@@ -12,9 +12,12 @@ fn tick(cx: &mut TestAppContext, seconds: u64) {
 async fn the_shown_chat_outlives_the_idle_timeout_until_the_user_moves_on(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.sessions.idle_timeout_secs = 2
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.sessions.idle_timeout_secs = 2
+            })
     })
     .await
     .unwrap();
@@ -43,7 +46,10 @@ async fn a_session_still_closing_frees_the_slot_so_no_second_chat_is_evicted(
 ) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 2)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_live = 2)
     })
     .await
     .unwrap();

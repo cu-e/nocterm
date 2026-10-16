@@ -17,7 +17,7 @@ use nocterm_session::{LocalShellSettings, SshSettings};
 #[cfg(test)]
 use nocterm_session::{Secret, Session};
 #[cfg(test)]
-use nocterm_ui::SettingsStore;
+use nocterm_store::SettingsConfig;
 use nocterm_ui::{CursorShape, TerminalSettings};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,

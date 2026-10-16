@@ -11,7 +11,7 @@ fn adopt_saved(
     chat: SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
-    lazy_start(cx);
+    lazy_start(f, cx);
     reinstall_history(f, vec![chat], cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel

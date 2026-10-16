@@ -8,7 +8,8 @@ use gpui_kit::{
 use nocterm_containers::{Action, ContainersError, Engine};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Target};
 use nocterm_settings::SettingsDocument;
-use nocterm_ui::{DesignTokens, SettingsStore};
+use nocterm_store::SettingsConfig;
+use nocterm_ui::DesignTokens;
 use nocterm_workspace::{HostKey, Item, ItemEvent, Panel as _, SessionContext, Workspace};
 
 use crate::{
@@ -129,7 +130,7 @@ pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>)
         gpui_kit::init(cx);
         nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(SettingsDocument::default()),
+            (SettingsConfig::in_memory(SettingsDocument::default())).install(cx),
             cx,
         );
         let (window, workspace) =

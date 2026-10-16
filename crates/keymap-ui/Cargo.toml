@@ -15,6 +15,7 @@ nocterm-ui.workspace = true
 gpui-kit.workspace = true
 
 [dev-dependencies]
+nocterm-store.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
 

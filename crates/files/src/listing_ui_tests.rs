@@ -458,7 +458,7 @@ fn delayed_home_keeps_the_original_initial_directory_after_published_policy_chan
             observed.store(true, Ordering::SeqCst);
         }
     }));
-    let store = nocterm_ui::SettingsStore::in_memory(Default::default()).with(
+    let store = nocterm_store::SettingsConfig::in_memory(Default::default()).with(
         nocterm_session::LocalShellSettings(nocterm_session::ShellSettings {
             cwd: Some(original.path().to_string_lossy().into_owned()),
             ..Default::default()
@@ -486,7 +486,7 @@ fn delayed_home_keeps_the_original_initial_directory_after_published_policy_chan
                 },
             ))
             .install(cx);
-        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+        crate::tests::settings_window(other, cx);
     });
     cx.run_until_parked();
     panel.read_with(cx, |panel, cx| {
@@ -559,7 +559,7 @@ fn each_indexing_request_reads_latest_original_policy_after_an_unrelated_install
         let other = nocterm_store::SettingsConfig::in_memory(Default::default())
             .with(ExplorerSettings::default())
             .install(cx);
-        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+        crate::tests::settings_window(other, cx);
     });
     cx.run_until_parked();
     panel.update(cx, |panel, cx| {

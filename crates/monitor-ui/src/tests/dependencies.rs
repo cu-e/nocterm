@@ -3,12 +3,19 @@ use super::*;
 use gpui_kit::test::TestWindowExt as _;
 
 fn another_settings(cx: &mut App) -> nocterm_store::SettingsHandle {
-    nocterm_store::SettingsConfig::in_memory(SettingsDocument::default())
+    let settings = nocterm_store::SettingsConfig::in_memory(SettingsDocument::default())
         .with(MonitorSettings {
             local: false,
             ..MonitorSettings::default()
         })
-        .install(cx)
+        .install(cx);
+    let ready = nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
+    let installed = crate::install(None, &ready, cx);
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| crate::MonitorPage::new(installed.settings().clone(), window, cx))
+    })
+    .unwrap();
+    settings
 }
 
 #[gpui_kit::test]
@@ -19,11 +26,7 @@ fn independent_policy_cannot_redirect_an_existing_watch_and_closed_model_is_rele
     let (window, workspace, monitor, installed) = fixture_with_installation(cx, Some(host.clone()));
     cx.run_until_parked();
     assert!(host.reading(0));
-    let other = cx.update(|cx| {
-        let other = another_settings(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
-        other
-    });
+    let other = cx.update(another_settings);
     cx.run_until_parked();
     assert!(
         host.reading(0),
@@ -89,7 +92,7 @@ fn monitor_page_native_switch_keeps_original_policy_after_unrelated_installation
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = crate::install(None, &ready, cx);
@@ -99,7 +102,6 @@ fn monitor_page_native_switch_keeps_original_policy_after_unrelated_installation
         })
         .unwrap();
         let other = another_settings(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
         (installed, other, handle, page)
     });
     cx.update_window(handle, |_, window, cx| {
@@ -121,7 +123,7 @@ fn monitor_page_native_switch_keeps_original_policy_after_unrelated_installation
 }
 
 fn number_page(
-    store: SettingsStore,
+    store: SettingsConfig,
     cx: &mut TestAppContext,
 ) -> (
     crate::Installed,
@@ -130,7 +132,7 @@ fn number_page(
 ) {
     let result = cx.update(|cx| {
         gpui_kit::init(cx);
-        let ready = nocterm_ui::init(DesignTokens::builtin(), store, cx);
+        let ready = nocterm_ui::init(DesignTokens::builtin(), (store).install(cx), cx);
         let installed = crate::install(None, &ready, cx);
         let original = installed.settings().clone();
         let (window, page) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -192,18 +194,14 @@ fn assert_interval(
 fn native_number_validation_debounce_enter_and_blur_keep_the_original_policy(
     cx: &mut TestAppContext,
 ) {
-    let (installed, window, _page) = number_page(SettingsStore::in_memory(Default::default()), cx);
+    let (installed, window, _page) = number_page(SettingsConfig::in_memory(Default::default()), cx);
     let original = cx.update(|cx| {
         installed
             .settings()
             .setting::<MonitorSettings>(cx)
             .interval_secs
     });
-    let other = cx.update(|cx| {
-        let other = another_settings(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
-        other
-    });
+    let other = cx.update(another_settings);
     type_interval(window, "0", cx);
     cx.update_window(window, |_, window, cx| window.press("enter", cx))
         .unwrap();
@@ -252,7 +250,7 @@ async fn physical_number_publication_refusal_keeps_old_policy_and_current_native
     cx: &mut TestAppContext,
 ) {
     let blocked = tempfile::tempdir().unwrap();
-    let store = SettingsStore::new(
+    let store = SettingsConfig::new(
         Default::default(),
         nocterm_settings::SettingsFile::new(blocked.path()),
     );
@@ -299,7 +297,7 @@ fn installing_monitor_and_materializing_its_page_starts_no_sampling(cx: &mut Tes
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         crate::install(Some(host.clone()), &ready, cx)

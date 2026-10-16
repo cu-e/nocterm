@@ -21,6 +21,8 @@ futures.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-terminal-model.workspace = true
+nocterm-monitor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

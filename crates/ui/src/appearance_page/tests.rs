@@ -26,12 +26,14 @@ fn setup(
 ) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        crate::init(
+        let ready = crate::init(
             crate::DesignTokens::builtin(),
-            crate::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
+            (nocterm_store::SettingsConfig::in_memory(
+                nocterm_settings::SettingsDocument::default(),
+            ))
+            .install(cx),
             cx,
         );
-        let ready = crate::UiReady::installed(cx).unwrap();
         let service = nocterm_theme_service::ThemesHandle::install(
             Some(backend.clone()),
             Some(backend.clone()),

@@ -1,6 +1,6 @@
 //! Native input and public receipts retain original settings, literal drafts and admitted work.
 use super::SettingsTextField;
-use crate::{DesignTokens, SettingsStore, TerminalSettings};
+use crate::{DesignTokens, TerminalSettings};
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Context, Entity, Render, Subscription, TestAppContext,
     TestSupportExt as _, Window, WindowOptions, component::v_flex, div, prelude::*,
@@ -52,11 +52,7 @@ fn fixture(initial: Option<&str>, cx: &mut TestAppContext) -> Fixture {
             })
             .with(crate::AppearanceSettings::default())
             .install(cx);
-        crate::init(
-            DesignTokens::builtin(),
-            SettingsStore::from_handle(settings.clone()),
-            cx,
-        );
+        crate::init(DesignTokens::builtin(), settings.clone(), cx);
         let mut field = None;
         let supplied = settings.clone();
         let (window, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -160,14 +156,8 @@ fn older_success_keeps_newer_draft_and_original_settings_after_another_installat
     let f = fixture(None, cx);
     draft(f.window, "first", cx);
     enter(f.window, cx);
-    let other = cx.update(|cx| {
-        let other = SettingsConfig::in_memory(Default::default())
-            .with(TerminalSettings::default())
-            .with(crate::AppearanceSettings::default())
-            .install(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
-        other
-    });
+    let other_fixture = fixture(None, cx);
+    let other = other_fixture.settings.clone();
     draft(f.window, "second", cx);
     f.release.send(Ok(())).unwrap();
     cx.run_until_parked();

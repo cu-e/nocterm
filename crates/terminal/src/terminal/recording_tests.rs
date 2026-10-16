@@ -11,7 +11,7 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
@@ -76,7 +76,7 @@ fn setup_recording_test(
         settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(settings),
+            (SettingsConfig::in_memory(settings)).install(cx),
             cx,
         );
         let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());

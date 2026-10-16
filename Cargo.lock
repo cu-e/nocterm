@@ -5133,6 +5133,7 @@ dependencies = [
  "nocterm-containers",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
 ]
@@ -5239,6 +5240,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-keymap",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
 ]
 
@@ -5337,6 +5339,7 @@ dependencies = [
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5391,8 +5394,10 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-core",
+ "nocterm-monitor",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-terminal-model",
  "tempfile",
  "thiserror 2.0.21",
 ]

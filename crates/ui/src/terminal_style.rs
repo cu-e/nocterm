@@ -93,7 +93,7 @@ mod tests {
             gpui_kit::init(cx);
             crate::init(
                 crate::DesignTokens::builtin(),
-                crate::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
                 cx,
             );
             let supplied = crate::TerminalSettings {

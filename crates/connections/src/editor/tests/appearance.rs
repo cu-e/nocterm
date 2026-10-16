@@ -4,6 +4,8 @@ use super::*;
 #[gpui_kit::test]
 fn dialog_and_icon_fade_paint_without_an_ambient_settings_alias(cx: &mut TestAppContext) {
     let (handle, workspace, _opened, installed) = crate::test_support::workspace(cx);
+    let original = installed.settings().clone();
+    let other = competing_editor(cx);
     let custom = nocterm_ui::DesignTokens::with_overrides(
         "[light.terminal]\nbackground = '#123456'\n[dark.terminal]\nbackground = '#123456'\n",
     )
@@ -12,7 +14,6 @@ fn dialog_and_icon_fade_paint_without_an_ambient_settings_alias(cx: &mut TestApp
     cx.update(|cx| {
         cx.set_reduce_motion(true);
         cx.set_global(nocterm_ui::Design::new(custom));
-        cx.remove_global::<nocterm_ui::SettingsStore>();
     });
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1800.)));
     cx.update_window(handle, |_, window, cx| {
@@ -51,4 +52,31 @@ fn dialog_and_icon_fade_paint_without_an_ambient_settings_alias(cx: &mut TestApp
         );
     })
     .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            original
+                .setting::<nocterm_ui::TerminalSettings>(cx)
+                .font_size,
+            None
+        );
+        assert_eq!(
+            other.setting::<nocterm_ui::TerminalSettings>(cx).font_size,
+            Some(31.)
+        );
+    });
+}
+
+fn competing_editor(cx: &mut TestAppContext) -> nocterm_store::SettingsHandle {
+    let (window, workspace, _, installed) = crate::test_support::workspace(cx);
+    let settings = installed.settings().clone();
+    cx.update(|cx| {
+        settings
+            .update::<nocterm_ui::TerminalSettings>(cx, |terminal| terminal.font_size = Some(31.))
+    })
+    .detach();
+    cx.update_window(window, |_, window, cx| {
+        open_editor(installed, None, workspace.downgrade(), window, cx);
+    })
+    .unwrap();
+    settings
 }

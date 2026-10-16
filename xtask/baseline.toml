@@ -28,13 +28,11 @@ nocterm-workspace = 4
 [domain_io]
 
 [global_reads]
-nocterm = 1
-nocterm-ui = 5
+nocterm-ui = 4
 
 [globals]
 "nocterm_ui::design::Design" = 1
 "nocterm_ui::notice::Notices" = 1
-"nocterm_ui::settings::SettingsStore" = 1
 
 [impl_spread]
 

@@ -117,7 +117,10 @@ pub(super) fn fixture_with_layout(
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
+            (nocterm_store::SettingsConfig::in_memory(
+                nocterm_settings::SettingsDocument::default(),
+            ))
+            .install(cx),
             cx,
         );
         let layout = nocterm_ui::LayoutHandle::in_memory(cx);

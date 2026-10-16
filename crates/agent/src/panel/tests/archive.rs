@@ -156,11 +156,14 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
     );
     let global = b.to_string_lossy().into_owned();
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
-            settings.working_directory = Some(global);
-            settings.sandbox = nocterm_ai::SandboxMode::Workspace;
-        })
-        .detach();
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, move |settings| {
+                settings.working_directory = Some(global);
+                settings.sandbox = nocterm_ai::SandboxMode::Workspace;
+            })
+            .detach();
     });
     cx.run_until_parked();
     let mut chat = saved(&f);
@@ -266,7 +269,7 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
 #[gpui_kit::test]
 fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     cx.run_until_parked();
     let mut chat = saved(&f);
     chat.updated = 1;
@@ -322,7 +325,10 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
     enter_literal(&f, "draft before disable", cx);
     cx.run_until_parked();
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
             .detach()
     });
     cx.run_until_parked();

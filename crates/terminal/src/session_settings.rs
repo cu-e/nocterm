@@ -187,7 +187,7 @@ mod tests {
             gpui_kit::init(cx);
             let ui = nocterm_ui::init(
                 nocterm_ui::DesignTokens::builtin(),
-                nocterm_ui::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
                 cx,
             );
             let installed = crate::install(

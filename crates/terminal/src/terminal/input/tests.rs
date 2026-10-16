@@ -34,7 +34,7 @@ fn fixture_with_transport(
         settings.update::<nocterm_ui::TerminalSettings>(|settings| settings.charset = charset);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(settings),
+            (nocterm_store::SettingsConfig::in_memory(settings)).install(cx),
             cx,
         );
         let local_transport = transport.clone();

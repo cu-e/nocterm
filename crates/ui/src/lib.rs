@@ -2,17 +2,17 @@
 //!
 //! Design tokens (`nocterm-design`) and user settings (`nocterm-settings`)
 //! know nothing about GPUI. This crate exposes the installed settings handle
-//! and projects them onto the component library's theme. [`ActiveDesign`] and
-//! [`SettingsExt`] remain compatibility accessors for presentation callers; shared
+//! and projects them onto the component library's theme. [`ActiveDesign`] remains
+//! a compatibility paint accessor for presentation callers; shared
 //! terminal styling accepts supplied settings; ThemeUi retains the original policy
 //! and paints Design changes without resolving back into Design.
 //!
-//! Owns: Appearance views, theme projections, shared controls and checked text receipts, settings compatibility and layout.
+//! Owns: Appearance views, theme projections, shared controls and checked text receipts and layout.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
 //! Settings section: appearance. Terminal styling uses the terminal-model domain schema.
-//! Globals: Design, SettingsStore, Notices.
+//! Globals: Design, Notices.
 //! Imported themes use one retained ThemeUi projection over ThemesHandle and SettingsHandle.
 //! Design is paint data only; OS callbacks apply the retained projection.
 //! Feature policy schemas are registered by their owning service.
@@ -28,7 +28,6 @@ mod layout;
 pub mod notice;
 mod sections;
 mod session_options;
-mod settings;
 mod settings_page;
 mod settings_text_field;
 pub use session_options::{SessionOptionsEditor, SessionOptionsInputError};
@@ -46,7 +45,6 @@ pub use nocterm_store::StoreError as SettingsError;
 pub use sections::{
     AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, UiLayout,
 };
-pub use settings::{SettingsExt, SettingsStore, edit_settings, register_setting};
 pub use terminal_style::{TerminalStyle, hsla};
 pub use theme::unknown_color_names;
 pub use themes::ThemeUi;
@@ -55,19 +53,21 @@ pub use nocterm_design::{Color, DesignTokens};
 
 use gpui_kit::App;
 
-/// Installs the design tokens and settings, themes the components after
-/// them. Retain [`ThemeUi`] to keep the projection in step when either changes.
+/// Initializes design and component paint with the supplied installed settings.
+/// Retain [`ThemeUi`] to keep the projection in step when either changes.
 ///
 /// Call it after `gpui_kit::init`. The returned witness is what the features
 /// that read settings take, so calling them first does not compile.
-pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiReady {
+pub fn init(
+    tokens: DesignTokens,
+    settings: nocterm_store::SettingsHandle,
+    cx: &mut App,
+) -> UiReady {
     for name in unknown_color_names(&tokens) {
         tracing::warn!(%name, "design tokens name a colour the component theme does not have");
     }
 
     cx.set_global(Design::new(tokens));
-    cx.set_global(settings);
-    let settings = settings::init(cx);
     settings.register::<crate::AppearanceSettings>(cx);
     settings.register::<crate::TerminalSettings>(cx);
     let appearance = settings.setting::<crate::AppearanceSettings>(cx).clone();
@@ -75,8 +75,8 @@ pub fn init(tokens: DesignTokens, settings: SettingsStore, cx: &mut App) -> UiRe
     UiReady { settings }
 }
 
-/// Proof that [`init`] has run: the design and the settings store are
-/// installed. It retains the explicit settings dependency for composition.
+/// Proof that [`init`] has initialized design and retained the supplied settings.
+/// Features receive the explicit dependency through this witness.
 #[derive(Clone)]
 pub struct UiReady {
     settings: nocterm_store::SettingsHandle,
@@ -85,14 +85,6 @@ pub struct UiReady {
 impl UiReady {
     pub fn settings(&self) -> &nocterm_store::SettingsHandle {
         &self.settings
-    }
-    /// The witness for an app [`init`] already ran in, for code handed the
-    /// app rather than the witness, such as a test re-initializing a feature.
-    pub fn installed(cx: &App) -> Option<Self> {
-        cx.try_global::<SettingsStore>()?
-            .handle()
-            .cloned()
-            .map(|settings| Self { settings })
     }
 }
 
@@ -110,3 +102,6 @@ pub use settings_field::FieldPresentation;
 mod appearance_page;
 pub use appearance_page::appearance_settings_page;
 pub use appearance_page::commands::{open_scheme_picker, open_theme_picker};
+
+#[cfg(test)]
+mod settings_initialization_tests;

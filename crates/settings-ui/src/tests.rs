@@ -23,7 +23,7 @@ fn supplied_builtin_pages_are_created_eagerly_in_navigation_order(cx: &mut TestA
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
@@ -38,7 +38,7 @@ fn supplied_builtin_pages_are_created_eagerly_in_navigation_order(cx: &mut TestA
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 SettingsView::with_pages(
-                    OwnerPages::new(builtins, Vec::new()),
+                    test_catalog(builtins, Vec::new()),
                     Installed::new(ready.settings().clone()),
                     window,
                     cx,
@@ -63,13 +63,13 @@ use std::{
 };
 struct HostFixture {
     installed: Installed,
-    pages: OwnerPages,
+    pages: SettingsCatalog,
 }
 fn host_fixture(cx: &mut App) -> HostFixture {
     gpui_kit::init(cx);
     let ready = nocterm_ui::init(
         nocterm_ui::DesignTokens::builtin(),
-        nocterm_ui::SettingsStore::in_memory(Default::default()),
+        (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
         cx,
     );
     let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
@@ -81,11 +81,22 @@ fn host_fixture(cx: &mut App) -> HostFixture {
     });
     HostFixture {
         installed: Installed::new(ready.settings().clone()),
-        pages: OwnerPages::new(builtins, Vec::new()),
+        pages: test_catalog(builtins, Vec::new()),
     }
 }
-fn with_guest(fixture: &HostFixture, guests: Vec<SettingsPageSpec>) -> OwnerPages {
-    fixture.pages.with_guests(guests)
+fn with_guest(fixture: &HostFixture, guests: Vec<SettingsPageSpec>) -> SettingsCatalog {
+    SettingsCatalog::new(
+        fixture
+            .pages
+            .pages()
+            .iter()
+            .filter(|page| page.lifecycle() == Lifecycle::Eager)
+            .cloned()
+            .chain(guests.into_iter().map(SettingsPageRegistration::lazy))
+            .collect(),
+        "appearance",
+    )
+    .unwrap()
 }
 fn test_window_options() -> WindowOptions {
     WindowOptions::default()
@@ -291,7 +302,7 @@ impl SettingsPage for FlushPage {
         }
     }
 }
-fn flush_catalog(events: Rc<RefCell<Vec<&'static str>>>) -> OwnerPages {
+fn flush_catalog(events: Rc<RefCell<Vec<&'static str>>>) -> SettingsCatalog {
     let builtins = ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| {
         let events = events.clone();
         SettingsPageSpec::contextual(id, id, move |_, _, cx| {
@@ -309,7 +320,7 @@ fn flush_catalog(events: Rc<RefCell<Vec<&'static str>>>) -> OwnerPages {
             events: events.clone(),
         })
     });
-    OwnerPages::new(builtins, vec![guest])
+    test_catalog(builtins, vec![guest])
 }
 #[gpui_kit::test]
 fn every_builtin_flushes_before_guest_deactivation_and_close(cx: &mut TestAppContext) {
@@ -362,6 +373,159 @@ fn every_builtin_flushes_before_guest_deactivation_and_close(cx: &mut TestAppCon
                 "guest-closed"
             ]
         );
+    })
+    .unwrap();
+}
+
+fn test_catalog(builtins: [SettingsPageSpec; 5], guests: Vec<SettingsPageSpec>) -> SettingsCatalog {
+    SettingsCatalog::new(
+        builtins
+            .into_iter()
+            .map(SettingsPageRegistration::eager)
+            .chain(guests.into_iter().map(SettingsPageRegistration::lazy))
+            .collect(),
+        "appearance",
+    )
+    .unwrap()
+}
+
+fn descriptor(id: &'static str, created: Rc<Cell<usize>>) -> SettingsPageSpec {
+    SettingsPageSpec::new(id, id, move |_, cx| {
+        created.set(created.get() + 1);
+        cx.new(|cx| EmptyPage {
+            focus: cx.focus_handle(),
+        })
+    })
+}
+
+#[test]
+fn catalog_rejects_invalid_ids_and_defaults_before_invoking_any_factory() {
+    use SettingsCatalogError::{DuplicateId, EmptyId, MissingDefault};
+    let created = Rc::new(Cell::new(0));
+    let eager = |id| SettingsPageRegistration::eager(descriptor(id, created.clone()));
+    let lazy = |id| SettingsPageRegistration::lazy(descriptor(id, created.clone()));
+    assert_eq!(
+        SettingsCatalog::new(vec![], "").err(),
+        Some(MissingDefault { id: "" })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![eager("")], "missing").err(),
+        Some(EmptyId { index: 0 })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![eager("same"), lazy("same")], "missing").err(),
+        Some(DuplicateId { id: "same" })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![eager("one"), lazy("")], "one").err(),
+        Some(EmptyId { index: 1 })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![eager("one")], "absent").err(),
+        Some(MissingDefault { id: "absent" })
+    );
+    assert!(SettingsCatalog::new(vec![eager("A"), lazy("a"), lazy(" ")], " ").is_ok());
+    assert_eq!(
+        created.get(),
+        0,
+        "validation and descriptor freezing must be side effect free"
+    );
+}
+
+#[gpui_kit::test]
+fn supplied_order_and_lazy_default_drive_navigation_without_creating_hidden_pages(
+    cx: &mut TestAppContext,
+) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let created = events.clone();
+    let (handle, workspace) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let registration = |id, eager| {
+            let created = created.clone();
+            let spec = SettingsPageSpec::new(id, id, move |_, cx| {
+                created.borrow_mut().push(id);
+                cx.new(|cx| EmptyPage {
+                    focus: cx.focus_handle(),
+                })
+            });
+            if eager {
+                SettingsPageRegistration::eager(spec)
+            } else {
+                SettingsPageRegistration::lazy(spec)
+            }
+        };
+        let catalog = SettingsCatalog::new(
+            vec![
+                registration("hidden", false),
+                registration("default", false),
+                registration("last eager", true),
+                registration("first eager", true),
+            ],
+            "default",
+        )
+        .unwrap();
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(deps, window, cx);
+                open_page(&mut workspace, "", &catalog, fixture.installed, window, cx);
+                workspace
+            })
+        })
+        .unwrap()
+    });
+    assert_eq!(&*events.borrow(), &["last eager", "first eager", "default"]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        assert_eq!(view.read(cx).selected_page_id(), "default");
+        window.within("settings-pages").click(3usize, cx);
+        assert_eq!(view.read(cx).selected_page_id(), "first eager");
+        window.within("settings-pages").click(0usize, cx);
+        assert_eq!(view.read(cx).selected_page_id(), "hidden");
+        assert_eq!(
+            &*events.borrow(),
+            &["last eager", "first eager", "default", "hidden"]
+        );
+        workspace.update(cx, |workspace, cx| workspace.close_item(0, window, cx));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn same_and_unknown_page_opens_preserve_selection_and_do_not_flush(cx: &mut TestAppContext) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (handle, workspace, fixture, pages) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let pages = flush_catalog(events.clone());
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(deps, window, cx);
+                open_page(
+                    &mut workspace,
+                    "guest",
+                    &pages,
+                    fixture.installed.clone(),
+                    window,
+                    cx,
+                );
+                workspace
+            })
+        })
+        .unwrap();
+        (handle, workspace, fixture, pages)
+    });
+    events.borrow_mut().clear();
+    cx.update_window(handle, |_, window, cx| {
+        for id in ["guest", "missing", ""] {
+            workspace.update(cx, |workspace, cx| {
+                open_page(workspace, id, &pages, fixture.installed.clone(), window, cx)
+            });
+            let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+            assert_eq!(view.read(cx).selected_page_id(), "guest");
+        }
+        assert!(events.borrow().is_empty());
     })
     .unwrap();
 }

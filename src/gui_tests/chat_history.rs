@@ -1,6 +1,5 @@
 //! Browsing and releasing a stored chat must preserve its original file bytes.
 use super::*;
-use nocterm_ui::SettingsExt as _;
 
 #[gpui_kit::test]
 async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
@@ -37,6 +36,7 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
         let (window, workspace) = open_workspace(&booted, cx);
         (booted, window, workspace)
     });
+    let settings = booted.settings_deps().settings().clone();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.activate_window();
@@ -62,7 +62,8 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
             "the stored transcript was actually hydrated and rendered"
         );
         window.dispatch_action(Box::new(nocterm_workspace::ToggleRightPanel), cx);
-        cx.update_setting::<nocterm_ai::AiSettings>(|ai| ai.enabled = false)
+        settings
+            .update::<nocterm_ai::AiSettings>(cx, |ai| ai.enabled = false)
             .detach();
     })
     .unwrap();

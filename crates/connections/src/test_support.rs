@@ -19,7 +19,7 @@ pub(crate) fn workspace(
         gpui_kit::init(cx);
         let ready = nocterm_ui::init(
             DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = crate::install(

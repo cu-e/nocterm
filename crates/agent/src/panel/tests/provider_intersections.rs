@@ -74,10 +74,13 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     let program = Arc::new(Program::default());
     *f.access.executor().borrow_mut() = Some(program.clone());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.terminal_write = ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     new_chat(&f, cx);
@@ -233,11 +236,14 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
 fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.terminal_read = ApprovalPolicy::Allow;
-            settings.approval.terminal_write = ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_read = ApprovalPolicy::Allow;
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     new_chat(&f, cx);
@@ -258,10 +264,13 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     assert!(receive.try_recv().unwrap().is_none());
     cx.update(|cx| assert_eq!(thread.read(cx).permission_cards().len(), 1));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.agent_permissions = ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     assert!(

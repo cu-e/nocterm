@@ -397,3 +397,5 @@ async fn checked_section_publishes_sanitized_value_and_counts_sanitized_noop_onc
     assert_eq!(same.await.unwrap(), 1);
     cx.update(|cx| assert_eq!(settings.revision(cx), 1));
 }
+
+mod publication;

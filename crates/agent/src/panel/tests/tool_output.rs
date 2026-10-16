@@ -347,10 +347,13 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
     );
     for redacts in [true, false] {
         cx.update(|cx| {
-            cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
-                settings.approval.redact_secrets = redacts;
-            })
-            .detach();
+            f.installation
+                .ready
+                .settings()
+                .update::<nocterm_ai::AiSettings>(cx, move |settings| {
+                    settings.approval.redact_secrets = redacts;
+                })
+                .detach();
         });
         cx.run_until_parked();
         settle(&f, cx);

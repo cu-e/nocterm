@@ -9,7 +9,8 @@ use gpui_kit::{App, Context, Window};
 use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
-use nocterm_ui::SettingsStore;
+use nocterm_settings_ui::SettingsCatalogError;
+use nocterm_store::SettingsConfig;
 use nocterm_vault::VaultAccess;
 use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
@@ -18,7 +19,7 @@ use std::rc::Rc;
 /// What differs between the application and its tests.
 pub(crate) struct Services {
     pub(crate) tokens: DesignTokens,
-    pub(crate) settings: SettingsStore,
+    pub(crate) settings: SettingsConfig,
     pub(crate) paths: Paths,
     /// Whether connections, snippets, layout, recordings and the keymap are
     /// read from and written to `paths`; tests keep them in memory.
@@ -53,10 +54,11 @@ pub(crate) struct VaultSetup {
 /// Installed dependencies retained by every workspace window.
 #[derive(Clone)]
 pub(crate) struct Booted {
+    #[cfg(test)]
     keymap: nocterm_keymap::KeymapHandle,
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     terminal: nocterm_terminal::Installed,
-    settings_ui: nocterm_settings_ui::Installed,
+    settings_ui: crate::settings_pages::SettingsPages,
     monitor: nocterm_monitor_ui::Installed,
     agent: nocterm_agent::Installed,
     files: nocterm_files::Installed,
@@ -69,6 +71,7 @@ pub(crate) struct Booted {
 }
 
 impl Booted {
+    #[cfg(test)]
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
     }
@@ -77,18 +80,11 @@ impl Booted {
         &self.agent
     }
     pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Installed {
-        self.settings_ui.clone()
+        self.settings_ui.installed()
     }
-    pub(crate) fn settings_pages(
-        &self,
-        guests: Vec<nocterm_ui::SettingsPageSpec>,
-    ) -> nocterm_settings_ui::OwnerPages {
-        crate::settings_owner_pages(
-            self.themes.clone(),
-            nocterm_terminal::settings_pages(&self.terminal),
-            nocterm_agent::settings_page(&self.agent),
-            guests,
-        )
+    #[cfg(test)]
+    pub(crate) fn settings_pages(&self) -> nocterm_settings_ui::SettingsCatalog {
+        self.settings_ui.ordinary().clone()
     }
 
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
@@ -97,7 +93,7 @@ impl Booted {
 }
 
 /// Composes services and feature dependencies in dependency order.
-pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
+pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, SettingsCatalogError> {
     let Services {
         tokens,
         settings,
@@ -117,6 +113,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
     let base = tokens.clone();
+    let settings = settings.install(cx);
     let ui = nocterm_ui::init(tokens, settings, cx);
     let shutdown = nocterm_store::ShutdownCoordinator::default();
     report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
@@ -134,18 +131,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
             None
         }
     };
-    let association_owner = connections
-        .as_ref()
-        .map(|installed| installed.connections().clone());
-    let vault = vault.and_then(|setup| open_vault(setup, &ui, association_owner, cx));
-    let (terminal_deps, vault) = match vault {
-        Some(opened) => (
-            terminal_deps.with_credentials(opened.credentials),
-            Some(opened.installed),
-        ),
-        None => (terminal_deps, None),
-    };
-    let terminal = nocterm_terminal::install(terminal_deps, &ui, cx);
+    let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
     }
@@ -156,9 +142,21 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
-    let settings_ui = nocterm_settings_ui::Installed::new(ui.settings().clone());
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
+    let settings_ui = crate::settings_pages::SettingsPages::compose(
+        nocterm_settings_ui::Installed::new(ui.settings().clone()),
+        themes.clone(),
+        nocterm_terminal::settings_pages(&terminal),
+        nocterm_agent::settings_page(&agent),
+        [
+            nocterm_keymap_ui::settings_page(keymap.clone()),
+            nocterm_monitor_ui::settings_page(&monitor),
+            nocterm_files::settings_page(&files),
+        ],
+        vault.as_deref().map(nocterm_vault_ui::settings_page),
+    )?;
     let booted = Booted {
+        #[cfg(test)]
         keymap,
         local_host,
         terminal,
@@ -173,7 +171,30 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Booted {
         themes,
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
-    booted
+    Ok(booted)
+}
+
+/// Bind credentials before installing the retained terminal capability.
+fn install_terminal(
+    terminal: nocterm_terminal::Deps,
+    vault: Option<VaultSetup>,
+    ready: &nocterm_ui::UiReady,
+    connections: Option<&nocterm_connections::Installed>,
+    cx: &mut App,
+) -> (
+    nocterm_terminal::Installed,
+    Option<Rc<nocterm_vault_ui::Installed>>,
+) {
+    let association_owner = connections.map(|installed| installed.connections().clone());
+    let vault = vault.and_then(|setup| open_vault(setup, ready, association_owner, cx));
+    let (terminal, vault) = match vault {
+        Some(opened) => (
+            terminal.with_credentials(opened.credentials),
+            Some(opened.installed),
+        ),
+        None => (terminal, None),
+    };
+    (nocterm_terminal::install(terminal, ready, cx), vault)
 }
 
 /// Compose the supplied theme catalogue and its retained settings/paint projection.
@@ -332,17 +353,9 @@ pub(crate) fn build_workspace(
     if let Some(connections) = &booted.connections {
         nocterm_connections::register(connections, workspace, window, cx);
     }
-    crate::register_settings(
-        workspace,
-        vault,
-        booted.themes.clone(),
-        booted.settings_deps(),
-        booted.keymap(),
-        &booted.files,
-        &booted.monitor,
-        nocterm_terminal::settings_pages(&booted.terminal),
-        nocterm_agent::settings_page(&booted.agent),
-    );
+    booted
+        .settings_ui
+        .register(workspace, booted.themes.clone());
     nocterm_files::register(&booted.files, workspace, window, cx);
     // The last panel's switcher sits just before the monitor.
     if let Some(snippets) = &booted.snippets {
@@ -357,12 +370,12 @@ pub(crate) fn build_workspace(
             .settings()
             .setting::<nocterm_vault_ui::VaultSettings>(cx)
             .prompt_on_startup
+        && let Some(pages) = booted.settings_ui.startup()
     {
-        let pages = vec![nocterm_vault_ui::settings_page(vault)];
         nocterm_settings_ui::open_page(
             workspace,
             "vault",
-            &booted.settings_pages(pages),
+            pages,
             booted.settings_deps(),
             window,
             cx,
@@ -391,7 +404,7 @@ mod observation_tests {
             gpui_kit::init(cx);
             let ready = nocterm_ui::init(
                 DesignTokens::builtin(),
-                SettingsStore::in_memory(Default::default()),
+                SettingsConfig::in_memory(Default::default()).install(cx),
                 cx,
             );
             nocterm_connections::install(
@@ -422,7 +435,7 @@ mod observation_tests {
             gpui_kit::init(cx);
             let ready = nocterm_ui::init(
                 DesignTokens::builtin(),
-                SettingsStore::in_memory(Default::default()),
+                SettingsConfig::in_memory(Default::default()).install(cx),
                 cx,
             );
             // The observations are deliberately composed with no configured
@@ -484,7 +497,7 @@ mod credential_tests {
             gpui_kit::init(cx);
             let ready = nocterm_ui::init(
                 DesignTokens::builtin(),
-                SettingsStore::in_memory(Default::default()),
+                SettingsConfig::in_memory(Default::default()).install(cx),
                 cx,
             );
             let connections = cx.new(|_| {

@@ -12,7 +12,6 @@ use nocterm_ai::{
     BridgeRegistration, ConnectRequest, ToolBridge, acp,
 };
 
-use nocterm_ui::SettingsExt as _;
 use nocterm_workspace::{
     ExpectedSession, Item, ItemEvent, LiveCommands, RemoteReconnect, SignInPrompts,
     TerminalCapabilities, TerminalExecution, TerminalInfo, TerminalInput, TerminalState,
@@ -405,7 +404,7 @@ fn fixture_with_width(
             tokens.layout.agent_panel.width = width;
             let ui = nocterm_ui::init(
                 tokens,
-                nocterm_ui::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
                 cx,
             );
             let shutdown = nocterm_store::ShutdownCoordinator::default();
@@ -580,9 +579,12 @@ fn reinstall_history(
 }
 /// Connects chats on their first message instead of when shown, for tests
 /// of what happens before a chat connects.
-fn lazy_start(cx: &mut TestAppContext) {
+fn lazy_start(f: &Fixture, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.warm_start = false)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.warm_start = false)
             .detach()
     });
     cx.run_until_parked();

@@ -54,3 +54,4 @@ acceptance; a later record supersedes an earlier one.
 | [0053](0053-retained-settings-ui-installation.md) | Settings UI retains its supplied settings installation |
 | [0054](0054-checked-settings-text-receipts.md) | Native settings text owns checked publication receipts |
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
+| [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition |

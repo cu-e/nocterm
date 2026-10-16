@@ -12,7 +12,7 @@ use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_settings::{SettingsDocument, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
-use nocterm_ui::SettingsStore;
+use nocterm_store::SettingsConfig;
 
 use crate::{AGENT_BRIDGE, agent_auth, bootstrap};
 
@@ -20,7 +20,7 @@ pub(crate) struct PreparedApp {
     paths: Paths,
     executable: PathBuf,
     tokens: DesignTokens,
-    settings: SettingsStore,
+    settings: SettingsConfig,
     themes: bootstrap::Themes,
     transport: SshTransport,
     files: nocterm_files::Deps,
@@ -119,6 +119,14 @@ impl PreparedApp {
             },
             cx,
         );
+        let booted = match booted {
+            Ok(booted) => booted,
+            Err(error) => {
+                tracing::error!(%error, "could not compose settings pages");
+                cx.quit();
+                return;
+            }
+        };
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -129,7 +137,7 @@ impl PreparedApp {
             tracing::error!(%error, "could not open the window");
             cx.quit();
         }
-        crate::report_settings_errors(cx);
+        crate::report_settings_errors(booted.settings_deps().settings(), cx);
         cx.activate(true);
     }
 }
@@ -219,13 +227,13 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
 }
 
 /// Invalid sections keep their source; malformed files disable writes for this run.
-fn load_settings(paths: &Paths) -> SettingsStore {
+fn load_settings(paths: &Paths) -> SettingsConfig {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(document) => SettingsStore::new(document, file),
+        Ok(document) => SettingsConfig::new(document, file),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
-            SettingsStore::in_memory(SettingsDocument::default())
+            SettingsConfig::in_memory(SettingsDocument::default())
         }
     }
 }

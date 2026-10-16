@@ -17,10 +17,7 @@ fn configured_and_malformed_ai_policy_are_registered_before_first_window(cx: &mu
                 false,
                 cx,
             );
-            let settings = nocterm_ui::UiReady::installed(cx)
-                .unwrap()
-                .settings()
-                .clone();
+            let settings = booted.settings_deps().settings().clone();
             assert!(
                 settings
                     .document(cx)

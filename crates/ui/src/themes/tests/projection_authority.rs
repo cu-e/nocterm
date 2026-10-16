@@ -16,11 +16,32 @@ fn install_projection(cx: &mut gpui_kit::App) -> ThemeUi {
     let base = DesignTokens::builtin();
     let ready = init(
         base.clone(),
-        SettingsStore::in_memory(Default::default()),
+        SettingsConfig::in_memory(Default::default()).install(cx),
         cx,
     );
     let service = nocterm_theme_service::ThemesHandle::install(None, None, Default::default(), cx);
     ThemeUi::install(ready.settings().clone(), service, base, cx)
+}
+
+fn unrelated_projection_window(cx: &mut App) -> (nocterm_store::SettingsHandle, AnyWindowHandle) {
+    let other = nocterm_store::SettingsConfig::in_memory(Default::default())
+        .with(AppearanceSettings {
+            mode: AppearanceMode::Light,
+            ..Default::default()
+        })
+        .install(cx);
+    let service = nocterm_theme_service::ThemesHandle::install(None, None, Default::default(), cx);
+    let other_projection = ThemeUi::install(other.clone(), service, DesignTokens::builtin(), cx);
+    let (unrelated_window, _) = gpui_kit::open_window(Default::default(), cx, |window, cx| {
+        let retained = other_projection.clone();
+        window
+            .observe_window_appearance(move |_, cx| retained.apply(cx))
+            .detach();
+        cx.new(|_| Surface)
+    })
+    .unwrap();
+    other_projection.apply(cx);
+    (other, unrelated_window)
 }
 
 #[gpui_kit::test]
@@ -33,16 +54,9 @@ async fn mode_and_geometry_publish_without_design_changes_or_an_unrelated_docume
         let changes = changes.clone();
         cx.observe_global::<Design>(move |_| changes.set(changes.get() + 1))
     });
-    let unrelated = cx.update(|cx| {
-        let other = nocterm_store::SettingsConfig::in_memory(Default::default())
-            .with(AppearanceSettings {
-                mode: AppearanceMode::Light,
-                ..Default::default()
-            })
-            .install(cx);
-        cx.set_global(SettingsStore::from_handle(other.clone()));
-        other
-    });
+    let (unrelated, unrelated_window) = cx.update(unrelated_projection_window);
+    // Settle B's initial window appearance before measuring A's publication.
+    cx.run_until_parked();
     cx.update(|cx| {
         projection.settings().update::<AppearanceSettings>(cx, |s| {
             s.mode = AppearanceMode::Dark;
@@ -74,6 +88,11 @@ async fn mode_and_geometry_publish_without_design_changes_or_an_unrelated_docume
         );
     });
     assert_eq!(changes.get(), 0, "mode and geometry do not replace Design");
+    // The unrelated document remains after its own paint owner/window is gone.
+    // Its later edits must not redirect the surviving A projection.
+    cx.update_window(unrelated_window, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
     cx.update(|cx| {
         unrelated.update::<AppearanceSettings>(cx, |s| {
             s.mode = AppearanceMode::System;
@@ -216,10 +235,11 @@ async fn rejected_native_settings_write_never_paints_the_candidate(cx: &mut Test
         gpui_kit::init(cx);
         let ready = init(
             DesignTokens::builtin(),
-            SettingsStore::new(
+            SettingsConfig::new(
                 Default::default(),
                 nocterm_settings::SettingsFile::new(directory.path()),
-            ),
+            )
+            .install(cx),
             cx,
         );
         let themes =

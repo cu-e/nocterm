@@ -43,7 +43,7 @@ impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
 type PageFactory =
     dyn Fn(SettingsPageContext, &mut Window, &mut App) -> Box<dyn SettingsPageHandle>;
 
-/// A lazy page factory supplied by the composition root.
+/// A page factory supplied by the composition root.
 #[derive(Clone)]
 pub struct SettingsPageSpec {
     pub id: &'static str,
@@ -67,7 +67,7 @@ impl SettingsPageSpec {
         }
     }
 
-    /// Builtin owner factories receive only the original settings and shared save feedback.
+    /// Owner factories receive only the original settings and shared save feedback.
     pub fn contextual<T: SettingsPage>(
         id: &'static str,
         title: impl Into<SharedString>,

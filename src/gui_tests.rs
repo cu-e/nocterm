@@ -135,7 +135,7 @@ fn fixture_with_settings(
     vault_ready: bool,
     themes: Option<Arc<nocterm_themes::test_support::InMemoryThemes>>,
     with_local: bool,
-    settings_override: Option<nocterm_ui::SettingsStore>,
+    settings_override: Option<nocterm_store::SettingsConfig>,
 ) -> (
     AnyWindowHandle,
     Entity<Workspace>,
@@ -161,7 +161,7 @@ fn fixture_with_settings(
         });
         let booted = boot_with_ports(
             directory,
-            settings_override.unwrap_or_else(|| nocterm_ui::SettingsStore::in_memory(settings)),
+            settings_override.unwrap_or_else(|| nocterm_store::SettingsConfig::in_memory(settings)),
             (
                 transport.clone(),
                 if with_local {
@@ -247,7 +247,7 @@ fn boot_with_files(
 ) -> crate::bootstrap::Booted {
     boot_with_ports(
         directory,
-        nocterm_ui::SettingsStore::in_memory(settings),
+        nocterm_store::SettingsConfig::in_memory(settings),
         (
             transport,
             nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
@@ -260,7 +260,7 @@ fn boot_with_files(
 }
 fn boot_with_ports(
     directory: tempfile::TempDir,
-    settings: nocterm_ui::SettingsStore,
+    settings: nocterm_store::SettingsConfig,
     terminal: (Arc<MockTransport>, nocterm_terminal::LocalSessions),
     vault: bool,
     files: Option<nocterm_files::Deps>,
@@ -282,7 +282,7 @@ fn boot_with_ports(
 }
 fn boot_with_ports_and_probe(
     directory: tempfile::TempDir,
-    settings: nocterm_ui::SettingsStore,
+    settings: nocterm_store::SettingsConfig,
     terminal: (Arc<MockTransport>, nocterm_terminal::LocalSessions),
     vault: bool,
     files: Option<nocterm_files::Deps>,
@@ -350,7 +350,8 @@ fn boot_with_ports_and_probe(
             vault,
         },
         cx,
-    );
+    )
+    .expect("valid fixture settings catalogs");
     cx.set_reduce_motion(true);
     booted
 }
@@ -667,8 +668,7 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
 fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_ui::SettingsExt as _;
-    let (window, workspace, _, _) = fixture(cx);
+    let (window, workspace, _, _, _, policy) = fixture_with_settings(cx, false, None, false, None);
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         assert!(workspace.read(cx).right_panel_is_available());
@@ -689,7 +689,8 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
             .find_item::<nocterm_settings_ui::SettingsView>()
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+        policy
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
             .detach();
         window.render_frame(cx);
     })

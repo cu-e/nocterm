@@ -17,14 +17,14 @@ fn fixture(cx: &mut TestAppContext, name: &std::ffi::OsStr, native: Arc<FakeExec
         cx,
         name,
         native,
-        nocterm_ui::SettingsStore::in_memory(Default::default()),
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
     )
 }
 fn fixture_with_store(
     cx: &mut TestAppContext,
     name: &std::ffi::OsStr,
     native: Arc<FakeExec>,
-    store: nocterm_ui::SettingsStore,
+    store: nocterm_store::SettingsConfig,
 ) -> OpenFixture {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(name), b"file").unwrap();
@@ -214,7 +214,7 @@ fn menu_snapshot_keeps_its_label_but_dispatch_uses_latest_original_published_pol
                 ..Default::default()
             })
             .install(cx);
-        cx.set_global(nocterm_ui::SettingsStore::from_handle(other));
+        crate::tests::settings_window(other, cx);
     });
     crate::tests::operations_ui::choose(cx, fixture.window, 9);
     let opened = fixture.native.opened_requests();
@@ -236,7 +236,7 @@ async fn rejected_durable_opener_policy_keeps_the_original_published_selection(
     cx: &mut TestAppContext,
 ) {
     let blocked = tempfile::tempdir().unwrap();
-    let store = nocterm_ui::SettingsStore::new(
+    let store = nocterm_store::SettingsConfig::new(
         Default::default(),
         nocterm_settings::SettingsFile::new(blocked.path()),
     );

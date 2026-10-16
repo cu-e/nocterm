@@ -2,11 +2,11 @@
 //!
 //! Every control saves as soon as it changes; text saves when typing pauses,
 //! on Enter and when the field loses focus. There is no draft and no Apply.
-//! Owns: settings Item navigation, shared diagnostics, eager builtin and lazy guest lifetimes.
+//! Owns: checked ordered page catalogs, Item navigation, shared diagnostics and eager/lazy lifetimes.
 //! Does not own: page controls, schema policy, native probing or settings persistence.
-//! Ports used: Installed supplies SettingsHandle; OwnerPages supplies owner factories.
+//! Ports used: Installed supplies SettingsHandle; SettingsCatalog supplies owner factories.
 //! Ports provided: workspace settings Item. Settings section: none. Globals: none.
-//! Invariants: builtin construction and all-builtin flush precede selection; guest lifetime stays lazy.
+//! Invariants: catalogs validate before factories run; eager construction/flush preserve order; lazy pages are reused.
 
 mod installation;
 pub use installation::Installed;
@@ -23,76 +23,62 @@ use nocterm_ui::{IconName, form};
 use nocterm_ui::{SettingsPageContext, SettingsPageFeedback, SettingsPageHandle, SettingsPageSpec};
 use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
 
-/// The pages every build has, in navigation order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Page {
-    Appearance,
-    Terminal,
-    LocalShell,
-    Ssh,
-    Ai,
-}
+mod catalog;
+use catalog::Lifecycle;
+pub use catalog::{SettingsCatalog, SettingsCatalogError, SettingsPageRegistration};
 
-impl Page {
-    const ALL: [Page; 5] = [
-        Page::Appearance,
-        Page::Terminal,
-        Page::LocalShell,
-        Page::Ssh,
-        Page::Ai,
-    ];
-    fn id(self) -> &'static str {
-        match self {
-            Page::Appearance => "appearance",
-            Page::Terminal => "terminal",
-            Page::LocalShell => "local-shell",
-            Page::Ssh => "ssh",
-            Page::Ai => "ai",
-        }
-    }
-    fn title(self) -> &'static str {
-        match self {
-            Page::Appearance => "Appearance",
-            Page::Terminal => "Terminal",
-            Page::LocalShell => "Local shell",
-            Page::Ssh => "SSH",
-            Page::Ai => "AI agents",
-        }
-    }
-    fn icon(self) -> IconName {
-        match self {
-            Page::Appearance => IconName::Palette,
-            Page::Terminal => IconName::Terminal,
-            Page::LocalShell => IconName::SquareTerminal,
-            Page::Ssh => IconName::Server,
-            Page::Ai => IconName::Bot,
-        }
-    }
-}
-
-/// Owner factories supplied by the app; the five builtin slots retain their established order.
-#[derive(Clone)]
-pub struct OwnerPages {
-    builtins: [SettingsPageSpec; 5],
-    guests: Vec<SettingsPageSpec>,
-}
-impl OwnerPages {
-    pub fn with_guests(&self, guests: Vec<SettingsPageSpec>) -> Self {
-        Self {
-            builtins: self.builtins.clone(),
-            guests,
-        }
-    }
-    pub fn new(builtins: [SettingsPageSpec; 5], guests: Vec<SettingsPageSpec>) -> Self {
-        Self { builtins, guests }
-    }
+struct PageSlot {
+    spec: SettingsPageSpec,
+    lifecycle: Lifecycle,
+    page: Option<Box<dyn SettingsPageHandle>>,
 }
 struct PageBook {
-    builtins: [(SettingsPageSpec, Box<dyn SettingsPageHandle>); 5],
-    guests: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
+    slots: Vec<PageSlot>,
+}
+impl PageBook {
+    fn new(
+        catalog: &SettingsCatalog,
+        context: SettingsPageContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let slots = catalog
+            .pages()
+            .iter()
+            .map(|registration| {
+                let spec = registration.spec().clone();
+                let lifecycle = registration.lifecycle();
+                let page = (lifecycle == Lifecycle::Eager)
+                    .then(|| spec.create(context.clone(), window, cx));
+                PageSlot {
+                    spec,
+                    lifecycle,
+                    page,
+                }
+            })
+            .collect();
+        let mut book = Self { slots };
+        book.activate(catalog.default_index(), context, window, cx);
+        book
+    }
+    fn selected(&self, index: usize) -> Option<&dyn SettingsPageHandle> {
+        self.slots.get(index)?.page.as_deref()
+    }
+    fn activate(
+        &mut self,
+        index: usize,
+        context: SettingsPageContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let slot = &mut self.slots[index];
+        if slot.page.is_none() {
+            slot.page = Some(slot.spec.create(context, window, cx));
+        }
+    }
 }
 /// Installs the settings Item with factories supplied by the actual feature owners.
-pub fn register(workspace: &mut Workspace, pages: OwnerPages, installed: Installed) {
+pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: Installed) {
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
@@ -109,7 +95,7 @@ pub fn register(workspace: &mut Workspace, pages: OwnerPages, installed: Install
 pub fn open_page(
     workspace: &mut Workspace,
     id: &str,
-    pages: &OwnerPages,
+    pages: &SettingsCatalog,
     installed: Installed,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -138,7 +124,7 @@ pub struct SettingsView {
 }
 impl SettingsView {
     pub fn with_pages(
-        pages: OwnerPages,
+        pages: SettingsCatalog,
         installed: Installed,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -159,90 +145,50 @@ impl SettingsView {
                 let _ = weak.update(cx, |_, cx| cx.notify());
             });
         });
-        let builtins = pages.builtins.map(|spec| {
-            let page = spec.create(context.clone(), window, cx);
-            (spec, page)
-        });
+        let selected_page = pages.default_index();
+        let pages = PageBook::new(&pages, context, window, cx);
         Self {
             installed,
-            selected_page: 0,
-            pages: PageBook {
-                builtins,
-                guests: pages.guests.into_iter().map(|spec| (spec, None)).collect(),
-            },
+            selected_page,
+            pages,
             focus: cx.focus_handle(),
             feedback,
             _subscriptions: vec![changed, settings],
         }
     }
     pub fn selected_page_id(&self) -> &str {
-        match Page::ALL.get(self.selected_page) {
-            Some(page) => page.id(),
-            None => self.pages.guests[self.selected_page - Page::ALL.len()].0.id,
-        }
-    }
-    fn builtin(&self) -> Option<Page> {
-        Page::ALL.get(self.selected_page).copied()
+        self.pages.slots[self.selected_page].spec.id
     }
     fn page_index(&self, id: &str) -> Option<usize> {
-        Page::ALL
-            .iter()
-            .position(|page| page.id() == id)
-            .or_else(|| {
-                self.pages
-                    .guests
-                    .iter()
-                    .position(|(spec, _)| spec.id == id)
-                    .map(|index| index + Page::ALL.len())
-            })
-    }
-    fn guest(&self) -> Option<&dyn SettingsPageHandle> {
-        self.selected_page
-            .checked_sub(Page::ALL.len())
-            .and_then(|index| self.pages.guests.get(index))
-            .and_then(|(_, page)| page.as_deref())
+        self.pages.slots.iter().position(|slot| slot.spec.id == id)
     }
     fn select_page(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= Page::ALL.len() + self.pages.guests.len() || index == self.selected_page {
+        if index >= self.pages.slots.len() || index == self.selected_page {
             return;
         }
-        // Leaving a page saves what is being typed there.
         self.commit_all(window, cx);
-        if let Some(page) = self.guest() {
+        if self.pages.slots[self.selected_page].lifecycle == Lifecycle::Lazy
+            && let Some(page) = self.pages.selected(self.selected_page)
+        {
             page.deactivate(window, cx);
         }
         self.selected_page = index;
-        if let Some((spec, page)) = index
-            .checked_sub(Page::ALL.len())
-            .and_then(|index| self.pages.guests.get_mut(index))
-            && page.is_none()
-        {
-            let context =
-                SettingsPageContext::new(self.installed.settings().clone(), self.feedback.clone());
-            *page = Some(spec.create(context, window, cx));
-        }
+        let context =
+            SettingsPageContext::new(self.installed.settings().clone(), self.feedback.clone());
+        self.pages.activate(index, context, window, cx);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
-
-    /// Every eager builtin flushes before the active guest is deactivated.
     fn commit_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for (_, page) in &self.pages.builtins {
-            page.flush(window, cx);
+        for slot in &self.pages.slots {
+            if slot.lifecycle == Lifecycle::Eager
+                && let Some(page) = &slot.page
+            {
+                page.flush(window, cx);
+            }
         }
     }
-
     fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let builtin = Page::ALL
-            .iter()
-            .enumerate()
-            .map(|(index, page)| (index, SharedString::from(page.title()), page.icon()));
-        let guests = self
-            .pages
-            .guests
-            .iter()
-            .enumerate()
-            .map(|(index, (spec, _))| (Page::ALL.len() + index, spec.title.clone(), spec.icon));
         v_flex()
             .id("settings-pages")
             .test_support()
@@ -259,11 +205,9 @@ impl SettingsView {
                     .font_semibold()
                     .child("Settings"),
             )
-            .children(
-                builtin
-                    .chain(guests)
-                    .map(|(index, title, icon)| self.nav_item(index, title, icon, cx)),
-            )
+            .children(self.pages.slots.iter().enumerate().map(|(index, slot)| {
+                self.nav_item(index, slot.spec.title.clone(), slot.spec.icon, cx)
+            }))
     }
     fn nav_item(
         &self,
@@ -282,12 +226,13 @@ impl SettingsView {
 impl EventEmitter<ItemEvent> for SettingsView {}
 impl Focusable for SettingsView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.builtin() {
-            Some(_) => self.focus.clone(),
-            None => self
-                .guest()
+        if self.pages.slots[self.selected_page].lifecycle == Lifecycle::Eager {
+            self.focus.clone()
+        } else {
+            self.pages
+                .selected(self.selected_page)
                 .map(|page| page.focus_handle(cx))
-                .unwrap_or_else(|| self.focus.clone()),
+                .unwrap_or_else(|| self.focus.clone())
         }
     }
 }
@@ -300,11 +245,8 @@ impl Item for SettingsView {
     }
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_all(window, cx);
-        for (_, page) in &self.pages.builtins {
-            page.close(window, cx);
-        }
-        for (_, page) in &self.pages.guests {
-            if let Some(page) = page {
+        for slot in &self.pages.slots {
+            if let Some(page) = &slot.page {
                 page.close(window, cx);
             }
         }
@@ -312,16 +254,11 @@ impl Item for SettingsView {
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match self.builtin() {
-            Some(_) => self.pages.builtins[self.selected_page]
-                .1
-                .view()
-                .into_any_element(),
-            None => self
-                .guest()
-                .map(|page| page.view().into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
-        };
+        let content = self
+            .pages
+            .selected(self.selected_page)
+            .map(|page| page.view().into_any_element())
+            .unwrap_or_else(|| div().into_any_element());
         let section_errors: Vec<_> = self.installed.settings().section_errors(cx)
             .iter()
             .map(|error| {

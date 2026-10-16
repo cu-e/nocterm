@@ -70,7 +70,7 @@ fn a_new_chat_connects_at_once_so_its_model_is_chosen_before_the_first_message(
 #[gpui_kit::test]
 fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     f.commands.config.set_options(models());
     cx.update(|cx| {
         let runtime = f.installation.installed.runtime();
@@ -119,7 +119,10 @@ fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &m
 async fn a_chat_hidden_before_it_was_admitted_gives_up_its_place(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.sessions.max_live = 1)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.sessions.max_live = 1)
     })
     .await
     .unwrap();

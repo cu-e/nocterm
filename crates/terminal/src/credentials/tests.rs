@@ -3,7 +3,7 @@ use crate::{Terminal, credentials::fake::FakeStore};
 use futures::FutureExt as _;
 use gpui_kit::{AppContext as _, Entity, Task, TestAppContext};
 use nocterm_session::{Auth, CloseReason, Event, Prompt, Reply, Secret, SecretRequest, Target};
-use nocterm_ui::SettingsStore;
+use nocterm_store::SettingsConfig;
 use nocterm_workspace::SessionSpec;
 use std::{sync::Arc, time::Duration};
 
@@ -31,7 +31,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));

@@ -39,12 +39,15 @@ fn submit(
     receive
 }
 
-fn set_policy(cx: &mut TestAppContext, policy: ApprovalPolicy) {
+fn set_policy(f: &Fixture, cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
-            settings.approval.agent_permissions = policy;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, move |settings| {
+                settings.approval.agent_permissions = policy;
+            })
+            .detach()
     });
     cx.run_until_parked();
 }
@@ -58,7 +61,7 @@ fn selected_once(receive: &mut oneshot::Receiver<acp::RequestPermissionOutcome>)
 #[gpui_kit::test]
 fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
@@ -117,7 +120,7 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
     let mut second_receive = submit(&f, cx, sessions[1].clone(), options());
     assert!(first_receive.try_recv().unwrap().is_none());
     assert!(second_receive.try_recv().unwrap().is_none());
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     selected_once(&mut first_receive);
     selected_once(&mut second_receive);
     cx.update(|cx| {
@@ -130,7 +133,7 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
             );
         }
     });
-    set_policy(cx, ApprovalPolicy::Ask);
+    set_policy(&f, cx, ApprovalPolicy::Ask);
     let mut future = submit(&f, cx, sessions[1].clone(), options());
     assert!(future.try_recv().unwrap().is_none());
     cx.update(|cx| assert_eq!(second.read(cx).permission_cards().len(), 1));
@@ -141,7 +144,7 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     cx: &mut TestAppContext,
 ) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
@@ -198,7 +201,7 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
             acp::PermissionOptionKind::AllowAlways,
         )],
     );
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     assert!(matches!(
         once.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Selected(_))
@@ -247,7 +250,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let mut obsolete = submit(&f, cx, session.clone(), options());
     cx.update(|cx| thread.update(cx, |thread, cx| thread.detach_session(cx)));
     cx.run_until_parked();
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     assert_eq!(
         obsolete.try_recv().unwrap(),
         Some(acp::RequestPermissionOutcome::Cancelled)
@@ -282,7 +285,7 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
             queued.try_recv().unwrap(),
             Some(acp::RequestPermissionOutcome::Cancelled)
         );
-        set_policy(cx, ApprovalPolicy::Allow);
+        set_policy(&f, cx, ApprovalPolicy::Allow);
         let mut late = submit(&f, cx, session, options());
         assert_eq!(
             late.try_recv().unwrap(),
@@ -309,10 +312,13 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     });
     let mut queued = submit(&f, cx, session, options());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.enabled = false;
-            settings.approval.agent_permissions = ApprovalPolicy::Allow;
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.enabled = false;
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
     })
     .await
     .unwrap();

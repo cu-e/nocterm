@@ -239,14 +239,14 @@ fn panel_fixture_with_installation(
         cx,
         fs,
         deps,
-        nocterm_ui::SettingsStore::in_memory(Default::default()),
+        nocterm_store::SettingsConfig::in_memory(Default::default()),
     )
 }
 fn panel_fixture_with_settings(
     cx: &mut TestAppContext,
     fs: Arc<dyn RemoteFs>,
     deps: Deps,
-    settings: nocterm_ui::SettingsStore,
+    settings: nocterm_store::SettingsConfig,
 ) -> (
     AnyWindowHandle,
     Entity<Workspace>,
@@ -256,7 +256,11 @@ fn panel_fixture_with_settings(
 ) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings, cx);
+        let ready = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            (settings).install(cx),
+            cx,
+        );
         let installed = install(deps, &ready, cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -714,4 +718,12 @@ fn custom_remote_adapter_cannot_deliver_an_unbounded_explorer_listing() {
                 .contains("Explorer listing limit")
         );
     }
+}
+
+pub(crate) fn settings_window(settings: nocterm_store::SettingsHandle, cx: &mut gpui_kit::App) {
+    settings.register::<crate::ExplorerSettings>(cx);
+    gpui_kit::open_window(gpui_kit::WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| crate::settings_page::ExplorerPage::new(settings, window, cx))
+    })
+    .unwrap();
 }

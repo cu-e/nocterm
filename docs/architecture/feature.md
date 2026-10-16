@@ -123,7 +123,11 @@ prefix/final effects. The service supplies typed publication errors; the domain 
 no separate writer loop or quit handler remains. Unknown top-level profile tables
 and comments on retained keys round-trip through the existing atomic writer.
 `nocterm-settings-ui`
-contributes a single settings Item with a page list. Every control saves itself:
+contributes a single settings Item with a page list. The app supplies a checked ordered catalog with
+explicit eager/lazy registration and a required default; validation invokes no factories. Each Item
+constructs eager pages in order, reuses lazy pages and closes only constructed pages. The ordinary
+and startup catalogs retain separate application policies
+([ADR0057](../adr/0057-checked-settings-catalog.md)). Every control saves itself:
 switches and choices at once, text when typing pauses, on Enter and on blur.
 Invalid text stays in its field with the error and is never written. Feature-owned
 bindings retain the actual validators, labels and section identities. Shared UI
@@ -500,7 +504,7 @@ SettingsTextField submits checked edits synchronously, observes physical receipt
 preserves newer draft generations when older completions arrive. Parent presentation
 subscriptions render receipt diagnostics without requiring a settings publication.
 NumberInput and Vault auto-lock controls retain their existing detached persistence
-behavior. Other feature consumers still have SettingsStore compatibility access. See
+behavior. Settings consumers retain their supplied service handles. See
 [ADR0053](../adr/0053-retained-settings-ui-installation.md) and
 [ADR0054](../adr/0054-checked-settings-text-receipts.md).
 Explorer panes and its settings page retain their original installation's settings
@@ -516,8 +520,7 @@ models/pages read it. Per-window models retain that handle with the exact suppli
 host, and weak publication subscriptions refresh the existing plan. Summary/details
 read through their model; page editors use the same supplied policy. One watch,
 metric union, host/session identity, eight retained histories and ten-second retry
-behavior remain the model's responsibility. Other SettingsStore compatibility
-consumers remain outside these feature boundaries.
+behavior remain the model's responsibility. Other settings consumers retain their own supplied handles.
 VaultView keeps its request generation, service and native-device authority private.
 A private VaultForm owns the actual masked password/confirmation and auto-lock inputs
 and local numeric validation. A confirmed submit clears both native password controls

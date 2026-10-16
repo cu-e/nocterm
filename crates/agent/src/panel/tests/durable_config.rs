@@ -50,9 +50,12 @@ fn tick(cx: &mut TestAppContext, seconds: u64) {
 async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.sessions.idle_timeout_secs = 2
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.sessions.idle_timeout_secs = 2
+            })
     })
     .await
     .unwrap();
@@ -100,7 +103,7 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
 #[gpui_kit::test]
 fn a_saved_chat_shows_its_own_model_before_it_connects(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     cx.update(|cx| {
         let runtime = f.installation.installed.runtime();
         runtime.remember_options("codex", &models(), cx)

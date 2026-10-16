@@ -33,7 +33,7 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let thread = draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.set_draft("original content".into(), cx);

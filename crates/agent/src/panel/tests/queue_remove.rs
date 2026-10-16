@@ -101,7 +101,7 @@ fn a_message_being_edited_cannot_be_removed(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006e".into(),

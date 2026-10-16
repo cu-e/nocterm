@@ -324,7 +324,7 @@ mod tests {
             gpui_kit::init(cx);
             crate::init(
                 crate::DesignTokens::builtin(),
-                crate::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
                 cx,
             );
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -383,7 +383,7 @@ mod tests {
             gpui_kit::init(cx);
             crate::init(
                 crate::DesignTokens::builtin(),
-                crate::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
                 cx,
             );
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {

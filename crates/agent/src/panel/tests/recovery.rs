@@ -161,7 +161,7 @@ fn after_an_agent_crash_one_failed_resume_is_enough(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn release_changes_notice_text_and_activation_clears_its_error_emphasis(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {

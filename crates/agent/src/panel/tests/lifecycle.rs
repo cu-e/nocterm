@@ -39,7 +39,10 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.run_until_parked();
     cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).transcript().entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes()>0);assert_eq!(thread.read(cx).tool_bytes(),0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
     })
     .await
     .unwrap();
@@ -103,7 +106,10 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
     assert_eq!(started.load(Ordering::SeqCst), 1);
     assert_eq!(cancelled.load(Ordering::SeqCst), 0);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
     })
     .await
     .unwrap();
@@ -118,9 +124,13 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     f.connector.use_distinct_process_handles();
     new_chat(&f, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.agents.entry("codex".into()).or_default().command = Some("other-agent".into())
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.agents.entry("codex".into()).or_default().command =
+                    Some("other-agent".into())
+            })
     })
     .await
     .unwrap();
@@ -129,9 +139,12 @@ async fn launch_changes_apply_to_new_connections_and_disabled_agents_stop_existi
     new_chat(&f, cx);
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.agents.get_mut("codex").unwrap().enabled = false
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.agents.get_mut("codex").unwrap().enabled = false
+            })
     })
     .await
     .unwrap();
@@ -155,7 +168,7 @@ fn favorites_latest_snapshot_is_persisted_in_order(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     new_chat(&f, cx);
     let (handle, workspace, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -191,9 +204,14 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
-    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = false))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |s| s.enabled = false)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(f.panel.read(cx).chat_documents().len() == 0);
@@ -203,9 +221,14 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     assert_eq!(f.bridge.revoked.lock().unwrap().len(), 1);
-    cx.update(|cx| cx.update_setting::<nocterm_ai::AiSettings>(|s| s.enabled = true))
-        .await
-        .unwrap();
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |s| s.enabled = true)
+    })
+    .await
+    .unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update_window(handle, |_, window, cx| {
@@ -616,7 +639,7 @@ fn a_permission_no_thread_takes_is_cancelled(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn new_chat_fork_and_durable_edits_use_supplied_identity_and_time(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     f._directory.metadata.timestamp_is(1000);
     new_chat(&f, cx);
     let original = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -655,7 +678,7 @@ fn snapshot_capture_and_rejected_queue_budget_do_not_acquire_native_metadata(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    lazy_start(cx);
+    lazy_start(&f, cx);
     f._directory.metadata.timestamp_is(1234);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());

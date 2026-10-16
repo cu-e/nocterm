@@ -47,7 +47,7 @@ pub(super) fn fixture_with_local(
         install_bindings(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {

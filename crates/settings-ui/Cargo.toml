@@ -10,6 +10,7 @@ publish = false
 layer = "feature"
 
 [dependencies]
+thiserror.workspace = true
 nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true

@@ -127,7 +127,7 @@ fn native_pages(
         gpui_kit::init(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx),
             cx,
         );
         let keymap = crate::keymap::load(Some(file.to_owned()), cx);

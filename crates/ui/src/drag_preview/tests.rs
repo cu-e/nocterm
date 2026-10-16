@@ -70,7 +70,7 @@ fn native_drag_retains_source_dimensions_label_payload_and_pointer_offset(cx: &m
         gpui_kit::init(cx);
         crate::init(
             crate::DesignTokens::builtin(),
-            crate::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
     });

@@ -11,7 +11,10 @@ Tooling (`xtask`) may depend on anything but the app and other tooling.
 The application is the composition root. `src/main.rs` selects the entrypoint;
 `src/startup.rs` owns paths, settings, design tokens and native collaborators prepared
 once before asynchronous agent-preference hydration. Loading preferences does not
-construct another filesystem, transfer queue or opener. The prepared inputs then
+construct another filesystem, transfer queue or opener. One SettingsConfig is prepared before
+hydration and consumed once to install the explicit settings handle afterward. Checked ordinary and
+startup page catalogs are retained by the existing Booted settings slot; a catalog error quits
+before application registration or first-window creation. The prepared inputs then
 pass to `src/bootstrap.rs`, which installs services in one order shared with GUI
 tests and registers independent workspace features. The vault adapter is passed
 as a `VaultAccess` port; its installed feature handle owns settings observation

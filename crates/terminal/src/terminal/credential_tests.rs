@@ -29,7 +29,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
@@ -157,7 +157,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let provider = crate::CredentialProvider::new(store.clone(), move |_, id, _| {
@@ -266,7 +266,7 @@ fn association_terminal(
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         let installed = crate::install(

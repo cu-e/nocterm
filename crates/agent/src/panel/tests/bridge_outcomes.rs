@@ -136,10 +136,13 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     *f.access.executor().borrow_mut() =
         Some(Arc::new(super::provider_intersections::Program::default()));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.terminal_write = nocterm_ai::ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_write = nocterm_ai::ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     new_chat(&f, cx);
