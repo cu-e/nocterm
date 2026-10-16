@@ -22,6 +22,9 @@ nocterm-connections-model.workspace = true
 nocterm-connections-io.workspace = true
 nocterm-containers-ui.workspace = true
 nocterm-snippets-ui.workspace = true
+nocterm-snippets.workspace = true
+nocterm-snippets-store.workspace = true
+nocterm-snippets-io.workspace = true
 nocterm-core.workspace = true
 nocterm-design.workspace = true
 nocterm-files.workspace = true
@@ -118,7 +121,9 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }
+nocterm-snippets = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
@@ -167,6 +172,8 @@ nocterm-containers = { path = "crates/containers" }
 nocterm-containers-ui = { path = "crates/containers-ui" }
 nocterm-snippets = { path = "crates/snippets" }
 nocterm-snippets-ui = { path = "crates/snippets-ui" }
+nocterm-snippets-store = { path = "crates/snippets-store" }
+nocterm-snippets-io = { path = "crates/snippets-io" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }

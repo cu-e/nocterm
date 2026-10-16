@@ -226,16 +226,18 @@ the paste closing marker. It sends the complete sequence atomically and refuses
 authentication, disconnected or alternate-screen states. Shell integration is not
 required; SSH and local shells use the same terminal path.
 
-The snippets feature returns one cloneable `Installed` over its exact library entity and
-supplied `SettingsHandle`. Bootstrap retains successful installation and supplies it to
+The snippets feature returns one cloneable `Installed` over its exact `SnippetsHandle`,
+supplied `SettingsHandle` and draft identity capability. Bootstrap retains successful installation and supplies it to
 every workspace/action/editor. Separate installations remain independent; no snippet
 global or transitive settings lookup selects the save target. Shutdown registration
 failure omits this feature rather than publishing an unregistered writer. SnippetDraft
 owns the actual name/description/code controls and original checked-save expectation;
 AttachmentPicker owns search, folding and section focus. Save completion advances the
 expected record only on success and can close only its original focused dialog. The
-existing viewless library/native file boundary remains migration debt. See
-[ADR0050](../adr/0050-retained-snippet-installation.md).
+viewless library lives in `nocterm-snippets-store`; native document and UUID work
+are supplied by `nocterm-snippets-io`. See
+[ADR0055](../adr/0055-snippet-storage-boundaries.md), which retains the editor authority
+and control ownership from [ADR0050](../adr/0050-retained-snippet-installation.md).
 
 ## Monitor
 

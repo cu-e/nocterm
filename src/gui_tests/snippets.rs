@@ -1,5 +1,6 @@
 //! Actual bootstrap windows retain the same supplied snippet installation.
 use super::*;
+mod native;
 fn show_library(
     workspace: &Entity<Workspace>,
     window: &mut gpui_kit::Window,
@@ -32,6 +33,23 @@ fn create_shared_snippet(
     })
     .unwrap();
 }
+fn isolated_snippets(cx: &mut gpui_kit::App) -> nocterm_snippets_ui::Installed {
+    let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+    let model = nocterm_snippets_store::SnippetsHandle::install(
+        nocterm_snippets_store::PreparedLibrary::memory(),
+        std::sync::Arc::new(|_| Box::pin(async { Ok(()) })),
+        &nocterm_store::ShutdownCoordinator::default(),
+        cx,
+    )
+    .unwrap();
+    nocterm_snippets_ui::init(
+        model,
+        settings,
+        std::sync::Arc::new(nocterm_snippets::test_support::SequenceIds::new(50_000)),
+        cx,
+    )
+}
+
 #[gpui_kit::test]
 fn snippet_installation_survives_first_window_and_remains_shared_with_new_windows(
     cx: &mut TestAppContext,
@@ -61,16 +79,7 @@ fn snippet_installation_survives_first_window_and_remains_shared_with_new_window
         );
     })
     .unwrap();
-    let separate = cx.update(|cx| {
-        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        nocterm_snippets_ui::init(
-            None,
-            settings,
-            &nocterm_store::ShutdownCoordinator::default(),
-            cx,
-        )
-        .unwrap()
-    });
+    let separate = cx.update(isolated_snippets);
     cx.update_window(first, |_, window, _| window.remove_window())
         .unwrap();
     drop(first_workspace);

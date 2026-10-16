@@ -2,9 +2,14 @@
 //!
 //! Owns: snippet/library formats, validation and checked record mutations.
 //! Does not own: identity generation, filesystem persistence or editor views.
-//! Ports used/provided: none. Settings section: none. Globals: none.
+//! Ports provided: blocking SnippetRepository and supplied SnippetIds. Settings section: none. Globals: none.
 //! Invariants: identity is supplied by the caller; stale expected records cannot
 //! overwrite or delete a newer saved record; validation performs no I/O.
+mod repository;
+pub use repository::{SnippetIds, SnippetRepository, SnippetStorageError, StorageOperation};
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

@@ -7,7 +7,8 @@ depend on GPUI alone, never on the component library, the UI layer or features,
 and UI/feature crates depend on them. `nocterm-store` owns ordered persistence
 and synchronous quit capture for layout, settings, snippets, connection state and agent preferences/documents ([ADR 0013](../adr/0013-persistence-shutdown-service.md)).
 `nocterm-agent-runtime` owns agent lifecycle
-([ADR 0005](../adr/0005-agent-runtime-service.md)).
+([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-snippets-store` owns
+checked snippet publication over the shared persistence driver.
 
 ## Agents
 
@@ -188,3 +189,15 @@ semantic settings revisions, including unchanged revisions for successful no-ops
 The original infallible edits and their consumers retain their behavior. Dev-only
 store test-support supplies the shared first-write gate and snapshot recording used
 by service and UI persistence fixtures.
+
+## Snippet library publication
+
+`nocterm-snippets-store` owns the viewless library and exposes `SnippetsHandle`.
+Prepared acquisition retains missing-versus-malformed distinctions and validates the
+whole library; malformed or invalid input becomes an empty read-only projection with
+its original shared diagnostic. The service admits checked record save/delete against
+the shared Persisted driver: durable queue32 and immediate memory publication retain
+expected-record conflict and final capture semantics. It has no native I/O, UUID
+generation, view, settings policy or shutdown hook. Composition supplies its snapshot
+writer and registers the same participant once. See
+[ADR0055](../adr/0055-snippet-storage-boundaries.md).

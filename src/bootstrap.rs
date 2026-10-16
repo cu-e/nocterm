@@ -219,8 +219,35 @@ fn install_snippets(
     shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
 ) -> Option<nocterm_snippets_ui::Installed> {
-    match nocterm_snippets_ui::init(paths, settings.clone(), shutdown, cx) {
-        Ok(installed) => Some(installed),
+    use nocterm_snippets::SnippetRepository as _;
+    let repository = paths.map(|paths| {
+        Arc::new(nocterm_snippets_io::FileSnippetRepository::new(
+            paths.snippets_file(),
+        ))
+    });
+    let loaded = repository
+        .as_ref()
+        .map_or(Ok(None), |repository| repository.load());
+    let prepared = nocterm_snippets_store::PreparedLibrary::loaded(loaded, repository.is_some());
+    let writer: nocterm_store::SnapshotWriter<nocterm_snippets::Library> =
+        Arc::new(move |library| {
+            let repository = repository.clone();
+            Box::pin(async move {
+                if let Some(repository) = repository {
+                    repository
+                        .save(&library)
+                        .map_err(nocterm_store::StoreError::backend)?;
+                }
+                Ok(())
+            })
+        });
+    match nocterm_snippets_store::SnippetsHandle::install(prepared, writer, shutdown, cx) {
+        Ok(model) => Some(nocterm_snippets_ui::init(
+            model,
+            settings.clone(),
+            Arc::new(nocterm_snippets_io::NativeSnippetIds),
+            cx,
+        )),
         Err(error) => {
             report_store_registration("snippets", Err(error));
             None

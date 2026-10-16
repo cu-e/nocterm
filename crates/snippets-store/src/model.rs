@@ -1,57 +1,10 @@
-//! Checked snippet mutations delegate ordered durable publication to the store service.
-use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Task};
-use nocterm_core::{Paths, SharedError, persist};
+//! Viewless checked transitions over the common ordered persistence owner.
+use crate::{SnippetsError, SnippetsLoadError};
+use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use nocterm_snippets::{Library, LibraryError, Snippet};
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
-use std::{path::PathBuf, sync::Arc};
-
+use std::sync::Arc;
 const MAX_PENDING: usize = 32;
-
-#[derive(Debug, thiserror::Error)]
-pub enum SnippetsLoadError {
-    #[error(transparent)]
-    File(#[from] persist::PersistError),
-    #[error(transparent)]
-    Library(#[from] LibraryError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SnippetsError {
-    #[error(transparent)]
-    Library(#[from] LibraryError),
-    #[error("Snippet library is read-only until its file is fixed: {0}")]
-    ReadOnly(#[source] SharedError<SnippetsLoadError>),
-    #[error("Snippet service is shutting down.")]
-    Closing,
-    #[error("Snippet save queue is full. Wait for pending saves and retry.")]
-    Full,
-    #[error("Snippet save was interrupted.")]
-    Cancelled,
-    #[error("Could not persist the snippet library: {0}")]
-    Persistence(#[source] StoreError),
-}
-
-impl SnippetsError {
-    pub fn read_only(source: Arc<SnippetsLoadError>) -> Self {
-        Self::ReadOnly(SharedError::from_arc(source))
-    }
-}
-
-impl From<StoreError> for SnippetsError {
-    fn from(error: StoreError) -> Self {
-        match error {
-            StoreError::Closing => Self::Closing,
-            StoreError::Full => Self::Full,
-            StoreError::CompletionDropped => Self::Cancelled,
-            StoreError::Edit(ref source) => source
-                .downcast_ref::<LibraryError>()
-                .cloned()
-                .map_or(Self::Persistence(error), Self::Library),
-            error => Self::Persistence(error),
-        }
-    }
-}
-
 pub(crate) struct Snippets {
     state: Entity<Persisted<Library>>,
     load_error: Option<Arc<SnippetsLoadError>>,
@@ -60,30 +13,7 @@ pub(crate) struct Snippets {
 }
 
 impl Snippets {
-    fn new(path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
-        let loaded = path.as_ref().map_or(Ok(Library::default()), |path| {
-            let library: Library = persist::load(path)?.unwrap_or_default();
-            library.validate()?;
-            Ok::<_, SnippetsLoadError>(library)
-        });
-        let (library, load_error) = match loaded {
-            Ok(library) => (library, None),
-            Err(error) => (Library::default(), Some(Arc::new(error))),
-        };
-        let persistent = path.is_some();
-        let writer: SnapshotWriter<Library> = Arc::new(move |library| {
-            let path = path.clone();
-            Box::pin(async move {
-                if let Some(path) = path {
-                    persist::save(&path, &library).map_err(StoreError::backend)?;
-                }
-                Ok(())
-            })
-        });
-        Self::with_writer(library, load_error, persistent, writer, cx)
-    }
-
-    fn with_writer(
+    pub(crate) fn with_writer(
         library: Library,
         load_error: Option<Arc<SnippetsLoadError>>,
         persistent: bool,
@@ -179,15 +109,3 @@ impl Snippets {
         }
     }
 }
-
-pub(crate) fn init(
-    paths: Option<&Paths>,
-    shutdown: &ShutdownCoordinator,
-    cx: &mut App,
-) -> Result<Entity<Snippets>, StoreError> {
-    let model = cx.new(|cx| Snippets::new(paths.map(Paths::snippets_file), cx));
-    model.read(cx).register_shutdown(shutdown)?;
-    Ok(model)
-}
-#[cfg(test)]
-mod tests;

@@ -4933,6 +4933,9 @@ dependencies = [
  "nocterm-session",
  "nocterm-settings",
  "nocterm-settings-ui",
+ "nocterm-snippets",
+ "nocterm-snippets-io",
+ "nocterm-snippets-store",
  "nocterm-snippets-ui",
  "nocterm-ssh",
  "nocterm-store",
@@ -4952,6 +4955,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "winresource",
 ]
 
@@ -5352,17 +5356,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-snippets-io"
+version = "0.0.0"
+dependencies = [
+ "nocterm-core",
+ "nocterm-snippets",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "nocterm-snippets-store"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-snippets",
+ "nocterm-store",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "nocterm-snippets-ui"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
- "nocterm-core",
  "nocterm-session",
  "nocterm-snippets",
+ "nocterm-snippets-store",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "tempfile",
  "thiserror 2.0.21",
  "uuid",
 ]

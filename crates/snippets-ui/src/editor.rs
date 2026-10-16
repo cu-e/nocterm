@@ -92,9 +92,7 @@ impl SnippetEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let draft = original
-            .clone()
-            .unwrap_or_else(|| Snippet::new(uuid::Uuid::new_v4()));
+        let draft = original.clone().unwrap_or_else(|| installed.new_draft());
         let draft = draft::SnippetDraft::new(original, draft, window, cx);
         let picker = picker::AttachmentPicker::new(window, cx);
         let subscriptions = vec![

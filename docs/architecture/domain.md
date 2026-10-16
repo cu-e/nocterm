@@ -234,3 +234,10 @@ injected adapters. Monitor and Vault schemas belong to their existing domain cra
 These schemas retain their established serialized names and public schema identities.
 The foundation settings schema builder supplies ordered property/default machinery;
 policy descriptions, constraints and defaults remain with each domain owner.
+
+## Snippet contracts
+
+The snippet domain also declares blocking SnippetRepository and supplied SnippetIds
+capabilities. Storage errors retain the original native source behind a typed read/write
+operation; no native paths, entropy acquisition or I/O enters the domain. Record and
+library serialization, validation and exact expected-record mutations remain pure.

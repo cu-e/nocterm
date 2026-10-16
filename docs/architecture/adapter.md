@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec` and `nocterm-connections-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -185,3 +185,13 @@ Native chat identity and timestamp facts are supplied by agent-storage's
 NativeChatMetadata through AI's ChatMetadataSource. New document allocation
 combines one native UUID with its creation timestamp; snapshots and imports
 supply their existing identity and time without consulting the adapter.
+
+## Snippet documents and identities
+
+`nocterm-snippets-io` implements the domain SnippetRepository and SnippetIds ports.
+Composition supplies the snippets path. Native load/save retain core persist's exact
+TOML and atomic publication behavior, including rewriting comments on successful save.
+The adapter preserves the original PersistError behind typed operation errors, and
+performs no validation/fallback, queue or GUI work. Native UUIDv4 acquisition occurs
+only when the editor requests a new draft. See
+[ADR0055](../adr/0055-snippet-storage-boundaries.md).

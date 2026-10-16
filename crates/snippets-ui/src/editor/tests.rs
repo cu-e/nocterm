@@ -8,8 +8,7 @@ fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>, In
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let installed = crate::init(
-            None,
+        let installed = crate::test_support::install(
             settings,
             &nocterm_store::ShutdownCoordinator::default(),
             cx,
@@ -291,13 +290,8 @@ fn an_existing_editor_saves_only_its_original_installation_without_settings_glob
     .unwrap();
     let second = cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        crate::init(
-            None,
-            settings,
-            &nocterm_store::ShutdownCoordinator::default(),
-            cx,
-        )
-        .unwrap()
+        crate::test_support::install(settings, &nocterm_store::ShutdownCoordinator::default(), cx)
+            .unwrap()
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -319,7 +313,7 @@ fn shutdown_registration_failure_returns_no_editable_installation(cx: &mut TestA
         let shutdown = nocterm_store::ShutdownCoordinator::default();
         drop(shutdown.capture_all(cx));
         assert!(matches!(
-            crate::init(None, settings, &shutdown, cx),
+            crate::test_support::install(settings, &shutdown, cx),
             Err(nocterm_store::StoreError::Closing)
         ));
     });
@@ -395,110 +389,64 @@ fn conflicting_save_keeps_literal_controls_and_original_expected_record_for_retr
     });
 }
 
-fn native_installation(
-    paths: &nocterm_core::Paths,
-    original: &Snippet,
+#[gpui_kit::test]
+fn draft_identity_is_created_once_and_editing_an_existing_record_never_requests_an_id(
     cx: &mut TestAppContext,
-) -> Installed {
-    nocterm_core::persist::save(
-        &paths.snippets_file(),
-        &nocterm_snippets::Library {
-            snippets: vec![original.clone()],
-        },
-    )
-    .unwrap();
-    cx.update(|cx| {
-        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        crate::init(
-            Some(paths),
-            settings,
+) {
+    let (handle, workspace, original) = workspace(cx);
+    let ids = Arc::new(nocterm_snippets::test_support::SequenceIds::new(50_000));
+    let installed = cx.update(|cx| {
+        crate::test_support::install_with_ids(
+            original.settings().clone(),
+            ids.clone(),
             &nocterm_store::ShutdownCoordinator::default(),
             cx,
         )
         .unwrap()
+    });
+    assert_eq!(ids.calls(), 0, "installation does not generate a draft");
+    cx.update_window(handle, |_, window, cx| {
+        begin(&installed, &workspace, window, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(ids.calls(), 1);
+        window.click("snippet-save", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("snippet-error").is_some());
+        replace(window, "snippet-name", "Created once", cx);
+        replace(window, "snippet-code", "echo original", cx);
+        window.click("snippet-save", cx);
     })
-}
-
-#[gpui_kit::test]
-fn native_failed_save_retains_literal_draft_and_original_expectation_for_retry(
-    cx: &mut TestAppContext,
-) {
-    let (handle, workspace, _) = workspace(cx);
-    let directory = tempfile::tempdir().unwrap();
-    let paths = nocterm_core::Paths::rooted_at(directory.path());
-    let original = Snippet {
-        name: "Original".into(),
-        content: "echo original".into(),
-        profiles: vec!["specific-server".into()],
-        groups: vec!["Work".into()],
-        ..Snippet::new(uuid::Uuid::from_u128(13))
-    };
-    let installed = native_installation(&paths, &original, cx);
-    // Keep the already-loaded library writable but refuse its next physical atomic publication.
-    std::fs::remove_file(paths.snippets_file()).unwrap();
-    std::fs::create_dir(paths.snippets_file()).unwrap();
+    .unwrap();
+    cx.run_until_parked();
+    let saved = cx.update(|cx| installed.library(cx).snippets[0].clone());
+    assert_eq!(saved.id, uuid::Uuid::from_u128(50_000));
+    assert_eq!(
+        ids.calls(),
+        1,
+        "validation retry and successful save reuse the draft"
+    );
     cx.update_window(handle, |_, window, cx| {
         open(
             installed.clone(),
-            Some(original.clone()),
+            Some(saved.clone()),
             workspace.downgrade(),
             window,
             cx,
         );
-        replace(window, "snippet-name", "  Native literal  ", cx);
-        replace(window, "snippet-description", "First\nSecond 日本語", cx);
-        replace(window, "snippet-code", "print('kept')\n", cx);
-        window.click("python", cx);
-        window.click("snippet-section-attachments", cx);
         window.render_frame(cx);
-        window.click("group-Work", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
+        replace(window, "snippet-code", "echo edited", cx);
         window.click("snippet-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("snippet-error").is_some());
-        assert_eq!(installed.library(cx).snippets, [original]);
-        assert!(installed.error(cx).is_some());
-        window.click("snippet-section-snippet", cx);
-        window.render_frame(cx);
-        assert_input(window, "snippet-name", "  Native literal  ", cx);
-        assert_input(window, "snippet-description", "First\nSecond 日本語", cx);
-        assert_input(window, "snippet-code", "print('kept')\n", cx);
-    })
-    .unwrap();
-    std::fs::remove_dir(paths.snippets_file()).unwrap();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("snippet-save", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("dialog").is_none());
-        let saved = &installed.library(cx).snippets[0];
-        assert_eq!(saved.name, "Native literal");
-        assert_eq!(saved.description, "First\nSecond 日本語");
-        assert_eq!(saved.content, "print('kept')\n");
-        assert_eq!(saved.language, Language::Python);
-        assert_eq!(saved.profiles, ["specific-server"]);
-        assert!(saved.groups.is_empty());
-        assert!(installed.error(cx).is_none());
-        assert_eq!(
-            nocterm_core::persist::load::<nocterm_snippets::Library>(&paths.snippets_file())
-                .unwrap()
-                .unwrap()
-                .snippets
-                .as_slice(),
-            std::slice::from_ref(saved)
-        );
-    })
-    .unwrap();
+    cx.update(|cx| {
+        assert_eq!(installed.library(cx).snippets[0].id, saved.id);
+        assert_eq!(installed.library(cx).snippets[0].content, "echo edited");
+    });
+    assert_eq!(
+        ids.calls(),
+        1,
+        "existing editor does not acquire an identity"
+    );
 }

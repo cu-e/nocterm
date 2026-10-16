@@ -15,8 +15,7 @@ fn fixture(
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let installed = crate::init(
-            None,
+        let installed = crate::test_support::install(
             settings,
             &nocterm_store::ShutdownCoordinator::default(),
             cx,
@@ -167,13 +166,8 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
     seed(&original, &installed, cx);
     let separate = cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        crate::init(
-            None,
-            settings,
-            &nocterm_store::ShutdownCoordinator::default(),
-            cx,
-        )
-        .unwrap()
+        crate::test_support::install(settings, &nocterm_store::ShutdownCoordinator::default(), cx)
+            .unwrap()
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

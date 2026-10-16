@@ -154,3 +154,9 @@ window-appearance callback captures that projection and applies its current publ
 mode. Design remains paint data; neither Design nor the toolkit theme discovers a
 settings service. Closing one window releases its native callback while surviving
 and later windows keep the root projection.
+
+Snippet composition acquires the supplied native document at the existing installation
+phase, prepares its checked service state and supplies a repository-backed snapshot
+writer to SnippetsHandle. Only successful shutdown registration exposes Installed to
+windows. The same installed library/settings and native identity capability are reused
+across windows; UUID acquisition occurs only for an actual new editor draft.

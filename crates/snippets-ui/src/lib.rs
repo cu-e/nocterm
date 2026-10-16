@@ -1,10 +1,10 @@
 //! Contextual snippet library in the workspace sidebar.
 //!
-//! Owns: retained library/settings installation, editor/panel presentation and identity generation.
+//! Owns: retained service/settings/identity capabilities and editor/panel presentation.
 //! SnippetDraft owns literal native controls; AttachmentPicker owns search/folding/section state.
 //! Does not own: checked record rules or ordered background write orchestration.
-//! Existing native library loading/identity creation remain explicit feature migration debt.
-//! Ports used: SnapshotWriter, UserTerminalPaste. Ports provided: sidebar panel.
+//! Native storage/entropy is supplied by composition; the library model lives in snippets-store.
+//! Ports used: SnippetsHandle, SettingsHandle, SnippetIds, UserTerminalPaste. Ports provided: sidebar panel.
 //! Settings section: reads terminal through supplied SettingsHandle. Globals: none.
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.
@@ -13,12 +13,12 @@
 
 mod editor;
 mod installation;
-mod model;
+#[cfg(test)]
+mod test_support;
 pub use installation::Installed;
 mod panel;
 use gpui_kit::{App, AppContext as _, Context, Window};
-pub use model::{SnippetsError, SnippetsLoadError};
-use nocterm_core::Paths;
+pub use nocterm_snippets_store::{SnippetsError, SnippetsLoadError};
 use nocterm_workspace::Workspace;
 pub use panel::SnippetsPanel;
 
@@ -31,15 +31,15 @@ gpui_kit::actions!(
         NewSnippet,
     ]
 );
-/// Install the shared library; `None` provides in-memory storage for tests.
+/// Retain the actual installed library, original settings and draft identity capability.
 pub fn init(
-    paths: Option<&Paths>,
+    model: nocterm_snippets_store::SnippetsHandle,
     settings: nocterm_store::SettingsHandle,
-    shutdown: &nocterm_store::ShutdownCoordinator,
+    ids: std::sync::Arc<dyn nocterm_snippets::SnippetIds>,
     cx: &mut App,
-) -> Result<Installed, nocterm_store::StoreError> {
-    let model = model::init(paths, shutdown, cx)?;
-    Ok(Installed::new(model, settings))
+) -> Installed {
+    settings.register::<nocterm_ui::TerminalSettings>(cx);
+    Installed::new(model, settings, ids)
 }
 /// Register the snippet switch and action in a workspace.
 pub fn register(

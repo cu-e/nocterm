@@ -1,0 +1,21 @@
+[package]
+name = "nocterm-snippets-io"
+description = "Native snippet document acquisition, publication and draft identities."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-snippets.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
