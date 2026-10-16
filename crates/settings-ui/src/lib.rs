@@ -2,9 +2,9 @@
 //!
 //! Every control saves as soon as it changes; text saves when typing pauses,
 //! on Enter and when the field loses focus. There is no draft and no Apply.
-//! Owns: settings tab presentation, field editing and lazy guest page lifetimes.
-//! Does not own: native sandbox probing, settings persistence or guest feature rules.
-//! Ports used: Installed supplies SettingsHandle and SandboxProbe; ThemeUi and guest pages.
+//! Owns: settings tab presentation, feature validators, field membership and lazy guest page lifetimes.
+//! Does not own: shared native text/receipt state, sandbox probing, persistence or guest feature rules.
+//! Ports used: Installed supplies SettingsHandle and SandboxProbe; SettingsTextField, ThemeUi and guest pages.
 //! Ports provided: workspace settings Item. Settings section: none. Globals: none.
 //! Invariants: sandbox availability is display evidence; native launch validates freshly.
 
@@ -15,20 +15,23 @@ pub use deps::Deps;
 pub use installation::Installed;
 mod appearance;
 mod field;
+mod field_presentation;
 mod pages;
 
 use std::collections::BTreeMap;
 
-use field::{Field, FieldError};
+use field::FieldError;
+use field_presentation::FieldPresentation;
 use gpui_kit::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
     TestSupportExt as _, Window,
-    component::{StyledExt as _, h_flex, input::InputEvent, v_flex},
+    component::{StyledExt as _, h_flex, v_flex},
     div,
     prelude::*,
     px, rems,
 };
 use nocterm_settings::{SettingsDocument, SettingsSection};
+use nocterm_ui::SettingsTextField;
 use nocterm_ui::{IconName, form};
 use nocterm_ui::{SettingsPageHandle, SettingsPageSpec};
 use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
@@ -138,7 +141,7 @@ pub struct SettingsView {
     pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
     focus: FocusHandle,
     /// Text settings by key, such as `terminal.font_size`.
-    fields: BTreeMap<SharedString, Field>,
+    fields: BTreeMap<SharedString, FieldPresentation>,
     ai: ai::AiPage,
     appearance: appearance::AppearancePage,
     session_options: gpui_kit::Entity<nocterm_ui::SessionOptionsEditor>,
@@ -230,7 +233,7 @@ impl SettingsView {
             return;
         }
         // Leaving a page saves what is being typed there.
-        self.commit_all(cx);
+        self.commit_all(window, cx);
         if let Some(page) = self.guest() {
             page.deactivate(window, cx);
         }
@@ -256,67 +259,35 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) {
         let key = key.into();
-        let event_key = key.clone();
-        let field = Field::new(
+        let field = SettingsTextField::new(
             self.installed.settings().clone(),
-            read,
-            write,
+            key.clone(),
+            move |document| read(document.get::<S>()),
+            move |document, text| {
+                let mut section = document.get::<S>().clone();
+                write(&mut section, text).map_err(nocterm_store::StoreError::edit)?;
+                document.set(section);
+                Ok(())
+            },
             window,
             cx,
-            move |this, event, window, cx| this.field_event(&event_key, event, window, cx),
         );
-        self.fields.insert(key, field);
+        self.fields
+            .insert(key, FieldPresentation::new(field, window, cx));
     }
     pub(crate) fn remove_fields(&mut self, prefix: &str) {
         self.fields.retain(|key, _| !key.starts_with(prefix));
     }
-    fn field_event(
-        &mut self,
-        key: &SharedString,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            InputEvent::Change => {
-                let pending = key.clone();
-                let task = cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor().timer(field::DEBOUNCE).await;
-                    let _ = this.update(cx, |this, cx| {
-                        if let Some(field) = this.fields.get_mut(&pending) {
-                            field.commit(cx);
-                        }
-                        cx.notify();
-                    });
-                });
-                if let Some(field) = self.fields.get_mut(key) {
-                    field.debounce = Some(task);
-                }
-            }
-            InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                if let Some(field) = self.fields.get_mut(key) {
-                    field.commit(cx);
-                }
-                cx.notify();
-            }
-            InputEvent::Focus => {}
-        }
-    }
     /// Saves every field with unsaved text now.
-    fn commit_all(&mut self, cx: &mut Context<Self>) {
-        for field in self.fields.values_mut() {
-            if field.debounce.is_some() {
-                field.commit(cx);
-            }
+    fn commit_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for field in self.fields.values() {
+            field.field().flush(window, cx);
         }
         if self.session_options_save.take().is_some() {
             self.save_session_options(cx);
         }
     }
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for field in self.fields.values_mut() {
-            field.sync(window, cx);
-        }
         ai::sync(self, window, cx);
         self.appearance.sync(window, cx);
         cx.notify();
@@ -364,7 +335,9 @@ impl SettingsView {
 
     fn schedule_session_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.session_options_save = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(field::DEBOUNCE).await;
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(600))
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.session_options_save = None;
                 this.save_session_options(cx);
@@ -387,8 +360,8 @@ impl SettingsView {
         }
     }
 
-    pub(crate) fn field(&self, key: &str) -> &Field {
-        &self.fields[key]
+    pub(crate) fn field(&self, key: &str) -> &SettingsTextField {
+        self.fields[key].field()
     }
 
     fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -457,7 +430,7 @@ impl Item for SettingsView {
         IconName::Settings
     }
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_all(cx);
+        self.commit_all(window, cx);
         for (_, page) in &self.pages {
             if let Some(page) = page {
                 page.close(window, cx);

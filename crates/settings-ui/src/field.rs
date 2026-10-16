@@ -1,21 +1,4 @@
-//! A text setting that saves itself: shortly after typing stops, on Enter and
-//! when it loses focus. Invalid text stays in the field with its error and
-//! is never written.
-use std::{rc::Rc, time::Duration};
-
-/// How long typing must pause before a field saves.
-pub(crate) const DEBOUNCE: Duration = Duration::from_millis(600);
-
-use gpui_kit::{
-    App, Context, Entity, Focusable as _, SharedString, Subscription, Task, Window,
-    component::input::{InputEvent, InputState},
-    prelude::*,
-};
-use nocterm_settings::{SettingsDocument, SettingsSection};
-use nocterm_store::SettingsHandle;
-
-type Read = Rc<dyn Fn(&SettingsDocument) -> String>;
-type Write = Rc<dyn Fn(&mut SettingsDocument, &str) -> Result<(), FieldError>>;
+//! Feature-specific settings syntax and validation errors.
 
 /// Why text typed into a field cannot be saved; `Display` is the message
 /// shown beside the field.
@@ -49,93 +32,6 @@ pub(crate) enum FieldError {
     DuplicateAgent(String),
     #[error(transparent)]
     Agent(#[from] crate::ai::AgentValidationError),
-}
-
-pub(crate) struct Field {
-    settings: SettingsHandle,
-    pub input: Entity<InputState>,
-    read: Read,
-    write: Write,
-    pub error: Option<SharedString>,
-    /// The text last saved or loaded; unchanged text is not written again.
-    saved: String,
-    /// A save waiting for typing to pause.
-    pub debounce: Option<Task<()>>,
-    _subscription: Subscription,
-}
-
-impl Field {
-    /// A field showing `read` of section `S` and saving through `write`.
-    pub(crate) fn new<S: SettingsSection, V: 'static>(
-        settings: SettingsHandle,
-        read: impl Fn(&S) -> String + 'static,
-        write: impl Fn(&mut S, &str) -> Result<(), FieldError> + 'static,
-        window: &mut Window,
-        cx: &mut Context<V>,
-        on_event: impl Fn(&mut V, &InputEvent, &mut Window, &mut Context<V>) + 'static,
-    ) -> Self {
-        let read: Read = Rc::new(move |document| read(document.get::<S>()));
-        let write: Write = Rc::new(move |document, text| {
-            let mut section = document.get::<S>().clone();
-            write(&mut section, text)?;
-            document.set(section);
-            Ok(())
-        });
-        let saved = read(settings.document(cx));
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(saved.clone()));
-        let subscription = cx.subscribe_in(&input, window, move |view, _, event, window, cx| {
-            on_event(view, event, window, cx)
-        });
-        Self {
-            settings,
-            input,
-            read,
-            write,
-            error: None,
-            saved,
-            debounce: None,
-            _subscription: subscription,
-        }
-    }
-
-    /// Validates the text against the current settings and saves it.
-    pub(crate) fn commit(&mut self, cx: &mut App) {
-        self.debounce = None;
-        let text = self.input.read(cx).value().to_string();
-        if text == self.saved && self.error.is_none() {
-            return;
-        }
-        let mut probe = self.settings.document(cx).clone();
-        if let Err(error) = (self.write)(&mut probe, &text) {
-            self.error = Some(error.to_string().into());
-            return;
-        }
-        self.error = None;
-        self.saved = text.clone();
-        let write = self.write.clone();
-        self.settings
-            .edit(cx, move |settings| {
-                // Checked above; the settings may have changed since, so a
-                // value that no longer fits is left out rather than forced in.
-                let _ = write(settings, &text);
-            })
-            .detach();
-    }
-
-    /// Shows a value saved elsewhere, unless the user is editing this field.
-    pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut App) {
-        let value = (self.read)(self.settings.document(cx));
-        if value == self.saved || self.debounce.is_some() || self.error.is_some() {
-            return;
-        }
-        let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
-        if focused && self.input.read(cx).value() != self.saved.as_str() {
-            return;
-        }
-        self.saved = value.clone();
-        self.input
-            .update(cx, |input, cx| input.set_value(value, window, cx));
-    }
 }
 
 /// An optional value: empty text means unset.

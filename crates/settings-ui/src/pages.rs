@@ -5,7 +5,6 @@ use gpui_kit::{
         Disableable as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::Input,
         switch::Switch,
         v_flex,
     },
@@ -58,12 +57,45 @@ pub(crate) fn apply_session_options(document: &mut SettingsDocument, options: Se
     document.set(options.logging.unwrap_or_default());
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn add_fields(
     view: &mut SettingsView,
     window: &mut Window,
     cx: &mut Context<SettingsView>,
 ) {
+    appearance_fields(view, window, cx);
+    terminal_fields(view, window, cx);
+    view.add_field(
+        "ssh.timeout",
+        |s: &SshSettings| s.connect_timeout_secs.to_string(),
+        |s: &mut SshSettings, text| {
+            s.connect_timeout_secs = number(text, "Connection timeout", CONNECT_TIMEOUT_RANGE)?;
+            Ok(())
+        },
+        window,
+        cx,
+    );
+    view.add_field(
+        "ssh.keepalive",
+        |s: &SshSettings| s.keepalive_interval_secs.to_string(),
+        |s: &mut SshSettings, text| {
+            s.keepalive_interval_secs = number(text, "Keepalive interval", KEEPALIVE_RANGE)?;
+            Ok(())
+        },
+        window,
+        cx,
+    );
+    shell_fields::<LocalShellSettings>(view, "local", |s| &mut s.0, |s| &s.0, window, cx);
+    shell_fields::<SshSettings>(
+        view,
+        "ssh.launch",
+        |s| &mut s.launch,
+        |s| &s.launch,
+        window,
+        cx,
+    );
+}
+
+fn appearance_fields(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsView>) {
     view.add_field(
         "appearance.card_gap",
         |s: &AppearanceSettings| s.card_gap.to_string(),
@@ -84,6 +116,9 @@ pub(crate) fn add_fields(
         window,
         cx,
     );
+}
+
+fn terminal_fields(view: &mut SettingsView, window: &mut Window, cx: &mut Context<SettingsView>) {
     view.add_field(
         "terminal.font_family",
         |s: &TerminalSettings| s.font_family.clone().unwrap_or_default(),
@@ -121,35 +156,6 @@ pub(crate) fn add_fields(
             s.scrollback_lines = number(text, "Scrollback", SCROLLBACK_RANGE)?;
             Ok(())
         },
-        window,
-        cx,
-    );
-    view.add_field(
-        "ssh.timeout",
-        |s: &SshSettings| s.connect_timeout_secs.to_string(),
-        |s: &mut SshSettings, text| {
-            s.connect_timeout_secs = number(text, "Connection timeout", CONNECT_TIMEOUT_RANGE)?;
-            Ok(())
-        },
-        window,
-        cx,
-    );
-    view.add_field(
-        "ssh.keepalive",
-        |s: &SshSettings| s.keepalive_interval_secs.to_string(),
-        |s: &mut SshSettings, text| {
-            s.keepalive_interval_secs = number(text, "Keepalive interval", KEEPALIVE_RANGE)?;
-            Ok(())
-        },
-        window,
-        cx,
-    );
-    shell_fields::<LocalShellSettings>(view, "local", |s| &mut s.0, |s| &s.0, window, cx);
-    shell_fields::<SshSettings>(
-        view,
-        "ssh.launch",
-        |s| &mut s.launch,
-        |s| &s.launch,
         window,
         cx,
     );
@@ -289,10 +295,8 @@ pub(crate) fn text_row(
         .child(form::stacked_row(
             label,
             description,
-            Input::new(&field.input)
-                .id(SharedString::from(key.to_owned()))
-                .small(),
-            field.error.clone(),
+            field.input(),
+            field.error(cx),
             cx,
         ))
         .into_any_element()
@@ -310,16 +314,13 @@ pub(crate) fn short_row(
     let row = form::row(
         label,
         description,
-        gpui_kit::div().w(rems(10.)).child(
-            Input::new(&field.input)
-                .id(SharedString::from(key.to_owned()))
-                .small(),
-        ),
+        gpui_kit::div().w(rems(10.)).child(field.input()),
         cx,
     );
-    match field.error.clone() {
+    match field.error(cx) {
         Some(error) => v_flex()
             .id(SharedString::from(format!("settings-error-{key}")))
+            .aria_label(error.clone())
             .test_support()
             .child(row)
             .child(form::error_text(error, cx))

@@ -165,3 +165,194 @@ fn deferred_appearance_command_keeps_original_settings_without_global_redirect(
         );
     });
 }
+
+struct GatedPage {
+    window: gpui_kit::AnyWindowHandle,
+    workspace: Entity<Workspace>,
+    settings: nocterm_store::SettingsHandle,
+    release: nocterm_store::test_support::WriteRelease,
+    writes: nocterm_store::test_support::WriteLog<SettingsDocument>,
+}
+
+fn gated_page(cx: &mut TestAppContext) -> GatedPage {
+    let (writer, release, writes) = nocterm_store::test_support::gated_writer().into_parts();
+    let (window, workspace, settings) = cx.update(|cx| {
+        init_with_settings(
+            SettingsStore::from_config(nocterm_store::SettingsConfig::with_writer(
+                Default::default(),
+                writer,
+            )),
+            cx,
+        );
+        let settings = settings_deps(cx).settings().clone();
+        let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (window, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            let workspace = cx.new(|cx| {
+                let mut workspace = Workspace::new(layout, window, cx);
+                register(&mut workspace, theme_ui(cx), settings_deps(cx));
+                workspace
+            });
+            window.activate_window();
+            window.focus(&workspace.read(cx).focus_handle(cx), cx);
+            workspace
+        })
+        .unwrap();
+        (window, workspace, settings)
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_action(Box::new(OpenSettings), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    GatedPage {
+        window,
+        workspace,
+        settings,
+        release,
+        writes,
+    }
+}
+
+fn font_draft(handle: gpui_kit::AnyWindowHandle, text: &str, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
+        select_field_page("terminal.font_size", window, cx);
+        window.click("terminal.font_size", cx);
+        window.press("ctrl-a", cx);
+        window.press("backspace", cx);
+        window.input(text, cx);
+        assert_eq!(window.find("terminal.font_size").value(), Some(text));
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+async fn closing_the_actual_settings_item_admits_latest_text_before_capture(
+    cx: &mut TestAppContext,
+) {
+    let f = gated_page(cx);
+    enter_font(f.window, Some("19"), cx);
+    font_draft(f.window, "20", cx);
+    let weak = cx.update(|cx| {
+        f.workspace
+            .read(cx)
+            .find_item::<SettingsView>()
+            .unwrap()
+            .downgrade()
+    });
+    cx.update_window(f.window, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::CloseTab), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.workspace.read(cx).items().count(), 0);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(weak.upgrade().is_none());
+    let work = cx.update(|cx| f.settings.capture_shutdown(cx));
+    let task = cx.background_executor.spawn(work);
+    f.release.send(Ok(())).unwrap();
+    task.await.unwrap();
+    let values: Vec<_> = f
+        .writes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|d| d.get::<TerminalSettings>().font_size)
+        .collect();
+    assert_eq!(values, [Some(19.), Some(20.)]);
+}
+
+#[gpui_kit::test]
+fn leaving_the_actual_page_flushes_new_text_behind_a_pending_receipt(cx: &mut TestAppContext) {
+    let f = gated_page(cx);
+    enter_font(f.window, Some("19"), cx);
+    font_draft(f.window, "20", cx);
+    cx.update_window(f.window, |_, window, cx| {
+        select_field_page("local.args", window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    f.release.send(Ok(())).unwrap();
+    cx.run_until_parked();
+    let values: Vec<_> = f
+        .writes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|d| d.get::<TerminalSettings>().font_size)
+        .collect();
+    assert_eq!(values, [Some(19.), Some(20.)]);
+    cx.update(|cx| {
+        assert_eq!(
+            f.settings.setting::<TerminalSettings>(cx).font_size,
+            Some(20.)
+        )
+    });
+    cx.update_window(f.window, |_, window, cx| {
+        select_field_page("terminal.font_size", window, cx);
+        assert_eq!(window.find("terminal.font_size").value(), Some("20"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn newer_validation_error_survives_an_older_physical_success(cx: &mut TestAppContext) {
+    let f = gated_page(cx);
+    enter_font(f.window, Some("19"), cx);
+    enter_font(f.window, Some("100"), cx);
+    cx.update_window(f.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("terminal.font_size").value(), Some("100"));
+        assert!(
+            window
+                .find("settings-error-terminal.font_size")
+                .label()
+                .unwrap()
+                .starts_with("Font size:")
+        );
+    })
+    .unwrap();
+    f.release.send(Ok(())).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            f.settings.setting::<TerminalSettings>(cx).font_size,
+            Some(19.)
+        )
+    });
+    cx.update_window(f.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("terminal.font_size").value(), Some("100"));
+        assert!(
+            window
+                .find("settings-error-terminal.font_size")
+                .label()
+                .unwrap()
+                .starts_with("Font size:")
+        );
+    })
+    .unwrap();
+    assert_eq!(f.writes.lock().unwrap().len(), 1);
+    enter_font(f.window, Some("20"), cx);
+    cx.update(|cx| {
+        assert_eq!(
+            f.settings.setting::<TerminalSettings>(cx).font_size,
+            Some(20.)
+        )
+    });
+    cx.update_window(f.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find("settings-error-terminal.font_size")
+                .is_none()
+        );
+    })
+    .unwrap();
+    assert_eq!(f.writes.lock().unwrap().len(), 2);
+}

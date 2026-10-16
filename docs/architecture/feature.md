@@ -125,12 +125,17 @@ and comments on retained keys round-trip through the existing atomic writer.
 `nocterm-settings-ui`
 contributes a single settings Item with a page list. Every control saves itself:
 switches and choices at once, text when typing pauses, on Enter and on blur.
-Invalid text stays in its field with the error and is never written. Each save is
-an edit of one section through its supplied SettingsHandle queued and applied to the settings
-current when the write runs, so quick successive edits and other windows never
-conflict; changes are published through the retained settings owner only after a successful
-write, observers of other sections are not woken, and fields not being edited
-follow changes made elsewhere. Persistent writes run through bounded ordered
+Invalid text stays in its field with the error and is never written. Feature-owned
+bindings retain the actual validators, labels and section identities. Shared UI
+`SettingsTextField` owns private native input, debounce and checked receipt state;
+its callback validates the actual ordered candidate atomically. Publication failure
+preserves the literal and shows its error; the same text can be retried with Enter.
+Each distinct close/page-deactivation flush is admitted before field membership is
+released, including behind a pending write. FieldPresentation retains the narrow
+parent redraw observation with its handle; removal retires both. Changes publish
+through the original SettingsHandle only after a successful write. Newer drafts are
+not overwritten by older completion or external updates; pristine fields follow
+published changes without a feedback write. Persistent writes run through bounded ordered
 background queues; profile drafts carry the original snapshot, so another window
 cannot silently lose its saved changes. Pages share `nocterm_ui::form` sections and rows
 on the terminal's background. Recent snapshots

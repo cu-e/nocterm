@@ -6,15 +6,16 @@
 //! [`SettingsExt`] remain compatibility accessors for presentation callers; shared
 //! helpers also accept explicitly supplied settings.
 //!
-//! Owns: theme projections, shared assets/forms, settings compatibility access and layout values.
+//! Owns: theme projections, shared assets/forms, checked native text editing, settings compatibility and layout.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
-//! explicit settings-based terminal styling and the installed settings handle.
+//! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
 //! Settings sections: appearance, terminal.
 //! Globals: Design, SettingsStore, Notices.
 //! Imported themes use an explicit ThemeUi projection over ThemesHandle.
 //! Feature policy schemas are registered by their owning service.
-//! Invariants: layout edits remain visible on persistence failure; theme uses typed settings.
+//! Invariants: layout edits remain visible on persistence failure; text drafts retain original checked receipts.
+//! Text errors stay typed until display; close/deactivation synchronously admit distinct literals.
 
 mod design;
 mod drag_preview;
@@ -27,8 +28,10 @@ mod sections;
 mod session_options;
 mod settings;
 mod settings_page;
+mod settings_text_field;
 pub use session_options::{SessionOptionsEditor, SessionOptionsInputError};
 pub use settings_page::{SettingsPage, SettingsPageHandle, SettingsPageSpec};
+pub use settings_text_field::SettingsTextField;
 mod terminal_style;
 mod theme;
 mod themes;

@@ -32,6 +32,29 @@ for shell echo; cursor timing and IME overlays redraw only when their presentati
 changes. VT scroll boundaries preserve selection and avoid unnecessary output
 notifications, including selection recomputation in vi mode.
 
+## Settings controls
+
+`SettingsTextField` owns native input, a 600 ms debounce, checked admission and
+the latest original receipt. Feature-provided typed bindings read and validate
+actual settings candidates; UI keeps no feature validators or document cache.
+Each distinct flush immediately enters the existing bounded settings queue,
+including while an older write is pending. Same waiting literal is deduplicated
+only at an unchanged published semantic revision; a later publication admits a
+fresh intention before delayed UI completion. Settled dedup uses the current
+confirmed value. The field retains one latest waiter; dropping an older waiter
+never revokes accepted service work. Matching completion reconciles canonical
+text and diagnostics; a newer literal remains intact. Publication failures
+remain visible and the same literal can be retried with Enter. Returning to a
+prior value is admitted behind a different pending candidate.
+
+Published settings observations retain the original weak field/window. Forms own
+narrow redraw subscriptions with each field's membership, so an asynchronous failure
+updates the surrounding error even without a settings publication. Removing a field
+retires its handle and form observation together. Hosts flush before close/deactivation;
+shutdown captures already accepted edits through the existing service. A draft never
+flushed before native quit is not an accepted snapshot. No coordinator phase or quit
+handler is added ([ADR 0054](../adr/0054-checked-settings-text-receipts.md)).
+
 ## Rendering
 
 Windows incremental painting stays inside the vendored GPUI renderer. Exact
