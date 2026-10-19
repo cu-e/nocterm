@@ -22,4 +22,11 @@ fn main() {
         netbsdlike: { any(netbsd, openbsd) },
         solarish: { any(illumos, solaris) },
     }
+    // Nocterm: declare the aliases above and the upstream CI-only `fbsd14` for
+    // rustc's cfg checking.
+    println!(
+        "cargo:rustc-check-cfg=cfg(android, dragonfly, ios, freebsd, illumos, linux, macos, \
+         netbsd, openbsd, solaris, watchos, tvos, apple_targets, bsd, linux_android, \
+         freebsdlike, netbsdlike, solarish, fbsd14)"
+    );
 }

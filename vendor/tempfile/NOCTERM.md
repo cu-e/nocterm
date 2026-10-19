@@ -1,7 +1,7 @@
 # Nocterm admitted temporary-path addition
 
-Base: published tempfile3.27.0,
-upstream5c8fa12eb584931b4f1bccfde87eb72fbfa7dc61,
+Base: published tempfile 3.27.0,
+upstream 5c8fa12eb584931b4f1bccfde87eb72fbfa7dc61,
 MIT OR Apache-2.0.
 
 Nocterm adds `TempPath::from_prepared_path(Box<Path>)`: a safe ownership move

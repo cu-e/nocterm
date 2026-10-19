@@ -351,7 +351,9 @@
       "license": "MIT",
       "patches": [
         "vendor/patches/nix/0001-caller-buffer-current-directory.patch",
-        "vendor/patches/nix/0002-native-environment-home-realpath.patch"
+        "vendor/patches/nix/0002-native-environment-home-realpath.patch",
+        "vendor/patches/nix/0003-native-environment-snapshot.patch",
+        "vendor/patches/nix/0004-current-compiler-lint-hygiene.patch"
       ],
       "omitted": []
     },
@@ -387,7 +389,8 @@
       "patches": [
         "vendor/patches/tempfile/0001-admitted-temporary-path.patch",
         "vendor/patches/tempfile/0002-owned-native-error-path.patch",
-        "vendor/patches/tempfile/0003-borrow-original-temp-override.patch"
+        "vendor/patches/tempfile/0003-borrow-original-temp-override.patch",
+        "vendor/patches/tempfile/0004-controlled-anonymous-engine.patch"
       ],
       "omitted": []
     },
@@ -455,7 +458,8 @@
       },
       "license": "MIT OR Apache-2.0",
       "patches": [
-        "vendor/patches/serde_json/0001-native-error-body-layout.patch"
+        "vendor/patches/serde_json/0001-native-error-body-layout.patch",
+        "vendor/patches/serde_json/0002-native-error-message-layout.patch"
       ],
       "omitted": []
     }

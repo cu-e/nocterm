@@ -4,8 +4,11 @@ use std::ffi::CStr;
 /// Native presence and exact caller-storage requirements, without UTF-8 conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnvironmentObservation {
+    /// The variable is not set.
     Missing,
+    /// The value was copied; its length in bytes, without a NUL.
     Copied(usize),
+    /// The output is too small; the value's length in bytes. Nothing was written.
     Required(usize),
 }
 

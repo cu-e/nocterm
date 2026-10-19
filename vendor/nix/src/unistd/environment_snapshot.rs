@@ -5,8 +5,20 @@ use std::ffi::CStr;
 /// Exact native raw entry count and NUL-separated output storage requirements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnvironmentSnapshot {
-    Required { bytes: usize, entries: usize },
-    Copied { bytes: usize, entries: usize },
+    /// The output is too small; nothing was written.
+    Required {
+        /// Bytes of all entries, each including its NUL.
+        bytes: usize,
+        /// Number of raw entries.
+        entries: usize,
+    },
+    /// Every entry was copied into the start of the output.
+    Copied {
+        /// Bytes written, each entry including its NUL.
+        bytes: usize,
+        /// Number of raw entries written.
+        entries: usize,
+    },
 }
 
 /// Copy the current complete native environment, preserving raw entry order,

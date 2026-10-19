@@ -11,7 +11,7 @@ paths before using stock constructors. The bounded history Unicode-unit adapter
 uses the actual stock parser and retains its original concrete Error.
 
 Error::message_allocation_bytes() observes the exact current private Message
-Box<str> length or0, without formatting, cloning, copying or changing constructors.
+Box<str> length or 0, without formatting, cloning, copying or changing constructors.
 Controlled typed-route callers use it only after prepaying source-derived parser/
 formatting growth peaks, so an escaped original error retains its actual body and
 message allocation instead of a temporary prospective peak envelope.

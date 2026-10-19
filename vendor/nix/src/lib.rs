@@ -89,6 +89,9 @@
 #![deny(missing_copy_implementations)]
 #![deny(missing_debug_implementations)]
 #![warn(missing_docs)]
+// Nocterm: lints that warn by default only on newer compilers, about unchanged
+// upstream code.
+#![allow(missing_abi, mismatched_lifetime_syntaxes, unpredictable_function_pointer_comparisons)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(clippy::cast_ptr_alignment)]
 #![deny(unsafe_op_in_unsafe_fn)]
