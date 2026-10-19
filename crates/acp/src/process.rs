@@ -8,7 +8,7 @@ use std::{
 use nocterm_ai::{AgentError, ConnectRequest};
 
 mod lifecycle;
-pub(crate) use lifecycle::ProcessGroup;
+pub(crate) use lifecycle::{CleanupError, ProcessGroup};
 #[cfg(target_os = "linux")]
 mod host;
 #[cfg(target_os = "linux")]

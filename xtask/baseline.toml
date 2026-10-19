@@ -2,7 +2,7 @@
 # Entries may only shrink; reductions must lower this inventory.
 [complexity_expects]
 nocterm = 4
-nocterm-acp = 7
+nocterm-acp = 6
 nocterm-agent = 9
 nocterm-ai = 2
 nocterm-connections = 5

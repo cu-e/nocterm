@@ -10,7 +10,7 @@ use std::time::Duration;
 
 /// Why the agent process tree could not be confirmed stopped.
 #[derive(Debug, Clone, thiserror::Error)]
-pub(super) enum CleanupError {
+pub(crate) enum CleanupError {
     #[error("Agent cleanup worker disappeared")]
     WorkerLost,
     #[cfg(unix)]
@@ -89,10 +89,15 @@ impl ProcessGroup {
             });
         future
     }
-    pub(crate) fn shutdown(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+    /// Stops the process tree gracefully, resolving only once it is confirmed gone.
+    pub(crate) fn shutdown_confirmed(&self) -> BoxFuture<'static, Result<(), CleanupError>> {
         let completion = self.cleanup(false);
+        completion.boxed()
+    }
+    pub(crate) fn shutdown(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+        let confirmed = self.shutdown_confirmed();
         async move {
-            completion
+            confirmed
                 .await
                 .map_err(|error| AgentError::Io(error.to_string()))
         }
