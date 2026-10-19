@@ -737,5 +737,7 @@ fn public_repository_keeps_original_embedded_resource_branch_grammar() {
 
 #[path = "history_tests/large_resources.rs"]
 mod large_resources;
+#[path = "history_tests/native_errors.rs"]
+mod native_errors;
 #[path = "history_tests/raw_values.rs"]
 mod raw_values;

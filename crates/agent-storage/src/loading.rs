@@ -6,11 +6,11 @@ use nocterm_ai::{
     history::{HistoryCodecError, MAX_FILE_BYTES},
     storage::AgentStorageError,
 };
+use nocterm_core::SharedError;
 use std::{
     fs::File,
     io::Read as _,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 pub(super) fn file(dir: &Path, id: &str) -> Result<PathBuf, AgentStorageError> {
     if uuid::Uuid::parse_str(id).is_err() {
@@ -47,7 +47,7 @@ pub(super) fn read(path: &Path, id: &str) -> Result<Vec<u8>, AgentStorageError> 
 fn read_error(path: &Path, source: std::io::Error) -> AgentStorageError {
     AgentStorageError::Read {
         path: path.to_owned(),
-        source: Arc::new(source),
+        source: SharedError::from_error(source),
     }
 }
 

@@ -47,12 +47,9 @@ impl FailureCapture {
             {
                 AgentStorageError::NotFound(id.into())
             }
-            HeldReadError::Native { path, source, .. } => AgentStorageError::Read {
-                path,
-                source: source.into_arc(),
-            },
+            HeldReadError::Native { path, source, .. } => AgentStorageError::Read { path, source },
             #[cfg(test)]
-            HeldReadError::Json(error) => HistoryCodecError::Json(error.into_arc()).into(),
+            HeldReadError::Json(error) => HistoryCodecError::Json(error).into(),
             HeldReadError::EncodedLimit => HistoryCodecError::EncodedLimit.into(),
             HeldReadError::StructuralLimit => HistoryCodecError::StructuralLimit.into(),
             HeldReadError::Arithmetic => HistoryCodecError::ArithmeticOverflow.into(),

@@ -16,6 +16,8 @@
 //! ImageCodecCause reuses core shared causes without exposing a native codec type.
 //! Account usage diagnostics retain typed native I/O causes through foundation SharedError;
 //! narrow domain constructors preserve operation category and path.
+//! HistoryCodecError::Json and AgentStorageError StateDecode/Read/Publish/Directory/
+//! StatePublication/Delete retain their original concrete errors through SharedError.
 //! Workspace preparation and sandbox spawn diagnostics retain typed shared native I/O;
 //! adapter constructors preserve classification without changing policy or mount authority.
 //! Settings section: ai. Globals: none.

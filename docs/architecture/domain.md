@@ -195,6 +195,10 @@ payload retirement; they do not locate scopes by serialized chat ID.
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
 ([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records without adding protocol-specific fields.
+`HistoryCodecError::Json` and the `AgentStorageError` variants `StateDecode`,
+`Read`, `Publish`, `Directory`, `StatePublication` and `Delete` hold their original
+concrete errors in foundation `SharedError`, so standard source traversal reaches
+them and clones share them. Managed variants use their paid resident holders.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`

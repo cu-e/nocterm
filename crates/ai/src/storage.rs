@@ -6,7 +6,7 @@ use crate::{
 mod label;
 use futures::future::BoxFuture;
 pub use label::{ManagedLabelFailure, StorageLabel};
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManagedPreparationCause {
@@ -54,36 +54,36 @@ pub enum AgentStorageError {
     #[error(transparent)]
     Codec(#[from] HistoryCodecError),
     #[error("Could not decode agent state: {0}")]
-    StateDecode(#[source] Arc<toml::de::Error>),
+    StateDecode(#[source] nocterm_core::SharedError<toml::de::Error>),
     #[error("Could not read {path}: {source}")]
     Read {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: nocterm_core::SharedError<std::io::Error>,
     },
     #[error("Could not publish {path}: {source}")]
     Publish {
         path: PathBuf,
         #[source]
-        source: Arc<nocterm_core::fs::FileError>,
+        source: nocterm_core::SharedError<nocterm_core::fs::FileError>,
     },
     #[error("Could not create private directory {path}: {source}")]
     Directory {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: nocterm_core::SharedError<std::io::Error>,
     },
     #[error("Could not save agent state at {path}: {source}")]
     StatePublication {
         path: PathBuf,
         #[source]
-        source: Arc<nocterm_core::persist::PersistError>,
+        source: nocterm_core::SharedError<nocterm_core::persist::PersistError>,
     },
     #[error("Could not delete {path}: {source}")]
     Delete {
         path: PathBuf,
         #[source]
-        source: Arc<std::io::Error>,
+        source: nocterm_core::SharedError<std::io::Error>,
     },
 }
 impl AgentStorageError {

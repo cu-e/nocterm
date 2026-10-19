@@ -4989,6 +4989,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-agent-runtime",
  "nocterm-ai",
+ "nocterm-core",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",

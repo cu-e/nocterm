@@ -8,6 +8,7 @@ use nocterm_ai::{
     history::{self, ChatSummary},
     storage::{AgentStorageError, ChatRepository, StorageFuture},
 };
+use nocterm_core::SharedError;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -130,7 +131,7 @@ pub(super) fn save_shared(dir: &Path, chat: &SharedChat) -> Result<(), AgentStor
     nocterm_core::paths::ensure_private_dir(dir).map_err(|source| {
         AgentStorageError::Directory {
             path: dir.to_owned(),
-            source: Arc::new(source),
+            source: SharedError::from_error(source),
         }
     })?;
     let staged = match decision.encoding {
@@ -156,12 +157,12 @@ pub(super) fn save_shared(dir: &Path, chat: &SharedChat) -> Result<(), AgentStor
     .map_err(|error| match error {
         nocterm_core::fs::StageError::Native(source) => AgentStorageError::Publish {
             path: path.clone(),
-            source: Arc::new(source),
+            source: SharedError::from_error(source),
         },
         nocterm_core::fs::StageError::Producer(writing::ProducerError::Io(source)) => {
             AgentStorageError::Publish {
                 path: path.clone(),
-                source: Arc::new(nocterm_core::fs::FileError::Io {
+                source: SharedError::from_error(nocterm_core::fs::FileError::Io {
                     path: path.clone(),
                     source,
                 }),
@@ -175,7 +176,7 @@ pub(super) fn save_shared(dir: &Path, chat: &SharedChat) -> Result<(), AgentStor
         .publish()
         .map_err(|source| AgentStorageError::Publish {
             path,
-            source: Arc::new(source),
+            source: SharedError::from_error(source),
         })?;
     catalog::update_cache(dir, chat.snapshot(), !chat.prompts().is_empty());
     Ok(())
@@ -186,7 +187,7 @@ pub(super) fn delete(dir: &Path, id: &str) -> Result<(), AgentStorageError> {
         Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
             Err(AgentStorageError::Delete {
                 path,
-                source: Arc::new(source),
+                source: SharedError::from_error(source),
             })
         }
         _ => {

@@ -285,7 +285,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
             path: f._directory.path().join("chats"),
-            source: Arc::new(std::io::Error::new(
+            source: nocterm_core::SharedError::from_error(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "blocks directory creation",
             )),

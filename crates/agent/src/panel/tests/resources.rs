@@ -209,7 +209,9 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Read {
             path: f._directory.path().join("chats"),
-            source: Arc::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            source: nocterm_core::SharedError::from_error(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )),
         },
     );
     thread.update(cx, |thread, cx| thread.send("retain me".into(), cx));
@@ -620,7 +622,9 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
         nocterm_ai::testing::StorageOperation::Save(replacement_id),
         nocterm_ai::storage::AgentStorageError::Read {
             path: f._directory.path().join("chats"),
-            source: Arc::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            source: nocterm_core::SharedError::from_error(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )),
         },
     );
     while cx.background_executor.tick() {

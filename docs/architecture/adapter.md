@@ -116,6 +116,9 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
 publication, catalog scanning and rebuildable metadata sidecars. The transcript
 is authoritative: a sidecar failure cannot revoke a successful publication.
+State TOML decode, read and directory failures, chat deletion and the legacy
+shared-chat publication route reach the domain error as their original concrete
+values.
 An archived-draft update merges only its draft and timestamp into the original
 transcript under the service's shared serial gate.
 

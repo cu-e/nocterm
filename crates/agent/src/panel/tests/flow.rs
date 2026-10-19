@@ -425,7 +425,7 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
             path: f._directory.path().join("chats"),
-            source: Arc::new(std::io::Error::new(
+            source: nocterm_core::SharedError::from_error(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "blocks directory creation",
             )),
