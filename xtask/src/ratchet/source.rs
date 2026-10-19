@@ -211,7 +211,7 @@ pub(super) fn attributes(item: &Item) -> &[Attribute] {
     }
 }
 
-pub(super) fn test_only(attributes: &[Attribute]) -> bool {
+pub(crate) fn test_only(attributes: &[Attribute]) -> bool {
     attributes.iter().any(|attribute| {
         attribute.path().is_ident("test")
             || attribute
