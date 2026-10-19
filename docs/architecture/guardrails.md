@@ -85,6 +85,15 @@ fail-closed policy rejects `include!` source, including literal, dynamic and
 locally aliased calls: declare a Rust module instead. Passing the
 inventory does not waive the design rules.
 
+## Crate cards
+
+Every package under `crates/` starts its crate root (library, else binary) with
+an ownership card in its `//!` documentation: `Owns:`, `Does not own:`, its
+`Ports`, `Settings` section, `Globals` and `Invariants`. The label may carry a
+short qualifier before its colon (`Ports used:`, `Settings section:`). The
+check is a presence check on crate-level documentation; it does not judge
+whether the card describes the actual boundary, which remains a review duty.
+
 ## Early warnings and the survey
 
 `cargo xtask architecture` also prints, without failing, each package that has

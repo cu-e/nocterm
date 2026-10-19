@@ -69,6 +69,9 @@ fn survey(root: &Path, name: &str, owner: Option<&str>) -> anyhow::Result<Survey
         .to_owned();
     let sources = sources(root, directory)?;
     let mut survey = report::summarize(package.name.clone(), layer, &sources);
+    if let Some(card) = crate::crate_cards::root_file(package) {
+        survey.card_missing = crate::crate_cards::missing(&fs::read_to_string(card)?)?;
+    }
     if let Some(owner) = owner {
         survey.matrix = Some(type_matrix(owner, &sources)?);
     }

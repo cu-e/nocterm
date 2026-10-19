@@ -14,6 +14,7 @@ pub(super) const TEST_WARN_LINES: usize = 60;
 pub(super) struct Survey {
     pub(super) package: String,
     pub(super) layer: String,
+    pub(super) card_missing: Vec<&'static str>,
     pub(super) totals: Totals,
     pub(super) files: Vec<FileRow>,
     pub(super) types: Vec<TypeRow>,
@@ -142,6 +143,7 @@ pub(super) fn summarize(package: String, layer: String, sources: &[Source]) -> S
     Survey {
         package,
         layer,
+        card_missing: Vec::new(),
         totals,
         files,
         types,

@@ -53,6 +53,9 @@ fn header(out: &mut String, survey: &Survey) {
         totals.tests,
         totals.complexity_expects,
     );
+    if !survey.card_missing.is_empty() {
+        let _ = writeln!(out, "card missing: {}", survey.card_missing.join(", "));
+    }
 }
 
 fn shapes(out: &mut String, survey: &Survey) {

@@ -14,6 +14,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use serde_json::Value;
 
+mod crate_cards;
 mod file_size;
 mod lint_policy;
 mod manifest_lints;
@@ -87,6 +88,7 @@ fn main() -> anyhow::Result<()> {
             settings_reference::check(root)?;
             ratchet::check(root)?;
             file_size::check(root)?;
+            crate_cards::check(root)?;
             report_early_warnings(root)
         }
         Some("survey") => survey::run(root, &arguments[1..]),
