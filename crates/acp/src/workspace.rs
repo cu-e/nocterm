@@ -1,9 +1,4 @@
 //! Native agent workspace preparation, invoked by the host background executor.
-#![expect(
-    clippy::result_large_err,
-    clippy::large_enum_variant,
-    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
-)]
 use futures::future::BoxFuture;
 use nocterm_ai::{
     sandbox::SandboxPolicy,

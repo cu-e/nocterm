@@ -72,6 +72,10 @@ pub(super) struct Preparation {
     budget: SourceBudget,
 }
 impl Preparation {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn operation(
         home: &Home,
         startup: ManagedStartupHandle,
@@ -93,6 +97,10 @@ impl Preparation {
             }
         })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn run(
         &self,
         startup: ManagedStartupHandle,

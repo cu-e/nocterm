@@ -30,6 +30,10 @@ pub(super) struct PermissionTask {
     budget: SourceBudget,
 }
 impl PermissionTask {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn reject_overflow(mut self) -> Result<(), DriverError> {
         if let Some(responder) = self.responder.take() {
             let response = outgoing::fault::<()>(
@@ -45,6 +49,10 @@ impl PermissionTask {
         }
         Ok(())
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn new(
         responder: Responder<SourceBudget>,
         answer: PermissionAnswer,

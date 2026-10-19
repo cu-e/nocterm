@@ -42,6 +42,10 @@ impl Incoming {
             budget,
         }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn permission(&mut self, mut dispatch: Dispatch<SourceBudget>) -> Result<(), DriverError> {
         let span = dispatch.envelope().payload().supplied();
         let schema = super::permission_schema::diagnostic(span, &self.budget)?;
@@ -109,6 +113,10 @@ impl Incoming {
     }
 }
 impl Handler for Incoming {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn dispatch(
         &mut self,
         dispatch: Dispatch<SourceBudget>,

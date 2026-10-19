@@ -4,11 +4,6 @@
 //! budget before allocation. JSON-RPC payloads remain source spans through SDK
 //! routing; neutral materializers consume only actual prepaid native values.
 //! This module does not install a fallback to the generic typed SDK decoder.
-#![expect(
-    clippy::result_large_err,
-    clippy::large_enum_variant,
-    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
-)]
 mod authentication;
 mod budget;
 mod channel;

@@ -19,6 +19,10 @@ use std::{
 pub(crate) struct Paths {
     budget: SourceBudget,
 }
+#[expect(
+    clippy::result_large_err,
+    reason = "every path step returns ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 impl Paths {
     pub(crate) fn new(budget: SourceBudget) -> Self {
         Self { budget }
@@ -198,6 +202,10 @@ impl Paths {
             .map_err(|error| CanonicalError::Cause(error.into()))
     }
 }
+#[expect(
+    clippy::large_enum_variant,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 enum CanonicalError {
     Native(io::Error),
     Cause(Cause),
@@ -213,6 +221,10 @@ enum Input {
 }
 #[cfg(unix)]
 impl Input {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn new(input: &[u8], budget: SourceBudget) -> Result<Self, Cause> {
         let len = input
             .len()

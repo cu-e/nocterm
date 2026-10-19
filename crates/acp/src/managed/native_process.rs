@@ -89,6 +89,10 @@ impl Preparation {
         Self { budget }
     }
     #[cfg(unix)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn spawn(
         &self,
         startup: &ManagedStartupHandle,
@@ -173,6 +177,10 @@ impl Preparation {
         })
     }
     #[cfg(not(unix))]
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn spawn(
         &self,
         _: &ManagedStartupHandle,
@@ -182,6 +190,10 @@ impl Preparation {
     ) -> Result<Spawned, Error> {
         Err(Error::Platform)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn missing(&self, command: &str, env: &Environment, rules: &DiagnosticRedactor) -> Error {
         let result = diagnostic_text::format(format_args!("Cannot find agent command '{command}'. Configure an absolute executable path; inherited PATH is {}",env.get("PATH").unwrap_or("<unset>")),&self.budget).map_err(Error::from).and_then(|message|Ok(Error::Command(rules.scrub(message,&[],&self.budget)?)));
         match result {
@@ -189,6 +201,10 @@ impl Preparation {
         }
     }
     #[cfg(unix)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn resolve(
         &self,
         command: &str,
@@ -226,6 +242,10 @@ impl Preparation {
         Ok(None)
     }
     #[cfg(unix)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn sandbox(
         &self,
         policy: &nocterm_ai::sandbox::SandboxPolicy,
@@ -299,6 +319,10 @@ impl Preparation {
         Ok((bwrap, output))
     }
     #[cfg(unix)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn bwrap(
         &self,
         env: &Environment,

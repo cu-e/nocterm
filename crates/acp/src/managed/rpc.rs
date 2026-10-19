@@ -138,6 +138,10 @@ impl Rpc {
             }
         })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     async fn execute<T, F>(
         &self,
         envelope: Result<Envelope<SourceBudget>, Cause>,
@@ -164,6 +168,10 @@ impl Rpc {
         self.execute_request(request, restoring, timeout, decode, timeout_message)
             .await
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     async fn execute_request<T, F>(
         &self,
         request: Request<SourceBudget>,
@@ -214,6 +222,10 @@ impl Rpc {
         drop(response);
         Ok(decoded)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn prepare_prompt(
         &self,
         payload: &nocterm_ai::history::physical::DispatchPayload,
@@ -265,6 +277,10 @@ impl Rpc {
             Err(ManagedCommandError::LocalRestoreUnsupported { fork })
         })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn opened(
         &self,
         envelope: Result<Envelope<SourceBudget>, Cause>,

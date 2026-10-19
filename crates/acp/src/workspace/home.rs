@@ -9,6 +9,10 @@ pub(super) enum HomeFacts {
     Supplied(NativeOwned<Option<PathBuf>>),
 }
 impl HomeFacts {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn prepare(home: &Home, budget: &SourceBudget) -> Result<Self, Cause> {
         Ok(match home {
             Home::Current => Self::Current,
@@ -18,6 +22,10 @@ impl HomeFacts {
             Home::Supplied(None) => Self::Supplied(NativeOwned::absent(budget.ledger())?),
         })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn resolve(
         self,
         budget: &SourceBudget,
@@ -29,6 +37,10 @@ impl HomeFacts {
     }
 }
 #[cfg(unix)]
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn current(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause> {
     use nix::unistd::{EnvironmentObservation, getenv_into};
     use std::{os::unix::ffi::OsStrExt, path::Path};
@@ -46,6 +58,10 @@ fn current(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause>
         }
     }
 }
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn zeroes(budget: &SourceBudget, count: usize) -> Result<Buffer<u8, SourceBudget>, Cause> {
     let mut result = Buffer::new(budget.clone());
     result.reserve(count)?;
@@ -68,6 +84,10 @@ fn zeroes(budget: &SourceBudget, count: usize) -> Result<Buffer<u8, SourceBudget
         all(target_vendor = "apple", not(target_os = "macos"))
     ))
 ))]
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn passwd(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause> {
     use std::{os::unix::ffi::OsStrExt, path::Path};
     let mut scratch = zeroes(budget, nix::unistd::passwd_home_buffer_size())?;
@@ -94,11 +114,19 @@ fn passwd(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause> 
         all(target_vendor = "apple", not(target_os = "macos"))
     )
 ))]
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn passwd(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause> {
     Ok(NativeOwned::absent(budget.ledger())?)
 }
 
 #[cfg(not(unix))]
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn current(_: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause> {
     Err(Cause::Platform)
 }

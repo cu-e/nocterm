@@ -64,6 +64,10 @@ impl Commands {
     }
 }
 impl ManagedAgentCommands for Commands {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn new_session(&self, request: &SessionOpen) -> Operation<ManagedOpened> {
         let envelope = self.rpc.id().map_err(Cause::from).and_then(|id| {
             Ok(outgoing::open(
@@ -77,6 +81,10 @@ impl ManagedAgentCommands for Commands {
         });
         self.rpc.opened(envelope, false, None)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn restore_session(&self, request: &RestoreSession) -> Operation<ManagedOpened> {
         let (restore, fork, _) = self.rpc.state().capabilities();
         let method = if request.fork && fork {
@@ -117,6 +125,10 @@ impl ManagedAgentCommands for Commands {
         self.rpc.prepare_prompt(payload)
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn cancel(&self, session: &SessionId) -> Result<(), ManagedCommandError> {
         let _lifetime = self
             .rpc
@@ -129,6 +141,10 @@ impl ManagedAgentCommands for Commands {
             .and_then(|envelope| Ok(self.rpc.notify(envelope)?));
         result.map_err(|error| super::rpc::failure(error, ticket))
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn set_mode(&self, request: &ModeSelection) -> Operation<()> {
         let envelope = self.rpc.id().map_err(Cause::from).and_then(|id| {
             Ok(outgoing::mode(
@@ -147,6 +163,10 @@ impl ManagedAgentCommands for Commands {
     ) -> Operation<NativeOwned<Vec<ConfigOption>>> {
         super::configuration_command::Configuration::new(self.rpc.clone()).execute(request)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn authenticate(&self, method: &AuthMethodId) -> Operation<()> {
         let envelope = self.rpc.id().map_err(Cause::from).and_then(|id| {
             Ok(outgoing::authenticate(

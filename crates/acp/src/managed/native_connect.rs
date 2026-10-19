@@ -9,6 +9,10 @@ use nocterm_ai::{
 };
 use std::{io, path::PathBuf, sync::Arc};
 #[derive(Debug, thiserror::Error)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 pub(crate) enum Cause {
     #[error(transparent)]
     Spawn(#[from] native_process::Error),
@@ -84,6 +88,10 @@ impl Preparation {
             }
         })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     async fn run(
         self,
         request: ManagedConnectRequest,
@@ -137,6 +145,10 @@ impl Drop for Connecting {
         }
     }
 }
+#[expect(
+    clippy::large_enum_variant,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 enum Failure {
     Managed(ManagedCommandError),
     Native(Cause),

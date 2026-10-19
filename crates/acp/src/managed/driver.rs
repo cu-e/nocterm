@@ -54,6 +54,10 @@ impl DriverError {
 /// The handler owns paid notification/cache/permission work. Its polls share
 /// this driver's task, so no unaccounted executor task is created per request.
 pub(super) trait Handler: Unpin {
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn dispatch(
         &mut self,
         dispatch: Dispatch<SourceBudget>,

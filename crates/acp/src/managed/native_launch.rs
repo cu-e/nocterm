@@ -31,6 +31,10 @@ impl Launch {
     pub(super) fn new(budget: SourceBudget, rules: Arc<DiagnosticRedactor>) -> Self {
         Self { budget, rules }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn start(
         self,
         spawned: Spawned,

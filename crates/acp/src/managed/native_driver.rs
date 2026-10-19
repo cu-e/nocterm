@@ -164,6 +164,10 @@ fn final_event(
 }
 
 /// The redacted stderr tail, or the protocol failure text when stderr was empty.
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 fn exit_tail(
     tail: &Shared<std::sync::Mutex<Tail>, SourceBudget>,
     diagnostics: &Shared<Diagnostics, SourceBudget>,

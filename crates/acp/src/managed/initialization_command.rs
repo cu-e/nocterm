@@ -8,6 +8,10 @@ use nocterm_ai::{
     history::source::{ManagedAgentInfo, ManagedCommandError, ManagedSourceFuture},
     model::json::deferred::NativeAllocationError,
 };
+#[expect(
+    clippy::result_large_err,
+    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+)]
 pub(super) fn initialize(
     rpc: &Rpc,
     startup: ManagedStartupHandle,

@@ -18,6 +18,10 @@ impl Configuration {
     pub(super) fn new(rpc: Rpc) -> Self {
         Self { rpc }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn execute(
         self,
         request: &ConfigurationSelection,
@@ -40,6 +44,10 @@ impl Configuration {
                 }
             })
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     fn prepare(&self, request: &ConfigurationSelection) -> Result<Prepared, Cause> {
         let models = self
             .rpc

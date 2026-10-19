@@ -19,6 +19,10 @@ impl Close {
     pub(super) fn new(rpc: Rpc, events: Sender<ManagedAgentEvent>) -> Self {
         Self { rpc, events }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn execute(
         self,
         session: &SessionId,

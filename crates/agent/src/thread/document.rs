@@ -57,10 +57,10 @@ pub(crate) enum DocumentError {
 }
 /// Request framing the feature chose for the next prompt; copied natively at dispatch.
 pub(super) struct DispatchRequest<'a> {
-    pub(super) session: &'a nocterm_ai::model::ids::SessionId,
-    pub(super) context: Option<&'a str>,
-    pub(super) history: Option<&'a str>,
-    pub(super) command: bool,
+    session: &'a nocterm_ai::model::ids::SessionId,
+    context: Option<&'a str>,
+    history: Option<&'a str>,
+    command: bool,
 }
 impl<'a> DispatchRequest<'a> {
     pub(super) fn new(
