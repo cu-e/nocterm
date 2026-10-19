@@ -184,9 +184,11 @@ Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings
 its supplied settings handle before its first registry read. Settings observation
 uses a weak runtime; the feature installation owns that subscription. Shutdown
 capture retains only the runtime handle and returns the existing App-free work.
-No runtime global selects the recipient of a deferred operation. Protocol and
-physical history signatures remain ACP/version one. See
-[ADR0052](../adr/0052-retained-agent-installation.md).
+No runtime global selects the recipient of a deferred operation. Runtime signatures
+use neutral AI records; saved history is written as version two, with a bounded
+version-one fallback for oversized imported chats. See
+[ADR0052](../adr/0052-retained-agent-installation.md) and
+[ADR0058](../adr/0058-neutral-agent-protocol-boundary.md).
 
 SettingsHandle supplies additive edit_checked and update_checked operations over the
 same Persisted worker. Checked callbacks run at the actual ordered document base;

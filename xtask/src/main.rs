@@ -150,6 +150,18 @@ fn check_dependency(
     Ok(())
 }
 
+/// Agent protocol SDK types stay in the protocol adapter and the storage
+/// adapter's historical grammar; other crates use neutral AI records (ADR 0058).
+fn check_protocol_dependency(package: &str, dependency: &Dependency) -> anyhow::Result<()> {
+    let name = dependency.name.as_str();
+    if name.starts_with("agent-client-protocol")
+        && !matches!(package, "nocterm-acp" | "nocterm-agent-storage")
+    {
+        bail!("{package} depends on agent protocol SDK {name}");
+    }
+    Ok(())
+}
+
 fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut metadata = metadata(root)?;
     manifest_lints::check(root, &metadata)?;
@@ -190,6 +202,8 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
         let source = layers[package.name.as_str()];
         for dependency in &package.dependencies {
             check_dependency(source, dependency, &layers)
+                .with_context(|| format!("architecture violation in {}", package.name))?;
+            check_protocol_dependency(&package.name, dependency)
                 .with_context(|| format!("architecture violation in {}", package.name))?;
         }
         let mut dependencies: Vec<_> = package
@@ -531,6 +545,31 @@ mod tests {
             uses_default_features: true,
         };
         assert!(check_dependency("app", &missing, &layers).is_err());
+    }
+    #[test]
+    fn agent_protocol_sdk_is_limited_to_its_adapters() {
+        for name in ["agent-client-protocol", "agent-client-protocol-schema"] {
+            for kind in [None, Some("dev")] {
+                let dependency = Dependency {
+                    name: name.into(),
+                    kind: kind.map(str::to_owned),
+                    rename: Some("renamed".into()),
+                    features: Vec::new(),
+                    uses_default_features: true,
+                };
+                for package in ["nocterm-acp", "nocterm-agent-storage"] {
+                    assert!(check_protocol_dependency(package, &dependency).is_ok());
+                }
+                for package in [
+                    "nocterm-ai",
+                    "nocterm-agent-runtime",
+                    "nocterm-agent",
+                    "nocterm",
+                ] {
+                    assert!(check_protocol_dependency(package, &dependency).is_err());
+                }
+            }
+        }
     }
     #[test]
     fn feature_and_transport_boundaries_are_enforced() {

@@ -10,6 +10,10 @@ existing exceptions, not a budget to spend elsewhere. A new exception or growth
 fails. A reduction also fails until its entry is lowered or removed. No command
 regenerates the inventory.
 
+Agent protocol SDK packages (`agent-client-protocol*`) may be dependencies of
+any kind only in `nocterm-acp` and `nocterm-agent-storage`; renamed bindings do not
+escape the check ([ADR 0058](../adr/0058-neutral-agent-protocol-boundary.md)).
+
 Every first-party workspace package must inherit `[lints] workspace = true` in
 its actual Cargo manifest. The check uses Cargo's complete no-dependencies
 workspace membership, including the root package, binaries and proc macros;

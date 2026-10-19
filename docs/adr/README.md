@@ -56,3 +56,4 @@ acceptance; a later record supersedes an earlier one.
 | [0055](0055-snippet-storage-boundaries.md) | Native snippet documents and viewless publication have separate owners |
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
 | [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition |
+| [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at their adapters, and history is neutral |
