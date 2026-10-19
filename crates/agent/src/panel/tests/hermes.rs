@@ -1,6 +1,6 @@
 //! Hermes spells the bridge's tools `mcp_nocterm_<id>_<tool>`, omits the input
 //! of calls without arguments and fences every result it reports.
-use super::provider_intersections::{Program, bridge, update};
+use super::provider_fixtures::{Program, bridge, update};
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use nocterm_ai::{

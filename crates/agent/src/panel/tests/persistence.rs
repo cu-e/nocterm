@@ -329,3 +329,28 @@ fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
     );
     cx.update(|cx| assert_eq!(thread.read(cx).document().desired_revision(), first.1));
 }
+
+#[gpui_kit::test]
+fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        thread.send("active".into(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
+        thread.send("queued\n\"\\界".into(), cx);
+        let first = thread.shared_snapshot(cx).unwrap();
+        let second = thread.shared_snapshot(cx).unwrap();
+        assert!(Arc::ptr_eq(&first.queue[0], &second.queue[0]));
+        assert!(Arc::ptr_eq(
+            &first.queue[0],
+            &thread.composer().queue()[0].saved
+        ));
+        assert_eq!(
+            thread.composer().queue()[0].encoded_len,
+            nocterm_ai::history::prompt_size(&thread.composer().queue()[0].saved).unwrap()
+        );
+    });
+}

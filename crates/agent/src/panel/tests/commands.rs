@@ -482,3 +482,183 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("обзор", "Review"),
+            ])),
+            cx,
+        );
+
+        cx.notify();
+    });
+    set_input(&f, "/обзор args", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("composer-command-token").is_some());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                Vec::new(),
+            )),
+            cx,
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
+        assert!(window.try_find("composer-command-token").is_none());
+        window.input("界", cx);
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
+}
+
+#[gpui_kit::test]
+fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    f.panel.update(cx, |panel, cx| panel.current().unwrap().update(cx, |thread, cx| {
+        report_control(thread, acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new((0..1000).map(|index| {
+            let mut value = serde_json::json!({"name":format!("skill{index:04}"), "description":"description ".repeat(1000)});
+            if index % 2 == 1 { value["input"] = serde_json::json!({"hint":"Provide optional arguments"}); }
+            serde_json::from_value(value).unwrap()
+        }).collect())), cx);
+
+        cx.notify();
+    }));
+    set_input(&f, "", cx);
+    cx.update_window(f.handle, |_, window, cx| window.input("/", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("slash-command", 0usize)).is_some());
+        assert!(window.try_find(("slash-command", 999usize)).is_none());
+        let first = window.find(("slash-command", 0usize)).bounds();
+        let second = window.find(("slash-command", 1usize)).bounds();
+        assert!(
+            second.size.height > first.size.height,
+            "optional hint must change row height"
+        );
+        window.press("up", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
+        );
+        let row = window.find(("slash-command", 999usize)).bounds();
+        let viewport = window.find("agent-slash-commands").bounds();
+        assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
+        window.input("?", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/?");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("backspace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("up", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
+        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.press("tab", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0999 ");
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0000 ");
+        assert!(window.try_find(("slash-command", 0usize)).is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.current().unwrap().update(cx, |thread, cx| {
+                report_control(
+                    thread,
+                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                        vec![
+                            acp::AvailableCommand::new("review", "Review changes"),
+                            acp::AvailableCommand::new("rename", "Rename chat"),
+                        ],
+                    )),
+                    cx,
+                );
+                cx.notify();
+            });
+        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
+
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_some());
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "escape");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_none());
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/r", window, cx);
+
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
+    cx.simulate_keystrokes(f.handle, "shift-tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/rename ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab enter");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.input("these changes", cx);
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "/review these changes"
+        );
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
+}

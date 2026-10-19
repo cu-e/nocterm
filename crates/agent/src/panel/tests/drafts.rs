@@ -15,6 +15,24 @@ fn saved_value(f: &Fixture, id: &str) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+pub(super) fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+pub(super) fn disk_value(
+    repository: &nocterm_ai::testing::InMemoryAgentRepository,
+    id: &str,
+) -> serde_json::Value {
+    let bytes = repository.encoded(id).unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+mod saving;
+
 #[gpui_kit::test]
 fn unsent_chat_survives_switching_and_restores_its_composer(cx: &mut TestAppContext) {
     let f = fixture(cx);

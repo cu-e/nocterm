@@ -217,3 +217,145 @@ fn refused_shutdown_registration_returns_a_usable_original_installation(cx: &mut
         );
     });
 }
+
+#[gpui_kit::test]
+fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    f.connector.support_images();
+    new_chat(&f, cx);
+    exchange(&f, "saved chat", "saved answer", cx);
+    let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let (send, receive) = oneshot::channel();
+    set_input(&f, "image owner draft", cx);
+    f.panel.update(cx, |panel, cx| {
+        panel.prepare_images(
+            async move {
+                receive.await.unwrap();
+                Ok(vec![prompt_image()])
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    cx.update(|cx| assert!(f.panel.read(cx).preparing_images()));
+    new_chat(&f, cx);
+    set_input(&f, "second chat draft", cx);
+    send.send(()).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let panel = f.panel.read(cx);
+        assert!(!panel.preparing_images());
+        assert_eq!(panel.composer_text(cx).as_ref(), "second chat draft");
+        assert!(
+            panel
+                .current()
+                .unwrap()
+                .read(cx)
+                .composer()
+                .images()
+                .is_empty()
+        );
+        assert!(old.read(cx).composer().images().is_empty());
+    });
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(old.entity_id(), cx));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "image owner draft"
+        )
+    });
+}
+
+#[gpui_kit::test]
+fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    owner.update(cx, |thread, cx| {
+        thread.send("active".into(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
+        thread.send("queued image".into(), cx);
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("queue-edit-first", cx);
+        assert!(f.panel.read(cx).preparing_queue_edit());
+        f.panel.update(cx, |panel, cx| {
+            panel.delete_thread(owner.entity_id(), window, cx);
+            panel.new_thread("codex".into(), window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let panel = f.panel.read(cx);
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
+        assert!(!panel.preparing_images());
+        assert_eq!(panel.composer_text(cx).as_ref(), "");
+        assert!(
+            panel
+                .current()
+                .unwrap()
+                .read(cx)
+                .composer()
+                .images()
+                .is_empty()
+        );
+        assert!(!owner.read(cx).composer().editing_queue());
+    });
+}
+
+#[gpui_kit::test]
+async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    owner.update(cx, |thread, cx| {
+        thread.send("active".into(), cx);
+        thread.send("queued".into(), cx);
+    });
+    cx.run_until_parked();
+    set_input(&f, "draft", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click("queue-edit-first", cx);
+        window.render_frame(cx);
+        assert!(window.find("agent-queue").bounds().size.height > gpui_kit::px(0.));
+    })
+    .unwrap();
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let panel = f.panel.read(cx);
+        assert!(panel.chat_documents().len() == 0);
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
+
+        assert!(window.try_find("agent-queue").is_none());
+        assert!(window.try_find("agent-transcript-area").is_none());
+        assert!(panel.composer_text(cx).is_empty());
+        assert!(!owner.read(cx).composer().editing_queue());
+    })
+    .unwrap();
+}

@@ -1,22 +1,6 @@
-//! Draft ownership survives view teardown and temporary queue editing.
+//! Unsent text and edits are saved on shutdown and survive reopening.
 use super::*;
-use std::time::Duration;
-
-fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
-    cx.update_window(f.handle, |_, window, cx| {
-        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-}
-
-fn disk_value(
-    repository: &nocterm_ai::testing::InMemoryAgentRepository,
-    id: &str,
-) -> serde_json::Value {
-    let bytes = repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
-}
+use crate::panel::tests::restoration::{disk_chat, reopen};
 
 #[gpui_kit::test]
 fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestAppContext) {
@@ -152,41 +136,85 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
 }
 
 #[gpui_kit::test]
-fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext) {
+fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
-        thread.send("queued original".into(), cx);
+    exchange(&f, "remember the first disk", "the first disk is full", cx);
+    let saved = cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        thread.read(cx).snapshot(cx).unwrap()
     });
+    let id = saved.id.clone();
+    f.commands
+        .restore_errors
+        .lock()
+        .unwrap()
+        .push_back(AgentError::RestoreUnavailable(
+            "Original session is gone".into(),
+        ));
+    let first = reopen(&f, saved, cx);
+    let fresh = disk_chat(&f, &id);
+    assert!(fresh.pending_history);
+    assert_ne!(fresh.session_id.as_deref(), Some("s0"));
+    drop(first);
     cx.run_until_parked();
-    type_draft(&f, "separate unsent draft", cx);
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("queue-edit-first", cx);
-    })
-    .unwrap();
-    type_draft(&f, "replacement being edited", cx);
-    cx.background_executor.advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
-    let before = disk_value(&f.repository, &id);
-    assert_eq!(before["draft"], "separate unsent draft");
-    assert_eq!(before["queue"][0]["text"], "queued original");
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("agent-send", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    let after = disk_value(&f.repository, &id);
-    assert_eq!(after["draft"], "separate unsent draft");
-    assert_eq!(after["queue"][0]["text"], "replacement being edited");
-    cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).composer_text(cx).as_ref(),
-            "separate unsent draft"
+
+    // Native resume succeeds for the new session, which has not received old messages.
+    let second = reopen(&f, fresh, cx);
+    cx.update(|cx| assert!(second.read(cx).document().pending_history()));
+    second.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("help", "Show help"),
+            ])),
+            cx,
         );
+        thread.send("/help".into(), cx);
     });
+    cx.run_until_parked();
+    complete_active(&f, cx);
+    let after_slash = disk_chat(&f, &id);
+    assert!(after_slash.pending_history);
+    drop(second);
+    cx.run_until_parked();
+
+    let third = reopen(&f, after_slash, cx);
+    third.update(cx, |thread, cx| thread.send("what was full?".into(), cx));
+    cx.run_until_parked();
+    {
+        let prompts = f.commands.prompts.lock().unwrap();
+        let request = prompts.last().unwrap();
+        let history = request
+            .prompt
+            .iter()
+            .filter_map(|block| match block {
+                acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") => {
+                    Some(&text.text)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].contains("User: remember the first disk"));
+        assert!(history[0].contains("Assistant: the first disk is full"));
+    }
+    assert!(
+        disk_chat(&f, &id).pending_history,
+        "delivery has not finished"
+    );
+    complete_active(&f, cx);
+    let delivered = disk_chat(&f, &id);
+    assert!(!delivered.pending_history);
+    drop(third);
+    cx.run_until_parked();
+
+    let fourth = reopen(&f, delivered, cx);
+    cx.update(|cx| assert!(!fourth.read(cx).document().pending_history()));
+    fourth.update(cx, |thread, cx| thread.send("next question".into(), cx));
+    cx.run_until_parked();
+    assert!(!f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
+        |block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation"))
+    ));
+    complete_active(&f, cx);
 }

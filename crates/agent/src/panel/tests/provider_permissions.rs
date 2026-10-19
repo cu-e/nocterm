@@ -1,5 +1,6 @@
 use super::*;
 use nocterm_ai::ApprovalPolicy;
+use serde_json::json;
 
 fn options() -> Vec<acp::PermissionOption> {
     vec![
@@ -328,4 +329,52 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
         Some(acp::RequestPermissionOutcome::Cancelled)
     );
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[gpui_kit::test]
+fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_read = ApprovalPolicy::Allow;
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
+    f.events
+        .try_send(AgentEvent::Permission {
+            request: serde_json::from_value(json!({"sessionId":session,"toolCall":{
+            "toolCallId":"permission","title":"Provider action"
+        },"options":[{"optionId":"no","name":"Yes","kind":"reject_once"},
+            {"optionId":"yes","name":"No","kind":"allow_once"}]}))
+            .unwrap(),
+            respond,
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(receive.try_recv().unwrap().is_none());
+    cx.update(|cx| assert_eq!(thread.read(cx).permission_cards().len(), 1));
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    assert!(
+        matches!(receive.try_recv().unwrap(), Some(acp::RequestPermissionOutcome::Selected(choice))
+        if choice.option_id == acp::PermissionOptionId::from("yes"))
+    );
+    cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
 }

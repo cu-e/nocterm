@@ -1,6 +1,7 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
+use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
 
@@ -188,4 +189,53 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
         "Terminal was detached or chat is unavailable. Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
     );
     assert!(f.access.sent().borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    for input in [
+        "/var/log/syslog investigate",
+        "/unknown ordinary",
+        "  /$skill:review аргументы",
+    ] {
+        thread.update(cx, |thread, cx| {
+            restore_entries(
+                &f,
+                thread,
+                vec![Entry::Agent("remember this context".into())],
+                cx,
+            );
+            restore_pending_history(&f, thread, cx);
+            report_control(
+                thread,
+                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
+                    vec![acp::AvailableCommand::new("$skill:review", "Review")],
+                )),
+                cx,
+            );
+            thread.send(input.into(), cx);
+        });
+        cx.run_until_parked();
+        let prompts = f.commands.prompts.lock().unwrap();
+        let request = prompts.last().unwrap();
+        if input.contains("$skill:review") {
+            assert_eq!(request.prompt.len(), 1);
+            assert!(
+                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text == input)
+            );
+        } else {
+            assert_eq!(request.prompt.len(), 3);
+            assert!(
+                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
+            );
+            assert!(
+                matches!(&request.prompt[1], acp::ContentBlock::Text(text) if text.text.contains("Assistant: remember this context"))
+            );
+        }
+        drop(prompts);
+        complete_active(&f, cx);
+    }
 }

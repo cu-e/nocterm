@@ -1,5 +1,5 @@
 //! Bridge-owned outcomes are independent of provider result envelopes.
-use super::provider_intersections::update;
+use super::provider_fixtures::update;
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use nocterm_ai::{TerminalCall, thread::Entry, tool_display};
@@ -134,7 +134,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
     *f.access.executor().borrow_mut() =
-        Some(Arc::new(super::provider_intersections::Program::default()));
+        Some(Arc::new(super::provider_fixtures::Program::default()));
     cx.update(|cx| {
         f.installation
             .ready
@@ -253,4 +253,34 @@ fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
             .unwrap()
             .contains("private-value")
     );
+}
+
+#[test]
+fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
+    let mut call = acp::ToolCall::new("call-1", "mcp.nocterm-11.exec_command")
+        .raw_input(
+            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+                "terminal_id":"t1", "program":"/bin/sh",
+                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
+                "timeout_ms":1_800_000, "yield_ms":1000,
+            }}),
+        )
+        .raw_output(json!({"result":null, "error":{
+            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+        }}));
+    call.status = acp::ToolCallStatus::Failed;
+    assert_eq!(
+        tool_display::header(&call),
+        "Nocterm · Execute program · Failed"
+    );
+    let input = tool_input::source(&call).unwrap();
+    assert_eq!(input.label, "Requested command");
+    assert_eq!(
+        input.text,
+        "cd ~/dev/NOUMMA && cargo build --release --locked -j 4"
+    );
+    let output = tool_output::source(&call, false).unwrap();
+    assert_eq!(output.sections.len(), 1);
+    assert_eq!(output.sections[0].label, "Error");
+    assert!(output.sections[0].text.starts_with("tool call error"));
 }
