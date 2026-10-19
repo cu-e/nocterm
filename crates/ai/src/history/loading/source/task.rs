@@ -130,6 +130,10 @@ impl fmt::Debug for ReaderPreparationFailure {
     }
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+)]
 pub(super) fn prepare<T: ReaderMaterializer>(
     request: ReaderRequest,
     id: ReaderDocumentId,

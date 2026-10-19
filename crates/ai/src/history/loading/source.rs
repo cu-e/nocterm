@@ -1,8 +1,4 @@
 //! An original document source retains its reusable reader/delivery capabilities.
-#![expect(
-    clippy::result_large_err,
-    reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
-)]
 use super::{NativeLoadError, NativeMaterialized, NativePhase, ReaderCompletion, ReaderOutcome};
 use crate::{
     model::{
@@ -139,6 +135,10 @@ pub struct ReaderRequest {
 }
 impl ReaderRequest {
     /// Stages only after the original shared history permit and reader capture.
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn prepare_native<T: ReaderMaterializer>(
         self,
         id: ReaderDocumentId,

@@ -87,6 +87,10 @@ impl ManagedNotice {
     }
 }
 impl ManagedNotice {
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub(super) fn certify(
         source: &SourceContext,
         input: NativeOwned<SessionNotice>,
@@ -138,6 +142,10 @@ macro_rules! control_owner {
             pub fn $borrow(&self) -> &$ty {
                 self.payload.get()
             }
+            #[expect(
+                clippy::result_large_err,
+                reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+            )]
             pub(super) fn certify(
                 source: &SourceContext,
                 input: NativeOwned<$ty>,

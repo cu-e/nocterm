@@ -1,8 +1,4 @@
 //! Anonymous private replay only when the original opened source cannot replay.
-#![expect(
-    clippy::result_large_err,
-    reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
-)]
 #[cfg(target_os = "linux")]
 mod creation;
 #[cfg(target_os = "linux")]

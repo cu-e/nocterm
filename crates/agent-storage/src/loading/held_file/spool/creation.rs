@@ -73,6 +73,10 @@ impl PreparedFailure {
     }
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
+)]
 pub(super) fn create(
     path: &Path,
     ledger: &DecodeLedger,

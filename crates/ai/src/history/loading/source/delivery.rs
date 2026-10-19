@@ -35,6 +35,10 @@ impl ReaderDelivery {
     }
     /// Success returns the SAME now-empty delivery to the original source.
     /// A foreign destination retains the complete delivery for retry or release.
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn install_into(
         mut self,
         destination: &mut RetainedRole,

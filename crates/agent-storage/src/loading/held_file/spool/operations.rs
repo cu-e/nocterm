@@ -24,6 +24,10 @@ pub(super) enum CreationError {
 }
 impl CreationError {
     /// The original native error of a failed native call, without wrappers.
+    #[expect(
+        clippy::result_large_err,
+        reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn into_native(self) -> Result<io::Error, Self> {
         match self {
             Self::Native(error) | Self::Directory(CurrentDirectoryError::Native(error)) => {
@@ -50,9 +54,17 @@ impl<'a> Operations<'a> {
     pub(super) fn new(ledger: &'a DecodeLedger) -> Self {
         Self { ledger }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn credit(&self, bytes: usize) -> Result<NativeScratch, CreationError> {
         Ok(NativeScratch::reserve_native(self.ledger, bytes)?)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
+    )]
     pub(super) fn copy(&self, path: &Path) -> Result<AdmittedPath<NativeScratch>, CreationError> {
         let credit = self.credit(AdmittedPath::<NativeScratch>::copy_capacity(path))?;
         Ok(AdmittedPath::try_copy(path, credit)?)
@@ -99,6 +111,10 @@ impl AnonymousOperations for Operations<'_> {
             _ => None,
         }
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "exhaustion carries its prepaid path by value; a Box would be an unpaid allocation"
+    )]
     fn exhausted(&mut self, base: &Path) -> Self::Error {
         let prepare = || {
             let path = self.copy(base)?;

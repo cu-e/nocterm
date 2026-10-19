@@ -1,10 +1,6 @@
 //! The original native connection producer and prepaid physical allocation context.
 //! Contexts may retain already-paid buffers after teardown; only the actual lease
 //! owns the original Source capability. Its close revokes further allocation.
-#![expect(
-    clippy::result_large_err,
-    reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
-)]
 use crate::model::{
     json::{
         deferred::{DecodeLedger, JsonDecodeError, NativeAllocationError, ledger::Reservation},
@@ -137,12 +133,20 @@ impl SourceContext {
     > {
         crate::connection::ManagedStartupFacts::prepare(self, request)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn certify_opened(
         &self,
         input: crate::model::native::NativeOwned<crate::model::session::SessionOpened>,
     ) -> Result<ManagedOpened, SourceSemanticRefusal<crate::model::session::SessionOpened>> {
         ManagedOpened::certify(self, input)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn certify_permission(
         &self,
         input: crate::model::native::NativeOwned<crate::model::auth::ProviderPermission>,
@@ -150,12 +154,20 @@ impl SourceContext {
     {
         ManagedPermission::certify(self, input)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn certify_info(
         &self,
         input: crate::model::native::NativeOwned<crate::connection::AgentInfo>,
     ) -> Result<ManagedAgentInfo, SourceSemanticRefusal<crate::connection::AgentInfo>> {
         ManagedAgentInfo::certify(self, input)
     }
+    #[expect(
+        clippy::result_large_err,
+        reason = "refusals return ledger-paid values; a Box would be an unpaid allocation"
+    )]
     pub fn certify_notice(
         &self,
         input: crate::model::native::NativeOwned<crate::model::notice::SessionNotice>,
