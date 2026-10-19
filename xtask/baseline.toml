@@ -42,7 +42,6 @@ nocterm-ui = 4
 "nocterm_agent::thread::Restore" = 3
 "nocterm_agent_runtime::client::ClientState" = 9
 "nocterm_agent_runtime::lease::ReleasedLease" = 5
-"nocterm_agent_runtime::lease::SessionLease" = 5
 "nocterm_files::path_input::Navigate" = 2
 "nocterm_files::path_input::completion::Candidate" = 2
 "nocterm_files::path_input::completion::Query" = 3

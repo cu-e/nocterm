@@ -38,7 +38,7 @@ fn release_client(client: &ProbeClient, session: bool) {
         unreachable!()
     };
     if session {
-        lease.session = Some(nocterm_ai::model::ids::SessionId::new("session"));
+        lease.accept_session(nocterm_ai::model::ids::SessionId::new("session"), None);
     }
     events.clear();
     drop(lease);

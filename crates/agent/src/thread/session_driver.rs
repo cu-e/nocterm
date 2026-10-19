@@ -76,21 +76,21 @@ impl SessionDriver {
             && self.registration().as_ref().map(|r| r.id) == authority.registration()
     }
     pub(super) fn session(&self) -> &Option<SessionId> {
-        self.lease.as_ref().map_or(&None, |lease| &lease.session)
+        self.lease.as_ref().map_or(&None, SessionLease::session)
     }
     pub(super) fn commands(&self) -> &Option<ManagedCommandsHandle> {
-        self.lease.as_ref().map_or(&None, |lease| &lease.commands)
+        self.lease.as_ref().map_or(&None, SessionLease::commands)
     }
     pub(super) fn registration(&self) -> &Option<BridgeRegistration> {
         self.lease
             .as_ref()
-            .map_or(&None, |lease| &lease.registration)
+            .map_or(&None, SessionLease::registration)
     }
     pub(super) fn workdir(&self) -> &Option<PathBuf> {
-        self.lease.as_ref().map_or(&None, |lease| &lease.workdir)
+        self.lease.as_ref().map_or(&None, SessionLease::workdir)
     }
     pub(super) fn connection_key(&self) -> Option<u64> {
-        self.lease.as_ref().map(|lease| lease.connection_key)
+        self.lease.as_ref().map(SessionLease::connection_key)
     }
     pub(super) fn leased(&self) -> bool {
         self.lease.is_some()
@@ -148,8 +148,7 @@ impl SessionDriver {
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        lease.commands = Some(commands);
-        lease.workdir = Some(workdir);
+        lease.begin_open(commands, workdir);
         self.epoch = None;
         true
     }
@@ -176,15 +175,12 @@ impl SessionDriver {
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        if let Some(workdir) = fresh_workdir {
-            lease.workdir = Some(workdir);
-        }
         self.epoch = Some(LiveEpoch::new(
             ticket,
-            lease.connection_key,
+            lease.connection_key(),
             session.clone(),
         ));
-        lease.session = Some(session);
+        lease.accept_session(session, fresh_workdir);
         self.restore = None;
         true
     }
