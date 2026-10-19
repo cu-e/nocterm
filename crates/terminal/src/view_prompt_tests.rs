@@ -15,8 +15,13 @@ impl Transport for PromptTransport {
         session
     }
 }
-fn emit(cx: &mut TestAppContext, driver: Arc<SessionDriver>, request: SecretRequest) {
-    let (reply, _answer) = Reply::channel();
+fn emit(
+    cx: &mut TestAppContext,
+    transport: &PromptTransport,
+    request: SecretRequest,
+) -> futures::future::BoxFuture<'static, Option<Secret>> {
+    let (reply, answer) = Reply::channel();
+    let driver = transport.0.lock().unwrap().as_ref().unwrap().clone();
     cx.background_executor
         .spawn(async move {
             driver
@@ -25,122 +30,116 @@ fn emit(cx: &mut TestAppContext, driver: Arc<SessionDriver>, request: SecretRequ
         })
         .detach();
     cx.run_until_parked();
+    async move { answer.await.ok().flatten() }.boxed()
+}
+fn password() -> SecretRequest {
+    SecretRequest::Password {
+        target: Target::new("me", "host", 22),
+        retry: false,
+    }
+}
+fn connect(cx: &mut TestAppContext, transport: &PromptTransport) {
+    let driver = transport.0.lock().unwrap().as_ref().unwrap().clone();
+    cx.background_executor
+        .spawn(async move { driver.emit(Event::Connected).await })
+        .detach();
+    cx.run_until_parked();
+}
+fn credential_fixture(
+    cx: &mut TestAppContext,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Arc<PromptTransport>,
+    Arc<nocterm_session::testing::FakeCredentialStore>,
+) {
+    let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
+    let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+    let (handle, view, transport) = prompt_fixture(cx, Some(provider));
+    cx.update_window(handle, |_, window, cx| {
+        window.focus(&view.read(cx).focus_handle(cx), cx);
+    })
+    .unwrap();
+    (handle, transport, store)
 }
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
-fn superseded_secret_recreates_masked_empty_field_and_clears_old_text(cx: &mut TestAppContext) {
-    let transport = Arc::new(PromptTransport::default());
-    let (handle, view) = cx.update(|cx| {
-        gpui_kit::init(cx);
-        let ui = nocterm_ui::init(
-            nocterm_ui::DesignTokens::builtin(),
-            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
-            cx,
-        );
-        let installed = crate::install(
-            crate::Deps::new(
-                transport.clone(),
-                crate::LocalSessions::disabled("/bin/bash".into()),
-            ),
-            &ui,
-            cx,
-        );
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            let view = cx.new(|cx| {
-                TerminalView::new(
-                    installed.clone(),
-                    SessionSpec {
-                        profile: None,
-                        options: Default::default(),
-                        title: "test".into(),
-                        target: Target::new("me", "host", 22),
-                        auth: Auth::Password,
-                        credential: None,
-                        launch: None,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            window.focus(&view.read(cx).focus_handle(cx), cx);
-            view
-        })
-        .unwrap()
-    });
-    let driver = transport.0.lock().unwrap().as_ref().unwrap().clone();
-    emit(
+fn superseded_secret_recreates_a_masked_empty_focused_field_without_remember(
+    cx: &mut TestAppContext,
+) {
+    let (handle, transport, store) = credential_fixture(cx);
+    let _visible = emit(
         cx,
-        driver.clone(),
+        &transport,
         SecretRequest::Interactive {
             prompt: "Visible code".into(),
             echo: true,
         },
     );
-    let old_input = cx
-        .update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.input("previous answer", cx);
-            view.update(cx, |view, cx| {
-                let field = view.secret.as_mut().unwrap();
-                field.remember = true;
-                assert!(!field.input.read(cx).presentation().is_masked());
-                assert_eq!(field.input.read(cx).value(), "previous answer");
-                field.input.clone()
-            })
-        })
-        .unwrap();
-    emit(
-        cx,
-        driver.clone(),
-        SecretRequest::Password {
-            target: Target::new("me", "host", 22),
-            retry: false,
-        },
-    );
-    let password_input = cx
-        .update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let field = view.read(cx).secret.as_ref().unwrap();
-            assert_ne!(field.input.entity_id(), old_input.entity_id());
-            assert!(field.input.read(cx).presentation().is_masked());
-            assert!(field.input.read(cx).value().is_empty());
-            assert!(!field.remember);
-            assert!(field.input.read(cx).focus_handle(cx).is_focused(window));
-            assert!(old_input.read(cx).value().is_empty());
-            field.input.clone()
-        })
-        .unwrap();
-    // Even the same question is a new authentication attempt.
-    emit(
-        cx,
-        driver,
-        SecretRequest::Password {
-            target: Target::new("me", "host", 22),
-            retry: false,
-        },
-    );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let field = view.read(cx).secret.as_ref().unwrap();
-        assert_ne!(field.input.entity_id(), password_input.entity_id());
-        window.input("fresh password", cx);
-        window.press("ctrl-z", cx);
-        assert_ne!(
-            view.read(cx)
-                .secret
-                .as_ref()
-                .unwrap()
-                .input
-                .read(cx)
-                .value(),
-            "previous answer"
-        );
+        assert!(window.try_find("remember-credential").is_none());
+        window.input("previous answer", cx);
+        window.render_frame(cx);
+        // An echoed field exposes its text; a masked one never does.
+        assert_eq!(window.find("secret-input").value(), Some("previous answer"));
     })
     .unwrap();
+    let _remembered = emit(cx, &transport, password());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let field = window.find("secret-input");
+        assert_eq!(field.value(), None);
+        assert_eq!(field.focused(), Some(true));
+        window.click("remember-credential", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("remember-credential").checked(), Some(true));
+        window.input("first password", cx);
+    })
+    .unwrap();
+    // Even the same question is a new authentication attempt.
+    let answer = emit(cx, &transport, password());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("remember-credential").checked(), Some(false));
+        assert_eq!(window.find("secret-input").focused(), Some(true));
+        // A recreated field has no undo history of earlier answers.
+        window.press("ctrl-z", cx);
+        window.input("fresh password", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let answer = answer.now_or_never().unwrap().unwrap();
+    assert_eq!(answer.expose(), "fresh password");
+    connect(cx, &transport);
+    assert!(
+        store.labels().is_empty(),
+        "the superseded field's remember choice was kept"
+    );
+}
+#[gpui_kit::test]
+fn checked_remember_saves_the_answer_after_sign_in(cx: &mut TestAppContext) {
+    let (handle, transport, store) = credential_fixture(cx);
+    let answer = emit(cx, &transport, password());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("remember-credential", cx);
+        window.input("kept password", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never().unwrap().unwrap().expose(),
+        "kept password"
+    );
+    assert!(store.labels().is_empty(), "saved before sign in");
+    connect(cx, &transport);
+    assert_eq!(store.labels().len(), 1);
 }
 
-fn host_fixture(
+fn prompt_fixture(
     cx: &mut TestAppContext,
+    credentials: Option<crate::CredentialProvider>,
 ) -> (
     gpui_kit::AnyWindowHandle,
     Entity<TerminalView>,
@@ -154,14 +153,14 @@ fn host_fixture(
             (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
-        let installed = crate::install(
-            crate::Deps::new(
-                transport.clone(),
-                crate::LocalSessions::disabled("/bin/bash".into()),
-            ),
-            &ui,
-            cx,
+        let mut deps = crate::Deps::new(
+            transport.clone(),
+            crate::LocalSessions::disabled("/bin/bash".into()),
         );
+        if let Some(credentials) = credentials {
+            deps = deps.with_credentials(credentials);
+        }
+        let installed = crate::install(deps, &ui, cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 TerminalView::new(
@@ -218,7 +217,7 @@ fn emit_changed(
 fn changed_host_key_buttons_answer_exactly_once_and_restore_terminal_focus(
     cx: &mut TestAppContext,
 ) {
-    let (handle, view, transport) = host_fixture(cx);
+    let (handle, view, transport) = prompt_fixture(cx, None);
     for (button, decision) in [
         ("host-key-reject", HostKeyDecision::Reject),
         ("host-key-once", HostKeyDecision::AcceptOnce),
@@ -238,7 +237,7 @@ fn changed_host_key_buttons_answer_exactly_once_and_restore_terminal_focus(
 }
 #[gpui_kit::test]
 fn unsafe_changed_host_cannot_save_but_can_connect_once(cx: &mut TestAppContext) {
-    let (handle, view, transport) = host_fixture(cx);
+    let (handle, view, transport) = prompt_fixture(cx, None);
     let mut answer = emit_changed(cx, &transport, true);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

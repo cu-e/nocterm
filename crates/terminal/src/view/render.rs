@@ -566,7 +566,7 @@ impl TerminalView {
             .read(cx)
             .credential_message()
             .map(str::to_owned);
-        let field = Input::new(&input);
+        let field = Input::new(&input).id("secret-input");
         let field = if masked { field.mask_toggle() } else { field };
 
         Some(
