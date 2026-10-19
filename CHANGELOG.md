@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.2.0](https://github.com/cu-e/nocterm/compare/v3.1.0...v3.2.0) (2026-10-19)
+
+
+### Features
+
+* **agent:** reconnect dropped server terminals on demand ([af5d3c5](https://github.com/cu-e/nocterm/commit/af5d3c5203a4e86b5e70172f5d05da6a551551a7))
+* **agent:** remove queued messages ([117a7b4](https://github.com/cu-e/nocterm/commit/117a7b43bd292ca896e89b568aefd30638817082))
+* **xtask:** limit the agent protocol SDK to its adapters ([8d51c29](https://github.com/cu-e/nocterm/commit/8d51c29b569553cd3ea4349cc941af4bd717c9da))
+
+
+### Bug Fixes
+
+* **acp:** gate Unix-only managed launch helpers for other targets ([8eb0b7f](https://github.com/cu-e/nocterm/commit/8eb0b7f6dc18378ec16eaf21cfc2fc0c82d8adda))
+* **acp:** preserve taskkill error sources ([5d10726](https://github.com/cu-e/nocterm/commit/5d1072680e15644ccf22e64c0f897c3a7399c7b9))
+* **agent-runtime:** ignore events of a released connection ([f18c221](https://github.com/cu-e/nocterm/commit/f18c2214895254d3ab54b00d841bf02087e4343d))
+* **agent-storage:** gate Linux-only replay failures for other targets ([f48c0b3](https://github.com/cu-e/nocterm/commit/f48c0b3f76936dd730f5fdf5ff388e236e7ff60b))
+* **agent-storage:** keep original faults of managed replay creation ([4fde2fc](https://github.com/cu-e/nocterm/commit/4fde2fcabb8fab36c89fcef54089c0050ad8d5ca))
+* **agent:** connect saved chats when they are shown ([714d3c3](https://github.com/cu-e/nocterm/commit/714d3c356b5bc508b510f395aacc633bc24a771b))
+* **agent:** fit the open button in the attach menu ([bb5df39](https://github.com/cu-e/nocterm/commit/bb5df397aecd7a44a5af8fa735db957e0c2afd65))
+* **agent:** keep each chat's configuration across sessions ([5d2b7d2](https://github.com/cu-e/nocterm/commit/5d2b7d2fddebdab008ef54cb012df1ac56d1e522))
+* **agent:** preserve accepted reconnect dispatch order ([e6a9e66](https://github.com/cu-e/nocterm/commit/e6a9e66f976e7bc9e3a8b0af0a3ce814d2bb9dbb))
+* **ai:** preserve workspace and sandbox native causes ([48ef259](https://github.com/cu-e/nocterm/commit/48ef259ed821cece1f0addee8c69ee102107d869))
+* **core:** prepay the ancestor list of cold private directories ([1a329d3](https://github.com/cu-e/nocterm/commit/1a329d3272233aba57445aae798a09d812f986a7))
+* **core:** retain concrete owned codec error sources ([4e4cfc4](https://github.com/cu-e/nocterm/commit/4e4cfc45fde4eaceb0cba465349de21104fcc6a5))
+* **files:** preserve directory transfers through native ports ([765d7a8](https://github.com/cu-e/nocterm/commit/765d7a8315e288f943c78c42b0dbad8ae0b95213))
+* **store:** publish append status through public handles ([b8b21df](https://github.com/cu-e/nocterm/commit/b8b21df6469f2f845e759071445b74eed02f1820))
+* **store:** retain bounded wake across recording idle periods ([d6a88e5](https://github.com/cu-e/nocterm/commit/d6a88e53952e48a9e46fbe7c5562ae7c29030f0c))
+* **terminal:** retain credential association error sources ([a54d23f](https://github.com/cu-e/nocterm/commit/a54d23fb7cea595cf19a129c1acc12710d3de5b5))
+* **ui:** preserve checked settings text submissions ([9068d7a](https://github.com/cu-e/nocterm/commit/9068d7ae94d51fb17acec13e32cc8d034df3cbcf))
+* **xtask:** resolve implicit prelude types in symbol ratchets ([43063e6](https://github.com/cu-e/nocterm/commit/43063e674b4cb847a91e97c8640579ba44bdca10))
+* **xtask:** resolve implicit prelude types in symbol ratchets ([256a821](https://github.com/cu-e/nocterm/commit/256a82179368411ff11165e4309b4a8a7033c15b))
+
+
+### Documentation
+
+* align agent guardrails with the integration workflow ([5db9f64](https://github.com/cu-e/nocterm/commit/5db9f646a011b9f5112fc342992b61c077721885))
+* **architecture:** describe crate ownership and invariants ([3f0ab91](https://github.com/cu-e/nocterm/commit/3f0ab91958d74413bc8d8d6e5803fe38350ad2ed))
+
 ## [3.1.0](https://github.com/cu-e/nocterm/compare/v3.0.0...v3.1.0) (2026-10-09)
 
 
