@@ -318,6 +318,146 @@
           "license": "MIT"
         }
       ]
+    },
+    {
+      "name": "agent-client-protocol",
+      "version": "2.2.0",
+      "archive_url": "https://static.crates.io/crates/agent-client-protocol/agent-client-protocol-2.2.0.crate",
+      "sha256": "13f780597b2c88ab83d02509bcc3e86366751f86fa12114005e35c55ed691763",
+      "upstream": {
+        "repository": "https://github.com/agentclientprotocol/rust-sdk",
+        "revision": "2a78849d3eb3dcb140dade3b8fc938cf1e2b9ce5",
+        "path": "src/agent-client-protocol",
+        "evidence": "cargo-vcs"
+      },
+      "license": "Apache-2.0",
+      "patches": [
+        "vendor/patches/agent-client-protocol/0001-managed-raw-ownership.patch",
+        "vendor/patches/agent-client-protocol/0002-prepared-request-publication.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "nix",
+      "version": "0.28.0",
+      "archive_url": "https://static.crates.io/crates/nix/nix-0.28.0.crate",
+      "sha256": "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4",
+      "upstream": {
+        "repository": "https://github.com/nix-rust/nix",
+        "revision": "21ab06ef23de214174ddb039be5b5f08750d19e6",
+        "path": "",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT",
+      "patches": [
+        "vendor/patches/nix/0001-caller-buffer-current-directory.patch",
+        "vendor/patches/nix/0002-native-environment-home-realpath.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "archive_url": "https://static.crates.io/crates/windows-sys/windows-sys-0.61.2.crate",
+      "sha256": "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc",
+      "upstream": {
+        "repository": "https://github.com/microsoft/windows-rs",
+        "revision": "32c3144490c016fe496a0aed769bce60987a2e9d",
+        "path": "crates/libs/sys",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/windows-sys/0001-caller-buffer-current-directory.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "archive_url": "https://static.crates.io/crates/tempfile/tempfile-3.27.0.crate",
+      "sha256": "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd",
+      "upstream": {
+        "repository": "https://github.com/Stebalien/tempfile",
+        "revision": "5c8fa12eb584931b4f1bccfde87eb72fbfa7dc61",
+        "path": "",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/tempfile/0001-admitted-temporary-path.patch",
+        "vendor/patches/tempfile/0002-owned-native-error-path.patch",
+        "vendor/patches/tempfile/0003-borrow-original-temp-override.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "fdeflate",
+      "version": "0.3.7",
+      "archive_url": "https://static.crates.io/crates/fdeflate/fdeflate-0.3.7.crate",
+      "sha256": "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c",
+      "upstream": {
+        "repository": "https://github.com/image-rs/fdeflate",
+        "revision": "c365c7e6ffa81feb2e1fb762eed7299f05c9b0ca",
+        "path": "",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/fdeflate/0001-managed-native-allocations.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "png",
+      "version": "0.18.1",
+      "archive_url": "https://static.crates.io/crates/png/png-0.18.1.crate",
+      "sha256": "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61",
+      "upstream": {
+        "repository": "https://github.com/image-rs/image-png",
+        "revision": "2a3f980245e3ae38b82ade96533e7b450e8477bb",
+        "path": "",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/png/0001-managed-native-allocations.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "regex-automata",
+      "version": "0.4.18",
+      "archive_url": "https://static.crates.io/crates/regex-automata/regex-automata-0.4.18.crate",
+      "sha256": "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2",
+      "upstream": {
+        "repository": "https://github.com/rust-lang/regex",
+        "revision": "e6ad938198e68339a593f85d228f2d44cb54718f",
+        "path": "regex-automata",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/regex-automata/0001-managed-native-search-scratch.patch"
+      ],
+      "omitted": []
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.151",
+      "archive_url": "https://static.crates.io/crates/serde_json/serde_json-1.0.151.crate",
+      "sha256": "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+      "upstream": {
+        "repository": "https://github.com/serde-rs/json",
+        "revision": "de8500740cdcabffb9734f503e4889def823cf10",
+        "path": "",
+        "evidence": "cargo-vcs"
+      },
+      "license": "MIT OR Apache-2.0",
+      "patches": [
+        "vendor/patches/serde_json/0001-native-error-body-layout.patch"
+      ],
+      "omitted": []
     }
   ]
 }

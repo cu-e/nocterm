@@ -1,0 +1,66 @@
+diff --git a/NOCTERM.md b/NOCTERM.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ea815351c1ddc66acab952f9d5069c1cf457aedc
+GIT binary patch
+literal 863
+zcmYk5OK;mi4219c6$E;f727eK+P5}Mf&hI0X^I>jdY7_^uDB{m`O#lr$cloV7v#)*
+z!~Fo?b8ylI1f35A0aGHKY`eN91&ooMvlPW=G+IO3Z4=v`A{<#_KH9|2Hm#PkYF<Lu
+znk!*bT+hSxY_V9ZreQi;*0fkHaf%dgmaA=`<#hG&2IsVjB?Lt$yGp#ZD?3|Re0zL`
+zA5ZY9#jvNzyqZ=;F*?K;4SY{vSQEUyuw2jA>z`+HYS!yJIk0AFNPN8>Qf!74uTW#a
+zNO0Vf6qm8hFtzz_2v8ynkN3Hgh<$EAB_P3VqFBMB!#1ntqX7#$W8%LQi$M&2J>O4e
+zOEAxhJ1T+Ykbl$Qm`-fYvV#Zm+fJ3lzpzs9tmhYq6cXx1uq=8T+%yy!ozfXvB_lnM
+zjSW4Je?{{<)vS;OYUI=@UF=;DNe1(Hg(>AwL~2PQNjR6|0;iKh$Z{Yx&Qd~)zK6sO
+zdkK=Y>2nS7dxfJ=gn?vLJkg(yl_CUeF|eO6*sKeI%<3*dR^G8-8ZXEa2QpA{WEmYa
+zgu=43s_5(J?`V8+GB*ghX?ya0+2g`D^zU8<VUG|7o}0*efk!9Oz((WBcc)5i*1m-b
+zZZ+E=!|AQ)l!YMXo^y6+H6N&W`xA7c(Dmm~!UZaNR@l-W58MM%XcKy!wSgMD<giDH
+Isn;p~0SWpxcK`qY
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/Windows/Win32/System/Environment/caller_buffer.rs b/src/Windows/Win32/System/Environment/caller_buffer.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..601f4d8add018ad5de29d02833d4988fef6cdf7b
+GIT binary patch
+literal 3091
+zcma)8VNcvR5dFTtVrZpaau=2Y5+6cALWNe9deEb^y%R#gIFntgUOU+1UA7hf{WNis
+zO?T;C^9feT_|1E7-gswc3qFbp!3a`w1R0z|L))ctD9O4dDC29Cq^yD9m6?Dtij>gm
+z8<rr2*66^Kbz*|!QSb;p)adg3Ez;{)?6j-(<*<1{IzgD{UzFM3%kwujm{M^4JpcX{
+z>AmoD=A3mIoLydCTo&)nKcBpRcUqjDT%9}~jz&8>J8(7a5j*rj6Wm$n?7{<05v)@a
+zWrXhF-G!<`2iAe`Up-XTfg%qRXBRXbkDgzb=+qpOQ@jh43_b|Q4W8X+aCV>GjOuU)
+zXu=HE`+4=7IEL>d000Jc(H;Bg>dp4<0n~z~8Q_D|p=^jF4^@Nf{L}k!^Vt`th|nZ2
+zeiLvVb`NgStS@&S6>)eUlxw)Ig;cc6K$)&2ce_^dvVA`Z`+I3NdW?kq70@l4*IR{Q
+zrSL-0)CK~fwUvSxs&yc(nWJm|W8ken2p?$767({(7LdZQ6zJv%0vy&_NSvXej(t%P
+zI=JoN-GVSBI3%|mvz$%66{eY3f}9F7LAXO&Ae!bNpMkeceR9j@OyR#af(m14imn%x
+z1v!CAC><Q~Il-AVciax$b_>#$2x>ONQVBx69K*SV%isy7DC(wQ$B;D{)XqxuetV%x
+z1W$sn1)Md)gH|&|Or)`H#^cg>9Fzx9mROD(TUDmhqv(4tlp&i$&*t!A7O1rbY#+mA
+z<MvmZPArZy2>W}TA2kxl)-Z6?YB1Jll5{*%hRu=Zf1dme!t+>v!?gKpfA6sMAACG{
+zb9VJl-gss>@?I;6-2GgY=s^%@6rSL=JMI=1PLa6N2x0fYN251td_!kfs5~jHp%&ib
+znlQ$iZ4-1qzqM6{&BKnNDRu~3OP+jq2c<<1#uAk1utJAMA}E5zRB2Yfw$aHO!xYgm
+zTN=%Trf>wocn-wx@Kk~&U6)zMsqn=tP*Iah(i9#ef2!*19l^^sBVtbU#17pDQ^ELG
+zow`Zj;qha5Eox#551bh@qAhoam30Wha8wh|pWz8^$+0!MXgq0yE<tD}l4AooV;j>)
+z4)}><0%y)8Ll*i-PEvSGV~3B83adVkk5<aYNE{Tr_?oOcHqW~xNFwv;df_+$*R3v{
+zPj6srgVDh@@ImraRzYvKi$PjLPDo<Q&Q$c8@<8ZjKW6a&FB7o2e0~7<WJ`UVx7f!#
+zaqOxdeVTG2KfjjMBoSICgq|{3C{x;nPt%*x%$C4E`j$m}Aao|~Oz>1j_6K|R_rWhz
+z=DGEG-qy?Ws#1A=;Xjf)d!WNnquKLou7A_~{bc^MtF-9WXc4<9gei-eAUQ=}cq)r%
+zv4U4Zk`6@YX~GA-G++rw3_8!z%=5fmJsfpOIu2&xM4hy(@-zG}kKfHv=J{uouZm+h
+z>Z|h5Sq8y%&~S1WoWn^vmR4(&v|g4|w7sQtkme}2u3v`TgTqzbCLrMt*u9CYcBr}p
+z;%?$qNBB7MKfbr=^3D=MQV=?Yqn`zS6ZCEM6*+*~<A7U!YGIVzN}dH1H)PqB9PUrv
+zTa}_`1AuKd@x!6(sKEQJ78u`CqGE#&Hs0#H&N@cgw;zAeS}}=zXPtNhE7}W4(XCfA
+z+3*wVhqIb^nO(1mvq^d%EnVLKAMZ`+Ut>L@=)BY((BF?@M?Ybm{r%rY?C`DvW96@?
+g##Yjf;8rpir+8P7H;1Q<ls!RH=glHrh416&Us{C#q5uE@
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/Windows/Win32/System/Environment/mod.rs b/src/Windows/Win32/System/Environment/mod.rs
+index e88d236698274bb6b067e5023d35e16a9ffafbae..f41c25962284f950837391c0f57f547635f0c276 100644
+GIT binary patch
+delta 151
+zcmXBNF$%&k6b9fui&yxmiw;`Qu_)*uxVSoql-J~?2GgXxCQgc1@=l(>8#wg4!1sOr
+zULU=EtFkO{iaN1$7|1d-dC#(Fvb8L*q{(oFJ99rE-560^>jHTMO76kf?T?^fz#>tG
+qrJ7!}ZD*D#WnpYkoLyM2>O;)IP;xO8^Q-D}gDx6O#;qQ=O8o&>ST#Wa
+
+delta 7
+OcmexZ`?zL9vK;^t{{$ZZ
+
