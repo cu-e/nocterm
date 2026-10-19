@@ -7,7 +7,7 @@ model: opus
 
 You design changes for this repository. You do not write or edit code.
 
-Read AGENTS.md, CONTRIBUTING.md, docs/ARCHITECTURE.md, the relevant layer notes,
+Read CONTRIBUTING.md, docs/ARCHITECTURE.md, the relevant layer notes,
 the ADR index and every accepted ADR relevant to the touched crates, and their
 `//!` documentation. Then read the relevant code and produce a plan:
 

@@ -76,11 +76,7 @@ scripts/setup.sh   # enables the commit-msg hook
 Rules:
 
 - **Header** ≤ 72 chars. Subject in imperative mood, lower-case first letter, no trailing period: `fix(pty): handle zero-size resize`.
-- **Scope** is optional, lower-case kebab, and names the affected module (`pty`, `renderer`, `config`). Use `deps` for dependency bumps. Keep the scope list in [AGENTS.md](AGENTS.md) up to date as modules appear.
-
-| Scope | Covers |
-| ----- | ------ |
-| `connections-store` | profile/recent publication, committed authority and bounded raw facts |
+- **Scope** is optional, lower-case kebab, and names the affected crate directory (`ssh`, `agent-runtime`, `connections-model`). Use `app` for the root `src/`, `deps` for dependency bumps and `xtask` for tooling.
 - **Body** explains *why*, not *what*; wrap at ~100 chars. Blank line after the header.
 - **Breaking changes**: add `!` after the type/scope *and* a `BREAKING CHANGE: <what breaks and how to migrate>` footer.
 - **Footers**: `Refs: #123`, `Closes: #123`, `Co-Authored-By: ...`.
@@ -95,9 +91,8 @@ A Rust source file may have at most 800 lines, tests included. `cargo xtask arch
 child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
 For production code, an extracted module owns a responsibility and its own type;
 moving more methods of the same growing type into another file is not an extraction.
-Files that were already longer are listed in `xtask/oversized-files.toml`; they may only
-shrink, and their entry is lowered or removed as they do. Never raise an entry to make a
-check pass.
+The legacy exception list `xtask/oversized-files.toml` is empty; never add an entry to make
+a check pass.
 
 A function may have at most 80 lines and a cognitive complexity of 20 (`clippy.toml`).
 Functions that were already over carry `#[expect(clippy::too_many_lines, reason = "...")]`;

@@ -7,8 +7,8 @@ Drive the pipeline described in AGENTS.md for the task: $ARGUMENTS
 
 You are the orchestrator. Subagents start with no context, so every prompt must
 carry the task, plan, branch name, target/base branch, verification scope and prior
-findings, plus paths to AGENTS.md, CONTRIBUTING.md, docs/ARCHITECTURE.md, relevant
-layer notes and docs/adr/README.md. Plans and reports go in ignored `.claude/plans/`.
+findings, plus paths to docs/ARCHITECTURE.md, relevant layer notes and docs/adr/README.md
+(AGENTS.md is loaded automatically). Plans and reports go in ignored `.claude/plans/`.
 
 1. **Design** — spawn `architect` with the task and reading paths above. Require
    placement, shape, public surface, reuse, typed errors, docs/ADR and the target
@@ -28,8 +28,7 @@ layer notes and docs/adr/README.md. Plans and reports go in ignored `.claude/pla
 7. **Wrap up** — summarise what was built, each applicable verification command
    and result, review verdict and remaining nits. Propose Conventional Commit
    headers and a PR title. Include the target branch and the `xtask/baseline.toml`
-   delta in the proposed PR description; until that file exists, report manual
-   metric changes and the absence of ratchets. Keep vendor changes separate from
+   delta in the proposed PR description. Keep vendor changes separate from
    application changes. Commit, push and open the PR only if the user asks.
 
 Documentation-only changes skip subagents under AGENTS.md and use its documented
