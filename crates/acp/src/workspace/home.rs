@@ -1,6 +1,7 @@
 //! HOME and the original one-call passwd fallback use admitted caller buffers.
 use super::{Home, managed::Cause};
 use crate::managed::SourceBudget;
+#[cfg(unix)]
 use agent_client_protocol::managed::Buffer;
 use nocterm_ai::model::native::NativeOwned;
 use std::path::PathBuf;
@@ -58,6 +59,7 @@ fn current(budget: &SourceBudget) -> Result<NativeOwned<Option<PathBuf>>, Cause>
         }
     }
 }
+#[cfg(unix)]
 #[expect(
     clippy::result_large_err,
     reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"

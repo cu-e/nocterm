@@ -42,6 +42,7 @@ pub(crate) struct ProcessGroup {
     completion: Mutex<Attempts>,
 }
 impl ProcessGroup {
+    #[cfg(unix)]
     pub(crate) fn new(
         pid: u32,
         #[cfg(target_os = "linux")] container: Option<super::systemd::Container>,

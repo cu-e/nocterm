@@ -121,6 +121,7 @@ impl Paths {
         };
         let resolved = match self.canonical(path) {
             Ok(path) => path,
+            #[cfg(unix)]
             Err(CanonicalError::Native(error)) => {
                 return Err(Cause::Resolve(self.diagnostic(path, diagnostic, error)?));
             }
@@ -149,6 +150,7 @@ impl Paths {
             self.list(&policy.readable)?,
         )?)
     }
+    #[cfg(unix)]
     pub(crate) fn existing_file(&self, path: &Path) -> Result<bool, Cause> {
         let diagnostic = self.diagnostic_credit(path)?;
         let scratch = self.std_scratch(path)?;
@@ -167,6 +169,7 @@ impl Paths {
             Err(error) => Err(Cause::Resolve(self.diagnostic(path, diagnostic, error)?)),
         }
     }
+    #[cfg(unix)]
     pub(crate) fn executable(&self, path: &Path) -> Result<Option<NativeOwned<PathBuf>>, Cause> {
         if !self.is_executable(path)? {
             return Ok(None);
@@ -177,6 +180,7 @@ impl Paths {
             Err(CanonicalError::Cause(error)) => Err(error),
         }
     }
+    #[cfg(unix)]
     pub(crate) fn is_executable(&self, path: &Path) -> Result<bool, Cause> {
         let scratch = self.std_scratch(path)?;
         let executable = crate::process::executable(path);
@@ -210,11 +214,15 @@ impl Paths {
             .map_err(|error| CanonicalError::Cause(error.into()))
     }
 }
-#[expect(
-    clippy::large_enum_variant,
-    reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+#[cfg_attr(
+    unix,
+    expect(
+        clippy::large_enum_variant,
+        reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"
+    )
 )]
 enum CanonicalError {
+    #[cfg(unix)]
     Native(io::Error),
     Cause(Cause),
 }

@@ -1,8 +1,8 @@
 //! Native sandbox facts and launch projection; policy remains in AI.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod launch;
 pub(crate) mod resolution;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use launch::SandboxLauncher;
 #[cfg(test)]
 mod tests;

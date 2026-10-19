@@ -28,6 +28,7 @@ pub(crate) enum Cause {
     Sdk(ManagedError<JsonDecodeError>),
     #[error(transparent)]
     Admission(#[from] NativeAllocationError),
+    #[cfg(unix)]
     #[error("native path bytes changed after metadata validation")]
     Input,
     #[cfg(not(unix))]

@@ -47,9 +47,12 @@ mod tests;
 
 pub(crate) use budget::SourceBudget;
 
+#[cfg(unix)]
 mod arguments;
 mod diagnostic_text;
+#[cfg(unix)]
 mod environment;
+#[cfg(unix)]
 mod environment_snapshot;
 mod native_process;
 

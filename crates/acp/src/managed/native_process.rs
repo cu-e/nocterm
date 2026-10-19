@@ -1,27 +1,27 @@
 //! Borrowed paid facts enter the existing native subprocess and containment owners.
+#[cfg(unix)]
 use super::{
     arguments::Arguments,
-    budget::SourceBudget,
     diagnostic_text,
     environment::Environment,
     environment_snapshot::{self, Snapshot},
-    redaction::DiagnosticRedactor,
 };
+use super::{budget::SourceBudget, redaction::DiagnosticRedactor};
 use agent_client_protocol::managed::{Buffer, ManagedError, Source};
 use nocterm_ai::{
     connection::{ManagedStartupHandle, ManagedWorkspaceHandle},
-    model::{json::deferred::JsonDecodeError, native::NativeOwned},
-    sandbox::{MountAccess, ProtectedWorkdirError},
+    model::json::deferred::JsonDecodeError,
+    sandbox::ProtectedWorkdirError,
     workspace::WorkdirError,
 };
-use std::{
-    fmt, io,
-    path::{Path, PathBuf},
-    process::Stdio,
-    sync::Arc,
-};
+#[cfg(unix)]
+use nocterm_ai::{model::native::NativeOwned, sandbox::MountAccess};
+use std::{fmt, path::Path, sync::Arc};
+#[cfg(unix)]
+use std::{io, path::PathBuf, process::Stdio};
 #[derive(thiserror::Error)]
 pub(super) enum Error {
+    #[cfg(unix)]
     #[error(transparent)]
     Snapshot(#[from] environment_snapshot::Error),
     #[error(transparent)]
@@ -38,16 +38,21 @@ pub(super) enum Error {
     Protected(#[from] ProtectedWorkdirError),
     #[error(transparent)]
     Redaction(#[from] super::redaction::Error),
+    #[cfg(unix)]
     #[error("{}",.0.text())]
     Command(Source<SourceBudget>),
+    #[cfg(unix)]
     #[error(
         "Agent isolation is on, but bubblewrap (bwrap) was not found in PATH. Install bubblewrap or turn isolation off in AI settings."
     )]
     SandboxMissing,
+    #[cfg(unix)]
     #[error("Agent isolation is only available on Linux. Turn it off in AI settings.")]
     SandboxUnsupported,
+    #[cfg(unix)]
     #[error("Cannot execute bubblewrap at {}",.0.as_path().display())]
     SandboxExecutable(NativeOwned<PathBuf>),
+    #[cfg(unix)]
     #[error("Cannot start agent: {0}")]
     Spawn(#[source] io::Error),
     #[cfg(target_os = "linux")]
@@ -188,8 +193,10 @@ impl Preparation {
         _: Option<&Path>,
         _: &DiagnosticRedactor,
     ) -> Result<Spawned, Error> {
+        let _ = &self.budget;
         Err(Error::Platform)
     }
+    #[cfg(unix)]
     #[expect(
         clippy::result_large_err,
         reason = "failures carry ledger-paid diagnostics by value; a Box would be an unpaid allocation"

@@ -1,5 +1,7 @@
 //! Primitive allocation refusals stay inline across concrete native error owners.
-use super::{diagnostics, environment_snapshot, error::DecodeError, native_process, redaction};
+#[cfg(unix)]
+use super::environment_snapshot;
+use super::{diagnostics, error::DecodeError, native_process, redaction};
 use agent_client_protocol::managed::ManagedError;
 use nocterm_ai::model::json::deferred::{JsonDecodeError, NativeAllocationError};
 pub(super) fn json(error: &JsonDecodeError) -> Option<NativeAllocationError> {
@@ -77,8 +79,9 @@ pub(super) fn diagnostic(error: &diagnostics::Error) -> Option<NativeAllocationE
 }
 pub(super) fn process(error: &native_process::Error) -> Option<NativeAllocationError> {
     match error {
-        native_process::Error::Snapshot(environment_snapshot::Error::Native(error))
-        | native_process::Error::Allocation(error) => sdk(error),
+        #[cfg(unix)]
+        native_process::Error::Snapshot(environment_snapshot::Error::Native(error)) => sdk(error),
+        native_process::Error::Allocation(error) => sdk(error),
         native_process::Error::Native(error)
         | native_process::Error::Path(nocterm_ai::model::native::NativePathError::Admission(
             error,
