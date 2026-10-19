@@ -1,4 +1,8 @@
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 #[gpui_kit::test]
 fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
@@ -26,18 +30,21 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(25_900, 256_000)),
+            SessionUpdate::UsageUpdate(ContextUsage::new(25_900, 256_000)),
         )))
         .unwrap();
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
     finish
-        .send(
-            acp::PromptResponse::new(acp::StopReason::EndTurn)
-                .usage(acp::Usage::new(30_000, 25_000, 5_000).cached_read_tokens(20_000)),
-        )
+        .send(PromptOutcome {
+            usage: Some(TokenTotals {
+                cache_read: Some(20_000),
+                ..TokenTotals::new(30_000, 25_000, 5_000)
+            }),
+            ..PromptOutcome::new(StopReason::EndTurn)
+        })
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
@@ -52,13 +59,7 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
         assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread
-                .read(cx)
-                .transcript()
-                .tokens
-                .as_ref()
-                .unwrap()
-                .total_tokens,
+            thread.read(cx).transcript().tokens.as_ref().unwrap().total,
             30_000
         );
     });
@@ -137,11 +138,11 @@ fn implicit_markdown_images_are_disabled_and_config_labels_show_selection() {
         crate::panel::widgets::safe_markdown("![secret](file:///hidden)<img src='x'>"),
         "[secret](file:///hidden)&lt;img src='x'>"
     );
-    let option = acp::SessionConfigOption::select(
+    let option = ConfigOption::select(
         "model",
         "Model",
         "one",
-        vec![acp::SessionConfigSelectOption::new("one", "First")],
+        vec![ConfigChoice::new("one", "First")],
     );
     assert_eq!(crate::thread::config_label(&option), "First");
 }
@@ -227,21 +228,19 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
-    f.commands
-        .config
-        .set_options(vec![acp::SessionConfigOption::select(
-            "model",
-            "Model",
-            "one",
-            vec![
-                acp::SessionConfigSelectOption::new(
-                    "one",
-                    "Very long selected model name that must fit the narrow panel",
-                ),
-                acp::SessionConfigSelectOption::new("two", "Second"),
-            ],
-        )]);
-    f.commands.config.set_modes(serde_json::from_value(serde_json::json!({"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]})).unwrap());
+    f.commands.config.set_options(vec![ConfigOption::select(
+        "model",
+        "Model",
+        "one",
+        vec![
+            ConfigChoice::new(
+                "one",
+                "Very long selected model name that must fit the narrow panel",
+            ),
+            ConfigChoice::new("two", "Second"),
+        ],
+    )]);
+    f.commands.config.set_modes(ask_and_code());
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -308,8 +307,8 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow() {
     let title = crate::thread::chat_title;
     assert_eq!(title(None, &state), "New Agent");
     assert_eq!(title(Some("Mine"), &state), "Mine");
-    state.entries.push(Entry::User(vec![acp::ContentBlock::Text(
-        acp::TextContent::new("Привет 🌍"),
+    state.entries.push(Entry::User(vec![Content::Text(
+        nocterm_ai::model::content::Text::new("Привет 🌍"),
     )]));
     assert_eq!(title(None, &state), "Provider title");
     assert_eq!(title(Some("  "), &state), "Provider title");
@@ -322,9 +321,20 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow() {
         (100, 0, 0.),
         (85, 100, 0.85),
     ] {
-        let usage = serde_json::from_value(serde_json::json!({"used":used,"size":size})).unwrap();
+        let usage = ContextUsage::new(used, size);
         assert_eq!(crate::panel::usage::usage_fraction(Some(&usage)), expected);
     }
+}
+
+fn ask_and_code() -> nocterm_ai::model::controls::Modes {
+    use nocterm_ai::model::controls::{ModeChoice, Modes};
+    Modes::new(
+        "ask",
+        vec![
+            ModeChoice::new("ask", "Ask"),
+            ModeChoice::new("code", "Code"),
+        ],
+    )
 }
 
 #[test]
@@ -365,10 +375,8 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     thread.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(
-                    "Inspecting the current terminal carefully before running commands",
-                ),
+            SessionUpdate::AgentThoughtChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "Inspecting the current terminal carefully before running commands",
             ))),
             cx,
         )
@@ -531,7 +539,7 @@ fn prompt_completion_refreshes_its_original_usage_source_after_another_installat
         image_deps(),
     );
     finish
-        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
     assert_eq!(source.requests().len(), 1);

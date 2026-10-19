@@ -3,6 +3,9 @@
 use super::provider_fixtures::{Program, bridge, update};
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch, ToolRecord, ToolStatus};
 use nocterm_ai::{
     ApprovalPolicy, ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display,
 };
@@ -20,17 +23,17 @@ fn fenced(tool: &str, result: &str) -> String {
     )
 }
 
-fn completed(id: &str, text: String) -> acp::SessionUpdate {
-    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+fn completed(id: &str, text: String) -> SessionUpdate {
+    SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
         id.to_owned(),
-        acp::ToolCallUpdateFields::new()
+        ToolChanges::default()
             .raw_output(Value::String(text.clone()))
-            .content(vec![acp::ToolCallContent::from(text)])
-            .status(acp::ToolCallStatus::Completed),
-    ))
+            .content(vec![ToolContent::from(text)])
+            .status(ToolStatus::Succeeded),
+    )))
 }
 
-fn row(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) -> acp::ToolCall {
+fn row(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) -> ToolRecord {
     let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
         panic!("tool row expected");
     };
@@ -66,7 +69,7 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
 fn assert_terminal_listing(
     f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
-    session: &acp::SessionId,
+    session: &SessionId,
     terminal_id: &str,
     cx: &mut TestAppContext,
 ) {
@@ -74,10 +77,10 @@ fn assert_terminal_listing(
     update(
         f,
         session,
-        acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+        SessionUpdate::ToolCall(Box::new(ToolRecord::new(
             "tc-list",
             "mcp_nocterm_3_list_terminals",
-        )),
+        ))),
         cx,
     );
     let listed = bridge(f, TerminalCall::ListTerminals, cx);
@@ -109,7 +112,7 @@ fn assert_terminal_listing(
 fn assert_completed_command(
     f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
-    session: &acp::SessionId,
+    session: &SessionId,
     terminal_id: String,
     program: &Program,
     cx: &mut TestAppContext,
@@ -126,10 +129,10 @@ fn assert_completed_command(
     update(
         f,
         session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("tc-exec", "mcp_nocterm_3_exec_command")
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("tc-exec", "mcp_nocterm_3_exec_command")
                 .raw_input(serde_json::to_value(&request).unwrap()),
-        ),
+        )),
         cx,
     );
     let started = bridge(f, TerminalCall::ExecCommand(request), cx);
@@ -205,11 +208,11 @@ fn a_saved_hermes_row_is_readable_without_its_bridge() {
     }).to_string()})
     .to_string();
     let text = fenced("mcp_nocterm_1_read_terminal", &result);
-    let mut call = acp::ToolCall::new("tc-ec26dc3e6086", "mcp_nocterm_1_read_terminal")
+    let mut call = ToolRecord::new("tc-ec26dc3e6086", "mcp_nocterm_1_read_terminal")
         .raw_input(json!({"lines": 50, "terminal_id": "t1"}))
         .raw_output(Value::String(text.clone()))
-        .content(vec![acp::ToolCallContent::from(text)]);
-    call.status = acp::ToolCallStatus::Completed;
+        .content(vec![ToolContent::from(text)]);
+    call.status = ToolStatus::Succeeded;
     assert_eq!(
         tool_display::header(&call),
         "Nocterm · Read terminal · Completed"
@@ -229,10 +232,10 @@ fn a_failed_hermes_call_shows_the_error() {
         "mcp_nocterm_3_read_command",
         &json!({"error": "Unknown command handle c9"}).to_string(),
     );
-    let mut call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_read_command")
+    let mut call = ToolRecord::new("tc-1", "mcp_nocterm_3_read_command")
         .raw_input(json!({"terminal_id":"t1", "command_id":"c9"}))
         .raw_output(Value::String(text));
-    call.status = acp::ToolCallStatus::Failed;
+    call.status = ToolStatus::Failed;
     let output = tool_output::source(&call, false).unwrap();
     assert_eq!(output.sections.len(), 1);
     assert_eq!(output.sections[0].label, "Error");
@@ -241,7 +244,7 @@ fn a_failed_hermes_call_shows_the_error() {
 
 #[test]
 fn a_short_hermes_result_is_not_fenced() {
-    let call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_send_input")
+    let call = ToolRecord::new("tc-1", "mcp_nocterm_3_send_input")
         .raw_input(json!({"terminal_id":"t1", "text":"y", "press_enter":true}))
         .raw_output(json!(
             json!({"result": json!({"accepted":true}).to_string()}).to_string()
@@ -261,7 +264,7 @@ fn a_fence_with_extra_text_stays_literal() {
         ),
         fenced("mcp_nocterm_3_exec_command\" other=\"", &result),
     ] {
-        let call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_exec_command")
+        let call = ToolRecord::new("tc-1", "mcp_nocterm_3_exec_command")
             .raw_input(json!({"terminal_id":"t1", "program":"true"}))
             .raw_output(Value::String(text.clone()));
         let output = tool_output::source(&call, false).unwrap();

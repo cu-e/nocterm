@@ -1,5 +1,7 @@
 use super::*;
 use gpui_kit::{point, px};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::session::SessionUpdate;
 
 fn open_usage(f: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
@@ -58,9 +60,9 @@ fn usage_escape_precedes_slash_suggestions(cx: &mut TestAppContext) {
             panel.current().unwrap().update(cx, |thread, cx| {
                 report_control(
                     thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        vec![acp::AvailableCommand::new("review", "Review")],
-                    )),
+                    SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                        "review", "Review",
+                    )]),
                     cx,
                 );
                 cx.notify();

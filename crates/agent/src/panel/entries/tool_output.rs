@@ -5,10 +5,9 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ai::{
-    acp,
-    tool_display::{self, ToolDisplay, ToolOutcome},
-};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::{ToolContent, ToolRecord};
+use nocterm_ai::tool_display::{self, ToolDisplay, ToolOutcome};
 use serde_json::Value;
 
 use super::tool_input::{Section, literal_section};
@@ -62,17 +61,17 @@ fn text(value: &Value) -> String {
         .unwrap_or_else(|| serde_json::to_string_pretty(value).unwrap_or_default())
 }
 
-fn content_value(item: &acp::ToolCallContent) -> Value {
+fn content_value(item: &ToolContent) -> Value {
     match item {
-        acp::ToolCallContent::Content(content) => match &content.content {
-            acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
+        ToolContent::Content(content) => match &content.content {
+            Content::Text(content) => Value::String(content.text.clone()),
             block => serde_json::to_value(block).unwrap_or_default(),
         },
         item => serde_json::to_value(item).unwrap_or_default(),
     }
 }
 
-pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
+pub(in crate::panel) fn source(call: &ToolRecord, redact: bool) -> Option<Output> {
     let display = ToolDisplay::from_call(call);
     if let Some(display) = &display
         && let Some(outcome) = &display.outcome

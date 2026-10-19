@@ -2,6 +2,14 @@ use super::*;
 use agent_client_protocol::{Channel, schema::ProtocolVersion};
 use serde_json::json;
 
+fn setting(session: SessionId, config: ConfigId, value: &str) -> SetConfigOption {
+    SetConfigOption {
+        session,
+        config,
+        setting: ConfigSetting::Choice(ConfigChoiceId::new(value)),
+    }
+}
+
 #[cfg(unix)]
 #[test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -50,70 +58,61 @@ for line in sys.stdin:
             .unwrap();
         let session = connection
             .commands
-            .new_session(acp::NewSessionRequest::new(directory.path().to_owned()))
+            .new_session(SessionOpen {
+                working_directory: directory.path().to_owned(),
+                endpoints: Vec::new(),
+            })
             .await
             .unwrap();
-        let options = session.config_options.unwrap();
+        let options = session.configuration.unwrap();
         assert_eq!(options.len(), 1);
         let id = options[0].id.clone();
         let changed = connection
             .commands
-            .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                session.session_id.clone(),
-                id.clone(),
-                "second",
-            ))
+            .set_config_option(setting(session.session.clone(), id.clone(), "second"))
             .await
             .unwrap();
         let selected = changed.iter().find(|option| option.id == id).unwrap();
-        let acp::SessionConfigKind::Select(select) = &selected.kind else {
+        let ConfigKind::Select(select) = &selected.kind else {
             panic!("select")
         };
-        assert_eq!(select.current_value.0.as_ref(), "second");
+        assert_eq!(select.current.as_str(), "second");
         let event = connection.events.recv().await.unwrap();
         let AgentEvent::Session(notification) = event else {
             panic!("session update")
         };
-        let acp::SessionUpdate::ConfigOptionUpdate(update) = notification.update else {
+        let SessionUpdate::ConfigOptionUpdate(update) = notification.update else {
             panic!("config update")
         };
-        assert_eq!(update.config_options.len(), 2);
-        assert!(update.config_options.iter().any(|option| option.id == id));
+        assert_eq!(update.len(), 2);
+        assert!(update.iter().any(|option| option.id == id));
         assert!(
             connection
                 .commands
-                .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                    session.session_id.clone(),
-                    id.clone(),
-                    "fails"
-                ))
+                .set_config_option(setting(session.session.clone(), id.clone(), "fails"))
                 .await
                 .is_err()
         );
         assert!(
             connection
                 .commands
-                .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                    session.session_id.clone(),
-                    id,
-                    "unadvertised"
-                ))
+                .set_config_option(setting(session.session.clone(), id, "unadvertised"))
                 .await
                 .is_err()
         );
         let retained = connection
             .commands
-            .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                session.session_id,
-                "other",
-                "a",
-            ))
+            .set_config_option(SetConfigOption {
+                session: session.session,
+                config: ConfigId::new("other"),
+                setting: ConfigSetting::Choice(ConfigChoiceId::new("a")),
+            })
             .await
             .unwrap();
-        let acp::SessionConfigKind::Select(select) = &retained[0].kind else {
+        let ConfigKind::Select(select) = &retained[0].kind else {
             panic!("select")
         };
-        assert_eq!(select.current_value.0.as_ref(), "second");
+        assert_eq!(select.current.as_str(), "second");
         connection.commands.shutdown();
     });
 }
@@ -163,17 +162,17 @@ for line in sys.stdin:
                 })
                 .await
                 .unwrap();
-            let request = |fork| nocterm_ai::RestoreSessionRequest {
-                session_id: acp::SessionId::new("s1"),
-                cwd: directory.path().to_owned(),
-                mcp_servers: Vec::new(),
+            let request = |fork| RestoreSession {
+                session: SessionId::new("s1"),
+                working_directory: directory.path().to_owned(),
+                endpoints: Vec::new(),
                 fork,
             };
             let forked = connection.commands.restore_session(request(true)).await;
             let resumed = connection.commands.restore_session(request(false)).await;
             if fork {
-                assert_eq!(forked.unwrap().session_id.to_string(), "s2");
-                assert_eq!(resumed.unwrap().session_id.to_string(), "s1");
+                assert_eq!(forked.unwrap().session.to_string(), "s2");
+                assert_eq!(resumed.unwrap().session.to_string(), "s1");
             } else {
                 // Neither was advertised, so neither was sent.
                 assert!(forked.is_err());
@@ -241,13 +240,13 @@ fn sdk_channel_initializes_streams_permissions_and_config() {
                     AgentEvent::Session(notification) => {
                         assert!(matches!(
                             notification.update,
-                            acp::SessionUpdate::AgentMessageChunk(_)
+                            SessionUpdate::AgentMessageChunk(_)
                         ));
                         streamed = true;
                     }
                     AgentEvent::Permission { respond, .. } => {
                         assert!(streamed);
-                        respond.respond(acp::RequestPermissionOutcome::Cancelled);
+                        respond.respond(PermissionOutcome::Cancelled);
                         return Ok::<_, acp::Error>(());
                     }
                     _ => panic!("Unexpected event"),
@@ -281,10 +280,8 @@ fn remote_error_payloads_are_sanitized() {
     let error = acp::Error::auth_required().data(json!({"password":"marker"}));
     assert!(matches!(map_error(error), AgentError::AuthRequired(_)));
     let error = map_error(acp::Error::internal_error().data("marker"));
-    let AgentError::Rpc(error) = error else {
-        panic!("Wrong error variant")
-    };
-    assert!(error.data.is_none());
+    // The neutral error has no field that could carry the agent's data.
+    assert!(matches!(error, AgentError::Rpc(_)), "Wrong error variant");
     let secret = "custom-auth-marker".to_owned();
     let error=map_error_with(acp::Error::internal_error().data(json!({"message":"Session limit reached; custom-auth-marker", "unrelated":"do not expose"})),&[secret]);
     let AgentError::Rpc(error) = error else {
@@ -293,7 +290,6 @@ fn remote_error_payloads_are_sanitized() {
     assert!(error.message.contains("Session limit reached"));
     assert!(!error.message.contains("custom-auth-marker"));
     assert!(!error.message.contains("do not expose"));
-    assert!(error.data.is_none());
 }
 #[cfg(unix)]
 #[test]
@@ -594,10 +590,10 @@ for line in sys.stdin:
                 .unwrap();
             let result = connection
                 .commands
-                .restore_session(nocterm_ai::RestoreSessionRequest {
-                    session_id: acp::SessionId::new("stale"),
-                    cwd: directory.path().to_owned(),
-                    mcp_servers: Vec::new(),
+                .restore_session(RestoreSession {
+                    session: SessionId::new("stale"),
+                    working_directory: directory.path().to_owned(),
+                    endpoints: Vec::new(),
                     fork: false,
                 })
                 .await;

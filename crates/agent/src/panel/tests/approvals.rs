@@ -1,4 +1,7 @@
 use super::*;
+use nocterm_ai::model::auth::PermissionOutcome;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 
 #[gpui_kit::test]
 fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chunks(
@@ -61,10 +64,10 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("late"),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "late",
             ))),
         )))
         .unwrap();
@@ -259,12 +262,31 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
     let responses = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
-        (0..2).map(|_| {
-            let (send, receive) = nocterm_ai::PermissionResponder::channel();
-            let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Long permission title"},"options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"},{"optionId":"deny","name":"Reject","kind":"reject_once"}]})).unwrap();
-            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
-            receive
-        }).collect::<Vec<_>>()
+        (0..2)
+            .map(|_| {
+                let (send, receive) = nocterm_ai::PermissionResponder::channel();
+                let request = permission_request(
+                    session.clone(),
+                    "call",
+                    Some("Long permission title"),
+                    vec![
+                        allow_once_choice("allow", "Allow once"),
+                        nocterm_ai::model::auth::PermissionChoice::new(
+                            "deny",
+                            "Reject",
+                            nocterm_ai::model::auth::PermissionEffect::DenyOnce,
+                        ),
+                    ],
+                );
+                f.events
+                    .try_send(AgentEvent::Permission {
+                        request,
+                        respond: send,
+                    })
+                    .unwrap();
+                receive
+            })
+            .collect::<Vec<_>>()
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -288,11 +310,11 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
     let mut responses = responses.into_iter();
     assert!(matches!(
         futures::executor::block_on(responses.next().unwrap()).unwrap(),
-        acp::RequestPermissionOutcome::Selected(_)
+        PermissionOutcome::Selected(_)
     ));
     assert!(matches!(
         futures::executor::block_on(responses.next().unwrap()).unwrap(),
-        acp::RequestPermissionOutcome::Cancelled
+        PermissionOutcome::Cancelled
     ));
 }
 
@@ -307,8 +329,18 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     show_history(&f, cx);
     cx.update(|cx| {
         let session = owner.read(cx).session().clone().unwrap();
-        let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Review pending request"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-        f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+        let request = permission_request(
+            session,
+            "call",
+            Some("Review pending request"),
+            vec![allow_once_choice("allow", "Allow")],
+        );
+        f.events
+            .try_send(AgentEvent::Permission {
+                request,
+                respond: send,
+            })
+            .unwrap();
     });
     cx.run_until_parked();
     cx.executor()
@@ -326,7 +358,7 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     .unwrap();
     assert!(matches!(
         futures::executor::block_on(receive).unwrap(),
-        acp::RequestPermissionOutcome::Selected(_)
+        PermissionOutcome::Selected(_)
     ));
 }
 
@@ -341,8 +373,18 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
         let owner = cx.update(|cx| {
             let owner = f.panel.read(cx).current().unwrap();
             let session = owner.read(cx).session().clone().unwrap();
-            let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Hidden permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+            let request = permission_request(
+                session,
+                "call",
+                Some("Hidden permission"),
+                vec![allow_once_choice("allow", "Allow")],
+            );
+            f.events
+                .try_send(AgentEvent::Permission {
+                    request,
+                    respond: send,
+                })
+                .unwrap();
             owner
         });
         // Deliver the provider event before switching away from its draft chat.
@@ -398,7 +440,7 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
             .unwrap_or_else(|| panic!("{disposition} response was not released"))
             .unwrap();
         assert_eq!(
-            matches!(result, acp::RequestPermissionOutcome::Selected(_)),
+            matches!(result, PermissionOutcome::Selected(_)),
             disposition == "resolve"
         );
     }

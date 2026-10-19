@@ -52,6 +52,20 @@ pub struct ProviderPermission {
     pub choices: Vec<PermissionChoice>,
 }
 
+impl ProviderPermission {
+    pub fn new(
+        session: impl Into<SessionId>,
+        tool: ToolPatch,
+        choices: Vec<PermissionChoice>,
+    ) -> Self {
+        Self {
+            session: session.into(),
+            tool,
+            choices,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PermissionChoice {
     pub id: PermissionOptionId,

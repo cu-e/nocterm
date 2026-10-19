@@ -6,7 +6,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::controls::ConfigCategory;
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
 
@@ -308,7 +308,7 @@ impl AgentPanel {
                 .read(cx)
                 .config_options()
                 .iter()
-                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
+                .find(|option| option.category == Some(ConfigCategory::Model))
         {
             self.toggle_menu(MenuKind::Config(option.id.to_string()), cx);
         }

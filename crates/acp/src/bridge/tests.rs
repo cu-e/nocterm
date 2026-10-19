@@ -39,13 +39,11 @@ fn token(registration: &BridgeRegistration) -> String {
 fn launches_the_relay_under_the_chat_server_name() {
     let dir = tempfile::tempdir().unwrap();
     let registration = bridge(&dir).register().unwrap();
-    let nocterm_ai::acp::McpServer::Stdio(server) = registration.mcp_server() else {
-        panic!("stdio relay");
-    };
+    let server = registration.endpoint();
     assert_eq!(server.name, format!("nocterm-{}", registration.id));
-    assert_eq!(server.command, std::env::current_exe().unwrap());
-    assert_eq!(server.args, ["agent-bridge"]);
-    let names: Vec<_> = server.env.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(server.launch.program, std::env::current_exe().unwrap());
+    assert_eq!(server.launch.args, ["agent-bridge"]);
+    let names: Vec<_> = server.launch.env.iter().map(|v| v.0.as_str()).collect();
     assert_eq!(names, [ENDPOINT_VARIABLE, TOKEN_VARIABLE]);
 }
 #[test]

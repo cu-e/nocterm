@@ -5,19 +5,20 @@ use std::{
 };
 
 use agent_client_protocol::{Agent, ConnectionTo, Lines};
+use agent_client_protocol_schema::v1 as acp;
 use async_process::{ChildStdin, ChildStdout};
 use futures::{
     channel::oneshot,
     future::{Either, select},
 };
-use nocterm_ai::{AgentConnection, acp};
+use nocterm_ai::AgentConnection;
 
 use super::{
     commands::Commands,
     error::StartupError,
     exit_report::{EventQueue, ExitReport},
     handlers::client_builder_with_models,
-    handshake::Handshake,
+    handshake::{Handshake, Introduction},
     stderr_tail::StderrTail,
 };
 use crate::{
@@ -130,8 +131,8 @@ struct Session {
 }
 impl Session {
     async fn serve(self, connection: ConnectionTo<Agent>) -> Result<(), acp::Error> {
-        let info = match self.handshake.run(&connection).await {
-            Ok(info) => info,
+        let Introduction { info, support } = match self.handshake.run(&connection).await {
+            Ok(introduction) => introduction,
             Err(error) => {
                 let _ = self.ready.send(Err(error));
                 return Ok(());
@@ -142,7 +143,7 @@ impl Session {
             self.stop,
             self.group,
             self.secrets,
-            &info,
+            support,
             self.models,
             self.events.sender(),
         ));

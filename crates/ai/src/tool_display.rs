@@ -3,7 +3,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{TerminalCall, ToolFailure, acp};
+use crate::{
+    TerminalCall, ToolFailure,
+    model::{
+        session::SessionUpdate,
+        tools::{ToolRecord, ToolStatus},
+    },
+};
 
 pub const META_KEY: &str = "nocterm/tool-display";
 
@@ -63,7 +69,7 @@ impl ToolDisplay {
             .map(|_| outcome);
     }
 
-    pub fn from_call(call: &acp::ToolCall) -> Option<Self> {
+    pub fn from_call(call: &ToolRecord) -> Option<Self> {
         let value = call.meta.as_ref()?.get(META_KEY)?.clone();
         let display: Self = serde_json::from_value(value).ok()?;
         (display.version == 2 || (display.version == 1 && display.display_request().is_some()))
@@ -88,7 +94,7 @@ impl ToolDisplay {
         self.redacted |= self.arguments != original;
     }
 
-    pub fn attach(&self, call: &mut acp::ToolCall) {
+    pub fn attach(&self, call: &mut ToolRecord) {
         if let Ok(value) = serde_json::to_value(self) {
             call.meta
                 .get_or_insert_with(Default::default)
@@ -114,12 +120,22 @@ pub use identity::{
     bridge_server_name, envelope, fallback_tool, raw_envelope, requested_arguments, requested_call,
 };
 
-pub fn header(call: &acp::ToolCall) -> String {
+pub fn header(call: &ToolRecord) -> String {
     let title = ToolDisplay::from_call(call)
         .map(|display| display.title())
         .or_else(|| fallback_tool(call).map(|tool| format!("Nocterm · {}", operation(tool))))
         .unwrap_or_else(|| call.title.clone());
-    format!("{title} · {:?}", call.status)
+    format!("{title} · {}", status_name(call.status))
+}
+
+/// The status as it has always been shown in a row header.
+fn status_name(status: ToolStatus) -> &'static str {
+    match status {
+        ToolStatus::Pending => "Pending",
+        ToolStatus::Running => "InProgress",
+        ToolStatus::Succeeded => "Completed",
+        ToolStatus::Failed => "Failed",
+    }
 }
 
 pub fn request(call: &TerminalCall) -> (&'static str, Value) {
@@ -158,10 +174,10 @@ fn redact_values(value: &mut Value) {
     }
 }
 
-pub fn strip_provider_meta(update: &mut acp::SessionUpdate) {
+pub fn strip_provider_meta(update: &mut SessionUpdate) {
     let meta = match update {
-        acp::SessionUpdate::ToolCall(call) => &mut call.meta,
-        acp::SessionUpdate::ToolCallUpdate(update) => &mut update.meta,
+        SessionUpdate::ToolCall(call) => &mut call.meta,
+        SessionUpdate::ToolCallUpdate(update) => &mut update.meta,
         _ => return,
     };
     if let Some(meta) = meta {

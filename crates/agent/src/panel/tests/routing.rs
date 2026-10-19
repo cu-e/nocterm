@@ -1,6 +1,9 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
@@ -13,10 +16,7 @@ fn server_names(f: &Fixture) -> Vec<String> {
         .iter()
         .map(|servers| {
             assert_eq!(servers.len(), 1);
-            match &servers[0] {
-                acp::McpServer::Stdio(server) => server.name.clone(),
-                other => panic!("unexpected server {other:?}"),
-            }
+            servers[0].name.clone()
         })
         .collect()
 }
@@ -157,7 +157,7 @@ fn prompts_tell_the_agent_to_report_unreachable_servers(cx: &mut TestAppContext)
     new_chat(&f, cx);
     exchange(&f, "check the server", "ok", cx);
     let prompt = f.commands.prompts.lock().unwrap()[0].clone();
-    let acp::ContentBlock::Text(context) = &prompt.prompt[0] else {
+    let Content::Text(context) = &prompt.content[0] else {
         panic!("the prompt starts with its context");
     };
     assert!(
@@ -211,9 +211,10 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
             restore_pending_history(&f, thread, cx);
             report_control(
                 thread,
-                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                    vec![acp::AvailableCommand::new("$skill:review", "Review")],
-                )),
+                SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                    "$skill:review",
+                    "Review",
+                )]),
                 cx,
             );
             thread.send(input.into(), cx);
@@ -222,17 +223,15 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
         let prompts = f.commands.prompts.lock().unwrap();
         let request = prompts.last().unwrap();
         if input.contains("$skill:review") {
-            assert_eq!(request.prompt.len(), 1);
-            assert!(
-                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text == input)
-            );
+            assert_eq!(request.content.len(), 1);
+            assert!(matches!(&request.content[0], Content::Text(text) if text.text == input));
         } else {
-            assert_eq!(request.prompt.len(), 3);
+            assert_eq!(request.content.len(), 3);
             assert!(
-                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
+                matches!(&request.content[0], Content::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
             );
             assert!(
-                matches!(&request.prompt[1], acp::ContentBlock::Text(text) if text.text.contains("Assistant: remember this context"))
+                matches!(&request.content[1], Content::Text(text) if text.text.contains("Assistant: remember this context"))
             );
         }
         drop(prompts);

@@ -1,5 +1,8 @@
 //! Empty provider sessions have no conversation to restore.
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{PromptOutcome, SessionUpdate, StopReason};
 use nocterm_ai::{
     history::{SavedChat, SavedPrompt},
     thread::Entry,
@@ -91,9 +94,12 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text == "waiting request")
-    ));
+    assert!(
+        prompts[0]
+            .content
+            .iter()
+            .any(|block| matches!(block, Content::Text(text) if text.text == "waiting request"))
+    );
     cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
 }
 
@@ -102,9 +108,7 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
     let mut f = fixture(cx);
     let mut saved = empty_chat(&f);
     saved.entries = vec![
-        Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-            "remember this",
-        ))]),
+        Entry::User(vec![Content::text("remember this")]),
         Entry::Agent("previous answer".into()),
     ];
     saved.queue.push(SavedPrompt {
@@ -127,8 +131,12 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("User: remember this") && text.text.contains("Assistant: previous answer"))));
-    assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text == "continue conversation")));
+    assert!(prompts[0].content.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("User: remember this") && text.text.contains("Assistant: previous answer"))));
+    assert!(
+        prompts[0].content.iter().any(
+            |block| matches!(block, Content::Text(text) if text.text == "continue conversation")
+        )
+    );
     drop(prompts);
     cx.update(|cx| assert_eq!(thread.read(cx).transcript().entries.len(), 3));
     complete_active(&f, cx);
@@ -136,7 +144,7 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
     cx.run_until_parked();
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    assert!(!prompts[1].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation (context"))));
+    assert!(!prompts[1].content.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation (context"))));
     assert_eq!(f.commands.restores.lock().unwrap().len(), 1);
 }
 
@@ -198,9 +206,10 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     fork.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("help", "Show help"),
-            ])),
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                "help",
+                "Show help",
+            )]),
             cx,
         );
         thread.send("/help".into(), cx);
@@ -216,12 +225,10 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     let history = prompts
         .last()
         .unwrap()
-        .prompt
+        .content
         .iter()
         .find_map(|block| match block {
-            acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") => {
-                Some(&text.text)
-            }
+            Content::Text(text) if text.text.contains("Saved conversation") => Some(&text.text),
             _ => None,
         })
         .unwrap();
@@ -259,7 +266,7 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
         .unwrap()
         .take()
         .unwrap()
-        .send(acp::PromptResponse::new(acp::StopReason::Cancelled))
+        .send(PromptOutcome::new(StopReason::Cancelled))
         .unwrap();
     cx.run_until_parked();
     assert!(disk_chat(&f, &id).pending_history);
@@ -273,8 +280,8 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
     cx.update(|cx| assert!(restarted.read(cx).document().pending_history()));
     restarted.update(cx, |thread, cx| thread.send("try again".into(), cx));
     cx.run_until_parked();
-    assert!(f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") && text.text.contains("old answer"))
+    assert!(f.commands.prompts.lock().unwrap().last().unwrap().content.iter().any(
+        |block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation") && text.text.contains("old answer"))
     ));
     complete_active(&f, cx);
     assert!(!disk_chat(&f, &id).pending_history);
@@ -317,9 +324,9 @@ fn saved_chat(f: &Fixture, history: bool) -> SavedChat {
         attachments: Vec::new(),
     }];
     if history {
-        chat.entries = vec![nocterm_ai::thread::Entry::User(vec![
-            acp::ContentBlock::Text(acp::TextContent::new("prior real message")),
-        ])];
+        chat.entries = vec![nocterm_ai::thread::Entry::User(vec![Content::text(
+            "prior real message",
+        )])];
     }
     chat
 }
@@ -358,10 +365,10 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     });
     let text = |index: usize| {
         f.commands.prompts.lock().unwrap()[index]
-            .prompt
+            .content
             .iter()
             .filter_map(|block| match block {
-                acp::ContentBlock::Text(text) => Some(text.text.clone()),
+                Content::Text(text) => Some(text.text.clone()),
                 _ => None,
             })
             .next_back()
@@ -386,9 +393,10 @@ fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
             .restore_errors
             .lock()
             .unwrap()
-            .push_back(AgentError::Rpc(
-                acp::Error::internal_error().data("Service temporarily overloaded"),
-            ));
+            .push_back(AgentError::Rpc(nocterm_ai::model::session::RemoteError {
+                code: -32603,
+                message: "Service temporarily overloaded".into(),
+            }));
     }
     send_composer(&f, cx);
     cx.background_executor

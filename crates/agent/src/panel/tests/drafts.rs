@@ -1,5 +1,6 @@
 //! Unsent composer text belongs to history without becoming a transcript entry.
 use super::*;
+use nocterm_ai::model::ids::AuthMethodId;
 use std::time::Duration;
 
 fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
@@ -204,7 +205,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     f.commands.auth_required.store(false, Ordering::SeqCst);
     cx.update_window(f.handle, |_, window, cx| {
         thread.update(cx, |thread, cx| {
-            thread.authenticate(acp::AuthMethodId::new("sign-in"), window, cx)
+            thread.authenticate(AuthMethodId::new("sign-in"), window, cx)
         })
     })
     .unwrap();

@@ -1,8 +1,10 @@
 //! Presentation state reduces legacy updates; only actual saved-row changes are semantic.
-use nocterm_ai::{
-    acp,
-    thread::{Entry, ThreadChange, ThreadState},
-};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::Change;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolChanges, ToolRecord, ToolStatus};
+use nocterm_ai::model::usage::TokenTotals;
+use nocterm_ai::thread::{Entry, ThreadChange, ThreadState};
 
 #[derive(Clone, Default)]
 pub(super) struct Transcript {
@@ -34,29 +36,43 @@ impl Transcript {
     pub(super) fn state(&self) -> &ThreadState {
         &self.state
     }
-    pub(super) fn apply(&mut self, update: acp::SessionUpdate, now: u64) -> (ThreadChange, bool) {
+    pub(super) fn apply(&mut self, update: SessionUpdate, now: u64) -> (ThreadChange, bool) {
         let semantic = self.changes_saved(&update);
         (self.state.apply(update, now), semantic)
     }
-    fn changes_saved(&self, update: &acp::SessionUpdate) -> bool {
+    fn changes_saved(&self, update: &SessionUpdate) -> bool {
         match update {
-            acp::SessionUpdate::AgentMessageChunk(chunk) => !matches!((&chunk.content, self.state.entries.last()), (acp::ContentBlock::Text(text), Some(Entry::Agent(_))) if text.text.is_empty()),
-            acp::SessionUpdate::AgentThoughtChunk(chunk) => !matches!((&chunk.content, self.state.entries.last()), (acp::ContentBlock::Text(text), Some(Entry::Thought(_))) if text.text.is_empty()),
-            acp::SessionUpdate::UserMessageChunk(_) | acp::SessionUpdate::ToolCall(_) => true,
-            acp::SessionUpdate::ToolCallUpdate(update) => self.state.entries.iter().enumerate().find(|(_, entry)| matches!(entry, Entry::Tool(call) if call.tool_call_id == update.tool_call_id)).is_some_and(|(row, entry)| {
-                row >= nocterm_ai::history::SavedChat::saved_entry_start(self.state.entries.len()) && match entry {
-                    Entry::Tool(call) => changed_tool(call, &update.fields),
-                    _ => false,
-                }
-            }),
-            acp::SessionUpdate::SessionInfoUpdate(update) => update.title.as_opt_ref().is_some_and(|title| title != self.state.title.as_ref()),
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                !matches!((chunk, self.state.entries.last()), (Content::Text(text), Some(Entry::Agent(_))) if text.text.is_empty())
+            }
+            SessionUpdate::AgentThoughtChunk(chunk) => {
+                !matches!((chunk, self.state.entries.last()), (Content::Text(text), Some(Entry::Thought(_))) if text.text.is_empty())
+            }
+            SessionUpdate::UserMessageChunk(_) | SessionUpdate::ToolCall(_) => true,
+            SessionUpdate::ToolCallUpdate(update) => self
+                .state
+                .entries
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| matches!(entry, Entry::Tool(call) if call.id == update.id))
+                .is_some_and(|(row, entry)| {
+                    row >= nocterm_ai::history::SavedChat::saved_entry_start(
+                        self.state.entries.len(),
+                    ) && match entry {
+                        Entry::Tool(call) => changed_tool(call, &update.changes),
+                        _ => false,
+                    }
+                }),
+            SessionUpdate::SessionInfoUpdate(update) => {
+                matches!(&update.title, Change::Set(title) if Some(title) != self.state.title.as_ref())
+            }
             _ => false,
         }
     }
-    pub(super) fn append_user(&mut self, content: Vec<acp::ContentBlock>, now: u64) {
+    pub(super) fn append_user(&mut self, content: Vec<Content>, now: u64) {
         self.state.push_user(content, now);
     }
-    pub(super) fn tokens(&mut self, usage: Option<acp::Usage>) {
+    pub(super) fn tokens(&mut self, usage: Option<TokenTotals>) {
         self.state.tokens = usage;
     }
     pub(super) fn patch_tool(&mut self, patch: ToolMetadataPatch) -> bool {
@@ -76,19 +92,16 @@ impl Transcript {
         let mut changed = Vec::new();
         for (row, entry) in self.state.entries.iter_mut().enumerate() {
             if let Entry::Tool(call) = entry
-                && matches!(
-                    call.status,
-                    acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
-                )
+                && matches!(call.status, ToolStatus::Pending | ToolStatus::Running)
             {
-                call.status = acp::ToolCallStatus::Failed;
+                call.status = ToolStatus::Failed;
                 changed.push(row);
             }
         }
         changed
     }
 }
-fn changed_tool(call: &acp::ToolCall, fields: &acp::ToolCallUpdateFields) -> bool {
+fn changed_tool(call: &ToolRecord, fields: &ToolChanges) -> bool {
     fields
         .kind
         .as_ref()

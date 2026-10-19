@@ -1,32 +1,32 @@
 //! ACP provider permissions are independent of Nocterm terminal grants.
 use super::approval_inbox::ApprovalToken;
-use nocterm_ai::acp;
+use nocterm_ai::model::auth::{PermissionEffect, PermissionOutcome, ProviderPermission};
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
 
 const ONE_TIME_REQUIRED: &str = "Automatic approval needs a valid Allow once option. This agent did not provide one. Review its choices or cancel this request.";
 
-fn unique_option(request: &acp::RequestPermissionRequest, id: &acp::PermissionOptionId) -> bool {
-    !id.0.trim().is_empty()
+fn unique_option(request: &ProviderPermission, id: &PermissionOptionId) -> bool {
+    !id.as_str().trim().is_empty()
         && request
-            .options
+            .choices
             .iter()
-            .filter(|option| option.option_id == *id)
+            .filter(|option| option.id == *id)
             .count()
             == 1
 }
 
-fn allow_once(request: &acp::RequestPermissionRequest) -> Option<acp::PermissionOptionId> {
+fn allow_once(request: &ProviderPermission) -> Option<PermissionOptionId> {
     request
-        .options
+        .choices
         .iter()
         .find(|option| {
-            option.kind == acp::PermissionOptionKind::AllowOnce
-                && unique_option(request, &option.option_id)
+            option.effect == PermissionEffect::AllowOnce && unique_option(request, &option.id)
         })
-        .map(|option| option.option_id.clone())
+        .map(|option| option.id.clone())
 }
 
-fn selected(id: acp::PermissionOptionId) -> acp::RequestPermissionOutcome {
-    acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(id))
+fn selected(id: PermissionOptionId) -> PermissionOutcome {
+    PermissionOutcome::Selected(id)
 }
 
 /// Fresh provider authority, sampled by the coordinator before every transition.
@@ -34,14 +34,14 @@ pub(super) struct PermissionGate {
     enabled: bool,
     accepts_updates: bool,
     stopped: bool,
-    session: Option<acp::SessionId>,
+    session: Option<SessionId>,
 }
 impl PermissionGate {
     pub(super) fn new(
         enabled: bool,
         accepts_updates: bool,
         stopped: bool,
-        session: Option<acp::SessionId>,
+        session: Option<SessionId>,
     ) -> Self {
         Self {
             enabled,
@@ -50,16 +50,16 @@ impl PermissionGate {
             session,
         }
     }
-    fn accepts(&self, request: &acp::RequestPermissionRequest) -> bool {
+    fn accepts(&self, request: &ProviderPermission) -> bool {
         self.enabled
             && self.accepts_updates
             && !self.stopped
-            && self.session.as_ref() == Some(&request.session_id)
+            && self.session.as_ref() == Some(&request.session)
     }
 }
 
 struct PendingPermission {
-    request: acp::RequestPermissionRequest,
+    request: ProviderPermission,
     respond: nocterm_ai::PermissionResponder,
     token: ApprovalToken,
     explanation: Option<&'static str>,
@@ -67,7 +67,7 @@ struct PendingPermission {
 
 /// An immutable card; responders and mutable queue state never leave their owner.
 pub(crate) struct PermissionCard {
-    request: acp::RequestPermissionRequest,
+    request: ProviderPermission,
     token: ApprovalToken,
     explanation: Option<&'static str>,
 }
@@ -75,7 +75,7 @@ impl PermissionCard {
     pub(crate) fn token(&self) -> ApprovalToken {
         self.token
     }
-    pub(crate) fn request(&self) -> &acp::RequestPermissionRequest {
+    pub(crate) fn request(&self) -> &ProviderPermission {
         &self.request
     }
     pub(crate) fn explanation(&self) -> Option<&'static str> {
@@ -90,14 +90,14 @@ pub(super) struct ProviderRequests {
 impl ProviderRequests {
     pub(super) fn receive(
         &mut self,
-        request: acp::RequestPermissionRequest,
+        request: ProviderPermission,
         respond: nocterm_ai::PermissionResponder,
         token: ApprovalToken,
         gate: &PermissionGate,
         automatic: bool,
     ) -> bool {
         if !gate.accepts(&request) {
-            respond.respond(acp::RequestPermissionOutcome::Cancelled);
+            respond.respond(PermissionOutcome::Cancelled);
             return false;
         }
         if automatic && let Some(id) = allow_once(&request) {
@@ -116,9 +116,7 @@ impl ProviderRequests {
         let mut changed = false;
         for mut permission in std::mem::take(&mut self.pending) {
             if !gate.accepts(&permission.request) {
-                permission
-                    .respond
-                    .respond(acp::RequestPermissionOutcome::Cancelled);
+                permission.respond.respond(PermissionOutcome::Cancelled);
                 changed = true;
             } else if automatic && let Some(id) = allow_once(&permission.request) {
                 permission.respond.respond(selected(id));
@@ -135,7 +133,7 @@ impl ProviderRequests {
     pub(super) fn choose(
         &mut self,
         token: ApprovalToken,
-        option: Option<acp::PermissionOptionId>,
+        option: Option<PermissionOptionId>,
         gate: &PermissionGate,
     ) -> bool {
         let Some(index) = self
@@ -151,7 +149,7 @@ impl ProviderRequests {
                 gate.accepts(&permission.request) && unique_option(&permission.request, id)
             })
             .map(selected)
-            .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
+            .unwrap_or(PermissionOutcome::Cancelled);
         permission.respond.respond(outcome);
         true
     }

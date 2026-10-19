@@ -1,6 +1,6 @@
 use super::*;
+use nocterm_ai::model::content::Content;
 use nocterm_ai::{
-    acp,
     history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt},
     thread::Entry,
 };
@@ -12,9 +12,7 @@ fn chat() -> SavedChat {
     chat.title = Some("Disk usage".into());
     chat.session_id = Some("session-1".into());
     chat.entries = vec![
-        Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-            "df -h?",
-        ))]),
+        Entry::User(vec![Content::text("df -h?")]),
         Entry::Thought("checking".into()),
         Entry::Agent("Use `df -h`.".into()),
     ];
@@ -112,7 +110,7 @@ fn deleting_removes_the_file_and_ids_cannot_walk_paths() {
 fn large_images_and_old_entries_are_left_out() {
     let dir = tempfile::tempdir().unwrap();
     let mut chat = chat();
-    let image = acp::ContentBlock::Image(acp::ImageContent::new(
+    let image = Content::Image(nocterm_ai::model::content::Image::new(
         "A".repeat(MAX_SAVED_IMAGE_BYTES + 1),
         "image/png",
     ));
@@ -127,7 +125,7 @@ fn large_images_and_old_entries_are_left_out() {
     assert_eq!(loaded.entries.len(), MAX_SAVED_ENTRIES);
     assert!(matches!(
         loaded.entries.last(),
-        Some(Entry::User(blocks)) if matches!(&blocks[0], acp::ContentBlock::Text(text) if text.text.contains("not kept"))
+        Some(Entry::User(blocks)) if matches!(&blocks[0], Content::Text(text) if text.text.contains("not kept"))
     ));
 }
 
@@ -157,7 +155,7 @@ fn pending_images_and_attachment_snapshots_round_trip_without_truncation() {
     chat.queue = vec![SavedPrompt {
         id: 42,
         text: "queued image".into(),
-        images: vec![acp::ContentBlock::Image(acp::ImageContent::new(
+        images: vec![Content::Image(nocterm_ai::model::content::Image::new(
             data.clone(),
             "image/png",
         ))],
@@ -168,9 +166,7 @@ fn pending_images_and_attachment_snapshots_round_trip_without_truncation() {
     assert_eq!(saved.queue[0].text, "queued image");
     assert_eq!(saved.attachments, chat.attachments);
     assert_eq!(saved.queue[0].attachments, chat.attachments);
-    assert!(
-        matches!(&saved.queue[0].images[0], acp::ContentBlock::Image(image) if image.data == data)
-    );
+    assert!(matches!(&saved.queue[0].images[0], Content::Image(image) if image.data == data));
 }
 
 #[test]

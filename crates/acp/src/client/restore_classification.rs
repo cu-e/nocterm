@@ -57,10 +57,10 @@ for line in sys.stdin:
             for fork in [false, true] {
                 let result = connection
                     .commands
-                    .restore_session(nocterm_ai::RestoreSessionRequest {
-                        session_id: acp::SessionId::new("legacy-thread"),
-                        cwd: dir.path().to_owned(),
-                        mcp_servers: Vec::new(),
+                    .restore_session(RestoreSession {
+                        session: SessionId::new("legacy-thread"),
+                        working_directory: dir.path().to_owned(),
+                        endpoints: Vec::new(),
                         fork,
                     })
                     .await;
@@ -74,14 +74,17 @@ for line in sys.stdin:
             }
             let new = connection
                 .commands
-                .new_session(acp::NewSessionRequest::new(dir.path()))
+                .new_session(SessionOpen {
+                    working_directory: dir.path().to_owned(),
+                    endpoints: Vec::new(),
+                })
                 .await;
             let prompt = connection
                 .commands
-                .prompt(acp::PromptRequest::new(
-                    acp::SessionId::new("legacy-thread"),
-                    Vec::new(),
-                ))
+                .prompt(PromptRequest {
+                    session: SessionId::new("legacy-thread"),
+                    content: Vec::new(),
+                })
                 .await;
             for result in [new.map(|_| ()), prompt.map(|_| ())] {
                 if auth {

@@ -42,7 +42,7 @@ impl TranscriptView {
             })
             .into_any_element()
     }
-    pub(super) fn plan(plan: &nocterm_ai::acp::Plan, cx: &gpui_kit::App) -> AnyElement {
+    pub(super) fn plan(plan: &nocterm_ai::model::plan::Plan, cx: &gpui_kit::App) -> AnyElement {
         v_flex()
             .p_2()
             .border_t_1()

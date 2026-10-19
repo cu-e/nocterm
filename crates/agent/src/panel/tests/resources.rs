@@ -1,4 +1,8 @@
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::ToolStatus;
 use std::time::Duration;
 
 pub(super) fn draft(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
@@ -138,7 +142,7 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(
         *f.commands.closed.lock().unwrap(),
-        vec![acp::SessionId::new("s0")]
+        vec![SessionId::new("s0")]
     );
     assert!(f.commands.shutdowns.load(Ordering::SeqCst) >= 1);
     assert!(f.bridge.revoked.lock().unwrap().contains(&1));
@@ -202,7 +206,7 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
     });
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
-        vec![(acp::SessionId::new("s0"), false)]
+        vec![(SessionId::new("s0"), false)]
     );
     complete_active(&f, cx);
 }
@@ -354,7 +358,7 @@ async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
     });
     assert_eq!(
         *f.commands.closed.lock().unwrap(),
-        vec![acp::SessionId::new("s0")]
+        vec![SessionId::new("s0")]
     );
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     assert!(f.access.sent().borrow().is_empty());
@@ -416,9 +420,9 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
         }))
         .unwrap();
         f.events
-            .try_send(AgentEvent::Session(acp::SessionNotification::new(
+            .try_send(AgentEvent::Session(SessionNotice::new(
                 session.clone(),
-                acp::SessionUpdate::ToolCall(call),
+                SessionUpdate::ToolCall(call),
             )))
             .unwrap();
     }
@@ -441,9 +445,9 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
         assert_eq!(
             tools,
             vec![
-                acp::ToolCallStatus::Failed,
-                acp::ToolCallStatus::Failed,
-                acp::ToolCallStatus::Completed
+                ToolStatus::Failed,
+                ToolStatus::Failed,
+                ToolStatus::Succeeded
             ]
         );
     });
@@ -580,10 +584,10 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
             .unwrap()
             .load(Ordering::Acquire)
     );
-    let late = AgentEvent::Session(acp::SessionNotification::new(
-        acp::SessionId::new("s0"),
-        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-            acp::TextContent::new("late abandoned response"),
+    let late = AgentEvent::Session(SessionNotice::new(
+        SessionId::new("s0"),
+        SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+            "late abandoned response",
         ))),
     ));
     f.connector.event_senders.lock().unwrap()[0]
@@ -708,7 +712,7 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
-        vec![(acp::SessionId::new("s0"), false)]
+        vec![(SessionId::new("s0"), false)]
     );
     cx.update(|cx| assert!(replacement.read(cx).session_generating()));
     complete_active(&f, cx);

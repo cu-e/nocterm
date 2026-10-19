@@ -8,6 +8,7 @@ use super::{
 use base64::Engine as _;
 use gpui_kit::{Context, Task};
 use nocterm_ai::images::ImageThumbnailer;
+use nocterm_ai::model::content::Content;
 use std::sync::Arc;
 pub(super) struct PreviewOperation {
     binding: ActiveListBinding,
@@ -126,7 +127,7 @@ impl PreviewOperation {
                     .iter()
                     .zip(prompt.image_keys.iter())
                     .filter_map(|(block, key)| {
-                        let nocterm_ai::acp::ContentBlock::Image(image) = block else {
+                        let Content::Image(image) = block else {
                             return None;
                         };
                         let key = (*key)?;

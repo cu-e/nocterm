@@ -1,6 +1,10 @@
 use super::tool_output::{call, exec_result, expanded_fixture, settle};
 use super::*;
 use crate::panel::entries::tool_input::source;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::ToolRecord;
+use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch};
 use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display;
 use serde_json::json;
@@ -128,13 +132,9 @@ fn expanded_thought_and_tool(
     thread.update(cx, |thread, cx| {
         let mut entries = vec![
             Entry::Thought("short".into()),
-            Entry::Tool(acp::ToolCall::new("call", "Tool")),
+            Entry::Tool(ToolRecord::new("call", "Tool")),
         ];
-        entries.extend((0..30).map(|i| {
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                format!("question {i}"),
-            ))])
-        }));
+        entries.extend((0..30).map(|i| Entry::User(vec![Content::text(format!("question {i}"))])));
         restore_entries(f, thread, entries, cx);
         for index in 0..thread.transcript().entries.len() {
             thread.mark_dirty(index);
@@ -212,9 +212,14 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
     })
     .unwrap();
     thread.update(cx, |thread, cx| {
-        report_control(thread, acp::SessionUpdate::ToolCallUpdate(serde_json::from_value(serde_json::json!({
-            "toolCallId":"call", "content":[{"type":"content", "content":{"type":"text", "text":"tool line\n".repeat(12)}}]
-        })).unwrap()), cx);
+        report_control(
+            thread,
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "call",
+                ToolChanges::default().content(vec![ToolContent::from("tool line\n".repeat(12))]),
+            ))),
+            cx,
+        );
         thread.mark_dirty(1);
         cx.notify();
     });

@@ -6,8 +6,10 @@ use super::{
     permissions::{PermissionCard, PermissionGate},
 };
 use gpui_kit::{EntityId, Task};
+use nocterm_ai::model::auth::ProviderPermission;
+use nocterm_ai::model::ids::PermissionOptionId;
 use nocterm_ai::{
-    ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, ToolFailure, acp, thread::Entry,
+    ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, ToolFailure, thread::Entry,
     tool_display::ToolDisplay,
 };
 use nocterm_workspace::{ExpectedSession, LiveCommandLease};
@@ -364,7 +366,7 @@ impl ToolRuntime {
     }
     pub(super) fn approval_receive_provider(
         &mut self,
-        request: acp::RequestPermissionRequest,
+        request: ProviderPermission,
         respond: nocterm_ai::PermissionResponder,
         gate: &PermissionGate,
         policy: ApprovalPolicy,
@@ -382,7 +384,7 @@ impl ToolRuntime {
     pub(super) fn approval_choose_provider(
         &mut self,
         token: ApprovalToken,
-        choice: Option<acp::PermissionOptionId>,
+        choice: Option<PermissionOptionId>,
         gate: &PermissionGate,
     ) -> bool {
         self.approvals.choose_provider(token, choice, gate)

@@ -3,6 +3,8 @@ use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use crate::panel::tests::provider_fixtures::{Program, bridge, update};
 use nocterm_ai::ApprovalPolicy;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch, ToolRecord, ToolStatus};
 use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use serde_json::json;
 
@@ -54,10 +56,10 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+        SessionUpdate::ToolCall(Box::new(ToolRecord::new(
             "provider-call",
             "mcp__nocterm-17__exec_command",
-        )),
+        ))),
         cx,
     );
     cx.update(|cx| {
@@ -94,21 +96,21 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+        SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
             "provider-call",
-            acp::ToolCallUpdateFields::new()
+            ToolChanges::default()
                 .raw_input(serde_json::to_value(&request).unwrap())
                 .raw_output(wire["result"].clone())
                 .content(
-                    serde_json::from_value::<Vec<acp::ToolCallContent>>(
+                    serde_json::from_value::<Vec<ToolContent>>(
                         json!([{"type":"content","content":{
                             "type":"text","text":result.to_string()
                         }}]),
                     )
                     .unwrap(),
                 )
-                .status(acp::ToolCallStatus::Completed),
-        )),
+                .status(ToolStatus::Succeeded),
+        ))),
         cx,
     );
     cx.update(|cx| {
@@ -119,7 +121,7 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
             tool_display::header(call),
             "This computer · Execute program · Completed"
         );
-        let restored: acp::ToolCall =
+        let restored: ToolRecord =
             serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
         assert_eq!(tool_display::header(&restored), tool_display::header(call));
         let input = tool_input::source(&restored).unwrap();
@@ -150,10 +152,10 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
     });
     cx.update(|cx| thread.update(cx, |thread, cx| thread.clear_composer_context(cx)));
-    update(&f, &session, acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-        "provider-call", acp::ToolCallUpdateFields::new().title("Different destination")
+    update(&f, &session, SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+        "provider-call", ToolChanges::default().title("Different destination")
             .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),
-    )), cx);
+    ))), cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(("tool-call", 0usize), cx);

@@ -12,7 +12,10 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::controls::{
+    ConfigCategory, ConfigChoices, ConfigKind, ConfigOption, ConfigSetting,
+};
+use nocterm_ai::model::ids::{ConfigId, ModeId};
 use nocterm_ui::IconName;
 
 use super::{
@@ -23,13 +26,13 @@ use super::{
 #[derive(Clone)]
 pub(super) struct ConfigurationSelection {
     thread: gpui_kit::Entity<crate::thread::AgentThread>,
-    config: acp::SessionConfigId,
-    value: acp::SessionConfigOptionValue,
+    config: ConfigId,
+    value: ConfigSetting,
 }
 #[derive(Clone)]
 pub(super) struct ModeSelection {
     thread: gpui_kit::Entity<crate::thread::AgentThread>,
-    mode: acp::SessionModeId,
+    mode: ModeId,
 }
 #[derive(Clone)]
 pub(super) struct FavoriteSelection {
@@ -48,7 +51,7 @@ struct ConfigChoice {
 impl ConfigChoice {
     fn boolean(
         thread: gpui_kit::Entity<crate::thread::AgentThread>,
-        config: acp::SessionConfigId,
+        config: ConfigId,
         value: bool,
     ) -> Self {
         Self {
@@ -58,7 +61,7 @@ impl ConfigChoice {
             action: ConfigurationSelection {
                 thread,
                 config,
-                value: acp::SessionConfigOptionValue::Boolean { value },
+                value: ConfigSetting::Boolean(value),
             },
             favorite: None,
         }
@@ -202,9 +205,11 @@ impl ConfigMenuRenderer {
             Some(MenuKind::Config(id)) => {
                 if let Some(thread) = frame.thread.clone() {
                     let options = thread.read(cx).config_options();
-                    if let Some(option) = options.iter().find(|option| option.id.0.as_ref() == id) {
-                        let model =
-                            option.category == Some(acp::SessionConfigOptionCategory::Model);
+                    if let Some(option) = options
+                        .iter()
+                        .find(|option| option.id.as_str() == id.as_str())
+                    {
+                        let model = option.category == Some(ConfigCategory::Model);
                         if model {
                             menu = menu.child(frame.query_input);
                         }
@@ -241,7 +246,7 @@ impl ConfigMenuRenderer {
                         .read(cx)
                         .config_options()
                         .iter()
-                        .find(|option| option.id.0.as_ref() == id)
+                        .find(|option| option.id.as_str() == id.as_str())
                         .map(|option| option.name.clone())
                 })
                 .unwrap_or_default(),
@@ -291,34 +296,29 @@ impl ConfigMenuRenderer {
 impl ConfigMenuRenderer {
     fn config_choices(
         thread: &gpui_kit::Entity<crate::thread::AgentThread>,
-        option: &acp::SessionConfigOption,
+        option: &ConfigOption,
         query: &str,
         favorites: &nocterm_ai::favorites::AgentStateFile,
         cx: &gpui_kit::App,
     ) -> Vec<(String, Vec<ConfigChoice>)> {
         let agent = thread.read(cx).document().agent_id().to_owned();
-        let model = option.category == Some(acp::SessionConfigOptionCategory::Model);
+        let model = option.category == Some(ConfigCategory::Model);
         match &option.kind {
-            acp::SessionConfigKind::Select(select) => {
-                let groups = match &select.options {
-                    acp::SessionConfigSelectOptions::Ungrouped(options) => {
+            ConfigKind::Select(select) => {
+                let groups = match &select.choices {
+                    ConfigChoices::Flat(options) => {
                         vec![(String::new(), options.clone())]
                     }
-                    acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                    ConfigChoices::Grouped(groups) => groups
                         .iter()
-                        .map(|group| (group.name.clone(), group.options.clone()))
+                        .map(|group| (group.name.clone(), group.choices.clone()))
                         .collect(),
-                    _ => Vec::new(),
                 };
                 groups
                     .into_iter()
                     .map(|(name, mut values)| {
                         values.sort_by_key(|value| {
-                            !favorites.contains(
-                                &agent,
-                                option.id.0.as_ref(),
-                                value.value.0.as_ref(),
-                            )
+                            !favorites.contains(&agent, option.id.as_str(), value.id.as_str())
                         });
                         let choices = values
                             .into_iter()
@@ -326,24 +326,22 @@ impl ConfigMenuRenderer {
                             .map(|value| {
                                 let favorite = favorites.contains(
                                     &agent,
-                                    option.id.0.as_ref(),
-                                    value.value.0.as_ref(),
+                                    option.id.as_str(),
+                                    value.id.as_str(),
                                 );
                                 ConfigChoice {
-                                    id: format!("config-{}-{}", option.id, value.value),
+                                    id: format!("config-{}-{}", option.id, value.id),
                                     label: value.name,
-                                    selected: value.value == select.current_value,
+                                    selected: value.id == select.current,
                                     action: ConfigurationSelection {
                                         thread: thread.clone(),
                                         config: option.id.clone(),
-                                        value: acp::SessionConfigOptionValue::ValueId {
-                                            value: value.value.clone(),
-                                        },
+                                        value: ConfigSetting::Choice(value.id.clone()),
                                     },
                                     favorite: model.then(|| FavoriteSelection {
                                         agent: agent.clone(),
                                         config: option.id.to_string(),
-                                        value: value.value.to_string(),
+                                        value: value.id.to_string(),
                                         selected: favorite,
                                     }),
                                 }
@@ -353,15 +351,14 @@ impl ConfigMenuRenderer {
                     })
                     .collect()
             }
-            acp::SessionConfigKind::Boolean(boolean) => vec![(
+            ConfigKind::Boolean(boolean) => vec![(
                 String::new(),
                 vec![ConfigChoice::boolean(
                     thread.clone(),
                     option.id.clone(),
-                    !boolean.current_value,
+                    !*boolean,
                 )],
             )],
-            _ => Vec::new(),
         }
     }
 }
@@ -382,9 +379,9 @@ impl ConfigMenuRenderer {
             .configuration()
             .current_mode()
             .cloned()
-            .unwrap_or(modes.current_mode_id);
+            .unwrap_or(modes.current);
         modes
-            .available_modes
+            .choices
             .into_iter()
             .map(|mode| {
                 let action = ModeSelection {
@@ -423,20 +420,15 @@ impl ConfigurationSelection {
         self,
     ) -> (
         gpui_kit::Entity<crate::thread::AgentThread>,
-        acp::SessionConfigId,
-        acp::SessionConfigOptionValue,
+        ConfigId,
+        ConfigSetting,
     ) {
         (self.thread, self.config, self.value)
     }
 }
 
 impl ModeSelection {
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        gpui_kit::Entity<crate::thread::AgentThread>,
-        acp::SessionModeId,
-    ) {
+    pub(super) fn into_parts(self) -> (gpui_kit::Entity<crate::thread::AgentThread>, ModeId) {
         (self.thread, self.mode)
     }
 }

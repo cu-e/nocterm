@@ -1,4 +1,4 @@
-use nocterm_ai::acp;
+use nocterm_ai::model::content::Content;
 
 /// Bounded transcript context; roles, header, separators and omission marker count.
 pub(super) fn history_context(entries: &[nocterm_ai::thread::Entry]) -> String {
@@ -15,7 +15,7 @@ pub(super) fn history_context(entries: &[nocterm_ai::thread::Entry]) -> String {
                 blocks
                     .iter()
                     .filter_map(|block| match block {
-                        acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                        Content::Text(text) => Some(text.text.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>(),

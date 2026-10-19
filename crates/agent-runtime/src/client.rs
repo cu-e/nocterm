@@ -8,7 +8,10 @@
 //! of one it no longer holds.
 use super::SessionLease;
 use gpui::{App, EntityId};
-use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
+use nocterm_ai::{
+    AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder,
+    model::{auth::ProviderPermission, ids::SessionId, session::SessionNotice},
+};
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 /// What the runtime tells a chat.
@@ -24,10 +27,10 @@ pub enum SessionEvent {
         workdir: PathBuf,
     },
     /// An update for the chat's connection; it may belong to another session.
-    Update(Rc<acp::SessionNotification>),
+    Update(Rc<SessionNotice>),
     /// The agent asks to use a tool. Dropping `respond` answers `Cancelled`.
     Permission {
-        request: Box<acp::RequestPermissionRequest>,
+        request: Box<ProviderPermission>,
         respond: PermissionResponder,
     },
     /// A call to one of the chat's terminal tools.
@@ -76,7 +79,7 @@ pub struct ClientState {
     /// Restored chat directory, resolved before process and sandbox launch.
     pub workdir: Option<PathBuf>,
     pub agent_id: String,
-    pub session: Option<acp::SessionId>,
+    pub session: Option<SessionId>,
     /// Whether the session is doing work that closing it would interrupt.
     pub busy: bool,
     /// Whether the chat holds a connection.

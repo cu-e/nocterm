@@ -1,5 +1,10 @@
 use super::*;
 use futures::{channel::oneshot, future::BoxFuture};
+use nocterm_ai::model::controls::ConfigOption;
+use nocterm_ai::model::ids::{AuthMethodId, SessionId};
+use nocterm_ai::model::session::{
+    PromptOutcome, PromptRequest, SessionOpen, SessionOpened, SetConfigOption, SetMode,
+};
 use nocterm_ai::{AgentCommands, AgentError, CloseSessionOutcome};
 use std::sync::{
     Mutex,
@@ -30,37 +35,28 @@ fn unused<T: 'static>() -> BoxFuture<'static, Result<T, AgentError>> {
     Box::pin(async { Err(AgentError::Io("unused test operation".into())) })
 }
 impl AgentCommands for BlockedCommands {
-    fn new_session(
-        &self,
-        _: acp::NewSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+    fn new_session(&self, _: SessionOpen) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
         unused()
     }
-    fn prompt(
-        &self,
-        _: acp::PromptRequest,
-    ) -> BoxFuture<'static, Result<acp::PromptResponse, AgentError>> {
+    fn prompt(&self, _: PromptRequest) -> BoxFuture<'static, Result<PromptOutcome, AgentError>> {
         unused()
     }
-    fn cancel(&self, _: acp::SessionId) {}
-    fn set_mode(
-        &self,
-        _: acp::SetSessionModeRequest,
-    ) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn cancel(&self, _: SessionId) {}
+    fn set_mode(&self, _: SetMode) -> BoxFuture<'static, Result<(), AgentError>> {
         unused()
     }
     fn set_config_option(
         &self,
-        _: acp::SetSessionConfigOptionRequest,
-    ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
+        _: SetConfigOption,
+    ) -> BoxFuture<'static, Result<Vec<ConfigOption>, AgentError>> {
         unused()
     }
-    fn authenticate(&self, _: acp::AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn authenticate(&self, _: AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
         unused()
     }
     fn close_session(
         &self,
-        _: acp::SessionId,
+        _: SessionId,
     ) -> BoxFuture<'static, Result<CloseSessionOutcome, AgentError>> {
         self.closes.fetch_add(1, Ordering::SeqCst);
         if let Some(gate) = self.close_gate.lock().unwrap().take() {

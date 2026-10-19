@@ -1,16 +1,17 @@
 //! Prompt completion carries the exact turn authority that launched its request.
 use super::SessionAuthority;
-use nocterm_ai::{AgentCommands, AgentError, acp};
+use nocterm_ai::model::session::{PromptOutcome, PromptRequest};
+use nocterm_ai::{AgentCommands, AgentError};
 use std::sync::Arc;
 pub(in crate::thread) struct PromptOperation {
     authority: SessionAuthority,
-    response: futures::future::BoxFuture<'static, Result<acp::PromptResponse, AgentError>>,
+    response: futures::future::BoxFuture<'static, Result<PromptOutcome, AgentError>>,
 }
 impl PromptOperation {
     pub(in crate::thread) fn new(
         authority: SessionAuthority,
         commands: Arc<dyn AgentCommands>,
-        request: acp::PromptRequest,
+        request: PromptRequest,
     ) -> Self {
         Self {
             authority,
@@ -19,7 +20,7 @@ impl PromptOperation {
     }
     pub(in crate::thread) async fn run(
         self,
-    ) -> (SessionAuthority, Result<acp::PromptResponse, AgentError>) {
+    ) -> (SessionAuthority, Result<PromptOutcome, AgentError>) {
         (self.authority, self.response.await)
     }
 }

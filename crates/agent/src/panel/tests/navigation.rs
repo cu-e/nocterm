@@ -1,6 +1,8 @@
 //! Chat controls use the existing virtual scroller instead of a second viewport.
 use super::*;
 use gpui_kit::{ListOffset, point, px};
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::thread::Entry;
 
 fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
@@ -11,19 +13,15 @@ fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::Age
             f,
             thread,
             vec![
-                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    "First question",
-                ))]),
+                Entry::User(vec![Content::text("First question")]),
                 Entry::Thought("Reasoning before answer".into()),
-                Entry::Tool(acp::ToolCall::new("one", "Inspect terminal")),
+                Entry::Tool(ToolRecord::new("one", "Inspect terminal")),
                 Entry::Agent("A tall first answer with wrapped text.\n\n".repeat(80)),
                 Entry::Thought("Reasoning between messages".into()),
-                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
+                Entry::User(vec![Content::text(
                     "Second question with several paragraphs.\n\n".repeat(80),
-                ))]),
-                Entry::Content(acp::ContentBlock::Text(acp::TextContent::new(
-                    "Additional content",
-                ))),
+                )]),
+                Entry::Content(Content::text("Additional content")),
                 Entry::Agent("A tall second answer with wrapped text.\n\n".repeat(80)),
                 Entry::Agent("A tall final answer with wrapped text.\n\n".repeat(80)),
             ],
@@ -287,8 +285,8 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
             text.push_str(&"New streamed text. ".repeat(50));
         }
         thread.mark_dirty(8);
-        entries.push(Entry::User(vec![acp::ContentBlock::Text(
-            acp::TextContent::new("Third question"),
+        entries.push(Entry::User(vec![Content::Text(
+            nocterm_ai::model::content::Text::new("Third question"),
         )]));
         restore_entries(&f, thread, entries, cx);
         thread.mark_dirty(9);
@@ -392,7 +390,7 @@ fn top_of_chat_includes_leading_tools_before_the_first_user_message(cx: &mut Tes
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
         let mut entries = thread.history_entries().to_vec();
-        entries[0] = Entry::Tool(acp::ToolCall::new("leading", "Leading tool"));
+        entries[0] = Entry::Tool(ToolRecord::new("leading", "Leading tool"));
         restore_entries(&f, thread, entries, cx);
         thread.mark_dirty(0);
         cx.notify();
@@ -430,10 +428,10 @@ fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAp
     let full = "Ответ 👨‍👩‍👧‍👦 世界 ".repeat(1000);
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(full.clone()),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                full.clone(),
             ))),
         )))
         .unwrap();
@@ -500,10 +498,10 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("new streamed answer".repeat(100)),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "new streamed answer".repeat(100),
             ))),
         )))
         .unwrap();

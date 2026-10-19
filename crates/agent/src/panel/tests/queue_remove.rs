@@ -1,5 +1,6 @@
 //! A queued message can be removed without sending it.
 use super::*;
+use nocterm_ai::model::content::Content;
 
 fn queued(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) -> Vec<String> {
     cx.update(|cx| {
@@ -70,9 +71,9 @@ fn the_queue_removes_a_message_and_keeps_the_rest_in_order(cx: &mut TestAppConte
     assert_eq!(prompts.len(), 2);
     assert!(
         prompts[1]
-            .prompt
+            .content
             .iter()
-            .any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text == "third"))
+            .any(|block| matches!(block, Content::Text(text) if text.text == "third"))
     );
 }
 

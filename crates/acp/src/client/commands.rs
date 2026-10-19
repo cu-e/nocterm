@@ -5,15 +5,29 @@ use std::{
 };
 
 use agent_client_protocol::{Agent, ConnectionTo, UntypedMessage};
+use agent_client_protocol_schema::v1 as acp;
 use futures::{
     FutureExt,
     channel::oneshot,
     future::{BoxFuture, Either, select},
 };
-use nocterm_ai::{AgentCommands, AgentError, AgentEvent, AgentInfo, acp};
+use nocterm_ai::{
+    AgentCommands, AgentError, AgentEvent,
+    model::{
+        controls::ConfigOption,
+        ids::{AuthMethodId, SessionId},
+        session::{
+            PromptOutcome, PromptRequest, RestoreSession, SessionOpen, SessionOpened,
+            SetConfigOption, SetMode,
+        },
+    },
+};
 
-use super::remote_errors::{map_error_with, restore_error};
-use crate::{models::Models, process};
+use super::{
+    handshake::SessionSupport,
+    remote_errors::{map_error_with, restore_error},
+};
+use crate::{mapping, models::Models, process};
 
 /// How the agent reopens earlier sessions, if it can.
 #[derive(Clone, Copy)]
@@ -40,14 +54,13 @@ impl Commands {
         stop: async_channel::Sender<()>,
         group: Arc<process::ProcessGroup>,
         secrets: Arc<Vec<String>>,
-        info: &AgentInfo,
+        support: SessionSupport,
         models: Arc<Mutex<Models>>,
         events: async_channel::Sender<AgentEvent>,
     ) -> Self {
-        let session = &info.capabilities.session_capabilities;
-        let restore = if session.resume.is_some() {
+        let restore = if support.resume {
             Restore::Resume
-        } else if info.capabilities.load_session {
+        } else if support.load {
             Restore::Load
         } else {
             Restore::Unsupported
@@ -57,9 +70,9 @@ impl Commands {
             stop,
             group,
             secrets,
-            close_supported: session.close.is_some(),
+            close_supported: support.close,
             restore,
-            fork_supported: session.fork.is_some(),
+            fork_supported: support.fork,
             models,
             events,
         }
@@ -68,37 +81,40 @@ impl Commands {
 impl AgentCommands for Commands {
     fn new_session(
         &self,
-        request: acp::NewSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        request: SessionOpen,
+    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         let models = self.models.clone();
         async move {
-            let message = UntypedMessage::new("session/new", request)
+            let message = UntypedMessage::new("session/new", mapping::new_session(request))
                 .map_err(|error| map_error_with(error, &secrets))?;
             let raw = connection
                 .send_request(message)
                 .block_task()
                 .await
                 .map_err(|error| map_error_with(error, &secrets))?;
-            models
+            let response = models
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .session(raw)
+                .session(raw)?;
+            Ok(mapping::opened(response))
         }
         .boxed()
     }
     fn restore_session(
         &self,
-        request: nocterm_ai::RestoreSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
+        request: RestoreSession,
+    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         let models = self.models.clone();
         let restore = self.restore;
         let fork_supported = self.fork_supported;
         async move {
-            let session_id = request.session_id.clone();
+            let session_id = mapping::wire_session(&request.session);
+            let working_directory = request.working_directory;
+            let servers = mapping::servers(request.endpoints);
             if request.fork {
                 if !fork_supported {
                     return Err(AgentError::RestoreUnavailable(
@@ -107,8 +123,8 @@ impl AgentCommands for Commands {
                 }
                 let message = UntypedMessage::new(
                     "session/fork",
-                    acp::ForkSessionRequest::new(request.session_id, request.cwd)
-                        .mcp_servers(request.mcp_servers),
+                    acp::ForkSessionRequest::new(session_id, working_directory)
+                        .mcp_servers(servers),
                 )
                 .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
                 let raw = connection
@@ -116,22 +132,23 @@ impl AgentCommands for Commands {
                     .block_task()
                     .await
                     .map_err(|error| restore_error(map_error_with(error, &secrets)))?;
-                return models
+                let response = models
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .session(raw);
+                    .session(raw)?;
+                return Ok(mapping::opened(response));
             }
             // Resuming skips the replay of history the panel already shows.
             let message = match restore {
                 Restore::Resume => UntypedMessage::new(
                     "session/resume",
-                    acp::ResumeSessionRequest::new(request.session_id, request.cwd)
-                        .mcp_servers(request.mcp_servers),
+                    acp::ResumeSessionRequest::new(session_id.clone(), working_directory)
+                        .mcp_servers(servers),
                 ),
                 Restore::Load => UntypedMessage::new(
                     "session/load",
-                    acp::LoadSessionRequest::new(request.session_id, request.cwd)
-                        .mcp_servers(request.mcp_servers),
+                    acp::LoadSessionRequest::new(session_id.clone(), working_directory)
+                        .mcp_servers(servers),
                 ),
                 Restore::Unsupported => {
                     return Err(AgentError::RestoreUnavailable(
@@ -149,42 +166,43 @@ impl AgentCommands for Commands {
             if let Some(object) = raw.as_object_mut() {
                 object.insert("sessionId".into(), serde_json::json!(session_id.0));
             }
-            models
+            let response = models
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .session(raw)
+                .session(raw)?;
+            Ok(mapping::opened(response))
         }
         .boxed()
     }
     fn prompt(
         &self,
-        request: acp::PromptRequest,
-    ) -> BoxFuture<'static, Result<acp::PromptResponse, AgentError>> {
+        request: PromptRequest,
+    ) -> BoxFuture<'static, Result<PromptOutcome, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         async move {
-            connection
-                .send_request(request)
+            let response = connection
+                .send_request(mapping::prompt(request))
                 .block_task()
                 .await
-                .map_err(|error| map_error_with(error, &secrets))
+                .map_err(|error| map_error_with(error, &secrets))?;
+            Ok(mapping::prompt_outcome(response)?)
         }
         .boxed()
     }
-    fn cancel(&self, session: acp::SessionId) {
+    fn cancel(&self, session: SessionId) {
         let _ = self
             .connection
-            .send_notification(acp::CancelNotification::new(session));
+            .send_notification(acp::CancelNotification::new(mapping::wire_session(
+                &session,
+            )));
     }
-    fn set_mode(
-        &self,
-        request: acp::SetSessionModeRequest,
-    ) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn set_mode(&self, request: SetMode) -> BoxFuture<'static, Result<(), AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         async move {
             connection
-                .send_request(request)
+                .send_request(mapping::set_mode(request))
                 .block_task()
                 .await
                 .map(|_| ())
@@ -194,12 +212,13 @@ impl AgentCommands for Commands {
     }
     fn set_config_option(
         &self,
-        request: acp::SetSessionConfigOptionRequest,
-    ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
+        request: SetConfigOption,
+    ) -> BoxFuture<'static, Result<Vec<ConfigOption>, AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         let models = self.models.clone();
         async move {
+            let request = mapping::set_config(request);
             let selection = models
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -215,10 +234,12 @@ impl AgentCommands for Commands {
                     .block_task()
                     .await
                     .map_err(|error| map_error_with(error, &secrets))?;
-                return Ok(models
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .selected(&request));
+                return Ok(mapping::options(
+                    models
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .selected(&request),
+                ));
             }
             let session = request.session_id.clone();
             let options = connection
@@ -227,22 +248,21 @@ impl AgentCommands for Commands {
                 .await
                 .map(|r| r.config_options)
                 .map_err(|error| map_error_with(error, &secrets))?;
-            Ok(models
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .retain(&session, options))
+            Ok(mapping::options(
+                models
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .retain(&session, options),
+            ))
         }
         .boxed()
     }
-    fn authenticate(
-        &self,
-        method: acp::AuthMethodId,
-    ) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn authenticate(&self, method: AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
         let connection = self.connection.clone();
         let secrets = self.secrets.clone();
         async move {
             connection
-                .send_request(acp::AuthenticateRequest::new(method))
+                .send_request(acp::AuthenticateRequest::new(method.to_string()))
                 .block_task()
                 .await
                 .map(|_| ())
@@ -252,8 +272,9 @@ impl AgentCommands for Commands {
     }
     fn close_session(
         &self,
-        session: acp::SessionId,
+        session: SessionId,
     ) -> BoxFuture<'static, Result<nocterm_ai::CloseSessionOutcome, AgentError>> {
+        let session = mapping::wire_session(&session);
         let connection = self.connection.clone();
         let supported = self.close_supported;
         let secrets = self.secrets.clone();

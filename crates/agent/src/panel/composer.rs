@@ -7,6 +7,8 @@ use super::{
 use crate::thread::Attachment;
 use gpui_kit::{AnyElement, PathPromptOptions};
 use nocterm_ai::images::PromptImage;
+use nocterm_ai::model::ids::AuthMethodId;
+use nocterm_ai::model::usage::ContextUsage;
 use std::path::PathBuf;
 
 impl AgentPanel {
@@ -168,7 +170,7 @@ impl AgentPanel {
     pub(super) fn render_composer(
         &mut self,
         thread: &Entity<AgentThread>,
-        usage: Option<&acp::UsageUpdate>,
+        usage: Option<&ContextUsage>,
         labels: &attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -219,7 +221,7 @@ impl AgentPanel {
             || !thread
                 .read(cx)
                 .agent_info()
-                .is_some_and(|info| info.capabilities.prompt_capabilities.image)
+                .is_some_and(|info| info.capabilities.image_prompts)
         {
             return;
         }
@@ -646,7 +648,7 @@ impl AgentPanel {
     pub(super) fn on_authenticate_clicked(
         &mut self,
         chat: gpui_kit::EntityId,
-        id: acp::AuthMethodId,
+        id: AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

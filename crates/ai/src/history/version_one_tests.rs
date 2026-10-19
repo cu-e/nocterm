@@ -1,5 +1,6 @@
 //! Version-one saved chat files stay readable and byte-stable.
 use super::*;
+use crate::model::content::Content;
 use serde_json::{Value, json};
 
 const ID: &str = "00000000-0000-4000-8000-0000000000a1";
@@ -91,7 +92,7 @@ fn lenient_legacy_files_are_normalized_when_saved_again() {
 fn images_over_the_saved_limit_are_replaced_when_saved() {
     let mut chat = decode(CANONICAL, ID).unwrap();
     let big = "A".repeat(MAX_SAVED_IMAGE_BYTES + 1);
-    let image: acp::ContentBlock =
+    let image: Content =
         serde_json::from_value(json!({"type": "image", "data": big, "mimeType": "image/png"}))
             .unwrap();
     chat.entries = vec![Entry::User(vec![image.clone()]), Entry::Content(image)];

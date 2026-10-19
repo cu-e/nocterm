@@ -279,8 +279,8 @@ impl Runtime {
             while let Ok(event) = events.recv().await {
                 let _ = this.update(cx, |this, cx| {
                     let session = match &event {
-                        AgentEvent::Session(notification) => Some(&notification.session_id),
-                        AgentEvent::Permission { request, .. } => Some(&request.session_id),
+                        AgentEvent::Session(notification) => Some(&notification.session),
+                        AgentEvent::Permission { request, .. } => Some(&request.session),
                         _ => None,
                     };
                     let owner = this

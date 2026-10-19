@@ -2,7 +2,7 @@
 #![cfg(target_os = "linux")]
 
 use nocterm_acp::AcpConnector;
-use nocterm_ai::{AgentCommands, AgentConnector as _, AgentLaunch, ConnectRequest, acp};
+use nocterm_ai::{AgentCommands, AgentConnector as _, AgentLaunch, ConnectRequest};
 use std::{
     collections::BTreeMap,
     fs,
@@ -168,9 +168,12 @@ fn repeated_managed_close_reaps_detached_descendants_and_fds() {
     for cycle in 0..6 {
         let dir = tempfile::tempdir().unwrap();
         let (commands, events) = connection(dir.path());
-        let session = futures::executor::block_on(
-            commands.new_session(acp::NewSessionRequest::new(dir.path())),
-        )
+        let session = futures::executor::block_on(commands.new_session(
+            nocterm_ai::model::session::SessionOpen {
+                working_directory: dir.path().to_path_buf(),
+                endpoints: Vec::new(),
+            },
+        ))
         .unwrap();
         let children = pids(dir.path());
         let environment: serde_json::Value =
@@ -208,8 +211,7 @@ fn repeated_managed_close_reaps_detached_descendants_and_fds() {
                 "512"
             );
         }
-        let outcome =
-            futures::executor::block_on(commands.close_session(session.session_id)).unwrap();
+        let outcome = futures::executor::block_on(commands.close_session(session.session)).unwrap();
         assert_eq!(outcome, nocterm_ai::CloseSessionOutcome::Closed);
         futures::executor::block_on(commands.shutdown_gracefully()).unwrap();
         drop(commands);

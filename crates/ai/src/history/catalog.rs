@@ -1,5 +1,6 @@
 //! Rebuildable metadata cache. Transcript files remain authoritative.
 use super::{HistoryCodecError, SavedChat, VERSION};
+use crate::model::content::Content;
 use serde::{Deserialize, Serialize};
 
 /// Primitive file stamp supplied by the storage adapter, never filesystem metadata.
@@ -28,7 +29,7 @@ impl ChatSummary {
     pub fn from_chat(chat: &SavedChat) -> Self {
         let fallback = chat.entries.iter().find_map(|entry| match entry {
             crate::thread::Entry::User(blocks) => blocks.iter().find_map(|block| match block {
-                crate::acp::ContentBlock::Text(text) if !text.text.trim().is_empty() => {
+                Content::Text(text) if !text.text.trim().is_empty() => {
                     Some(text.text.trim().chars().take(60).collect())
                 }
                 _ => None,

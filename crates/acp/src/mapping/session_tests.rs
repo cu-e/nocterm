@@ -154,8 +154,7 @@ fn answers_and_errors_keep_their_meaning() {
                 vec![wire::SessionMode::new("plan", "Plan")],
             ))
             .config_options(vec![wire::SessionConfigOption::boolean("f", "Flag", true)]),
-    )
-    .unwrap();
+    );
     assert_eq!(opened.session, SessionId::new("s"));
     assert_eq!(opened.modes.unwrap().choices[0].name, "Plan");
     assert_eq!(opened.configuration.unwrap().len(), 1);

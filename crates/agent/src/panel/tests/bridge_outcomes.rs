@@ -2,6 +2,8 @@
 use super::provider_fixtures::update;
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolRecord, ToolStatus};
 use nocterm_ai::{TerminalCall, thread::Entry, tool_display};
 use serde_json::{Value, json};
 
@@ -77,10 +79,10 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             json!({"terminal_id":terminal,"program":"sh","args":["-c","echo requested"]}),
         ),
     ] {
-        let row = acp::ToolCall::new(id, title(provider, tool))
+        let row = ToolRecord::new(id, title(provider, tool))
             .raw_input(args.clone())
             .raw_output(json!({"new_provider_wrapper":"provider garbage"}));
-        update(&f, &session, acp::SessionUpdate::ToolCall(row), cx);
+        update(&f, &session, SessionUpdate::ToolCall(Box::new(row)), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
             mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
@@ -154,10 +156,9 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("active", title("codex", "exec_command"))
-                .raw_input(arguments.clone()),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("active", title("codex", "exec_command")).raw_input(arguments.clone()),
+        )),
         cx,
     );
     let mut pending = send(
@@ -170,9 +171,9 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
+        )),
         cx,
     );
     assert!(
@@ -216,9 +217,9 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("late", title("codex", "typo")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("late", title("codex", "typo")).raw_input(json!({})),
+        )),
         cx,
     );
     cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
@@ -241,7 +242,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
 
 #[test]
 fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
-    let mut call = acp::ToolCall::new("error", title("codex", "list_terminals"));
+    let mut call = ToolRecord::new("error", title("codex", "list_terminals"));
     let mut display = tool_display::ToolDisplay::requested("list_terminals".into(), json!({}));
     display.finish(Err("password=private-value".into()));
     display.attach(&mut call);
@@ -257,7 +258,7 @@ fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
 
 #[test]
 fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
-    let mut call = acp::ToolCall::new("call-1", "mcp.nocterm-11.exec_command")
+    let mut call = ToolRecord::new("call-1", "mcp.nocterm-11.exec_command")
         .raw_input(
             json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
                 "terminal_id":"t1", "program":"/bin/sh",
@@ -268,7 +269,7 @@ fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
         .raw_output(json!({"result":null, "error":{
             "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
         }}));
-    call.status = acp::ToolCallStatus::Failed;
+    call.status = ToolStatus::Failed;
     assert_eq!(
         tool_display::header(&call),
         "Nocterm · Execute program · Failed"

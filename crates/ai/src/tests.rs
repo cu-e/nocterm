@@ -1,7 +1,14 @@
+use crate::model::content::Content;
+use crate::model::plan::Plan;
+use crate::model::session::SessionUpdate;
+use crate::model::tools::ToolStatus;
+use crate::model::tools::{ToolChanges, ToolPatch};
+use crate::model::usage::ContextUsage;
+use crate::model::{controls::Change, session::SessionInfo};
 use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
 use crate::{
-    acp, approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*,
-    thread::*, tools::*,
+    approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*, thread::*,
+    tools::*,
 };
 use serde_json::json;
 #[test]
@@ -66,8 +73,50 @@ fn environment_blocks_sensitive_and_injection_vars_even_if_requested() {
     assert!(!env.values().any(|v| v == "marker"));
     assert!(!valid_name("bad=name"));
 }
-fn update(value: serde_json::Value) -> acp::SessionUpdate {
-    serde_json::from_value(value).unwrap()
+/// Builds the neutral update from the JSON an agent would send.
+fn update(value: serde_json::Value) -> SessionUpdate {
+    fn field<T: serde::de::DeserializeOwned>(value: &serde_json::Value, name: &str) -> Option<T> {
+        value
+            .get(name)
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+    }
+    let content = || field::<Content>(&value, "content").unwrap();
+    match value["sessionUpdate"].as_str().unwrap() {
+        "agent_message_chunk" => SessionUpdate::AgentMessageChunk(content()),
+        "agent_thought_chunk" => SessionUpdate::AgentThoughtChunk(content()),
+        "user_message_chunk" => SessionUpdate::UserMessageChunk(content()),
+        "tool_call" => SessionUpdate::ToolCall(Box::new(serde_json::from_value(value).unwrap())),
+        "tool_call_update" => {
+            let changes = ToolChanges {
+                kind: field(&value, "kind"),
+                status: field(&value, "status"),
+                title: field(&value, "title"),
+                raw_input: field(&value, "rawInput"),
+                raw_output: field(&value, "rawOutput"),
+                ..ToolChanges::default()
+            };
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                field::<String>(&value, "toolCallId").unwrap(),
+                changes,
+            )))
+        }
+        "plan" => SessionUpdate::Plan(Plan {
+            entries: Vec::new(),
+        }),
+        "session_info_update" => SessionUpdate::SessionInfoUpdate(SessionInfo {
+            title: match value.get("title") {
+                None => Change::Keep,
+                Some(serde_json::Value::Null) => Change::Clear,
+                Some(title) => Change::Set(title.as_str().unwrap().into()),
+            },
+            meta: None,
+        }),
+        "usage_update" => SessionUpdate::UsageUpdate(ContextUsage::new(
+            field(&value, "used").unwrap(),
+            field(&value, "size").unwrap(),
+        )),
+        other => panic!("unsupported test update {other}"),
+    }
 }
 #[test]
 fn reducer_merges_chunks_and_keeps_message_boundaries() {
@@ -78,10 +127,7 @@ fn reducer_merges_chunks_and_keeps_message_boundaries() {
         ), 1);
     }
     assert!(matches!(&s.entries[0],Entry::Agent(v) if v=="hello world"));
-    s.push_user(
-        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
-        1,
-    );
+    s.push_user(vec![Content::text("next")], 1);
     s.apply(update(
         json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}),
     ), 1);
@@ -104,7 +150,7 @@ fn reducer_handles_transcript_metadata_usage_and_tool_replacement() {
         assert_ne!(s.apply(update(value), 1), ThreadChange::Ignored);
     }
     assert!(
-        matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==acp::ToolCallStatus::Completed)
+        matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==ToolStatus::Succeeded)
     );
     assert_eq!(s.title.as_deref(), Some("A title"));
     assert_eq!(s.usage.as_ref().unwrap().used, 50);
@@ -307,7 +353,7 @@ fn image_chunks_are_retained() {
     state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})), 1);
     assert!(matches!(
         state.entries.last(),
-        Some(Entry::Content(acp::ContentBlock::Image(_)))
+        Some(Entry::Content(Content::Image(_)))
     ));
 }
 
@@ -489,10 +535,7 @@ fn reducer_uses_supplied_timestamps_and_preserves_the_first_chunk_time() {
         10,
     );
     state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second"}})), 20);
-    state.push_user(
-        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
-        30,
-    );
+    state.push_user(vec![Content::text("next")], 30);
     assert_eq!(state.time(0), Some(10));
     assert_eq!(state.time(1), Some(30));
     state.apply(

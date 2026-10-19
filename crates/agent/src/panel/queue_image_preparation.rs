@@ -2,8 +2,8 @@
 use super::{AgentPanel, composer_view::ComposerBinding, images::ImageAttachError};
 use crate::thread::AgentThread;
 use gpui_kit::{Context, Task, WeakEntity};
+use nocterm_ai::model::content::Content;
 use nocterm_ai::{
-    acp,
     images::{ImageInspector, PromptImage},
     session::Ticket,
 };
@@ -48,7 +48,7 @@ impl QueueImagePreparation {
                 .images
                 .iter()
                 .filter_map(|block| match block {
-                    acp::ContentBlock::Image(image) => Some(
+                    Content::Image(image) => Some(
                         super::queue::decode_saved_image(&image.data).and_then(|bytes| {
                             PromptImage::validate(bytes, inspector.as_ref())
                                 .map_err(ImageAttachError::from)

@@ -1,7 +1,9 @@
 use super::*;
+use crate::model::session::SessionUpdate;
+use crate::model::tools::ToolRecord;
 
-fn command(server: &str) -> acp::ToolCall {
-    acp::ToolCall::new("c1", format!("mcp.{server}.run_command")).raw_input(json!({
+fn command(server: &str) -> ToolRecord {
+    ToolRecord::new("c1", format!("mcp.{server}.run_command")).raw_input(json!({
         "server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo hello"}
     }))
 }
@@ -27,12 +29,12 @@ fn local_metadata_survives_history_and_provider_metadata_is_removed() {
     let request = envelope(&call, "nocterm-3").unwrap();
     let display = ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()));
     display.attach(&mut call);
-    let restored: acp::ToolCall =
+    let restored: ToolRecord =
         serde_json::from_value(serde_json::to_value(&call).unwrap()).unwrap();
     assert!(header(&restored).starts_with("Production · root@actual.example:22 · Run command"));
-    let mut incoming = acp::SessionUpdate::ToolCall(restored);
+    let mut incoming = SessionUpdate::ToolCall(Box::new(restored));
     strip_provider_meta(&mut incoming);
-    let acp::SessionUpdate::ToolCall(incoming) = incoming else {
+    let SessionUpdate::ToolCall(incoming) = incoming else {
         unreachable!()
     };
     assert!(ToolDisplay::from_call(&incoming).is_none());
@@ -49,7 +51,7 @@ fn fallback_never_guesses_a_host_or_relabels_external_tools() {
         "mcp.external.run_command",
         "mcp.nocterm-forged.run_command",
     ] {
-        let call = acp::ToolCall::new("c1", title);
+        let call = ToolRecord::new("c1", title);
         assert!(header(&call).starts_with(title));
     }
 }
@@ -63,7 +65,7 @@ fn redaction_expansion_keeps_a_verified_display_without_weakening_execution_vali
     display.redact();
     assert!(display.arguments["command"].as_str().unwrap().len() > crate::MAX_INPUT_BYTES);
     assert!(parse("run_command", display.arguments.clone()).is_none());
-    let mut call = acp::ToolCall::new("c1", "provider title");
+    let mut call = ToolRecord::new("c1", "provider title");
     display.attach(&mut call);
     let saved = ToolDisplay::from_call(&call).unwrap();
     assert!(saved.redacted);
@@ -109,14 +111,14 @@ fn exact_provider_spellings_share_identity_and_validate_wrappers() {
             } else {
                 input.clone()
             };
-            let call = acp::ToolCall::new("screenshot", title).raw_input(args);
+            let call = ToolRecord::new("screenshot", title).raw_input(args);
             assert_eq!(request(&envelope(&call, "nocterm-17").unwrap()).1, expected);
             assert!(envelope(&call, "nocterm-1").is_none());
             assert!(header(&call).starts_with("Nocterm · Execute program"));
             assert!(ToolDisplay::from_call(&call).is_none());
         }
     }
-    let mut call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
+    let mut call = ToolRecord::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
     call.name = Some("mcp.nocterm-17.exec_command".into());
     assert!(envelope(&call, "nocterm-17").is_some());
     call.name = Some("mcp__nocterm-170__exec_command".into());
@@ -132,8 +134,8 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
         "mcp__nocterm-17__unknown",
         "mcp__nocterm-17_exec_command",
     ] {
-        let call = acp::ToolCall::new("c1", title)
-            .raw_input(json!({"terminal_id":"t1", "program":"true"}));
+        let call =
+            ToolRecord::new("c1", title).raw_input(json!({"terminal_id":"t1", "program":"true"}));
         assert!(requested_call(&call).is_none(), "{title}");
         assert!(envelope(&call, "nocterm-17").is_none());
         assert!(header(&call).starts_with(title));
@@ -143,7 +145,7 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
         json!({"server":"nocterm-17", "tool":"send_input", "arguments":{"terminal_id":"t1", "text":"foreign"}}),
         json!({"server":"nocterm-17", "arguments":{"terminal_id":"t1", "program":"true"}}),
     ] {
-        let call = acp::ToolCall::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
+        let call = ToolRecord::new("c1", "mcp__nocterm-17__exec_command").raw_input(input);
         assert!(requested_call(&call).is_none());
         assert!(header(&call).starts_with("mcp__nocterm-17__exec_command"));
     }
@@ -152,7 +154,7 @@ fn malformed_and_foreign_doubleunderscore_calls_keep_the_provider_label() {
 #[test]
 fn hermes_spelling_shares_identity_with_the_registered_server() {
     let input = json!({"terminal_id":"t2", "program":"sh", "args":["-c","qm config 9000"]});
-    let call = acp::ToolCall::new("h1", "mcp_nocterm_3_exec_command").raw_input(input.clone());
+    let call = ToolRecord::new("h1", "mcp_nocterm_3_exec_command").raw_input(input.clone());
     let expected = request(&parse("exec_command", input).unwrap());
     assert_eq!(request(&envelope(&call, "nocterm-3").unwrap()), expected);
     assert_eq!(request(&requested_call(&call).unwrap()), expected);
@@ -163,14 +165,14 @@ fn hermes_spelling_shares_identity_with_the_registered_server() {
 
 #[test]
 fn hermes_omits_the_input_of_calls_without_arguments() {
-    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_list_terminals");
+    let call = ToolRecord::new("h1", "mcp_nocterm_12_list_terminals");
     assert!(matches!(
         envelope(&call, "nocterm-12"),
         Some(TerminalCall::ListTerminals)
     ));
     assert!(header(&call).starts_with("Nocterm · List terminals"));
     // A tool that needs arguments is not complete without them.
-    let call = acp::ToolCall::new("h1", "mcp_nocterm_12_run_command");
+    let call = ToolRecord::new("h1", "mcp_nocterm_12_run_command");
     assert!(envelope(&call, "nocterm-12").is_none());
     assert!(header(&call).starts_with("Nocterm · Run command"));
 }
@@ -184,13 +186,13 @@ fn malformed_and_foreign_hermes_names_keep_the_provider_label() {
         "mcp_github_run_command",
         "mcp_nocterm_3_exec_command_extra",
     ] {
-        let call = acp::ToolCall::new("h1", title)
-            .raw_input(json!({"terminal_id":"t1", "command":"true"}));
+        let call =
+            ToolRecord::new("h1", title).raw_input(json!({"terminal_id":"t1", "command":"true"}));
         assert!(requested_call(&call).is_none(), "{title}");
         assert!(envelope(&call, "nocterm-3").is_none(), "{title}");
         assert!(header(&call).starts_with(title), "{title}");
     }
-    let mut call = acp::ToolCall::new("h1", "mcp_nocterm_3_run_command")
+    let mut call = ToolRecord::new("h1", "mcp_nocterm_3_run_command")
         .raw_input(json!({"terminal_id":"t1", "command":"true"}));
     call.name = Some("mcp__nocterm-4__run_command".into());
     assert!(envelope(&call, "nocterm-3").is_none());
@@ -206,7 +208,7 @@ fn a_request_the_bridge_rejected_is_still_shown_but_never_matched() {
         json!({"server":"nocterm-11", "tool":"exec_command", "arguments":arguments}),
         json!({"terminal_id":"t1", "program":""}),
     ] {
-        let call = acp::ToolCall::new("c1", "mcp.nocterm-11.exec_command").raw_input(input);
+        let call = ToolRecord::new("c1", "mcp.nocterm-11.exec_command").raw_input(input);
         assert!(requested_call(&call).unwrap().validate().is_err());
         assert!(header(&call).starts_with("Nocterm · Execute program"));
         assert!(
@@ -218,14 +220,15 @@ fn a_request_the_bridge_rejected_is_still_shown_but_never_matched() {
 
 #[test]
 fn v1_metadata_and_unparseable_v2_requests_remain_readable() {
-    let mut call = acp::ToolCall::new("old", "provider");
+    let mut call = ToolRecord::new("old", "provider");
     call.meta = Some(
         [(
             META_KEY.into(),
             json!({"version":1,"tool":"list_terminals","arguments":{},"destination":null}),
         )]
         .into_iter()
-        .collect(),
+        .collect::<serde_json::Map<_, _>>()
+        .into(),
     );
     assert!(ToolDisplay::from_call(&call).unwrap().outcome.is_none());
     let display = ToolDisplay::requested("unknown_tool".into(), json!({"bad":true}));
@@ -288,7 +291,7 @@ fn raw_matching_preserves_rejected_unknown_tools_and_original_arguments() {
         "mcp__nocterm-3__typo",
         "mcp_nocterm_3_typo",
     ] {
-        let call = acp::ToolCall::new("bad", title).raw_input(json!({"wrong":true}));
+        let call = ToolRecord::new("bad", title).raw_input(json!({"wrong":true}));
         assert_eq!(
             raw_envelope(&call, "nocterm-3"),
             Some(("typo".into(), json!({"wrong":true})))
@@ -306,13 +309,13 @@ fn old_hermes_server_names_are_display_only() {
         } else {
             json!({})
         };
-        let call = acp::ToolCall::new("old", format!("mcp_nocterm_{tool}")).raw_input(input);
+        let call = ToolRecord::new("old", format!("mcp_nocterm_{tool}")).raw_input(input);
         assert!(requested_call(&call).is_some());
         assert!(header(&call).starts_with("Nocterm"));
         assert!(envelope(&call, "nocterm-3").is_none());
         assert!(raw_envelope(&call, "nocterm-3").is_none());
     }
-    let mut call = acp::ToolCall::new("old", "mcp_nocterm_exec_command")
+    let mut call = ToolRecord::new("old", "mcp_nocterm_exec_command")
         .raw_input(json!({"terminal_id":"t1","program":"sh"}));
     call.name = Some("mcp.nocterm-3.exec_command".into());
     assert!(requested_call(&call).is_none());

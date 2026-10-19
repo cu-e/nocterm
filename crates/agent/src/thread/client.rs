@@ -7,12 +7,15 @@ use super::{
 };
 use crate::runtime::SessionEvent;
 use gpui_kit::{App, Context};
+use nocterm_ai::PermissionResponder;
+use nocterm_ai::model::auth::ProviderPermission;
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::{
     AgentCommands, AgentInfo, BridgeCall, BridgeRejection, TerminalCall, ToolFailure,
     thread::{Entry, ThreadChange},
     tool_display::{self, ToolDisplay},
 };
-use nocterm_ai::{PermissionResponder, acp};
 
 use nocterm_workspace::TerminalEntry;
 use std::path::PathBuf;
@@ -244,10 +247,7 @@ impl AgentThread {
         cx.notify();
     }
 
-    pub(crate) fn apply_presented_update(
-        &mut self,
-        mut update: acp::SessionUpdate,
-    ) -> ThreadChange {
+    pub(crate) fn apply_presented_update(&mut self, mut update: SessionUpdate) -> ThreadChange {
         self.tools
             .prepare_displays(self.session.turn(), self.state.entries().len());
         tool_display::strip_provider_meta(&mut update);
@@ -264,7 +264,7 @@ impl AgentThread {
     pub(super) fn on_prompt_completion(
         &mut self,
         authority: super::session_driver::SessionAuthority,
-        result: Result<acp::PromptResponse, nocterm_ai::AgentError>,
+        result: Result<PromptOutcome, nocterm_ai::AgentError>,
         is_command: bool,
         cx: &mut Context<Self>,
     ) {
@@ -273,7 +273,7 @@ impl AgentThread {
         }
         let completed = matches!(
             &result,
-            Ok(response) if response.stop_reason != acp::StopReason::Cancelled
+            Ok(response) if response.stop_reason != StopReason::Cancelled
         ) && !self.session.stopped();
         if !self.session.finish_turn(authority.ticket(), completed) {
             return;
@@ -335,30 +335,28 @@ impl AgentThread {
 
     /// Applies one notification from the chat's connection. Notifications
     /// for other sessions sharing the connection are ignored.
-    pub(crate) fn session_update(
-        &mut self,
-        notification: &acp::SessionNotification,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn session_update(&mut self, notification: &SessionNotice, cx: &mut Context<Self>) {
         if self.session.opening() && self.session().is_none() {
             self.config
                 .keep_control(self.session.ticket(), notification);
         }
-        if self.session().as_ref() != Some(&notification.session_id)
+        if self.session().as_ref() != Some(&notification.session)
             || !self.session.accepts_updates()
-            || matches!(notification.update, acp::SessionUpdate::UserMessageChunk(_))
+            || matches!(notification.update, SessionUpdate::UserMessageChunk(_))
         {
             return;
         }
         let index = match &notification.update {
-            acp::SessionUpdate::ToolCallUpdate(update) => self.state.entries().iter().position(
-                |entry| matches!(entry, Entry::Tool(call) if call.tool_call_id == update.tool_call_id),
-            ),
+            SessionUpdate::ToolCallUpdate(update) => self
+                .state
+                .entries()
+                .iter()
+                .position(|entry| matches!(entry, Entry::Tool(call) if call.id == update.id)),
             _ => self.state.entries().len().checked_sub(1),
         };
         let configuration = matches!(
             notification.update,
-            acp::SessionUpdate::ConfigOptionUpdate(_) | acp::SessionUpdate::CurrentModeUpdate(_)
+            SessionUpdate::ConfigOptionUpdate(_) | SessionUpdate::CurrentModeUpdate(_)
         );
         match self.apply_presented_update(notification.update.clone()) {
             ThreadChange::Transcript => {
@@ -437,7 +435,7 @@ impl AgentThread {
         ticket: nocterm_ai::session::Ticket,
         reconciling: bool,
         commands: Arc<dyn AgentCommands>,
-        session: acp::SessionId,
+        session: SessionId,
         request: super::config::operation::ConfigurationRequest,
         cx: &mut Context<Self>,
     ) {
@@ -473,7 +471,9 @@ impl AgentThread {
         let request = match step {
             ConfigStep::Stale => return,
             ConfigStep::Ready => return self.configured(cx),
-            ConfigStep::SetOption(id, value) => ConfigurationRequest::Option(id, value.to_acp()),
+            ConfigStep::SetOption(id, value) => {
+                ConfigurationRequest::Option(id, value.to_setting())
+            }
             ConfigStep::SetMode(id) => ConfigurationRequest::Mode(id),
         };
         self.start_configuration(ticket, true, commands, session, request, cx);
@@ -494,7 +494,7 @@ impl AgentThread {
         }
         match result {
             Ok(response) => {
-                let session = response.session_id;
+                let session = response.session;
                 if !self.session.accept_open(
                     ticket,
                     session.clone(),
@@ -505,7 +505,7 @@ impl AgentThread {
                 self.config.start_open(
                     ticket,
                     response.modes,
-                    response.config_options.unwrap_or_default(),
+                    response.configuration.unwrap_or_default(),
                 );
                 self.config.begin_reconciliation(&session, ticket);
                 self.state.set_pending_history(
@@ -544,7 +544,7 @@ impl AgentThread {
         if !self.host.enabled(cx) {
             return;
         }
-        let Some(server) = self.registration().as_ref().map(|r| r.mcp_server()) else {
+        let Some(server) = self.registration().as_ref().map(|r| r.endpoint()) else {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
@@ -609,7 +609,7 @@ impl AgentThread {
     }
     pub(crate) fn permission(
         &mut self,
-        request: acp::RequestPermissionRequest,
+        request: ProviderPermission,
         respond: PermissionResponder,
         cx: &mut Context<Self>,
     ) {
@@ -632,7 +632,7 @@ impl AgentThread {
     pub(crate) fn choose_permission_request(
         &mut self,
         token: ApprovalToken,
-        choice: Option<acp::PermissionOptionId>,
+        choice: Option<PermissionOptionId>,
         cx: &mut Context<Self>,
     ) {
         let gate = self.permission_gate(cx);

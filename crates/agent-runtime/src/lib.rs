@@ -13,6 +13,9 @@
 //! stamps change only after writer acceptance; final work reads no App and joins
 //! captured admission failures with publication failures. Shared cleanup diagnostics
 //! retain the original typed AgentError through standard source traversal.
+use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
+use nocterm_ai::model::controls::ConfigOption;
+use nocterm_ai::model::session::SessionUpdate;
 
 mod handle;
 pub use handle::RuntimeHandle;
@@ -37,7 +40,7 @@ use gpui::{App, Context, Entity, EntityId, Task};
 pub use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
-    ToolBridge, acp,
+    ToolBridge,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 pub use storage::{AgentPersistenceError, AgentStorage, HistoryReader};
@@ -208,7 +211,7 @@ impl Runtime {
     pub fn remember_options(
         &mut self,
         agent: &str,
-        options: &[nocterm_ai::acp::SessionConfigOption],
+        options: &[ConfigOption],
         cx: &mut Context<Self>,
     ) {
         if self.shutting_down {
@@ -225,7 +228,7 @@ impl Runtime {
     pub fn remember_choice(
         &mut self,
         agent: &str,
-        option: &nocterm_ai::acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &nocterm_ai::session_config::ConfigValue,
         cx: &mut Context<Self>,
     ) {
@@ -296,15 +299,18 @@ impl Runtime {
     pub fn terminal_auth_request(
         &self,
         key: u64,
-        method: &acp::AuthMethodTerminal,
+        method: &AuthMethod,
     ) -> Option<TerminalAuthRequest> {
+        let AuthFlow::TerminalSetup(setup) = &method.flow else {
+            return None;
+        };
         let connection = self.connections.get(key)?;
         let launch = &connection.launch;
         let mut args = launch.args.clone();
-        args.extend(method.args.iter().cloned());
+        args.extend(setup.args.iter().cloned());
         let mut env = nocterm_ai::env::sanitized_environment(launch, std::env::vars());
         env.extend(
-            method
+            setup
                 .env
                 .iter()
                 .filter(|(key, value)| {
@@ -319,7 +325,7 @@ impl Runtime {
             args,
             env,
             cwd: connection.workdir.clone(),
-            title: format!("Sign in: {}", method.name),
+            title: format!("Sign in: {}", method.label),
         })
     }
     pub fn connect(
@@ -477,7 +483,7 @@ impl Runtime {
         match event {
             AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
-                if let acp::SessionUpdate::UsageUpdate(update) = &notification.update
+                if let SessionUpdate::UsageUpdate(update) = &notification.update
                     && let Some(limit) = nocterm_ai::usage::claude_limit(update)
                 {
                     let agent = connection.launch.id.clone();
@@ -498,9 +504,9 @@ impl Runtime {
                     .users
                     .values()
                     .find(|client| {
-                        client.state(cx).is_some_and(|state| {
-                            state.session.as_ref() == Some(&request.session_id)
-                        })
+                        client
+                            .state(cx)
+                            .is_some_and(|state| state.session.as_ref() == Some(&request.session))
                     })
                     .cloned();
                 // A request no thread takes is answered `Cancelled` on drop.

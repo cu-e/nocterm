@@ -51,12 +51,12 @@ pub(crate) fn set_config(value: SetConfigOption) -> wire::SetSessionConfigOption
         wire_setting(value.setting),
     )
 }
-pub(crate) fn opened(value: wire::NewSessionResponse) -> Result<SessionOpened, ModelError> {
-    Ok(SessionOpened {
+pub(crate) fn opened(value: wire::NewSessionResponse) -> SessionOpened {
+    SessionOpened {
         session: SessionId::new(value.session_id.to_string()),
         modes: value.modes.map(modes),
-        configuration: value.config_options.map(options).transpose()?,
-    })
+        configuration: value.config_options.map(options),
+    }
 }
 pub(crate) fn prompt_outcome(value: wire::PromptResponse) -> Result<PromptOutcome, ModelError> {
     Ok(PromptOutcome {

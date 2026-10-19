@@ -2,8 +2,10 @@
 //! Neither provider titles nor today's attachment list establishes a destination.
 #[cfg(test)]
 use nocterm_ai::TerminalCall;
+use nocterm_ai::model::ids::ToolId;
+use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::{
-    ToolFailure, acp,
+    ToolFailure,
     thread::Entry,
     tool_display::{self, ToolDisplay},
 };
@@ -21,13 +23,13 @@ struct Record {
     id: u64,
     request: (String, serde_json::Value),
     display: ToolDisplay,
-    row: Option<acp::ToolCallId>,
+    row: Option<ToolId>,
     ambiguous: bool,
 }
 
 impl Record {
-    fn matches(&self, call: &acp::ToolCall) -> bool {
-        self.row.as_ref() == Some(&call.tool_call_id)
+    fn matches(&self, call: &ToolRecord) -> bool {
+        self.row.as_ref() == Some(&call.id)
             || tool_display::raw_envelope(call, &self.server)
                 .is_some_and(|request| request == self.request)
     }
@@ -94,7 +96,7 @@ impl ToolDisplays {
             let bound = self
                 .records
                 .iter()
-                .position(|record| record.row.as_ref() == Some(&call.tool_call_id));
+                .position(|record| record.row.as_ref() == Some(&call.id));
             let candidate = bound.or_else(|| {
                 let matches: Vec<_> = self
                     .records
@@ -132,7 +134,7 @@ impl ToolDisplays {
             let Entry::Tool(call) = &entries[index] else {
                 continue;
             };
-            record.row = Some(call.tool_call_id.clone());
+            record.row = Some(call.id.clone());
             if let Ok(value) = serde_json::to_value(&record.display)
                 && call
                     .meta

@@ -1,12 +1,12 @@
 //! Advertised slash commands share one interpretation in UI and prompt dispatch.
-use crate::acp;
+use crate::model::commands::AvailableCommand;
 use std::ops::Range;
 pub struct Invocation<'a> {
     pub name: &'a str,
     pub range: Range<usize>,
     pub has_arguments: bool,
 }
-pub fn invocation<'a>(text: &'a str, commands: &[acp::AvailableCommand]) -> Option<Invocation<'a>> {
+pub fn invocation<'a>(text: &'a str, commands: &[AvailableCommand]) -> Option<Invocation<'a>> {
     let trimmed = text.trim_start();
     let start = text.len() - trimmed.len();
     let body = trimmed.strip_prefix('/')?;
@@ -33,8 +33,8 @@ mod tests {
     #[test]
     fn only_exact_advertised_names_have_administrative_semantics() {
         let commands = vec![
-            acp::AvailableCommand::new("review", "Review"),
-            acp::AvailableCommand::new("$skills:界", "Skill"),
+            AvailableCommand::new("review", "Review"),
+            AvailableCommand::new("$skills:界", "Skill"),
         ];
         assert!(invocation("/var/log/nginx/error.log проверь", &commands).is_none());
         assert!(invocation("/unknown", &commands).is_none());

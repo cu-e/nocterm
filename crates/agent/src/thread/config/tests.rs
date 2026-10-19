@@ -1,15 +1,19 @@
 //! Configuration transitions preserve per-chat choices and reject obsolete replies.
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption, ModeChoice, Modes};
+use nocterm_ai::model::ids::{ModeId, SessionId};
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_ai::session::SessionState;
 
-fn option(id: &str, current: &str, values: &[&str]) -> acp::SessionConfigOption {
-    acp::SessionConfigOption::select(
+fn option(id: &str, current: &str, values: &[&str]) -> ConfigOption {
+    ConfigOption::select(
         id.to_owned(),
         id.to_owned(),
         current.to_owned(),
         values
             .iter()
-            .map(|value| acp::SessionConfigSelectOption::new(value.to_string(), value.to_string()))
+            .map(|value| ConfigChoice::new(value.to_string(), value.to_string()))
             .collect::<Vec<_>>(),
     )
 }
@@ -135,16 +139,14 @@ fn pending_controls_keep_latest_kind_for_exact_opened_session() {
     for (id, name) in [("other", "foreign"), ("mine", "old"), ("mine", "latest")] {
         config.keep_control(
             ticket,
-            &acp::SessionNotification::new(
+            &SessionNotice::new(
                 id,
-                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                    vec![acp::AvailableCommand::new(name, name)],
-                )),
+                SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(name, name)]),
             ),
         );
     }
     config.start_open(ticket, None, Vec::new());
-    config.begin_reconciliation(&acp::SessionId::new("mine"), ticket);
+    config.begin_reconciliation(&SessionId::new("mine"), ticket);
     assert_eq!(config.commands()[0].name, "latest");
     assert_eq!(config.commands_revision(), 1);
 }
@@ -153,21 +155,23 @@ fn pending_controls_keep_latest_kind_for_exact_opened_session() {
 fn mode_category_suppresses_separate_mode_request_and_commands_invalidate_revision() {
     let (_, ticket) = opening();
     let mut config = ChatConfig::default();
-    config.restore(Choices::new(), Some(acp::SessionModeId::new("code")), None);
+    config.restore(Choices::new(), Some(ModeId::new("code")), None);
     config.opening_started(ticket);
-    let modes=serde_json::from_value(serde_json::json!({"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]})).unwrap();
+    let modes = Modes::new(
+        "ask",
+        vec![
+            ModeChoice::new("ask", "Ask"),
+            ModeChoice::new("code", "Code"),
+        ],
+    );
     config.start_open(
         ticket,
         Some(modes),
-        vec![
-            option("mode", "ask", &["ask", "code"])
-                .category(acp::SessionConfigOptionCategory::Mode),
-        ],
+        vec![option("mode", "ask", &["ask", "code"]).category(ConfigCategory::Mode)],
     );
     assert!(config.config_overrides_modes());
     assert!(matches!(config.next_request(ticket), ConfigStep::Ready));
-    let update =
-        acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(Vec::new()));
+    let update = SessionUpdate::AvailableCommandsUpdate(Vec::new());
     assert!(config.report_control(&update));
     assert!(config.report_control(&update));
     assert_eq!(config.commands_revision(), 2);
@@ -208,16 +212,16 @@ fn pre_open_controls_evict_oldest_sessions_at_the_bound() {
     for index in 0..65 {
         config.keep_control(
             ticket,
-            &acp::SessionNotification::new(
+            &SessionNotice::new(
                 format!("session-{index}"),
-                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                    vec![acp::AvailableCommand::new("latest", "Latest")],
-                )),
+                SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                    "latest", "Latest",
+                )]),
             ),
         );
     }
     config.start_open(ticket, None, Vec::new());
-    config.begin_reconciliation(&acp::SessionId::new("session-0"), ticket);
+    config.begin_reconciliation(&SessionId::new("session-0"), ticket);
     assert!(config.commands().is_empty());
     assert_eq!(config.commands_revision(), 0);
 }
@@ -227,17 +231,12 @@ fn accepted_prompt_records_model_category_label_before_later_reports() {
     let mut config = ChatConfig::default();
     config.restore(Choices::new(), None, Some("saved model".into()));
     assert_eq!(config.model().as_deref(), Some("saved model"));
-    config.report_control(&acp::SessionUpdate::ConfigOptionUpdate(
-        acp::ConfigOptionUpdate::new(vec![
-            option("effort", "high", &["high"])
-                .category(acp::SessionConfigOptionCategory::ThoughtLevel),
-            option("model", "a", &["a"]).category(acp::SessionConfigOptionCategory::Model),
-        ]),
-    ));
+    config.report_control(&SessionUpdate::ConfigOptionUpdate(vec![
+        option("effort", "high", &["high"]).category(ConfigCategory::ThoughtLevel),
+        option("model", "a", &["a"]).category(ConfigCategory::Model),
+    ]));
     config.prompt_started();
     assert_eq!(config.model().as_deref(), Some("a"));
-    config.report_control(&acp::SessionUpdate::ConfigOptionUpdate(
-        acp::ConfigOptionUpdate::new(Vec::new()),
-    ));
+    config.report_control(&SessionUpdate::ConfigOptionUpdate(Vec::new()));
     assert_eq!(config.model().as_deref(), Some("a"));
 }

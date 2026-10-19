@@ -1,5 +1,6 @@
 //! Pure admission rejects before inspection and preserves original encoded payload.
 use super::*;
+use crate::model::content::Content;
 use crate::testing::{ScriptedImageCodec, images::png_header_fixture};
 use std::sync::Arc;
 fn codec(bytes: &[u8]) -> ScriptedImageCodec {
@@ -51,7 +52,7 @@ fn supplied_evidence_keeps_original_bytes_mime_and_exact_history_budget() {
         image.encoded_len(),
         crate::history::content_size(&image.content()).unwrap()
     );
-    let acp::ContentBlock::Image(content) = image.content() else {
+    let Content::Image(content) = image.content() else {
         panic!("expected image");
     };
     assert_eq!(content.data, STANDARD.encode(bytes));

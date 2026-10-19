@@ -1,10 +1,16 @@
 //! A chat goes on after its session fails: forks, resumes and transport
 //! errors recover through the next message instead of a reload.
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::SessionUpdate;
 use std::time::Duration;
 
 fn overloaded() -> AgentError {
-    AgentError::Rpc(acp::Error::internal_error().data("Service temporarily overloaded"))
+    AgentError::Rpc(nocterm_ai::model::session::RemoteError {
+        code: -32603,
+        message: "Service temporarily overloaded".into(),
+    })
 }
 
 fn last_prompt_text(f: &Fixture) -> Vec<String> {
@@ -14,10 +20,10 @@ fn last_prompt_text(f: &Fixture) -> Vec<String> {
         .unwrap()
         .last()
         .unwrap()
-        .prompt
+        .content
         .iter()
         .filter_map(|block| match block {
-            acp::ContentBlock::Text(text) => Some(text.text.clone()),
+            Content::Text(text) => Some(text.text.clone()),
             _ => None,
         })
         .collect()
@@ -191,21 +197,14 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
     new_chat(&f, cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     old.update(cx, |thread, cx| {
-        let option = acp::SessionConfigOption::select(
+        let option = ConfigOption::select(
             "model",
             "Model",
             "saved",
-            vec![acp::SessionConfigSelectOption::new(
-                "saved",
-                "remembered model",
-            )],
+            vec![ConfigChoice::new("saved", "remembered model")],
         )
-        .category(acp::SessionConfigOptionCategory::Model);
-        report_control(
-            thread,
-            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![option])),
-            cx,
-        );
+        .category(ConfigCategory::Model);
+        report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
         thread.send("active".into(), cx);
         thread.replace_composer_context(vec![Attachment::Group("queued".into())], cx);
         thread.send("queued prompt".into(), cx);
@@ -337,8 +336,8 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     });
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].prompt.iter().any(|block| matches!(
+    assert!(prompts[1].content.iter().any(|block| matches!(
         block,
-        acp::ContentBlock::Text(text) if text.text == "retained"
+        Content::Text(text) if text.text == "retained"
     )));
 }

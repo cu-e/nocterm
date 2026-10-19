@@ -1,14 +1,14 @@
 use super::*;
-use crate::{acp, history::SavedPrompt, thread::Entry};
+use crate::model::content::Content;
+use crate::{history::SavedPrompt, thread::Entry};
 fn chat() -> SavedChat {
     let mut chat = SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-000000000066".into(),
         1,
     );
-    chat.entries.push(Entry::User(vec![acp::ContentBlock::Text(
-        acp::TextContent::new("first message"),
-    )]));
+    chat.entries
+        .push(Entry::User(vec![Content::text("first message")]));
     chat
 }
 #[test]

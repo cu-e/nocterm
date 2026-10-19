@@ -1,17 +1,15 @@
 use super::*;
 use gpui_kit::px;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::SessionUpdate;
 
-fn commands(f: &Fixture, values: Vec<acp::AvailableCommand>, text: &str, cx: &mut TestAppContext) {
+fn commands(f: &Fixture, values: Vec<AvailableCommand>, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                report_control(
-                    thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        values,
-                    )),
-                    cx,
-                );
+                report_control(thread, SessionUpdate::AvailableCommandsUpdate(values), cx);
                 cx.notify();
             });
         });
@@ -34,7 +32,7 @@ fn clicked_unicode_command_keeps_focus_and_appends_at_end(cx: &mut TestAppContex
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "/",
         cx,
     );
@@ -58,8 +56,8 @@ fn long_description_has_same_row_height_and_bounded_full_details(cx: &mut TestAp
     commands(
         &f,
         vec![
-            acp::AvailableCommand::new("short", "Short description"),
-            acp::AvailableCommand::new("long", long),
+            AvailableCommand::new("short", "Short description"),
+            AvailableCommand::new("long", long),
         ],
         "/",
         cx,
@@ -110,7 +108,7 @@ fn typed_command_is_highlighted_and_details_only_appear_on_token_hover(cx: &mut 
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("long", "Full command details")],
+        vec![AvailableCommand::new("long", "Full command details")],
         "/long arguments",
         cx,
     );
@@ -144,7 +142,7 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
     commands(
         &f,
         (0..20)
-            .map(|i| acp::AvailableCommand::new(format!("command{i}"), "Description"))
+            .map(|i| AvailableCommand::new(format!("command{i}"), "Description"))
             .collect(),
         "/",
         cx,
@@ -221,12 +219,7 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    commands(
-        &f,
-        vec![acp::AvailableCommand::new("обзор", "Review")],
-        "",
-        cx,
-    );
+    commands(&f, vec![AvailableCommand::new("обзор", "Review")], "", cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.input("/обзор аргументы", cx)
     })
@@ -280,7 +273,7 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
     assert!(
-        matches!(&prompts[0].prompt[0], acp::ContentBlock::Text(text) if text.text == "/обзор аргументы")
+        matches!(&prompts[0].content[0], Content::Text(text) if text.text == "/обзор аргументы")
     );
 }
 
@@ -294,29 +287,23 @@ fn model_token_hover_opens_actual_model_picker(cx: &mut TestAppContext) {
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                let mut option = acp::SessionConfigOption::select(
+                let mut option = ConfigOption::select(
                     "model",
                     "Model",
                     "one",
                     vec![
-                        acp::SessionConfigSelectOption::new("one", "First"),
-                        acp::SessionConfigSelectOption::new("two", "Second"),
+                        ConfigChoice::new("one", "First"),
+                        ConfigChoice::new("two", "Second"),
                     ],
                 );
-                option.category = Some(acp::SessionConfigOptionCategory::Model);
-                report_control(
-                    thread,
-                    acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
-                        option,
-                    ])),
-                    cx,
-                );
+                option.category = Some(ConfigCategory::Model);
+                report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
                 cx.notify();
             });
     });
     commands(
         &f,
-        vec![acp::AvailableCommand::new("model", "Choose a model")],
+        vec![AvailableCommand::new("model", "Choose a model")],
         "/model ",
         cx,
     );
@@ -346,7 +333,7 @@ fn clipboard_paste_keeps_the_command_and_arguments_editable(cx: &mut TestAppCont
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "",
         cx,
     );
@@ -387,8 +374,8 @@ fn typing_slash_then_arrow_selects_before_tab_without_moving_the_caret(cx: &mut 
     commands(
         &f,
         vec![
-            acp::AvailableCommand::new("first", "First action"),
-            acp::AvailableCommand::new("second", "Second action"),
+            AvailableCommand::new("first", "First action"),
+            AvailableCommand::new("second", "Second action"),
         ],
         "",
         cx,
@@ -436,7 +423,7 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("review", "Review changes")],
+        vec![AvailableCommand::new("review", "Review changes")],
         " /",
         cx,
     );
@@ -491,9 +478,7 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     thread.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("обзор", "Review"),
-            ])),
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new("обзор", "Review")]),
             cx,
         );
 
@@ -510,9 +495,7 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     thread.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                Vec::new(),
-            )),
+            SessionUpdate::AvailableCommandsUpdate(Vec::new()),
             cx,
         );
         cx.notify();
@@ -534,15 +517,31 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    f.panel.update(cx, |panel, cx| panel.current().unwrap().update(cx, |thread, cx| {
-        report_control(thread, acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new((0..1000).map(|index| {
-            let mut value = serde_json::json!({"name":format!("skill{index:04}"), "description":"description ".repeat(1000)});
-            if index % 2 == 1 { value["input"] = serde_json::json!({"hint":"Provide optional arguments"}); }
-            serde_json::from_value(value).unwrap()
-        }).collect())), cx);
+    f.panel.update(cx, |panel, cx| {
+        panel.current().unwrap().update(cx, |thread, cx| {
+            report_control(
+                thread,
+                SessionUpdate::AvailableCommandsUpdate(
+                    (0..1000)
+                        .map(|index| {
+                            let command = AvailableCommand::new(
+                                format!("skill{index:04}"),
+                                "description ".repeat(1000),
+                            );
+                            if index % 2 == 1 {
+                                command.hint("Provide optional arguments")
+                            } else {
+                                command
+                            }
+                        })
+                        .collect(),
+                ),
+                cx,
+            );
 
-        cx.notify();
-    }));
+            cx.notify();
+        })
+    });
     set_input(&f, "", cx);
     cx.update_window(f.handle, |_, window, cx| window.input("/", cx))
         .unwrap();
@@ -603,12 +602,10 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
             panel.current().unwrap().update(cx, |thread, cx| {
                 report_control(
                     thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        vec![
-                            acp::AvailableCommand::new("review", "Review changes"),
-                            acp::AvailableCommand::new("rename", "Rename chat"),
-                        ],
-                    )),
+                    SessionUpdate::AvailableCommandsUpdate(vec![
+                        AvailableCommand::new("review", "Review changes"),
+                        AvailableCommand::new("rename", "Rename chat"),
+                    ]),
                     cx,
                 );
                 cx.notify();

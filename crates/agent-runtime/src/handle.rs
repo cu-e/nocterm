@@ -4,8 +4,10 @@ use crate::{
 };
 use futures::future::BoxFuture;
 use gpui::{App, AppContext as _, Entity, EntityId, Subscription, Task};
+use nocterm_ai::model::auth::AuthMethod;
+use nocterm_ai::model::controls::ConfigOption;
 use nocterm_ai::{
-    AgentLaunch, BridgeRegistration, acp,
+    AgentLaunch, BridgeRegistration,
     history::{ChatSummary, SavedChat, SharedChat},
 };
 use std::sync::Arc;
@@ -56,7 +58,7 @@ impl RuntimeHandle {
     pub fn terminal_auth_request(
         &self,
         key: u64,
-        method: &acp::AuthMethodTerminal,
+        method: &AuthMethod,
         cx: &App,
     ) -> Option<TerminalAuthRequest> {
         self.runtime.read(cx).terminal_auth_request(key, method)
@@ -71,12 +73,7 @@ impl RuntimeHandle {
             runtime.toggle_favorite(agent, option, value, cx)
         })
     }
-    pub fn remember_options(
-        &self,
-        agent: &str,
-        options: &[acp::SessionConfigOption],
-        cx: &mut App,
-    ) {
+    pub fn remember_options(&self, agent: &str, options: &[ConfigOption], cx: &mut App) {
         self.runtime.update(cx, |runtime, cx| {
             runtime.remember_options(agent, options, cx)
         })
@@ -84,7 +81,7 @@ impl RuntimeHandle {
     pub fn remember_choice(
         &self,
         agent: &str,
-        option: &acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &nocterm_ai::session_config::ConfigValue,
         cx: &mut App,
     ) {

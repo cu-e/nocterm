@@ -1,4 +1,5 @@
 use super::*;
+use nocterm_ai::model::tools::ToolRecord;
 use serde_json::json;
 
 fn normalize(displays: &mut ToolDisplays, entries: &mut Vec<Entry>) -> Vec<usize> {
@@ -19,7 +20,7 @@ fn normalize(displays: &mut ToolDisplays, entries: &mut Vec<Entry>) -> Vec<usize
 }
 
 fn row(id: &str) -> Entry {
-    Entry::Tool(acp::ToolCall::new(id.to_owned(), "mcp.nocterm-3.run_command").raw_input(json!({
+    Entry::Tool(ToolRecord::new(id.to_owned(), "mcp.nocterm-3.run_command").raw_input(json!({
         "server":"nocterm-3","tool":"run_command","arguments":{"terminal_id":"t1","command":"echo hello"}
     })))
 }
@@ -373,8 +374,7 @@ fn an_execution_completed_before_its_provider_row_binds_the_saved_outcome() {
     let Entry::Tool(call) = &entries[0] else {
         unreachable!()
     };
-    let restored: acp::ToolCall =
-        serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
+    let restored: ToolRecord = serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
     let Some(tool_display::ToolOutcome::Ok(value)) =
         ToolDisplay::from_call(&restored).unwrap().outcome
     else {

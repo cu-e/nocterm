@@ -1,6 +1,7 @@
 //! Exercise command ownership through the same bridge and chat lifecycle as users.
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::auth::PermissionOutcome;
 use nocterm_ai::{CancelCommand, ExecCommand, ReadCommand, TerminalCall};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::Value;
@@ -364,11 +365,12 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            let request = serde_json::from_value(serde_json::json!({
-                "sessionId": thread.session(), "toolCall":{"toolCallId":"late-provider-tool"},
-                "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
-            }))
-            .unwrap();
+            let request = permission_request(
+                thread.session().clone().unwrap(),
+                "late-provider-tool",
+                None,
+                vec![allow_once_choice("once", "Allow once")],
+            );
             f.events
                 .try_send(AgentEvent::Permission { request, respond })
                 .unwrap();
@@ -377,7 +379,7 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(
         permission.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],

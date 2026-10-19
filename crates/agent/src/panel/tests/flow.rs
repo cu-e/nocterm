@@ -1,4 +1,7 @@
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 
 fn texts(f: &Fixture) -> Vec<String> {
     f.commands
@@ -8,11 +11,11 @@ fn texts(f: &Fixture) -> Vec<String> {
         .iter()
         .map(|request| {
             request
-                .prompt
+                .content
                 .iter()
                 .rev()
                 .find_map(|block| match block {
-                    acp::ContentBlock::Text(text) => Some(text.text.clone()),
+                    Content::Text(text) => Some(text.text.clone()),
                     _ => None,
                 })
                 .unwrap()
@@ -187,12 +190,10 @@ fn slash_popup_keyboard_completion_keeps_commands_as_raw_prompts(cx: &mut TestAp
             .update(cx, |thread, cx| {
                 report_control(
                     thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        vec![
-                            acp::AvailableCommand::new("plan", "Plan a task"),
-                            acp::AvailableCommand::new("review", "Review changes"),
-                        ],
-                    )),
+                    SessionUpdate::AvailableCommandsUpdate(vec![
+                        AvailableCommand::new("plan", "Plan a task"),
+                        AvailableCommand::new("review", "Review changes"),
+                    ]),
                     cx,
                 );
                 cx.notify();
@@ -263,7 +264,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         );
         let restore = thread.read(cx).pending_restore().as_ref().unwrap();
         assert_eq!(
-            restore.session.0.as_ref(),
+            restore.session.as_str(),
             saved.session_id.as_deref().unwrap()
         );
     });
@@ -285,8 +286,8 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     });
     cx.run_until_parked();
     let requests = f.commands.prompts.lock().unwrap();
-    let prompt = &requests.last().unwrap().prompt;
-    assert!(prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("User: remember disk") && text.text.contains("Assistant: disk is full"))));
+    let prompt = &requests.last().unwrap().content;
+    assert!(prompt.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("User: remember disk") && text.text.contains("Assistant: disk is full"))));
     drop(requests);
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| {
@@ -295,14 +296,16 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     });
     cx.run_until_parked();
     let requests = f.commands.prompts.lock().unwrap();
-    assert!(!requests.last().unwrap().prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation"))));
+    assert!(!requests.last().unwrap().content.iter().any(
+        |block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation"))
+    ));
     drop(requests);
     complete_active(&f, cx);
 }
 
 #[test]
 fn slash_prefixes_do_not_capture_normal_text_or_command_arguments() {
-    let commands = [acp::AvailableCommand::new("plan", "Plan")];
+    let commands = [AvailableCommand::new("plan", "Plan")];
     assert_eq!(crate::panel::commands::matches("/PL", &commands).len(), 1);
     for text in [
         "path/to/file",
@@ -321,11 +324,12 @@ fn controls_received_before_session_response_are_kept(cx: &mut TestAppContext) {
     *f.commands.session_gate.lock().unwrap() = Some(gate);
     new_chat(&f, cx);
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             "s0",
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("early", "Early command"),
-            ])),
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                "early",
+                "Early command",
+            )]),
         )))
         .unwrap();
     cx.run_until_parked();
@@ -395,7 +399,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), count);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).session().as_ref().unwrap().0.as_ref(),
+            thread.read(cx).session().as_ref().unwrap().as_str(),
             saved.session_id.as_deref().unwrap()
         );
         assert!(!thread.read(cx).document().pending_history());
@@ -523,10 +527,10 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
         restore_pending_history(&f, thread, cx);
         report_control(
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("usage", "Usage"),
-                acp::AvailableCommand::new("review", "Review"),
-            ])),
+            SessionUpdate::AvailableCommandsUpdate(vec![
+                AvailableCommand::new("usage", "Usage"),
+                AvailableCommand::new("review", "Review"),
+            ]),
             cx,
         );
         thread.send("/usage".into(), cx);
@@ -534,13 +538,13 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
     cx.run_until_parked();
     {
         let requests = f.commands.prompts.lock().unwrap();
-        let blocks = &requests.last().unwrap().prompt;
+        let blocks = &requests.last().unwrap().content;
         assert_eq!(
             blocks.len(),
             1,
             "administrative commands require one text block"
         );
-        assert!(matches!(&blocks[0], acp::ContentBlock::Text(text) if text.text == "/usage"));
+        assert!(matches!(&blocks[0], Content::Text(text) if text.text == "/usage"));
     }
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| {
@@ -554,7 +558,7 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
     {
         let requests = f.commands.prompts.lock().unwrap();
         assert!(
-            matches!(&requests.last().unwrap().prompt[0], acp::ContentBlock::Text(text) if text.text == "/review these changes")
+            matches!(&requests.last().unwrap().content[0], Content::Text(text) if text.text == "/review these changes")
         );
     }
     complete_active(&f, cx);
@@ -562,7 +566,7 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
     cx.run_until_parked();
     {
         let requests = f.commands.prompts.lock().unwrap();
-        assert!(requests.last().unwrap().prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") && text.text.contains("saved context"))));
+        assert!(requests.last().unwrap().content.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation") && text.text.contains("saved context"))));
     }
     complete_active(&f, cx);
     cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
@@ -617,16 +621,17 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
     assert_eq!(requests.len(), 1);
     assert!(
         requests[0]
-            .prompt
+            .content
             .iter()
-            .any(|block| matches!(block, acp::ContentBlock::Image(_)))
+            .any(|block| matches!(block, Content::Image(_)))
     );
     assert!(
-        requests[0].prompt.iter().any(
-            |block| matches!(block, acp::ContentBlock::Text(text) if text.text == "with image")
-        ),
+        requests[0]
+            .content
+            .iter()
+            .any(|block| matches!(block, Content::Text(text) if text.text == "with image")),
         "{:?}",
-        requests[0].prompt
+        requests[0].content
     );
     drop(requests);
     complete_active(&f, cx);

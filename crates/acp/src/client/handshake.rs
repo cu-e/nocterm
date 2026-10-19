@@ -2,10 +2,27 @@
 use std::{sync::Arc, time::Duration};
 
 use agent_client_protocol::{Agent, ConnectionTo, schema::ProtocolVersion};
+use agent_client_protocol_schema::v1 as acp;
 use futures::future::{Either, select};
-use nocterm_ai::{AgentInfo, acp};
+use nocterm_ai::AgentInfo;
 
 use super::{error::StartupError, remote_errors::map_error_with};
+use crate::mapping;
+
+/// How the agent can reopen, fork and close sessions.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct SessionSupport {
+    pub(super) resume: bool,
+    pub(super) load: bool,
+    pub(super) fork: bool,
+    pub(super) close: bool,
+}
+
+/// What the agent said about itself, in neutral form and as transport support.
+pub(super) struct Introduction {
+    pub(super) info: AgentInfo,
+    pub(super) support: SessionSupport,
+}
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -29,7 +46,7 @@ impl Handshake {
     pub(super) async fn run(
         self,
         connection: &ConnectionTo<Agent>,
-    ) -> Result<AgentInfo, StartupError> {
+    ) -> Result<Introduction, StartupError> {
         let capabilities = acp::ClientCapabilities::default()
             .auth(acp::AuthCapabilities::new().terminal(self.terminal_auth))
             .session(
@@ -60,13 +77,23 @@ impl Handshake {
             return Err(StartupError::UnsupportedProtocol);
         }
         let implementation = response.agent_info;
-        Ok(AgentInfo {
-            name: implementation
-                .as_ref()
-                .map_or(self.fallback_name, |v| v.name.clone()),
-            version: implementation.map_or_else(String::new, |v| v.version),
-            capabilities: response.agent_capabilities,
-            auth_methods: response.auth_methods,
+        let offered = &response.agent_capabilities;
+        let support = SessionSupport {
+            resume: offered.session_capabilities.resume.is_some(),
+            load: offered.load_session,
+            fork: offered.session_capabilities.fork.is_some(),
+            close: offered.session_capabilities.close.is_some(),
+        };
+        Ok(Introduction {
+            info: AgentInfo {
+                name: implementation
+                    .as_ref()
+                    .map_or(self.fallback_name, |v| v.name.clone()),
+                version: implementation.map_or_else(String::new, |v| v.version),
+                capabilities: mapping::capabilities(&response.agent_capabilities),
+                auth_methods: mapping::auth_methods(response.auth_methods),
+            },
+            support,
         })
     }
 }

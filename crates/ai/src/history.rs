@@ -4,12 +4,13 @@
 //! replies and tool calls — and the agent session it belonged to, so it can be
 //! reopened after a restart. The terminal context sent with each prompt is
 //! never part of the transcript, so it is never saved.
+use crate::model::content::Content;
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{acp, thread::Entry};
+use crate::thread::Entry;
 
 mod budget;
 mod catalog;
@@ -53,7 +54,7 @@ pub struct SavedPrompt {
     pub id: u64,
     pub text: String,
     #[serde(default, deserialize_with = "decode::images")]
-    pub images: Vec<acp::ContentBlock>,
+    pub images: Vec<Content>,
     #[serde(default, deserialize_with = "decode::attachments")]
     pub attachments: Vec<SavedAttachment>,
 }
@@ -243,7 +244,7 @@ impl std::ops::Deref for SharedChat {
         &self.metadata
     }
 }
-pub fn content_size(content: &acp::ContentBlock) -> Result<usize, HistoryCodecError> {
+pub fn content_size(content: &Content) -> Result<usize, HistoryCodecError> {
     size::encoded_len(content).map_err(HistoryCodecError::from)
 }
 pub fn prompt_size(prompt: &SavedPrompt) -> Result<usize, HistoryCodecError> {

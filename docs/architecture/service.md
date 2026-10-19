@@ -13,7 +13,8 @@ checked snippet publication over the shared persistence driver.
 ## Agents
 
 The ACP AI panel uses four layers: `nocterm-ai` declares runtime-neutral agent
-contracts and bounded context/tool rules; `nocterm-acp` supplies subprocess and
+contracts, neutral protocol records and bounded context/tool rules; `nocterm-acp` maps the
+protocol SDK to them and supplies subprocess and
 authenticated local bridge adapters; the `nocterm-agent-runtime` service admits
 connections, closes idle ones and coordinates document writes; `nocterm-agent` supplies threads
 and chat UI. App injects the adapter. The runtime knows no thread type: a thread
@@ -175,8 +176,8 @@ Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings
 its supplied settings handle before its first registry read. Settings observation
 uses a weak runtime; the feature installation owns that subscription. Shutdown
 capture retains only the runtime handle and returns the existing App-free work.
-No runtime global selects the recipient of a deferred operation. Protocol and
-physical history signatures remain ACP/version one. See
+No runtime global selects the recipient of a deferred operation. Service signatures use only neutral
+records, and physical history stays version one. See
 [ADR0052](../adr/0052-retained-agent-installation.md).
 
 SettingsHandle supplies additive edit_checked and update_checked operations over the

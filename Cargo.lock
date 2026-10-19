@@ -5037,7 +5037,6 @@ dependencies = [
 name = "nocterm-ai"
 version = "0.0.0"
 dependencies = [
- "agent-client-protocol-schema",
  "async-channel",
  "base64 0.22.1",
  "futures",

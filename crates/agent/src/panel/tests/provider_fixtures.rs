@@ -1,6 +1,8 @@
 //! Shared provider and bridge fixtures: real ACP updates and bridge calls without display metadata.
 use super::*;
 use nocterm_ai::TerminalCall;
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::Value;
 
@@ -51,12 +53,12 @@ pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -
 
 pub(super) fn update(
     f: &Fixture,
-    session: &acp::SessionId,
-    update: acp::SessionUpdate,
+    session: &SessionId,
+    update: SessionUpdate,
     cx: &mut TestAppContext,
 ) {
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session.clone(),
             update,
         )))

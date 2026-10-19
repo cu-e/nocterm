@@ -1,5 +1,14 @@
+use nocterm_ai::model::auth::AuthMethod;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::ConfigOption;
+use nocterm_ai::model::ids::{AuthMethodId, SessionId};
+use nocterm_ai::model::session::{
+    ExternalToolEndpoint, PromptOutcome, PromptRequest, SessionNotice, SessionOpen, SessionOpened,
+    SessionUpdate, SetConfigOption, SetMode, StopReason,
+};
 mod image_fixtures;
 use crate::{AgentServices, panel::AgentPanel, runtime, thread::Attachment};
+use builders::{allow_once_choice, opened, permission_request};
 use futures::{FutureExt as _, channel::oneshot, future::BoxFuture};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -9,7 +18,7 @@ use gpui_kit::{
 use image_fixtures::{image_bytes, image_codec, image_deps, prompt_image};
 use nocterm_ai::{
     AgentCommands, AgentConnection, AgentConnector, AgentError, AgentEvent, AgentInfo, BridgeCall,
-    BridgeRegistration, ConnectRequest, ToolBridge, acp,
+    BridgeRegistration, ConnectRequest, ToolBridge,
 };
 
 use nocterm_workspace::{
@@ -48,6 +57,7 @@ fn shutdown_runtime(installed: &crate::Installed, cx: &mut TestAppContext) {
     });
     cx.foreground_executor().block_test(task);
 }
+mod builders;
 mod config_responses;
 mod process_commands;
 
@@ -58,30 +68,33 @@ struct Commands {
     restore_dirs: Mutex<Vec<std::path::PathBuf>>,
     session_gate: Mutex<Option<oneshot::Receiver<()>>>,
     close_gate: Mutex<Option<oneshot::Receiver<()>>>,
-    closed: Mutex<Vec<acp::SessionId>>,
+    closed: Mutex<Vec<SessionId>>,
     shutdown_failure: AtomicBool,
     auth_required: AtomicBool,
     authentications: AtomicUsize,
     authentication_failure: AtomicBool,
     shutdowns: AtomicUsize,
     cancels: AtomicUsize,
-    prompts: Mutex<Vec<acp::PromptRequest>>,
-    pending: Mutex<Option<oneshot::Sender<acp::PromptResponse>>>,
+    prompts: Mutex<Vec<PromptRequest>>,
+    pending: Mutex<Option<oneshot::Sender<PromptOutcome>>>,
     /// Each reopened session, and whether it was forked.
-    restores: Mutex<Vec<(acp::SessionId, bool)>>,
+    restores: Mutex<Vec<(SessionId, bool)>>,
     restore_errors: Mutex<std::collections::VecDeque<AgentError>>,
     /// The MCP servers each new session was given.
-    servers: Mutex<Vec<Vec<acp::McpServer>>>,
+    servers: Mutex<Vec<Vec<ExternalToolEndpoint>>>,
     /// The configuration options every session reports.
     config: config_responses::ConfigResponses,
 }
 impl AgentCommands for Commands {
     fn new_session(
         &self,
-        request: acp::NewSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
-        self.new_dirs.lock().unwrap().push(request.cwd.clone());
-        self.servers.lock().unwrap().push(request.mcp_servers);
+        request: SessionOpen,
+    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
+        self.new_dirs
+            .lock()
+            .unwrap()
+            .push(request.working_directory.clone());
+        self.servers.lock().unwrap().push(request.endpoints);
         let gate = self.session_gate.lock().unwrap().take();
         let id = self.sessions.fetch_add(1, Ordering::SeqCst);
         let auth_required = self.auth_required.load(Ordering::SeqCst);
@@ -94,43 +107,36 @@ impl AgentCommands for Commands {
             if auth_required {
                 Err(AgentError::AuthRequired("Sign in to continue".into()))
             } else {
-                Ok(acp::NewSessionResponse::new(format!("s{id}"))
-                    .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty()))
-                    .modes(modes))
+                Ok(opened(format!("s{id}"), config, modes))
             }
         }
         .boxed()
     }
     fn restore_session(
         &self,
-        request: nocterm_ai::RestoreSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
-        self.restore_dirs.lock().unwrap().push(request.cwd.clone());
+        request: nocterm_ai::model::session::RestoreSession,
+    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
+        self.restore_dirs
+            .lock()
+            .unwrap()
+            .push(request.working_directory.clone());
         self.restores
             .lock()
             .unwrap()
-            .push((request.session_id.clone(), request.fork));
+            .push((request.session.clone(), request.fork));
         if let Some(error) = self.restore_errors.lock().unwrap().pop_front() {
             return async move { Err(error) }.boxed();
         }
         let session = if request.fork {
-            acp::SessionId::new(format!("fork-of-{}", request.session_id))
+            SessionId::new(format!("fork-of-{}", request.session))
         } else {
-            request.session_id
+            request.session
         };
         let config = self.config.options();
         let modes = self.config.modes();
-        async move {
-            Ok(acp::NewSessionResponse::new(session)
-                .config_options(Some(config).filter(|config: &Vec<_>| !config.is_empty()))
-                .modes(modes))
-        }
-        .boxed()
+        async move { Ok(opened(session, config, modes)) }.boxed()
     }
-    fn prompt(
-        &self,
-        r: acp::PromptRequest,
-    ) -> BoxFuture<'static, Result<acp::PromptResponse, AgentError>> {
+    fn prompt(&self, r: PromptRequest) -> BoxFuture<'static, Result<PromptOutcome, AgentError>> {
         self.prompts.lock().unwrap().push(r);
         if self.auth_required.load(Ordering::SeqCst) {
             return async { Err(AgentError::AuthRequired("Sign in to continue".into())) }.boxed();
@@ -139,23 +145,20 @@ impl AgentCommands for Commands {
         *self.pending.lock().unwrap() = Some(tx);
         async move { rx.await.map_err(|_| AgentError::Io("closed".into())) }.boxed()
     }
-    fn cancel(&self, _: acp::SessionId) {
+    fn cancel(&self, _: SessionId) {
         self.cancels.fetch_add(1, Ordering::SeqCst);
     }
-    fn set_mode(
-        &self,
-        _: acp::SetSessionModeRequest,
-    ) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn set_mode(&self, _: SetMode) -> BoxFuture<'static, Result<(), AgentError>> {
         async { Ok(()) }.boxed()
     }
     fn set_config_option(
         &self,
-        request: acp::SetSessionConfigOptionRequest,
-    ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>> {
+        request: SetConfigOption,
+    ) -> BoxFuture<'static, Result<Vec<ConfigOption>, AgentError>> {
         let options = self.config.choose(request);
         async move { Ok(options) }.boxed()
     }
-    fn authenticate(&self, _: acp::AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
+    fn authenticate(&self, _: AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
         self.authentications.fetch_add(1, Ordering::SeqCst);
         let failed = self.authentication_failure.load(Ordering::SeqCst);
         if !failed {
@@ -172,7 +175,7 @@ impl AgentCommands for Commands {
     }
     fn close_session(
         &self,
-        session: acp::SessionId,
+        session: SessionId,
     ) -> BoxFuture<'static, Result<nocterm_ai::CloseSessionOutcome, AgentError>> {
         self.closed.lock().unwrap().push(session);
         let gate = self.close_gate.lock().unwrap().take();
@@ -218,16 +221,11 @@ impl Connector {
     fn use_distinct_process_handles(&self) {
         self.distinct_process_handles.store(true, Ordering::SeqCst);
     }
-    fn report_auth_methods(&self, methods: Vec<acp::AuthMethod>) {
+    fn report_auth_methods(&self, methods: Vec<AuthMethod>) {
         self.info.lock().unwrap().auth_methods = methods;
     }
     fn support_images(&self) {
-        self.info
-            .lock()
-            .unwrap()
-            .capabilities
-            .prompt_capabilities
-            .image = true;
+        self.info.lock().unwrap().capabilities.image_prompts = true;
     }
 }
 impl AgentConnector for Connector {
@@ -382,9 +380,7 @@ fn fixture_with_width(
                 name: "Fake".into(),
                 version: "1".into(),
                 capabilities: Default::default(),
-                auth_methods: vec![acp::AuthMethod::Agent(acp::AuthMethodAgent::new(
-                    "sign-in", "Account",
-                ))],
+                auth_methods: vec![AuthMethod::agent("sign-in", "Account")],
             }),
         });
         (
@@ -598,12 +594,12 @@ fn complete_active(f: &Fixture, cx: &mut TestAppContext) {
         .unwrap()
         .take()
         .unwrap()
-        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
 }
 
-fn exchange(f: &Fixture, text: &str, answer: &str, cx: &mut TestAppContext) -> acp::SessionId {
+fn exchange(f: &Fixture, text: &str, answer: &str, cx: &mut TestAppContext) -> SessionId {
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send(text.into(), cx));
@@ -611,17 +607,17 @@ fn exchange(f: &Fixture, text: &str, answer: &str, cx: &mut TestAppContext) -> a
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(answer),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                answer,
             ))),
         )))
         .unwrap();
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
     finish
-        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
     session
@@ -698,14 +694,14 @@ mod archive;
 
 fn report_control(
     thread: &mut crate::thread::AgentThread,
-    update: acp::SessionUpdate,
+    update: SessionUpdate,
     cx: &mut Context<crate::thread::AgentThread>,
 ) {
     let session = thread
         .session()
         .clone()
         .expect("fixture chat has an open agent session");
-    thread.session_update(&acp::SessionNotification::new(session, update), cx);
+    thread.session_update(&SessionNotice::new(session, update), cx);
 }
 
 fn restored_projection(

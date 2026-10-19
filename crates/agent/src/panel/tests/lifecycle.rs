@@ -1,4 +1,8 @@
 use super::*;
+use nocterm_ai::model::auth::{AuthMethod, PermissionOutcome};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_ai::model::tools::ToolStatus;
 
 #[gpui_kit::test]
 async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAppContext) {
@@ -29,15 +33,15 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("answer"),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "answer",
             ))),
         )))
         .unwrap();
     cx.run_until_parked();
-    cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).transcript().entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes()>0);assert_eq!(thread.read(cx).tool_bytes(),0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].prompt.len(),2);});
+    cx.update(|cx|{let thread=f.panel.read(cx).current().unwrap();assert!(matches!(thread.read(cx).transcript().entries.last(),Some(nocterm_ai::thread::Entry::Agent(value))if value=="answer"));assert!(thread.read(cx).context_bytes()>0);assert_eq!(thread.read(cx).tool_bytes(),0);let requests=f.commands.prompts.lock().unwrap();assert_eq!(requests.len(),1);assert_eq!(requests[0].content.len(),2);});
     cx.update(|cx| {
         f.installation
             .ready
@@ -251,11 +255,12 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     });
     cx.run_until_parked();
     let (tx, rx) = nocterm_ai::PermissionResponder::channel();
-    let request = serde_json::from_value(serde_json::json!({
-        "sessionId": session, "toolCall": {"toolCallId":"call", "title":"Read"},
-        "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
-    }))
-    .unwrap();
+    let request = permission_request(
+        session.clone(),
+        "call",
+        Some("Read"),
+        vec![allow_once_choice("allow", "Allow")],
+    );
     f.events
         .try_send(AgentEvent::Permission {
             request,
@@ -270,7 +275,7 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
     });
     assert!(matches!(
         futures::executor::block_on(rx).unwrap(),
-        acp::RequestPermissionOutcome::Cancelled
+        PermissionOutcome::Cancelled
     ));
     f.commands
         .pending
@@ -278,14 +283,14 @@ fn stop_cancels_permissions_drops_late_updates_and_keeps_the_session(cx: &mut Te
         .unwrap()
         .take()
         .unwrap()
-        .send(acp::PromptResponse::new(acp::StopReason::Cancelled))
+        .send(PromptOutcome::new(StopReason::Cancelled))
         .unwrap();
     cx.run_until_parked();
     let late = |text: &str| {
-        AgentEvent::Session(acp::SessionNotification::new(
+        AgentEvent::Session(SessionNotice::new(
             session.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(text),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                text,
             ))),
         ))
     };
@@ -425,10 +430,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
                 }
             })
             .collect::<Vec<_>>();
-        assert_eq!(
-            statuses,
-            vec![acp::ToolCallStatus::Failed, acp::ToolCallStatus::Completed]
-        );
+        assert_eq!(statuses, vec![ToolStatus::Failed, ToolStatus::Succeeded]);
         thread.update(cx, |thread, cx| {
             thread.send("Do not submit while auth-required".into(), cx)
         });
@@ -511,11 +513,14 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
         cx,
     );
     let unrelated = fixture(cx);
-    f.connector
-        .report_auth_methods(vec![acp::AuthMethod::Terminal(
-            acp::AuthMethodTerminal::new("setup", "Terminal setup")
-                .args(vec!["--setup".into(), "$(literal_argument)".into()]),
-        )]);
+    f.connector.report_auth_methods(vec![AuthMethod::terminal(
+        "setup",
+        "Terminal setup",
+        nocterm_ai::model::auth::TerminalSetup {
+            args: vec!["--setup".into(), "$(literal_argument)".into()],
+            env: Default::default(),
+        },
+    )]);
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -578,9 +583,9 @@ fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppCont
                 assert_eq!(
                     call.status,
                     if index == 2 {
-                        acp::ToolCallStatus::Completed
+                        ToolStatus::Succeeded
                     } else {
-                        acp::ToolCallStatus::Failed
+                        ToolStatus::Failed
                     }
                 );
                 assert!(!crate::panel::widgets::entry_is_live(
@@ -621,18 +626,19 @@ fn a_permission_no_thread_takes_is_cancelled(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let (respond, answer) = nocterm_ai::PermissionResponder::channel();
-    let request = serde_json::from_value(serde_json::json!({
-        "sessionId": "unknown-session", "toolCall": {"toolCallId":"call", "title":"Read"},
-        "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
-    }))
-    .unwrap();
+    let request = permission_request(
+        "unknown-session",
+        "call",
+        Some("Read"),
+        vec![allow_once_choice("allow", "Allow")],
+    );
     f.events
         .try_send(AgentEvent::Permission { request, respond })
         .unwrap();
     cx.run_until_parked();
     assert_eq!(
         futures::executor::block_on(answer).unwrap(),
-        acp::RequestPermissionOutcome::Cancelled
+        PermissionOutcome::Cancelled
     );
 }
 

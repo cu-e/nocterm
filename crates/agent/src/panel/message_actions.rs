@@ -10,7 +10,8 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_ai::{acp, thread::Entry};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use super::AgentPanel;
@@ -25,7 +26,7 @@ pub(super) fn message_text(entry: &Entry) -> Option<String> {
             parts
                 .iter()
                 .filter_map(|part| match part {
-                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    Content::Text(text) => Some(text.text.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()

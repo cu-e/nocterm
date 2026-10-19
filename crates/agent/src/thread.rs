@@ -3,8 +3,11 @@ use approval_inbox::ToolGate;
 use futures::FutureExt as _;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, EntityId, Window};
 use nocterm_ai::context::{ServerDescriptor, TerminalDescriptor};
+use nocterm_ai::model::auth::AuthFlow;
+use nocterm_ai::model::controls::{ConfigChoices, ConfigKind, ConfigOption};
+use nocterm_ai::model::ids::{AuthMethodId, SessionId};
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeRegistration, TerminalCall, acp, session::SessionPhase,
+    AgentCommands, AgentInfo, BridgeRegistration, TerminalCall, session::SessionPhase,
     thread::ThreadState,
 };
 
@@ -60,7 +63,7 @@ pub(crate) enum Attachment {
 /// An agent session from a saved chat, to reopen on the next connection.
 #[derive(Clone, Debug)]
 pub(crate) struct Restore {
-    pub session: acp::SessionId,
+    pub session: SessionId,
     pub workdir: PathBuf,
     /// Open a copy of the session rather than the session itself.
     pub fork: bool,
@@ -309,7 +312,7 @@ impl AgentThread {
         self.session.commands()
     }
 
-    pub(crate) fn session(&self) -> &Option<acp::SessionId> {
+    pub(crate) fn session(&self) -> &Option<SessionId> {
         self.session.session()
     }
 
@@ -431,7 +434,7 @@ impl AgentThread {
     pub(crate) fn configuration(&self) -> &config::ChatConfig {
         &self.config
     }
-    pub(crate) fn config_options(&self) -> Vec<acp::SessionConfigOption> {
+    pub(crate) fn config_options(&self) -> Vec<ConfigOption> {
         self.config.preview_options(self.session.opening())
     }
     pub(crate) fn draft_text(&self) -> Option<&str> {
@@ -575,7 +578,7 @@ impl AgentThread {
     }
     pub(crate) fn authenticate(
         &mut self,
-        method: acp::AuthMethodId,
+        method: AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -591,15 +594,15 @@ impl AgentThread {
             .and_then(|info| {
                 info.auth_methods
                     .iter()
-                    .find(|available| available.id() == &method)
+                    .find(|available| available.id == method)
             })
             .cloned()
         else {
             return;
         };
-        let auth = match method {
-            acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
-            acp::AuthMethod::Terminal(method) => {
+        let auth = match &method.flow {
+            AuthFlow::AgentManaged => commands.authenticate(method.id.clone()),
+            AuthFlow::TerminalSetup(_) => {
                 let runtime = self.host.runtime();
                 let Some(opener) = self.host.auth() else {
                     return;
@@ -619,7 +622,6 @@ impl AgentThread {
                 }
                 .boxed()
             }
-            _ => return,
         };
         self.session.begin_sign_in();
         self.notice.present("Signing in…".into());
@@ -731,32 +733,28 @@ impl AgentThread {
     }
 }
 
-pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
+pub(crate) fn config_label(option: &ConfigOption) -> String {
     match &option.kind {
-        acp::SessionConfigKind::Select(select) => {
-            let options = match &select.options {
-                acp::SessionConfigSelectOptions::Ungrouped(values) => {
-                    values.iter().collect::<Vec<_>>()
-                }
-                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+        ConfigKind::Select(select) => {
+            let options = match &select.choices {
+                ConfigChoices::Flat(values) => values.iter().collect::<Vec<_>>(),
+                ConfigChoices::Grouped(groups) => groups
                     .iter()
-                    .flat_map(|group| group.options.iter())
+                    .flat_map(|group| group.choices.iter())
                     .collect(),
-                _ => Vec::new(),
             };
             options
                 .iter()
-                .find(|value| value.value == select.current_value)
+                .find(|value| value.id == select.current)
                 .map(|value| value.name.clone())
-                .unwrap_or_else(|| select.current_value.to_string())
+                .unwrap_or_else(|| select.current.to_string())
         }
-        acp::SessionConfigKind::Boolean(value) => {
-            if value.current_value {
+        ConfigKind::Boolean(value) => {
+            if *value {
                 "On".into()
             } else {
                 "Off".into()
             }
         }
-        _ => String::new(),
     }
 }

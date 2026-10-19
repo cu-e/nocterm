@@ -1,5 +1,9 @@
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 
 #[gpui_kit::test]
 fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut TestAppContext) {
@@ -12,23 +16,23 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session.clone(),
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("answer"),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "answer",
             ))),
         )))
         .unwrap();
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
     finish
-        .send(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
 
     let saved = f.repository.chats();
     assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].session_id.as_deref(), Some(&*session.0));
+    assert_eq!(saved[0].session_id.as_deref(), Some(session.as_str()));
     assert!(matches!(
         saved[0].entries.as_slice(),
         [nocterm_ai::thread::Entry::User(_), nocterm_ai::thread::Entry::Agent(answer)] if answer == "answer"
@@ -208,7 +212,7 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
         assert_eq!(fork.transcript().entries.len(), 2);
         assert_eq!(
             fork.session().clone(),
-            Some(acp::SessionId::new(format!("fork-of-{nginx_session}")))
+            Some(SessionId::new(format!("fork-of-{nginx_session}")))
         );
         assert_ne!(
             fork.document().chat_id(),
@@ -273,18 +277,14 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
             assert_unaccepted_prompts_leave_no_history(thread, cx);
-            let mut option = acp::SessionConfigOption::select(
+            let mut option = ConfigOption::select(
                 "model",
                 "Agent model",
                 "first",
-                vec![acp::SessionConfigSelectOption::new("first", "First model")],
+                vec![ConfigChoice::new("first", "First model")],
             );
-            option.category = Some(acp::SessionConfigOptionCategory::Model);
-            report_control(
-                thread,
-                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![option])),
-                cx,
-            );
+            option.category = Some(ConfigCategory::Model);
+            report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
             thread.send("First request".into(), cx);
         });
     });
@@ -295,19 +295,16 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
             let model = thread.model();
             assert_eq!(model.as_deref(), Some("First model"));
             assert_eq!(thread.transcript().entries.len(), 1);
-            report_control(
-                thread,
-                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(Vec::new())),
-                cx,
-            );
+            report_control(thread, SessionUpdate::ConfigOptionUpdate(Vec::new()), cx);
             thread.send("Rejected while busy".into(), cx);
             assert_eq!(thread.transcript().entries.len(), 1);
             assert_eq!(thread.model(), model);
             report_control(
                 thread,
-                acp::SessionUpdate::SessionInfoUpdate(
-                    serde_json::from_value(serde_json::json!({"title":"Updated title"})).unwrap(),
-                ),
+                SessionUpdate::SessionInfoUpdate(nocterm_ai::model::session::SessionInfo {
+                    title: nocterm_ai::model::controls::Change::Set("Updated title".into()),
+                    meta: None,
+                }),
                 cx,
             );
             thread.stop(cx);

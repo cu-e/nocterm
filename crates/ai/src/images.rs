@@ -1,7 +1,7 @@
 //! Pure prompt admission and injected image inspection/preview contracts.
+use crate::model::content::{Content, Image};
 mod codec;
 mod header;
-use crate::acp;
 use base64::{Engine, engine::general_purpose::STANDARD};
 pub use codec::*;
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
@@ -34,7 +34,7 @@ pub struct PromptImage {
     data: std::sync::Arc<[u8]>,
     width: u32,
     height: u32,
-    content: std::sync::Arc<acp::ContentBlock>,
+    content: std::sync::Arc<Content>,
     encoded_len: usize,
 }
 impl PromptImage {
@@ -51,8 +51,7 @@ impl PromptImage {
             return Err(PromptImageError::Decode(ImageCodecError::InvalidEvidence));
         }
         let mime = facts.format().mime();
-        let content =
-            acp::ContentBlock::Image(acp::ImageContent::new(STANDARD.encode(&data), mime));
+        let content = Content::Image(Image::new(STANDARD.encode(&data), mime));
         let encoded_len = crate::history::content_size(&content)?;
         Ok(Self {
             mime_type: mime.into(),
@@ -63,7 +62,7 @@ impl PromptImage {
             encoded_len,
         })
     }
-    pub fn content(&self) -> acp::ContentBlock {
+    pub fn content(&self) -> Content {
         (*self.content).clone()
     }
     pub fn bytes(&self) -> &[u8] {

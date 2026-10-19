@@ -1,6 +1,12 @@
 //! Semantic transitions, capture offers and publication acknowledgements are distinct.
 use super::super::{Composer, config::ChatConfig};
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::Change;
+use nocterm_ai::model::plan::Plan;
+use nocterm_ai::model::session::{SessionInfo, SessionUpdate};
+use nocterm_ai::model::tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus};
+use nocterm_ai::model::usage::ContextUsage;
 use serde_json::json;
 const ID: &str = "00000000-0000-4000-8000-000000000001";
 fn imported(entries: Vec<Entry>) -> ChatDocument {
@@ -14,8 +20,42 @@ fn imported(entries: Vec<Entry>) -> ChatDocument {
 fn input<'a>(composer: &'a Composer, config: &'a ChatConfig) -> Inputs<'a> {
     Inputs::new(composer, config, Vec::new(), Resume::default())
 }
-fn update(value: serde_json::Value) -> acp::SessionUpdate {
-    serde_json::from_value(value).unwrap()
+/// Builds the neutral update from the JSON an agent would send.
+fn update(value: serde_json::Value) -> SessionUpdate {
+    fn field<T: serde::de::DeserializeOwned>(value: &serde_json::Value, name: &str) -> Option<T> {
+        value
+            .get(name)
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+    }
+    let content = || field::<Content>(&value, "content").unwrap();
+    match value["sessionUpdate"].as_str().unwrap() {
+        "agent_message_chunk" => SessionUpdate::AgentMessageChunk(content()),
+        "agent_thought_chunk" => SessionUpdate::AgentThoughtChunk(content()),
+        "tool_call_update" => {
+            let changes = ToolChanges {
+                status: field(&value, "status"),
+                title: field(&value, "title"),
+                raw_output: field(&value, "rawOutput"),
+                ..ToolChanges::default()
+            };
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                field::<String>(&value, "toolCallId").unwrap(),
+                changes,
+            )))
+        }
+        "plan" => SessionUpdate::Plan(Plan {
+            entries: Vec::new(),
+        }),
+        "session_info_update" => SessionUpdate::SessionInfoUpdate(SessionInfo {
+            title: Change::Set(value["title"].as_str().unwrap().into()),
+            meta: None,
+        }),
+        "usage_update" => SessionUpdate::UsageUpdate(ContextUsage::new(
+            field(&value, "used").unwrap(),
+            field(&value, "size").unwrap(),
+        )),
+        other => panic!("unsupported test update {other}"),
+    }
 }
 fn failure() -> crate::runtime::AgentPersistenceError {
     nocterm_store::StoreError::Closing.into()
@@ -40,8 +80,8 @@ fn imported_browse_projection_equal_metadata_and_capture_do_not_advance_revision
 
 #[test]
 fn empty_matching_chunks_identical_tool_patches_and_view_updates_are_clean() {
-    let call = acp::ToolCall::new("call", "Tool")
-        .status(acp::ToolCallStatus::Pending)
+    let call = ToolRecord::new("call", "Tool")
+        .status(ToolStatus::Pending)
         .raw_output(json!({"out":"same"}));
     let mut document = imported(vec![Entry::Tool(call), Entry::Agent("answer".into())]);
     document.apply_transcript(
@@ -65,7 +105,7 @@ fn empty_matching_chunks_identical_tool_patches_and_view_updates_are_clean() {
 
 #[test]
 fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
-    let mut entries = vec![Entry::Tool(acp::ToolCall::new("old", "Old"))];
+    let mut entries = vec![Entry::Tool(ToolRecord::new("old", "Old"))];
     entries.extend((0..2000).map(|_| Entry::Agent("saved".into())));
     let mut document = imported(entries);
     document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"old","title":"Changed old row"})),80);
@@ -80,7 +120,7 @@ fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
 
 #[test]
 fn genuine_saved_row_transitions_remain_dirty_even_when_the_text_returns_to_its_old_value() {
-    let mut document = imported(vec![Entry::Tool(acp::ToolCall::new("call", "A"))]);
+    let mut document = imported(vec![Entry::Tool(ToolRecord::new("call", "A"))]);
     for (title, time) in [("B", 81), ("A", 82)] {
         document.apply_transcript(
             update(json!({"sessionUpdate":"tool_call_update","toolCallId":"call","title":title})),
@@ -191,12 +231,12 @@ fn hydration_overlay_and_restart_keep_the_existing_semantic_revision() {
 #[test]
 fn metadata_normalization_changes_only_its_actual_key_and_only_when_different() {
     let mut document = imported(vec![Entry::Tool(
-        acp::ToolCall::new("call", "Tool").meta(
+        ToolRecord::new("call", "Tool").meta(nocterm_ai::model::extensions::Extensions::from(
             json!({"other":{"large":"preserved"}})
                 .as_object()
                 .unwrap()
                 .clone(),
-        ),
+        )),
     )]);
     document.patch_tool_rows(vec![ToolMetadataPatch::new(0, json!({"version":2}))], 81);
     document.patch_tool_rows(vec![ToolMetadataPatch::new(0, json!({"version":2}))], 82);

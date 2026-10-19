@@ -1,14 +1,17 @@
 //! A configuration request retains its original ticket and operation lifetime.
 use super::super::session_driver::OperationGuard;
-use nocterm_ai::{AgentCommands, AgentError, acp, session::Ticket};
+use nocterm_ai::model::controls::{ConfigOption, ConfigSetting};
+use nocterm_ai::model::ids::{ConfigId, ModeId, SessionId};
+use nocterm_ai::model::session::{SetConfigOption, SetMode};
+use nocterm_ai::{AgentCommands, AgentError, session::Ticket};
 use std::sync::Arc;
 pub(in crate::thread) enum ConfigurationRequest {
-    Option(acp::SessionConfigId, acp::SessionConfigOptionValue),
-    Mode(acp::SessionModeId),
+    Option(ConfigId, ConfigSetting),
+    Mode(ModeId),
 }
 pub(in crate::thread) enum ConfigurationResult {
-    Option(Result<Vec<acp::SessionConfigOption>, AgentError>),
-    Mode(acp::SessionModeId, Result<(), AgentError>),
+    Option(Result<Vec<ConfigOption>, AgentError>),
+    Mode(ModeId, Result<(), AgentError>),
 }
 pub(in crate::thread) struct ConfigurationOperation {
     ticket: Ticket,
@@ -22,21 +25,26 @@ impl ConfigurationOperation {
         reconciling: bool,
         guard: OperationGuard,
         commands: Arc<dyn AgentCommands>,
-        session: acp::SessionId,
+        session: SessionId,
         request: ConfigurationRequest,
     ) -> Self {
         let future = Box::pin(async move {
             match request {
                 ConfigurationRequest::Option(id, value) => ConfigurationResult::Option(
                     commands
-                        .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                            session, id, value,
-                        ))
+                        .set_config_option(SetConfigOption {
+                            session,
+                            config: id,
+                            setting: value,
+                        })
                         .await,
                 ),
                 ConfigurationRequest::Mode(id) => {
                     let result = commands
-                        .set_mode(acp::SetSessionModeRequest::new(session, id.clone()))
+                        .set_mode(SetMode {
+                            session,
+                            mode: id.clone(),
+                        })
                         .await;
                     ConfigurationResult::Mode(id, result)
                 }

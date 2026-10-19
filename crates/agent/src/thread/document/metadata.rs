@@ -162,7 +162,7 @@ impl SemanticInputs {
     pub(super) fn matches(&self, input: &Inputs<'_>) -> bool {
         self.model == input.config.model()
             && self.choices == *input.config.choices()
-            && self.mode.as_deref() == input.config.mode_choice().map(|mode| mode.0.as_ref())
+            && self.mode.as_deref() == input.config.mode_choice().map(|mode| mode.as_str())
             && self.draft.as_deref() == input.composer.draft()
             && self.attachments == input.attachments
             && self.queue.len() == input.composer.queue().len()

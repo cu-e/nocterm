@@ -43,6 +43,17 @@ impl SessionOpened {
     }
 }
 
+impl SessionOpened {
+    pub fn modes(mut self, modes: Modes) -> Self {
+        self.modes = Some(modes);
+        self
+    }
+    pub fn configuration(mut self, options: Vec<ConfigOption>) -> Self {
+        self.configuration = Some(options);
+        self
+    }
+}
+
 /// How the agent starts a local tool server for the session.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternalToolEndpoint {
@@ -98,6 +109,15 @@ pub struct SetConfigOption {
 pub struct SessionNotice {
     pub session: SessionId,
     pub update: SessionUpdate,
+}
+
+impl SessionNotice {
+    pub fn new(session: impl Into<SessionId>, update: SessionUpdate) -> Self {
+        Self {
+            session: session.into(),
+            update,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

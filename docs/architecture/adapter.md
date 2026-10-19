@@ -151,6 +151,10 @@ changed canonical cwd, protected roots, unsupported platforms and missing or
 unexecutable bubblewrap. It projects ordered policy mounts into native flags while
 process grouping and cleanup retain their existing owner.
 
+`nocterm-acp::mapping` is the only place where the agent protocol SDK is mapped to and
+from the neutral `nocterm_ai::model` records; no other package may depend on the SDK
+([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
+
 ACP native taskkill diagnostics retain their original I/O error through foundation
 SharedError, including native classification and shared allocation identity. The public
 process shutdown port retains its existing stringified AgentError diagnostic.

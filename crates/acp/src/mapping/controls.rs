@@ -12,15 +12,15 @@ fn choice(value: wire::SessionConfigSelectOption) -> ConfigChoice {
         description: value.description,
     }
 }
-fn category(value: wire::SessionConfigOptionCategory) -> Result<ConfigCategory, ModelError> {
-    Ok(match value {
+fn category(value: wire::SessionConfigOptionCategory) -> ConfigCategory {
+    match value {
         wire::SessionConfigOptionCategory::Mode => ConfigCategory::Mode,
         wire::SessionConfigOptionCategory::Model => ConfigCategory::Model,
         wire::SessionConfigOptionCategory::ModelConfig => ConfigCategory::ModelConfig,
         wire::SessionConfigOptionCategory::ThoughtLevel => ConfigCategory::ThoughtLevel,
         wire::SessionConfigOptionCategory::Other(value) => ConfigCategory::Other(value),
-        _ => return Err(ModelError::Unsupported("configuration category")),
-    })
+        _ => ConfigCategory::Other("other".into()),
+    }
 }
 pub(super) fn option(value: wire::SessionConfigOption) -> Result<ConfigOption, ModelError> {
     let kind = match value.kind {
@@ -50,14 +50,16 @@ pub(super) fn option(value: wire::SessionConfigOption) -> Result<ConfigOption, M
         id: ConfigId::new(value.id.to_string()),
         name: value.name,
         description: value.description,
-        category: value.category.map(category).transpose()?,
+        category: value.category.map(category),
         kind,
     })
 }
-pub(super) fn options(
-    values: Vec<wire::SessionConfigOption>,
-) -> Result<Vec<ConfigOption>, ModelError> {
-    values.into_iter().map(option).collect()
+/// Options of a shape this model cannot represent are not offered.
+pub(crate) fn options(values: Vec<wire::SessionConfigOption>) -> Vec<ConfigOption> {
+    values
+        .into_iter()
+        .filter_map(|value| option(value).ok())
+        .collect()
 }
 pub(super) fn modes(value: wire::SessionModeState) -> Modes {
     Modes {

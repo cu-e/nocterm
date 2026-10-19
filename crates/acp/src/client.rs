@@ -17,10 +17,19 @@ mod stderr_tail;
 #[cfg(test)]
 use {
     agent_client_protocol::{Agent, ConnectionTo},
+    agent_client_protocol_schema::v1 as acp,
     commands::close_session,
     futures::future::{Either, select},
     handlers::client_builder,
-    nocterm_ai::{AgentEvent, acp},
+    nocterm_ai::{
+        AgentEvent,
+        model::{
+            auth::PermissionOutcome,
+            controls::{ConfigKind, ConfigSetting},
+            ids::{ConfigChoiceId, ConfigId, SessionId},
+            session::{PromptRequest, RestoreSession, SessionOpen, SessionUpdate, SetConfigOption},
+        },
+    },
     remote_errors::{map_error, map_error_with, restore_error},
     std::{sync::Arc, time::Duration},
 };

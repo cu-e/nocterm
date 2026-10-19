@@ -2,10 +2,11 @@
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::{Agent, Client};
+use agent_client_protocol_schema::v1 as acp;
 use futures::future::{Either, select};
-use nocterm_ai::{AgentEvent, acp};
+use nocterm_ai::{AgentEvent, model::auth::PermissionOutcome};
 
-use crate::models::Models;
+use crate::{mapping, models::Models};
 
 #[cfg(test)]
 pub(super) fn client_builder(
@@ -32,14 +33,24 @@ pub(super) fn client_builder_with_models(
                             std::mem::take(&mut update.config_options),
                         );
                 }
+                // Updates the neutral model cannot hold are dropped.
+                let Ok(notice) = mapping::notice(notification) else {
+                    return Ok(());
+                };
                 notification_tx
-                    .try_send(AgentEvent::Session(notification))
+                    .try_send(AgentEvent::Session(notice))
                     .map_err(|_| acp::Error::internal_error().data("Agent event queue overflow"))
             },
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
             async move |request: acp::RequestPermissionRequest, responder, connection| {
+                let Ok(request) = mapping::permission(request) else {
+                    responder.respond(acp::RequestPermissionResponse::new(
+                        acp::RequestPermissionOutcome::Cancelled,
+                    ))?;
+                    return Ok(());
+                };
                 let (respond, answer) = nocterm_ai::PermissionResponder::channel();
                 permission_tx
                     .try_send(AgentEvent::Permission { request, respond })
@@ -47,9 +58,7 @@ pub(super) fn client_builder_with_models(
                 connection.clone().spawn(async move {
                     let cancellation = responder.cancellation();
                     let wait = cancellation.run_until_cancelled(async {
-                        Ok(answer
-                            .await
-                            .unwrap_or(acp::RequestPermissionOutcome::Cancelled))
+                        Ok(answer.await.unwrap_or(PermissionOutcome::Cancelled))
                     });
                     let outcome = match select(
                         Box::pin(wait),
@@ -58,9 +67,11 @@ pub(super) fn client_builder_with_models(
                     .await
                     {
                         Either::Left((Ok(answer), _)) => answer,
-                        _ => acp::RequestPermissionOutcome::Cancelled,
+                        _ => PermissionOutcome::Cancelled,
                     };
-                    responder.respond(acp::RequestPermissionResponse::new(outcome))
+                    responder.respond(acp::RequestPermissionResponse::new(mapping::wire_outcome(
+                        outcome,
+                    )))
                 })?;
                 Ok(())
             },

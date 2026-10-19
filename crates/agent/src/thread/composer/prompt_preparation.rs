@@ -1,7 +1,9 @@
 //! Prepared prompt framing borrows no mutable document or session state.
-use nocterm_ai::acp;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::PromptRequest;
 pub(in crate::thread) struct PromptPreparation {
-    visible: Vec<acp::ContentBlock>,
+    visible: Vec<Content>,
     context: Option<String>,
     history: Option<String>,
     command: bool,
@@ -9,12 +11,12 @@ pub(in crate::thread) struct PromptPreparation {
 impl PromptPreparation {
     pub(in crate::thread) fn new(
         text: String,
-        images: Vec<acp::ContentBlock>,
+        images: Vec<Content>,
         command: bool,
         context: Option<String>,
         history: Option<String>,
     ) -> Self {
-        let mut visible = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
+        let mut visible = vec![Content::text(text)];
         visible.extend(images);
         Self {
             visible,
@@ -27,21 +29,21 @@ impl PromptPreparation {
     pub(in crate::thread) fn context_bytes(&self) -> Option<usize> {
         self.context.as_ref().map(String::len)
     }
-    pub(in crate::thread) fn visible(&self) -> &[acp::ContentBlock] {
+    pub(in crate::thread) fn visible(&self) -> &[Content] {
         &self.visible
     }
     pub(in crate::thread) fn is_command(&self) -> bool {
         self.command
     }
-    pub(in crate::thread) fn request(self, session: acp::SessionId) -> acp::PromptRequest {
+    pub(in crate::thread) fn request(self, session: SessionId) -> PromptRequest {
         let mut content = Vec::new();
         if let Some(context) = self.context {
-            content.push(acp::ContentBlock::Text(acp::TextContent::new(context)));
+            content.push(Content::text(context));
         }
         if let Some(history) = self.history {
-            content.push(acp::ContentBlock::Text(acp::TextContent::new(history)));
+            content.push(Content::text(history));
         }
         content.extend(self.visible);
-        acp::PromptRequest::new(session, content)
+        PromptRequest { session, content }
     }
 }

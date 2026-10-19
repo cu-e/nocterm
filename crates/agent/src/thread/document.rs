@@ -1,7 +1,9 @@
 //! Durable chat transitions own semantic revisions; capture only hands off existing intent.
 use gpui_kit::Task;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::usage::TokenTotals;
 use nocterm_ai::{
-    acp,
     history::{HistoryCodecError, SavedChat, SharedChat},
     thread::{Entry, ThreadChange, ThreadState},
 };
@@ -184,29 +186,20 @@ impl ChatDocument {
     pub(super) fn edited_archived_draft(&mut self, now: u64) {
         self.changed(now, true);
     }
-    pub(super) fn apply_transcript(
-        &mut self,
-        update: acp::SessionUpdate,
-        now: u64,
-    ) -> ThreadChange {
+    pub(super) fn apply_transcript(&mut self, update: SessionUpdate, now: u64) -> ThreadChange {
         let (change, semantic) = self.transcript.apply(update, now);
         if semantic {
             self.changed(now, false);
         }
         change
     }
-    pub(super) fn append_user(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        now: u64,
-        input: &Inputs<'_>,
-    ) {
+    pub(super) fn append_user(&mut self, content: Vec<Content>, now: u64, input: &Inputs<'_>) {
         self.transcript.append_user(content, now);
         self.persistence.remember_inputs(input);
         self.mark_row(self.entries().len() - 1);
         self.changed(now, false);
     }
-    pub(super) fn tokens(&mut self, usage: Option<acp::Usage>) {
+    pub(super) fn tokens(&mut self, usage: Option<TokenTotals>) {
         self.transcript.tokens(usage);
     }
     pub(super) fn patch_tool_rows(&mut self, patches: Vec<ToolMetadataPatch>, now: u64) {

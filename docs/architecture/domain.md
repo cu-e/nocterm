@@ -185,10 +185,12 @@ survives later failure or cancellation without advancing file or byte counters.
 validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
-Existing SavedChat/SharedChat ACP payloads remain protocol migration debt.
+SavedChat and SharedChat hold neutral `nocterm_ai::model` records whose serialization
+is the version-one transcript JSON; no agent protocol SDK type appears in the domain
+([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
-([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records without adding protocol-specific fields.
+([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`

@@ -2,20 +2,22 @@
 //! chosen first; choices made earlier still reach the session first.
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption, ConfigSetting};
+use nocterm_ai::model::ids::ConfigId;
 use nocterm_ai::session_config::ConfigValue;
 
-fn models() -> Vec<acp::SessionConfigOption> {
+fn models() -> Vec<ConfigOption> {
     vec![
-        acp::SessionConfigOption::select(
+        ConfigOption::select(
             "model",
             "Model",
             "sonnet",
             vec![
-                acp::SessionConfigSelectOption::new("sonnet", "Sonnet"),
-                acp::SessionConfigSelectOption::new("opus", "Opus"),
+                ConfigChoice::new("sonnet", "Sonnet"),
+                ConfigChoice::new("opus", "Opus"),
             ],
         )
-        .category(acp::SessionConfigOptionCategory::Model),
+        .category(ConfigCategory::Model),
     ]
 }
 fn chat(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
@@ -29,8 +31,8 @@ fn chat(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
 fn choose_opus(thread: &Entity<AgentThread>, cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.set_config(
-            acp::SessionConfigId::new("model"),
-            acp::SessionConfigOptionValue::value_id("opus"),
+            ConfigId::new("model"),
+            ConfigSetting::Choice("opus".into()),
             cx,
         )
     });
@@ -94,7 +96,7 @@ fn a_model_chosen_before_the_session_opens_is_set_before_the_first_prompt(cx: &m
     complete_active(&f, cx);
     let requests = f.commands.config.requests();
     assert_eq!(requests.len(), 1);
-    assert_eq!(&*requests[0].config_id.0, "model");
+    assert_eq!(requests[0].config.as_str(), "model");
     cx.update(|cx| {
         assert_eq!(
             thread.read(cx).model().as_deref(),

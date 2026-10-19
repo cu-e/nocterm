@@ -1,7 +1,7 @@
 //! Exact provider spellings for the registered Nocterm bridge.
 use serde_json::json;
 
-use crate::{TerminalCall, acp};
+use crate::{TerminalCall, model::tools::ToolRecord};
 
 use super::{deserialize, operation, parse};
 
@@ -51,7 +51,7 @@ fn identity(name: &str) -> Option<Identity<'_>> {
     .then_some(Identity { registration, tool })
 }
 
-fn explicit_identity(call: &acp::ToolCall) -> Option<Option<Identity<'_>>> {
+fn explicit_identity(call: &ToolRecord) -> Option<Option<Identity<'_>>> {
     let title = call.title.as_str();
     let title_is_identity = title.starts_with("mcp.") || title.starts_with("mcp_");
     let title = if title_is_identity {
@@ -72,12 +72,12 @@ fn explicit_identity(call: &acp::ToolCall) -> Option<Option<Identity<'_>>> {
 
 /// Only exact names or a consistent explicit MCP envelope establish the request
 /// format. Neither establishes an execution destination.
-pub fn envelope(call: &acp::ToolCall, server: &str) -> Option<TerminalCall> {
+pub fn envelope(call: &ToolRecord, server: &str) -> Option<TerminalCall> {
     envelope_of(call, registration(server)?, parse)
 }
 
 /// Exact provider identity and original arguments, including rejected requests.
-pub fn raw_envelope(call: &acp::ToolCall, server: &str) -> Option<(String, serde_json::Value)> {
+pub fn raw_envelope(call: &ToolRecord, server: &str) -> Option<(String, serde_json::Value)> {
     let registration = registration(server)?;
     let named = explicit_identity(call)?;
     if named.is_some_and(|named| named.registration != registration) {
@@ -105,7 +105,7 @@ pub fn raw_envelope(call: &acp::ToolCall, server: &str) -> Option<(String, serde
 /// `read` turns the tool's arguments into a request: strictly when matching
 /// requests the bridge executed, by shape alone when only showing one.
 fn envelope_of(
-    call: &acp::ToolCall,
+    call: &ToolRecord,
     registration: &str,
     read: fn(&str, serde_json::Value) -> Option<TerminalCall>,
 ) -> Option<TerminalCall> {
@@ -134,13 +134,13 @@ fn envelope_of(
 }
 
 /// Presentation identity remains useful even when its arguments are malformed.
-pub fn fallback_tool(call: &acp::ToolCall) -> Option<&str> {
+pub fn fallback_tool(call: &ToolRecord) -> Option<&str> {
     requested_arguments(call).map(|(tool, _)| tool)
 }
 
 /// Original request arguments for display, without executor shape validation.
 /// Explicit provider names and any server envelope must still agree.
-pub fn requested_arguments(call: &acp::ToolCall) -> Option<(&str, serde_json::Value)> {
+pub fn requested_arguments(call: &ToolRecord) -> Option<(&str, serde_json::Value)> {
     match explicit_identity(call) {
         Some(Some(named)) => {
             if operation(named.tool) == "Tool" {
@@ -165,14 +165,14 @@ pub fn requested_arguments(call: &acp::ToolCall) -> Option<(&str, serde_json::Va
 }
 
 /// What a Nocterm tool row asked for, including requests the bridge rejected.
-pub fn requested_call(call: &acp::ToolCall) -> Option<TerminalCall> {
+pub fn requested_call(call: &ToolRecord) -> Option<TerminalCall> {
     let (tool, arguments) = requested_arguments(call)?;
     deserialize(tool, arguments)
 }
 
 /// Older Hermes builds used one bridge server named simply `nocterm`.
 /// This spelling is display-only: it never establishes a registered server.
-fn legacy_tool(call: &acp::ToolCall) -> Option<&str> {
+fn legacy_tool(call: &ToolRecord) -> Option<&str> {
     fn tool(name: &str) -> Option<&str> {
         let tool = name.strip_prefix("mcp_nocterm_")?;
         (operation(tool) != "Tool").then_some(tool)
@@ -193,7 +193,7 @@ fn legacy_tool(call: &acp::ToolCall) -> Option<&str> {
     }
 }
 
-fn legacy_arguments(call: &acp::ToolCall) -> Option<(&str, serde_json::Value)> {
+fn legacy_arguments(call: &ToolRecord) -> Option<(&str, serde_json::Value)> {
     let tool = legacy_tool(call)?;
     let input = call
         .raw_input

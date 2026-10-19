@@ -8,7 +8,8 @@ use super::{
 };
 use gpui_kit::{App, Context, EntityId, Task, WeakEntity};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
-use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure, acp};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 use nocterm_session::ExecRequest;
 
 use nocterm_workspace::{ExpectedSession, TerminalEntry, TerminalStatus};
@@ -48,7 +49,7 @@ impl QueuedPrompt {
             .images
             .iter()
             .map(|block| match block {
-                nocterm_ai::acp::ContentBlock::Image(image) => Some((
+                Content::Image(image) => Some((
                     NEXT_IMAGE.fetch_add(1, Ordering::Relaxed),
                     image.data.len(),
                     true,
@@ -560,7 +561,7 @@ impl AgentThread {
     pub(super) fn start_prompt(
         &mut self,
         text: String,
-        images: Vec<acp::ContentBlock>,
+        images: Vec<Content>,
         cx: &mut Context<Self>,
     ) {
         let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
@@ -768,9 +769,10 @@ mod tests {
             SavedPrompt {
                 id: 1,
                 text: "image".into(),
-                images: vec![nocterm_ai::acp::ContentBlock::Image(
-                    nocterm_ai::acp::ImageContent::new("a".repeat(2 * 1024 * 1024), "image/png"),
-                )],
+                images: vec![Content::Image(nocterm_ai::model::content::Image::new(
+                    "a".repeat(2 * 1024 * 1024),
+                    "image/png",
+                ))],
                 attachments: Vec::new(),
             },
             Vec::new(),

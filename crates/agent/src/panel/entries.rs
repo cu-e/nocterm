@@ -1,4 +1,6 @@
 //! The chat transcript: messages, reasoning, tool calls and images.
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::ToolRecord;
 
 use gpui_kit::{
     Context, SharedString, TestSupportExt as _,
@@ -7,7 +9,7 @@ use gpui_kit::{
     prelude::*,
     px, relative, rems,
 };
-use nocterm_ai::{acp, thread::Entry};
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use super::{
@@ -82,7 +84,7 @@ impl EntryRenderer {
             Entry::Agent(text) => Self::agent(row, &frame, text, messages, cx),
             Entry::Thought(text) => Self::thought(row, &frame, text, cx),
             Entry::Tool(call) => Self::tool(row, &frame, call, cx),
-            Entry::Content(acp::ContentBlock::Image(image)) => {
+            Entry::Content(Content::Image(image)) => {
                 let key = Self::pending_image(image, messages, &mut pending);
                 row.child(Self::image(messages.preview_state(&key)))
             }
@@ -91,7 +93,7 @@ impl EntryRenderer {
         (row.test_support().into_any_element(), pending)
     }
     fn pending_image(
-        image: &acp::ImageContent,
+        image: &nocterm_ai::model::content::Image,
         messages: &super::message_list::MessageList,
         pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
     ) -> super::image_pipeline::ImageKey {
@@ -104,7 +106,7 @@ impl EntryRenderer {
     fn user(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
-        parts: &[acp::ContentBlock],
+        parts: &[Content],
         messages: &super::message_list::MessageList,
         pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
         text: String,
@@ -125,7 +127,7 @@ impl EntryRenderer {
         let mut has_images = false;
         for (part_index, part) in parts.iter().enumerate() {
             match part {
-                acp::ContentBlock::Text(content) => {
+                Content::Text(content) => {
                     bubble = bubble.child(chat_markdown(
                         (
                             SharedString::from(format!("user-text-{}", frame.index)),
@@ -134,7 +136,7 @@ impl EntryRenderer {
                         escape_markdown(&content.text),
                     ));
                 }
-                acp::ContentBlock::Image(image) => {
+                Content::Image(image) => {
                     let key = Self::pending_image(image, messages, pending);
                     has_images = true;
                     images = images.child(Self::image(messages.preview_state(&key)));
@@ -239,7 +241,7 @@ impl EntryRenderer {
     fn tool(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
-        call: &acp::ToolCall,
+        call: &ToolRecord,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let index = frame.index;

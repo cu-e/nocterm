@@ -2,6 +2,8 @@
 use super::drafts::{disk_value, type_draft};
 use super::*;
 use nocterm_ai::history::{SavedAttachment, SavedChat, SavedPrompt};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 use std::time::Duration;
 
 fn pending_permission(
@@ -11,12 +13,12 @@ fn pending_permission(
 ) {
     let (send, _) = nocterm_ai::PermissionResponder::channel();
     thread.update(cx, |thread, _| {
-        let request = serde_json::from_value(serde_json::json!({
-            "sessionId":thread.session().as_ref().unwrap(),
-            "toolCall":{"toolCallId":"pending","title":"Needs approval"},
-            "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
-        }))
-        .unwrap();
+        let request = permission_request(
+            thread.session().clone().unwrap(),
+            "pending",
+            Some("Needs approval"),
+            vec![allow_once_choice("allow", "Allow")],
+        );
         f.events
             .try_send(AgentEvent::Permission {
                 request,
@@ -249,7 +251,7 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
     let requests = f.commands.prompts.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(
-        matches!(requests[1].prompt.last().unwrap(), acp::ContentBlock::Text(text) if text.text == "edited after completion")
+        matches!(requests[1].content.last().unwrap(), Content::Text(text) if text.text == "edited after completion")
     );
     drop(requests);
     complete_active(&f, cx);
@@ -285,8 +287,8 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     thread.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("durable response before completion"),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "durable response before completion",
             ))),
             cx,
         );

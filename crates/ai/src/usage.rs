@@ -5,11 +5,12 @@
 //! the session's token totals. Plan limits are not part of ACP: the Claude
 //! adapter attaches them to `usage_update` under `_claude/rateLimit`, and
 //! Codex writes them into session logs read through an injected account source.
+use crate::model::content::Content;
 
 mod source;
 pub use source::{AccountUsageSource, UsageAgent, UsageReadError};
 
-use crate::{acp, thread::Entry};
+use crate::{model::usage::ContextUsage, thread::Entry};
 
 /// The span a plan limit counts usage over.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,7 +97,7 @@ impl Limits {
 }
 
 /// The plan limit the Claude adapter attached to `update`, if any.
-pub fn claude_limit(update: &acp::UsageUpdate) -> Option<RateLimit> {
+pub fn claude_limit(update: &ContextUsage) -> Option<RateLimit> {
     let info = update.meta.as_ref()?.get("_claude/rateLimit")?;
     let window = match info.get("rateLimitType")?.as_str()? {
         "five_hour" => Window::FiveHour,
@@ -143,7 +144,7 @@ impl Breakdown {
             match entry {
                 Entry::User(blocks) => {
                     for block in blocks {
-                        if let acp::ContentBlock::Text(text) = block {
+                        if let Content::Text(text) = block {
                             parts.messages += tokens(&text.text);
                         }
                     }
@@ -178,8 +179,12 @@ impl Breakdown {
 mod tests {
     use super::*;
 
-    fn update(meta: serde_json::Value) -> acp::UsageUpdate {
-        acp::UsageUpdate::new(10, 100).meta(meta.as_object().cloned())
+    fn update(meta: serde_json::Value) -> ContextUsage {
+        ContextUsage::new(10, 100).meta(
+            meta.as_object()
+                .cloned()
+                .map(crate::model::extensions::Extensions::from),
+        )
     }
 
     #[test]
@@ -206,7 +211,7 @@ mod tests {
         assert_eq!(reached.used, None);
         assert!(reached.reached);
 
-        assert!(claude_limit(&acp::UsageUpdate::new(1, 2)).is_none());
+        assert!(claude_limit(&ContextUsage::new(1, 2)).is_none());
         assert!(claude_limit(&update(serde_json::json!({"other": 1}))).is_none());
     }
 
@@ -233,9 +238,7 @@ mod tests {
     #[test]
     fn breakdown_splits_reported_usage_by_transcript() {
         let entries = vec![
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "a".repeat(400),
-            ))]),
+            Entry::User(vec![Content::text("a".repeat(400))]),
             Entry::Thought("b".repeat(80)),
             Entry::Agent("c".repeat(400)),
         ];

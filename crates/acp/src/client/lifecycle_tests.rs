@@ -50,10 +50,13 @@ fn acknowledged_close_waits_for_the_foreground_event_barrier() {
         let connection = connection("ok", directory.path()).await;
         let session = connection
             .commands
-            .new_session(acp::NewSessionRequest::new(directory.path().to_path_buf()))
+            .new_session(SessionOpen {
+                working_directory: directory.path().to_path_buf(),
+                endpoints: Vec::new(),
+            })
             .await
             .unwrap();
-        let close = connection.commands.close_session(session.session_id);
+        let close = connection.commands.close_session(session.session);
         let close = match select(
             close,
             Box::pin(async_io::Timer::after(Duration::from_millis(50))),
@@ -86,11 +89,14 @@ fn unsupported_failed_and_hung_close_have_distinct_bounded_results() {
             let connection = connection(mode, directory.path()).await;
             let session = connection
                 .commands
-                .new_session(acp::NewSessionRequest::new(directory.path().to_path_buf()))
+                .new_session(SessionOpen {
+                    working_directory: directory.path().to_path_buf(),
+                    endpoints: Vec::new(),
+                })
                 .await
                 .unwrap();
             let started = std::time::Instant::now();
-            let outcome = connection.commands.close_session(session.session_id).await;
+            let outcome = connection.commands.close_session(session.session).await;
             match mode {
                 "unsupported" => assert_eq!(outcome.unwrap(), CloseSessionOutcome::Unsupported),
                 "error" => assert!(matches!(outcome, Err(AgentError::Rpc(_)))),

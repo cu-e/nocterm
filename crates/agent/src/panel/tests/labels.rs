@@ -1,5 +1,8 @@
 use super::*;
 use gpui_kit::px;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::{ToolContent, ToolRecord, ToolStatus};
 use nocterm_ai::thread::Entry;
 
 use crate::panel::widgets::single_line_label;
@@ -65,14 +68,17 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
         let thread = thread.read(cx);
         assert_eq!(thread.title(), prompt);
         assert!(matches!(&thread.transcript().entries[0], Entry::User(parts)
-            if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+            if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
     });
 
     let agent_title = "Agent\r\n  title\u{2028}with\tspaces";
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().title(agent_title)),
+            SessionUpdate::SessionInfoUpdate(nocterm_ai::model::session::SessionInfo {
+                title: nocterm_ai::model::controls::Change::Set(agent_title.into()),
+                meta: None,
+            }),
         )))
         .unwrap();
     cx.run_until_parked();
@@ -95,7 +101,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
     assert_eq!(saved[0].title.as_deref(), Some(agent_title));
     assert!(matches!(&saved[0].entries[0], Entry::User(parts)
-        if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+        if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
 
     // The existing single-line rename editor still receives the original title,
     // applying its own newline filtering. Cancelling it keeps the stored title.
@@ -133,11 +139,11 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
     // Exercise both animated glyphs and reduced-motion live rendering.
     for reduced_motion in [false, true] {
         cx.update(|cx| cx.set_reduce_motion(reduced_motion));
-        for (status, live) in [
-            (acp::ToolCallStatus::Completed, false),
-            (acp::ToolCallStatus::Failed, false),
-            (acp::ToolCallStatus::Pending, true),
-            (acp::ToolCallStatus::InProgress, true),
+        for (status, live, shown) in [
+            (ToolStatus::Succeeded, false, "Completed"),
+            (ToolStatus::Failed, false, "Failed"),
+            (ToolStatus::Pending, true, "Pending"),
+            (ToolStatus::Running, true, "InProgress"),
         ] {
             let mut heights = Vec::new();
             for title in [single_line_label(script), script.into()] {
@@ -145,7 +151,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                     complete_active(&f, cx);
                 }
                 thread.update(cx, |thread, cx| {
-                    let mut call = acp::ToolCall::new("script", title.clone());
+                    let mut call = ToolRecord::new("script", title.clone());
                     call.status = status;
                     call.raw_input = Some(serde_json::json!({"command": script}));
                     call.content = vec![
@@ -163,10 +169,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                 heights.push(
                     cx.update_window(f.handle, |_, window, cx| {
                         let header = window.find(("tool-call", 0usize));
-                        assert_eq!(
-                            header.label(),
-                            Some(format!("{title} · {status:?}").as_str())
-                        );
+                        assert_eq!(header.label(), Some(format!("{title} · {shown}").as_str()));
                         let entry = window.find(("agent-entry", 0usize)).bounds();
                         assert!(header.bounds().right() <= entry.right() + px(1.));
                         let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
@@ -190,10 +193,10 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                 let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                     panic!("expected tool call");
                 };
-                let acp::ToolCallContent::Content(output) = &call.content[0] else {
+                let ToolContent::Content(output) = &call.content[0] else {
                     panic!("expected text output");
                 };
-                assert!(matches!(&output.content, acp::ContentBlock::Text(text)
+                assert!(matches!(&output.content, Content::Text(text)
                     if text.text == script));
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_none());

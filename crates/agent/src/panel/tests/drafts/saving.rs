@@ -1,6 +1,9 @@
 //! Unsent text and edits are saved on shutdown and survive reopening.
 use super::*;
 use crate::panel::tests::restoration::{disk_chat, reopen};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 
 #[gpui_kit::test]
 fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestAppContext) {
@@ -165,9 +168,10 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     second.update(cx, |thread, cx| {
         report_control(
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("help", "Show help"),
-            ])),
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                "help",
+                "Show help",
+            )]),
             cx,
         );
         thread.send("/help".into(), cx);
@@ -186,12 +190,10 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         let prompts = f.commands.prompts.lock().unwrap();
         let request = prompts.last().unwrap();
         let history = request
-            .prompt
+            .content
             .iter()
             .filter_map(|block| match block {
-                acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") => {
-                    Some(&text.text)
-                }
+                Content::Text(text) if text.text.contains("Saved conversation") => Some(&text.text),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -213,8 +215,8 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.update(|cx| assert!(!fourth.read(cx).document().pending_history()));
     fourth.update(cx, |thread, cx| thread.send("next question".into(), cx));
     cx.run_until_parked();
-    assert!(!f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation"))
+    assert!(!f.commands.prompts.lock().unwrap().last().unwrap().content.iter().any(
+        |block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation"))
     ));
     complete_active(&f, cx);
 }

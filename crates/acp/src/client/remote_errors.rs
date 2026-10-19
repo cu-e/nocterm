@@ -1,8 +1,11 @@
 //! Remote failures reduced to scrubbed, typed agent errors.
-use nocterm_ai::{AgentError, acp};
+use agent_client_protocol_schema::v1 as wire;
+use nocterm_ai::{AgentError, model::session::RemoteError};
+
+use crate::mapping;
 
 /// Maps a remote error without leaking arbitrary agent output or configured secrets.
-pub(super) fn map_error_with(mut error: acp::Error, secrets: &[String]) -> AgentError {
+pub(super) fn map_error_with(mut error: wire::Error, secrets: &[String]) -> AgentError {
     if let Some(data) = error.data.as_ref()
         && let Some(detail) = data
             .as_str()
@@ -22,10 +25,10 @@ pub(super) fn map_error_with(mut error: acp::Error, secrets: &[String]) -> Agent
     error.message = scrub(&error.message, secrets);
     // Remote error data can contain arbitrary sensitive output.
     error.data = None;
-    if error.code == acp::Error::auth_required().code {
+    if error.code == wire::Error::auth_required().code {
         AgentError::AuthRequired(error.message.to_string())
     } else {
-        AgentError::Rpc(error)
+        AgentError::Rpc(mapping::remote_error(error))
     }
 }
 
@@ -41,7 +44,7 @@ pub(super) fn scrub(text: &str, secrets: &[String]) -> String {
 pub(super) fn restore_error(error: AgentError) -> AgentError {
     let unavailable = match &error {
         AgentError::Rpc(error) => {
-            error.code == acp::ErrorCode::MethodNotFound || {
+            error.code == RemoteError::METHOD_NOT_FOUND || {
                 let message = error.message.to_lowercase();
                 message.contains("session not found")
                     || message.contains("unknown session")
@@ -59,6 +62,6 @@ pub(super) fn restore_error(error: AgentError) -> AgentError {
 }
 
 #[cfg(test)]
-pub(super) fn map_error(error: acp::Error) -> AgentError {
+pub(super) fn map_error(error: wire::Error) -> AgentError {
     map_error_with(error, &[])
 }

@@ -1,6 +1,6 @@
 use super::*;
+use crate::model::tools::ToolRecord;
 use crate::{
-    acp,
     mcp::*,
     tool_display::{self, ToolDisplay, ToolOutcome},
 };
@@ -166,7 +166,7 @@ fn shape_parsing_remains_separate_from_execution_validation_and_identity_matchin
     let parsed = (get("read_terminal").unwrap().parse)(arguments.clone()).unwrap();
     assert!(parsed.validate().is_err());
     assert!(tool_display::parse("read_terminal", arguments.clone()).is_none());
-    let row = acp::ToolCall::new("row", "mcp.nocterm-7.read_terminal").raw_input(arguments.clone());
+    let row = ToolRecord::new("row", "mcp.nocterm-7.read_terminal").raw_input(arguments.clone());
     assert!(tool_display::requested_call(&row).is_some());
     assert!(tool_display::envelope(&row, "nocterm-7").is_none());
     let McpStep::Rejected {
@@ -194,7 +194,7 @@ fn both_metadata_versions_use_the_same_shape_parser_without_losing_outcomes() {
             );
             display.version = version;
             display.outcome = (version == 2).then(|| ToolOutcome::Ok(json!({"text":"ok"})));
-            let mut row = acp::ToolCall::new("row", "unrecognized provider");
+            let mut row = ToolRecord::new("row", "unrecognized provider");
             display.attach(&mut row);
             let restored = ToolDisplay::from_call(&row).unwrap();
             assert_eq!(restored.version, version);

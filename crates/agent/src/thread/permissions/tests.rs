@@ -1,22 +1,21 @@
 use super::*;
+use nocterm_ai::model::auth::{PermissionChoice, PermissionEffect, ProviderPermission};
+use nocterm_ai::model::tools::{ToolChanges, ToolPatch};
 
-fn request(options: Vec<acp::PermissionOption>) -> acp::RequestPermissionRequest {
-    serde_json::from_value(serde_json::json!({
-        "sessionId":"session", "toolCall":{"toolCallId":"tool"}, "options":options
-    }))
-    .unwrap()
+fn request(options: Vec<PermissionChoice>) -> ProviderPermission {
+    ProviderPermission::new(
+        "session",
+        ToolPatch::new("tool", ToolChanges::default()),
+        options,
+    )
 }
 
 #[test]
 fn automatic_choice_uses_kind_regardless_of_order_or_label() {
     let mut options = vec![
-        acp::PermissionOption::new("deny", "Allow once", acp::PermissionOptionKind::RejectOnce),
-        acp::PermissionOption::new(
-            "persistent",
-            "Allow",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
-        acp::PermissionOption::new("once", "Reject", acp::PermissionOptionKind::AllowOnce),
+        PermissionChoice::new("deny", "Allow once", PermissionEffect::DenyOnce),
+        PermissionChoice::new("persistent", "Allow", PermissionEffect::AllowRemembered),
+        PermissionChoice::new("once", "Reject", PermissionEffect::AllowOnce),
     ];
     for _ in 0..options.len() {
         assert_eq!(allow_once(&request(options.clone())), Some("once".into()));
@@ -27,12 +26,12 @@ fn automatic_choice_uses_kind_regardless_of_order_or_label() {
 #[test]
 fn persistent_or_rejection_options_never_qualify_for_automatic_approval() {
     for kind in [
-        acp::PermissionOptionKind::AllowAlways,
-        acp::PermissionOptionKind::RejectOnce,
-        acp::PermissionOptionKind::RejectAlways,
+        PermissionEffect::AllowRemembered,
+        PermissionEffect::DenyOnce,
+        PermissionEffect::DenyRemembered,
     ] {
         assert_eq!(
-            allow_once(&request(vec![acp::PermissionOption::new(
+            allow_once(&request(vec![PermissionChoice::new(
                 "id",
                 "Allow once",
                 kind
@@ -45,20 +44,16 @@ fn persistent_or_rejection_options_never_qualify_for_automatic_approval() {
 
 #[test]
 fn missing_or_ambiguous_option_ids_cannot_be_selected() {
-    let empty = request(vec![acp::PermissionOption::new(
+    let empty = request(vec![PermissionChoice::new(
         " ",
         "Allow",
-        acp::PermissionOptionKind::AllowOnce,
+        PermissionEffect::AllowOnce,
     )]);
     assert_eq!(allow_once(&empty), None);
     assert!(!unique_option(&empty, &" ".into()));
     let duplicate = request(vec![
-        acp::PermissionOption::new("same", "Allow once", acp::PermissionOptionKind::AllowOnce),
-        acp::PermissionOption::new(
-            "same",
-            "Allow always",
-            acp::PermissionOptionKind::AllowAlways,
-        ),
+        PermissionChoice::new("same", "Allow once", PermissionEffect::AllowOnce),
+        PermissionChoice::new("same", "Allow always", PermissionEffect::AllowRemembered),
     ]);
     assert_eq!(allow_once(&duplicate), None);
     assert!(!unique_option(&duplicate, &"same".into()));

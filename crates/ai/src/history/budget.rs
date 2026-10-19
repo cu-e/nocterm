@@ -124,10 +124,8 @@ impl HistoryBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        acp,
-        history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt},
-    };
+    use crate::history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt};
+    use crate::model::{content::Content, tools::ToolRecord};
     #[test]
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn bounded_wire_and_cached_budget_match_actual_acp_json_and_exact_limit() {
@@ -159,18 +157,18 @@ mod tests {
             serde_json::json!({"type":"resource_link", "name":"link", "uri":"file:///界"}),
             serde_json::json!({"type":"resource", "resource":{"uri":"file:///doc", "text":"body"}}),
             serde_json::json!({"type":"resource", "resource":{"uri":"file:///blob", "blob":"AAAA"}}),
-        ].into_iter().map(|value| serde_json::from_value::<acp::ContentBlock>(value).unwrap()).collect::<Vec<_>>();
+        ].into_iter().map(|value| serde_json::from_value::<Content>(value).unwrap()).collect::<Vec<_>>();
         chat.entries
             .extend(blocks.iter().cloned().map(Entry::Content));
         chat.entries.push(Entry::User(blocks.clone()));
         chat.entries.push(Entry::Thought("thinking\t界".into()));
         chat.entries.push(Entry::Tool(
-            acp::ToolCall::new("id", "title")
+            ToolRecord::new("id", "title")
                 .raw_input(serde_json::json!({"nested":[1,-2,0.1,true,null,"\u{1}\"\\界"]}))
                 .raw_output(serde_json::json!({"ok":false, "value":1e100})),
         ));
-        chat.entries.push(Entry::Content(acp::ContentBlock::Image(
-            acp::ImageContent::new(
+        chat.entries.push(Entry::Content(Content::Image(
+            crate::model::content::Image::new(
                 "A".repeat(super::super::MAX_SAVED_IMAGE_BYTES + 1),
                 "image/png",
             ),

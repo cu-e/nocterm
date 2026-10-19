@@ -80,7 +80,7 @@ fn update(value: wire::SessionUpdate) -> Result<SessionUpdate, ModelError> {
             SessionUpdate::CurrentModeUpdate(ModeId::new(value.current_mode_id.to_string()))
         }
         wire::SessionUpdate::ConfigOptionUpdate(value) => {
-            SessionUpdate::ConfigOptionUpdate(options(value.config_options)?)
+            SessionUpdate::ConfigOptionUpdate(options(value.config_options))
         }
         wire::SessionUpdate::SessionInfoUpdate(value) => {
             SessionUpdate::SessionInfoUpdate(SessionInfo {

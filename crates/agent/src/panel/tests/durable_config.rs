@@ -2,21 +2,23 @@
 //! saved with the chat and is given to every session the chat opens.
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption, ConfigSetting};
+use nocterm_ai::model::ids::ConfigId;
 use nocterm_ai::session_config::ConfigValue;
 use std::time::Duration;
 
-fn models() -> Vec<acp::SessionConfigOption> {
+fn models() -> Vec<ConfigOption> {
     vec![
-        acp::SessionConfigOption::select(
+        ConfigOption::select(
             "model",
             "Model",
             "sonnet",
             vec![
-                acp::SessionConfigSelectOption::new("sonnet", "Sonnet"),
-                acp::SessionConfigSelectOption::new("opus", "Opus"),
+                ConfigChoice::new("sonnet", "Sonnet"),
+                ConfigChoice::new("opus", "Opus"),
             ],
         )
-        .category(acp::SessionConfigOptionCategory::Model),
+        .category(ConfigCategory::Model),
     ]
 }
 fn chat(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
@@ -30,8 +32,8 @@ fn chat(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
 fn choose(thread: &Entity<AgentThread>, model: &str, cx: &mut TestAppContext) {
     thread.update(cx, |thread, cx| {
         thread.set_config(
-            acp::SessionConfigId::new("model"),
-            acp::SessionConfigOptionValue::value_id(model.to_owned()),
+            ConfigId::new("model"),
+            ConfigSetting::Choice(model.to_owned().into()),
             cx,
         )
     });
@@ -93,8 +95,8 @@ async fn a_chat_keeps_its_model_after_its_session_sleeps(cx: &mut TestAppContext
     let asked = f.commands.config.requests()[requests..].to_vec();
     assert_eq!(asked.len(), 1);
     assert_eq!(
-        ConfigValue::from_acp(&asked[0].value),
-        Some(ConfigValue::Value("opus".into()))
+        ConfigValue::from_setting(&asked[0].setting),
+        ConfigValue::Value("opus".into())
     );
     exchange(&f, "and now?", "Still Opus.", cx);
     cx.update(|cx| assert_eq!(first.read(cx).model().as_deref(), Some("Opus")));

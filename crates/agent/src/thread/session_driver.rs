@@ -1,8 +1,9 @@
 //! Session and lease transitions retain their original connection and operation identity.
 use super::Restore;
 use crate::runtime::SessionLease;
+use nocterm_ai::model::ids::SessionId;
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeRegistration, acp,
+    AgentCommands, AgentInfo, BridgeRegistration,
     session::{SessionPhase, SessionState, Ticket},
 };
 use std::{path::PathBuf, sync::Arc};
@@ -27,7 +28,7 @@ pub(super) struct SessionDriver {
 pub(super) struct SessionAuthority {
     ticket: Ticket,
     connection: Option<u64>,
-    session: Option<acp::SessionId>,
+    session: Option<SessionId>,
     registration: Option<u64>,
 }
 impl SessionAuthority {
@@ -40,7 +41,7 @@ impl SessionAuthority {
     pub(super) fn registration(&self) -> Option<u64> {
         self.registration
     }
-    pub(super) fn session(&self) -> &Option<acp::SessionId> {
+    pub(super) fn session(&self) -> &Option<SessionId> {
         &self.session
     }
 }
@@ -59,7 +60,7 @@ impl SessionDriver {
             && self.session() == authority.session()
             && self.registration().as_ref().map(|r| r.id) == authority.registration()
     }
-    pub(super) fn session(&self) -> &Option<acp::SessionId> {
+    pub(super) fn session(&self) -> &Option<SessionId> {
         self.lease.as_ref().map_or(&None, SessionLease::session)
     }
     pub(super) fn commands(&self) -> &Option<Arc<dyn AgentCommands>> {
@@ -154,7 +155,7 @@ impl SessionDriver {
     pub(super) fn accept_open(
         &mut self,
         ticket: Ticket,
-        session: acp::SessionId,
+        session: SessionId,
         fresh_workdir: Option<PathBuf>,
     ) -> bool {
         if !self.phase.session_current(ticket) {

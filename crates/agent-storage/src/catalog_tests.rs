@@ -1,17 +1,18 @@
 use super::*;
 use crate::chats::load;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::ToolRecord;
 fn file(dir: &Path, id: &str) -> Option<PathBuf> {
     crate::loading::file(dir, id).ok()
 }
 use nocterm_ai::{
-    acp,
     history::{SavedAttachment, SavedPrompt},
     thread::Entry,
 };
 fn chat() -> SavedChat {
     let mut chat = SavedChat::for_identity("codex".into(), uuid::Uuid::new_v4().to_string(), 1);
-    chat.entries.push(Entry::User(vec![acp::ContentBlock::Text(
-        acp::TextContent::new("first message"),
+    chat.entries.push(Entry::User(vec![Content::Text(
+        nocterm_ai::model::content::Text::new("first message"),
     )]));
     chat
 }
@@ -76,7 +77,7 @@ fn queued_images_drafts_and_metadata_survive_lazy_loading() {
     let prompt = SavedPrompt {
         id: 7,
         text: "pending".into(),
-        images: vec![acp::ContentBlock::Image(acp::ImageContent::new(
+        images: vec![Content::Image(nocterm_ai::model::content::Image::new(
             "A".repeat(600_000),
             "image/png",
         ))],
@@ -97,7 +98,7 @@ fn queued_images_drafts_and_metadata_survive_lazy_loading() {
     assert_eq!(loaded.queue[0].id, 7);
     assert_eq!(loaded.queue[0].attachments.len(), 1);
     assert!(
-        matches!(&loaded.queue[0].images[0], acp::ContentBlock::Image(image) if image.data.len() == 600_000)
+        matches!(&loaded.queue[0].images[0], Content::Image(image) if image.data.len() == 600_000)
     );
 }
 #[test]
@@ -109,7 +110,7 @@ fn malformed_collection_and_nested_amplification_are_rejected_without_erasing_fi
     fs::write(&path, serde_json::to_string(&chat).unwrap()).unwrap();
     assert!(load(dir.path(), &chat.id).is_err());
     chat.entries = vec![Entry::Tool(
-        acp::ToolCall::new("tool", "amplification")
+        ToolRecord::new("tool", "amplification")
             .raw_input(serde_json::json!({"tiny":vec![0; 140_000]})),
     )];
     fs::write(&path, serde_json::to_string(&chat).unwrap()).unwrap();

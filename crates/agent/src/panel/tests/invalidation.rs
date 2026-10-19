@@ -1,4 +1,6 @@
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 use nocterm_workspace::WorkspaceEvent;
 use std::cell::Cell;
 
@@ -38,8 +40,18 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
-        let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-        f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+        let request = permission_request(
+            session,
+            "call",
+            Some("Permission"),
+            vec![allow_once_choice("allow", "Allow")],
+        );
+        f.events
+            .try_send(AgentEvent::Permission {
+                request,
+                respond: send,
+            })
+            .unwrap();
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -101,8 +113,18 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         let (send, _receive) = nocterm_ai::PermissionResponder::channel();
         cx.update(|cx| {
             let session = owner.read(cx).session().clone().unwrap();
-            let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":id,"title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+            let request = permission_request(
+                session,
+                id,
+                Some("Permission"),
+                vec![allow_once_choice("allow", "Allow")],
+            );
+            f.events
+                .try_send(AgentEvent::Permission {
+                    request,
+                    respond: send,
+                })
+                .unwrap();
         });
         cx.run_until_parked();
         cx.update_window(f.handle, |_, window, cx| {
@@ -118,10 +140,8 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
             owner.update(cx, |t, cx| {
                 report_control(
                     t,
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                        acp::ContentBlock::Text(acp::TextContent::new(
-                            "unchanged approval, more output",
-                        )),
+                    SessionUpdate::AgentMessageChunk(Content::text(
+                        "unchanged approval, more output",
                     )),
                     cx,
                 );

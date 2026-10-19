@@ -1,5 +1,6 @@
 //! Normalize older ACP model selectors at the transport boundary.
-use nocterm_ai::{AgentError, acp};
+use agent_client_protocol_schema::v1 as acp;
+use nocterm_ai::AgentError;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 

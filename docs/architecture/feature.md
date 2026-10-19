@@ -284,7 +284,7 @@ vault feature.
 AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
 permissions, tool registrations, processes and panel visibility across windows.
 Chats are saved one file each in a private state directory and reopened through
-ACP session resume/load; fork uses `session/fork`. All three are sent only when
+the agent's session resume/load; fork uses `session/fork`. All three are sent only when
 advertised. Favorites have a separate state file. Usage limits come from Claude's
 `usage_update` metadata and Codex's session logs through an injected
 `AccountUsageSource`. See [AI agents](../AI_AGENTS.md) for protocol, limits and

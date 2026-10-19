@@ -11,7 +11,6 @@ test-support = []
 [dependencies]
 nocterm-settings.workspace = true
 nocterm-core.workspace = true
-agent-client-protocol-schema.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde_with.workspace = true

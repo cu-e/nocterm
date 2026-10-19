@@ -4,7 +4,14 @@ use futures::{
     future::{Either, select},
 };
 use nocterm_acp::AcpConnector;
-use nocterm_ai::{AgentConnector, AgentError, AgentEvent, AgentRegistry, ConnectRequest, acp};
+use nocterm_ai::{
+    AgentConnector, AgentError, AgentEvent, AgentRegistry, ConnectRequest,
+    model::{
+        auth::PermissionOutcome,
+        content::Content,
+        session::{PromptRequest, SessionOpen, SessionUpdate},
+    },
+};
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -34,27 +41,28 @@ fn real_agent_initialize_and_session() {
             .expect("Initialize real agent");
         let session = connection
             .commands
-            .new_session(acp::NewSessionRequest::new(directory.path().to_owned()))
+            .new_session(SessionOpen {
+                working_directory: directory.path().to_owned(),
+                endpoints: Vec::new(),
+            })
             .await
             .expect("Create session");
-        assert!(!session.session_id.to_string().is_empty());
+        assert!(!session.session.to_string().is_empty());
         if std::env::var_os("NOCTERM_ACP_SMOKE_PROMPT").is_some() {
             let commands = connection.commands.clone();
             let events = connection.events.clone();
             let received = Arc::new(Mutex::new(String::new()));
             let streamed = received.clone();
             let drain_events = events.clone();
-            let prompt = commands.prompt(acp::PromptRequest::new(
-                session.session_id,
-                vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    "Reply exactly NOCTERM_OK without tools.",
-                ))],
-            ));
+            let prompt = commands.prompt(PromptRequest {
+                session: session.session,
+                content: vec![Content::text("Reply exactly NOCTERM_OK without tools.")],
+            });
             let drain = async move {
                 loop {
                     match drain_events.recv().await {
                         Ok(AgentEvent::Permission { respond, .. }) => {
-                            respond.respond(acp::RequestPermissionOutcome::Cancelled);
+                            respond.respond(PermissionOutcome::Cancelled);
                         }
                         Ok(AgentEvent::Exited { .. }) | Err(_) => break,
                         Ok(event) => collect_message(event, &streamed),
@@ -102,8 +110,8 @@ fn real_agent_initialize_and_session() {
 }
 fn collect_message(event: AgentEvent, received: &Mutex<String>) {
     if let AgentEvent::Session(notification) = event
-        && let acp::SessionUpdate::AgentMessageChunk(chunk) = notification.update
-        && let acp::ContentBlock::Text(text) = chunk.content
+        && let SessionUpdate::AgentMessageChunk(content) = notification.update
+        && let Content::Text(text) = content
     {
         let mut buffer = received.lock().unwrap();
         for ch in text.text.chars() {

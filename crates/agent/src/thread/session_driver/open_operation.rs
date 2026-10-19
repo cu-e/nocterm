@@ -1,8 +1,10 @@
 //! An open attempt retains original commands, authority and bounded restore fallback.
 use super::SessionAuthority;
 use crate::thread::Restore;
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{ExternalToolEndpoint, SessionOpen, SessionOpened};
 use nocterm_ai::{
-    AgentCommands, AgentError, acp,
+    AgentCommands, AgentError,
     session::{RESTORE_ATTEMPTS, RestoreFallback, restore_fallback},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -11,12 +13,12 @@ pub(in crate::thread) struct OpenSessionOperation {
     authority: SessionAuthority,
     restore: Option<Restore>,
     workdir: PathBuf,
-    servers: Vec<acp::McpServer>,
+    servers: Vec<ExternalToolEndpoint>,
     executor: gpui_kit::BackgroundExecutor,
 }
 pub(in crate::thread) struct OpenSessionCompletion {
     authority: SessionAuthority,
-    result: Result<acp::NewSessionResponse, AgentError>,
+    result: Result<SessionOpened, AgentError>,
     restored: Option<bool>,
     workdir: PathBuf,
     pending_restore: Option<Restore>,
@@ -25,17 +27,17 @@ impl OpenSessionCompletion {
     pub(in crate::thread) fn authority(&self) -> &SessionAuthority {
         &self.authority
     }
-    pub(in crate::thread) fn orphan(&self) -> Option<acp::SessionId> {
+    pub(in crate::thread) fn orphan(&self) -> Option<SessionId> {
         self.result
             .as_ref()
             .ok()
-            .map(|response| response.session_id.clone())
+            .map(|response| response.session.clone())
     }
     pub(in crate::thread) fn into_parts(
         self,
     ) -> (
         SessionAuthority,
-        Result<acp::NewSessionResponse, AgentError>,
+        Result<SessionOpened, AgentError>,
         Option<bool>,
         PathBuf,
         Option<Restore>,
@@ -55,7 +57,7 @@ impl OpenSessionOperation {
         authority: SessionAuthority,
         restore: Option<Restore>,
         workdir: PathBuf,
-        servers: Vec<acp::McpServer>,
+        servers: Vec<ExternalToolEndpoint>,
         executor: gpui_kit::BackgroundExecutor,
     ) -> Self {
         Self {
@@ -77,15 +79,15 @@ impl OpenSessionOperation {
             pending_restore: self.restore,
         }
     }
-    async fn open(&self) -> (Result<acp::NewSessionResponse, AgentError>, Option<bool>) {
+    async fn open(&self) -> (Result<SessionOpened, AgentError>, Option<bool>) {
         if let Some(restore) = &self.restore {
             for attempt in 0..RESTORE_ATTEMPTS {
                 let error = match self
                     .commands
-                    .restore_session(nocterm_ai::RestoreSessionRequest {
-                        session_id: restore.session.clone(),
-                        cwd: restore.workdir.clone(),
-                        mcp_servers: self.servers.clone(),
+                    .restore_session(nocterm_ai::model::session::RestoreSession {
+                        session: restore.session.clone(),
+                        working_directory: restore.workdir.clone(),
+                        endpoints: self.servers.clone(),
                         fork: restore.fork,
                     })
                     .await
@@ -105,9 +107,10 @@ impl OpenSessionOperation {
         }
         let result = self
             .commands
-            .new_session(
-                acp::NewSessionRequest::new(self.workdir.clone()).mcp_servers(self.servers.clone()),
-            )
+            .new_session(SessionOpen {
+                working_directory: self.workdir.clone(),
+                endpoints: self.servers.clone(),
+            })
             .await;
         (result, self.restore.is_some().then_some(false))
     }

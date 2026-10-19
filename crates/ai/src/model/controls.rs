@@ -136,6 +136,15 @@ pub struct Modes {
     pub choices: Vec<ModeChoice>,
 }
 
+impl Modes {
+    pub fn new(current: impl Into<ModeId>, choices: Vec<ModeChoice>) -> Self {
+        Self {
+            current: current.into(),
+            choices,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeChoice {
     pub id: ModeId,

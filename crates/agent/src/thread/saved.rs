@@ -1,6 +1,9 @@
 //! A chat as saved in the history: restoring, forking, naming and saving.
 use gpui_kit::{App, Context};
-use nocterm_ai::{acp, thread::ThreadState};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::ConfigSetting;
+use nocterm_ai::model::ids::{ConfigId, ModeId, SessionId};
+use nocterm_ai::thread::ThreadState;
 use std::{sync::Arc, time::Duration};
 
 use super::{AgentThread, Attachment, Composer, Fork, RestartData, Restore, archive};
@@ -140,7 +143,7 @@ impl AgentThread {
         }
     }
 
-    pub(crate) fn set_mode(&mut self, id: acp::SessionModeId, cx: &mut Context<Self>) {
+    pub(crate) fn set_mode(&mut self, id: ModeId, cx: &mut Context<Self>) {
         if self.session.generating() || !self.host.enabled(cx) {
             return;
         }
@@ -170,8 +173,8 @@ impl AgentThread {
 
     pub(crate) fn set_config(
         &mut self,
-        id: acp::SessionConfigId,
-        value: acp::SessionConfigOptionValue,
+        id: ConfigId,
+        value: ConfigSetting,
         cx: &mut Context<Self>,
     ) {
         if self.session.generating() || !self.host.enabled(cx) {
@@ -532,15 +535,12 @@ impl AgentThread {
         }
         self.session
             .import_restore(chat.session_id.map(|session| Restore {
-                session: acp::SessionId::new(session),
+                session: SessionId::new(session),
                 workdir: chat.workdir.unwrap_or_default(),
                 fork: false,
             }));
-        self.config.restore(
-            chat.config,
-            chat.mode.map(acp::SessionModeId::new),
-            chat.model,
-        );
+        self.config
+            .restore(chat.config, chat.mode.map(ModeId::new), chat.model);
     }
     /// A copy of this chat, to go on with separately. When opened, the copy
     /// continues in a copy of this chat's agent session.
@@ -745,7 +745,7 @@ pub(crate) fn chat_title(name: Option<&str>, state: &ThreadState) -> String {
             state.entries.iter().find_map(|entry| match entry {
                 nocterm_ai::thread::Entry::User(parts) => {
                     parts.iter().find_map(|part| match part {
-                        acp::ContentBlock::Text(text) if !text.text.trim().is_empty() => {
+                        Content::Text(text) if !text.text.trim().is_empty() => {
                             Some(text.text.trim().chars().take(60).collect())
                         }
                         _ => None,
