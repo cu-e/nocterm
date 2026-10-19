@@ -90,6 +90,9 @@ pub(super) fn open_scratch(
     };
     // Windows' native path conversion remains a separate platform proof gate.
     #[cfg(not(unix))]
-    let bytes = 0;
+    let bytes = {
+        let _ = path;
+        0
+    };
     NativeScratch::reserve_native(ledger, bytes)
 }

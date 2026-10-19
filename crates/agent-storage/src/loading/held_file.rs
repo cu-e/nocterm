@@ -47,6 +47,7 @@ pub(super) enum Operation {
 }
 #[derive(Clone, Debug, thiserror::Error)]
 pub(super) enum HeldReadError {
+    #[cfg(target_os = "linux")]
     #[error(transparent)]
     ManagedReplay(nocterm_ai::storage::AgentStorageError),
     #[cfg(not(target_os = "linux"))]
@@ -90,8 +91,9 @@ impl DeepSource {
     /// any other failure keeps the original recursion failure.
     pub(super) fn or_native(self, later: HeldReadError) -> HeldReadError {
         match later {
-            error @ (HeldReadError::ManagedReplay(_)
-            | HeldReadError::Admission(_)
+            #[cfg(target_os = "linux")]
+            error @ HeldReadError::ManagedReplay(_) => error,
+            error @ (HeldReadError::Admission(_)
             | HeldReadError::ManagedNative(_)
             | HeldReadError::Native { .. }
             | HeldReadError::ChangedDocument) => error,

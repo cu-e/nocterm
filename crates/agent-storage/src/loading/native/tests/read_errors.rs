@@ -2,7 +2,6 @@ use super::*;
 use nocterm_ai::{
     history::{NativeLoadError, ReaderDelivery, ReaderSource},
     model::retention::document::DocumentRetention,
-    storage::AgentStorageError,
 };
 use std::{error::Error, io, path::Path};
 
@@ -38,7 +37,10 @@ fn escaped_native_read_failure_shares_original_path_cause_and_display() {
     let Some(NativeLoadError::Storage(error)) = delivery.error() else {
         panic!("native read failed through the storage boundary")
     };
-    assert!(matches!(error, AgentStorageError::ManagedRead(_)));
+    assert!(matches!(
+        error,
+        nocterm_ai::storage::AgentStorageError::ManagedRead(_)
+    ));
     let original = native(error) as *const io::Error;
     let message = error.to_string();
     let escaped = error.clone();

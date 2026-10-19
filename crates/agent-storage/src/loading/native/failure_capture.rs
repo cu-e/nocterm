@@ -34,6 +34,7 @@ impl FailureCapture {
             return AgentStorageError::ManagedAdmission(admission);
         }
         match error {
+            #[cfg(target_os = "linux")]
             HeldReadError::ManagedReplay(error) => error,
             HeldReadError::Admission(error) => AgentStorageError::ManagedAdmission(error),
             HeldReadError::ManagedNative(error)

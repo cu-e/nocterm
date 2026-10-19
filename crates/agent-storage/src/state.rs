@@ -88,6 +88,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
+    #[cfg(unix)]
     #[test]
     fn state_port_round_trips_latest_preferences_with_private_publication() {
         use std::os::unix::fs::PermissionsExt as _;
