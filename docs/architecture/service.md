@@ -4,19 +4,23 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Service crates own GPUI entities and background work but no views: they
 depend on GPUI alone, never on the component library, the UI layer or features,
-and features depend on them. `nocterm-agent-runtime` is the one service crate
-([ADR 0005](../adr/0005-agent-runtime-service.md)).
+and UI/feature crates depend on them. `nocterm-store` owns ordered persistence
+and synchronous quit capture for layout, settings, snippets, connection state and agent preferences/documents ([ADR 0013](../adr/0013-persistence-shutdown-service.md)).
+`nocterm-agent-runtime` owns agent lifecycle
+([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-snippets-store` owns
+checked snippet publication over the shared persistence driver.
 
 ## Agents
 
 The ACP AI panel uses four layers: `nocterm-ai` declares runtime-neutral agent
-contracts and bounded context/tool rules; `nocterm-acp` supplies subprocess and
+contracts, neutral protocol records and bounded context/tool rules; `nocterm-acp` maps the
+protocol SDK to them and supplies subprocess and
 authenticated local bridge adapters; the `nocterm-agent-runtime` service admits
-connections, closes idle ones and writes chats; `nocterm-agent` supplies threads
+connections, closes idle ones and coordinates document writes; `nocterm-agent` supplies threads
 and chat UI. App injects the adapter. The runtime knows no thread type: a thread
 registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
-host installs the `AiSettingsSource` the runtime reads settings through. Workspace exposes allowlisted `TerminalAccess`
+host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace exposes narrow terminal ports
 and `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.
@@ -32,7 +36,8 @@ budget. Collection limits and a structural preflight also bound allocation from
 small JSON elements, independently of the 32 MiB file limit.
 
 The client supplies a saved session's directory before connection startup.
-Background startup resolves and validates that directory once, and the resulting
+Background startup schedules the injected `WorkdirResolver`; its adapter prepares
+and validates that directory, and the resulting
 root is used for the process, sandbox and resumed or fresh ACP session. Dormant
 documents have no maintenance timer. Workspace events revoke execution access;
 an execution watchdog runs only while structured commands are active.
@@ -42,3 +47,158 @@ tombstones before windows disappear. Serialization, ordered disk writes and
 process cleanup then run in the background without consulting the application.
 Active and already-closing processes start cleanup concurrently. Persistence and
 cleanup share a bounded shutdown deadline; failures and timeouts are logged.
+
+## Agent storage ownership
+
+Runtime coordinates nine private responsibility owners rather than exposing
+mutable persistence, admission and connection maps. `AdmissionState` owns its queue/task and a pure `AdmissionPolicy`; its effects become GPUI client events in Runtime. `AgentStateStore` uses
+optimistic `Persisted` snapshots. `ChatStore` checks current document identity and
+permanent deletion tombstones before admitting independent keys to one
+`KeyedPersisted` worker; one chat failure does not stop unrelated chats.
+
+The existing `save_chat` method returns typed acceptance: false for stale ownership,
+true only after the keyed writer owns the immutable candidate. Revision-bearing
+`SaveAdmitted`, `Saved` and `SaveFailed` events distinguish intake from physical
+publication. Registry stamps are committed after intake succeeds. Capture retains
+writer-owned intents when a client has nothing pending; shutdown returns captured
+admission errors together with drained publication failures. Aggregation retains
+the original primary StoreError in its standard source chain; the secondary
+diagnostic stays separately inspectable, and both messages remain displayed. Normal detach leaves a
+client registered when admission fails so its desired candidate can still be retried.
+An older revision from the same current owner cannot replace a newer admitted intent.
+Successful detach admission acknowledges its original client outside the Runtime
+borrow even after unregistering it; candidate revision validation remains feature-owned.
+AI disable finalizes session transitions before taking that durable capture.
+
+Both snapshot and keyed policies use Store's common normal/captured disk
+executor and gate. Ready capacity is 32 key tokens, with one newest retained
+intent per dirty document; a full ready queue never drops accepted work. This is
+not a 32-document limit or a constant total payload budget: client history/queue
+validation owns per-document admission, and repository codecs retain the existing
+32 MiB encoded/64 MiB structural bounds. The service retains one newest payload
+per dirty key plus its immutable active operation; failed closed documents remain
+until retry or capture. The UI's 64 MiB resident archive policy bounds hydrated
+archive display, independently of dirty persistence admission. Exact
+physical key/owner/revision stamps are recorded before foreground acknowledgement.
+Clean closed keys release their payloads; failed dirty keys remain through retry
+or final capture. The existing snapshot receipt distinction is preserved: an
+already published active prefix completes at its own revision; only a covering
+final publication completes an unwritten prefix at the later revision.
+
+The app preloads preferences through injected repositories. Catalog loading stays
+lazy and bounded, with one shared hydration permit through GUI delivery.
+`PreparedHistory` is an optional bounded construction input, not a mutable
+Runtime fixture setter. Normal intake closes before shutdown client events;
+a private capture transition checks the current owner and takes final snapshots
+while App still exists. Normal session close and final capture share one lazy process-cleanup completion per
+command handle. Final capture bypasses a blocked close acknowledgement and joins
+cleanup already running; a previously failed normal attempt gets one final retry.
+Late normal close joins the same attempt rather than invoking cleanup again.
+Cleanup receipts retain the original typed AgentError through foundation SharedError,
+including any native source already retained by its variant.
+Favorites, chats and process cleanup start independently
+under the host's one `ShutdownCoordinator` budget. Runtime installs no quit hook
+or persistence deadline. See [ADR0022](../adr/0022-agent-storage-owners.md).
+
+The runtime's private `UsageLimits` owner coalesces account refreshes per agent and
+schedules the injected `AccountUsageSource` on its existing background executor.
+Missing reports and failures retain the last accepted limits; stopping the runtime
+cancels pending delivery. Native account paths remain in the injected adapter.
+
+Runtime performs no native workspace filesystem or home lookup. Its startup task
+checks cancellation before and after preparation and passes one resulting canonical
+root to the process, session requests and connected event. Candidate connection
+keys/serials remain unchanged when the prepared root is accepted. A late successful
+connector still follows the existing retained orphan-cleanup completion.
+
+## Connection publication
+
+`nocterm-connections-store` owns checked profile admission, ordered profile/recent
+publication and coupled shutdown capture. The feature re-exports its actual entity,
+so installed views and credential callbacks retain identical ownership. Writers and
+a `ConnectionClock` are explicit dependencies; editor inputs, native acquisitions,
+settings storage and views stay outside this service.
+
+Profiles use durable checked edits, recents use optimistic coalescing, and both
+reuse `Persisted` and `ShutdownCoordinator` with the common 180-ms budget.
+Each candidate applies pure authority transitions before the next candidate.
+Incarnation, exact endpoint and manual icon/country stamps therefore retain
+delete/re-add and A→B→A history even when one final capture serializes identical
+profiles. Stamps and derived effects are internal; writers receive only `Profiles`.
+
+The synchronous success hook applies derived recents before completing receipts
+and publishes a supplied immutable projection into a distinct `ProfilePublications`
+entity. It never rereads leased profile persistence or starts observation jobs.
+Failed, rejected and unadmitted mutations cannot publish authority. Captured
+background drain has no App/entity access; successful physical prefix/final
+snapshots alone select recents effects through the existing two-event feed.
+See [ADR0047](../adr/0047-connection-publication-authority-service.md).
+
+## Raw connection facts
+
+`FactsService` in `nocterm-connections-store` owns optimistic persisted Known data,
+immutable raw flag state and bounded native job reservations. The supplied background
+executor runs only native ports/data. Foreground tickets read the distinct committed
+profile carrier, narrow enabled/published-revision policy and captured original source
+at every admission and completion. Endpoint/incarnation/manual-override stamps retain
+intermediate history; original Item/session authority cannot renew through another
+window, equal filesystem Arc or a profile-only flag request. A newer original epoch
+may admit its own job without releasing or clearing obsolete physical jobs.
+
+All windows share 32 physical slots. Atomic paired OS/location reservation precedes
+capability decisions; stale work retains slots until actual completion. Rotating weak
+source cursors reproject on capacity delivery, preserving pending paired reservations
+and alternating raw flag/probe lanes. There is no native cancellation guarantee,
+production pool, hidden runtime/global lookup or waiting filesystem request queue.
+
+Raw CountryCode flag requests are independent of live sessions and detection policy:
+persisted startup keys, manual saved choices and editor drafts keep their previous
+behavior. DNS/GeoIP and OS require an original connected matching session. A terminal
+flag negative result is cached; image decoding/presentation stays in the feature.
+Known capture reuses Persisted/ShutdownCoordinator; closing blocks admissions and
+late completions from mutating captured data. See [ADR0048](../adr/0048-guarded-connection-facts.md).
+
+Immutable FactWorkload queries expose physical work and retained original-source
+metadata. The logical ledger prunes original Item/epoch/session lifetime separately
+from full profile/policy validity; retaining an FS cannot retain closed Item metadata,
+and changing association/policy cannot renew a live capability's OS once marker.
+Feature ItemsChanged schedules App-deferred reprojection outside the Workspace
+subscriber lease; original receipt validity checks are still synchronous.
+
+Connections read-only refusals retain the original loaded diagnostic allocation
+through foundation `SharedError`; standard sources reach the concrete storage
+error and its native cause. Publication rejects edits without replacing diagnostic
+identity, profile authority or the malformed source file.
+
+Agent runtime installation exposes `RuntimeHandle`, retaining one private Runtime
+entity behind named typed commands, immutable projections and actual observation.
+Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings on
+its supplied settings handle before its first registry read. Settings observation
+uses a weak runtime; the feature installation owns that subscription. Shutdown
+capture retains only the runtime handle and returns the existing App-free work.
+No runtime global selects the recipient of a deferred operation. Service signatures use only neutral
+records, and physical history stays version one. See
+[ADR0052](../adr/0052-retained-agent-installation.md).
+
+SettingsHandle supplies additive edit_checked and update_checked operations over the
+same Persisted worker. Checked callbacks run at the actual ordered document base;
+an error discards all candidate mutations before semantic revision bookkeeping or
+physical write. Typed section edits register/read their section, apply the callback
+to a clone and insert its sanitized value only on success. Memory edits publish
+synchronously; durable receipts retain the existing queue/backend timing and return
+semantic settings revisions, including unchanged revisions for successful no-ops.
+The original infallible edits and their consumers retain their behavior. Dev-only
+store test-support supplies the shared first-write gate and snapshot recording used
+by service and UI persistence fixtures.
+
+## Snippet library publication
+
+`nocterm-snippets-store` owns the viewless library and exposes `SnippetsHandle`.
+Prepared acquisition retains missing-versus-malformed distinctions and validates the
+whole library; malformed or invalid input becomes an empty read-only projection with
+its original shared diagnostic. The service admits checked record save/delete against
+the shared Persisted driver: durable queue32 and immediate memory publication retain
+expected-record conflict and final capture semantics. It has no native I/O, UUID
+generation, view, settings policy or shutdown hook. Composition supplies its snapshot
+writer and registers the same participant once. See
+[ADR0055](../adr/0055-snippet-storage-boundaries.md).

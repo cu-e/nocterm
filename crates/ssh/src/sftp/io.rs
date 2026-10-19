@@ -15,11 +15,26 @@ impl RemoteUpload for Writer {
     }
     fn write_batch(&mut self, chunks: Vec<Vec<u8>>) -> FsFuture<()> {
         if let Err(error) = validate_batch(&chunks) {
-            return async move { Err(error) }.boxed();
+            let poison = self.fs.request({
+                let id = self.id;
+                move |reply| FsRequest::PoisonUpload(id, reply)
+            });
+            // Keep rejected payloads outside the bounded actor queue, while
+            // making the existing stage unusable before reporting the failure.
+            return async move {
+                let _ = poison.await;
+                Err(error)
+            }
+            .boxed();
         }
         let id = self.id;
         self.fs
             .request(move |reply| FsRequest::WriteBatch(id, chunks, reply))
+    }
+    fn publish_as(&mut self, name: String) -> FsFuture<String> {
+        let id = self.id;
+        self.fs
+            .request(move |reply| FsRequest::PublishAs(id, name, reply))
     }
     fn finish(self: Box<Self>) -> FsFuture<String> {
         async move {

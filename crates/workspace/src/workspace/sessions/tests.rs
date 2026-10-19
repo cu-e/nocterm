@@ -1,44 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use gpui_kit::{
-    App, Context, EventEmitter, FocusHandle, Focusable, TestAppContext, Window, WindowOptions, div,
-    prelude::*,
-};
+use gpui_kit::{TestAppContext, WindowOptions, prelude::*};
 use nocterm_session::{Auth, Target};
 
-use crate::{Item, ItemEvent, SessionContext, SessionSpec, Workspace};
+use crate::{SessionSpec, Workspace};
 
-struct Remote {
-    focus: FocusHandle,
-    spec: SessionSpec,
-    connected: bool,
-}
-impl EventEmitter<ItemEvent> for Remote {}
-impl Focusable for Remote {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for Remote {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus)
-    }
-}
-impl Item for Remote {
-    fn tab_title(&self, _: &App) -> gpui_kit::SharedString {
-        self.spec.title.clone()
-    }
-    fn session(&self, _: &App) -> Option<SessionContext> {
-        Some(SessionContext::new(
-            self.spec.target.clone(),
-            None,
-            self.connected,
-        ))
-    }
-    fn session_spec(&self, _: &App) -> Option<SessionSpec> {
-        Some(self.spec.clone())
-    }
-}
+use crate::test_support::SessionProbe as Remote;
 
 #[gpui_kit::test]
 fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
@@ -59,7 +26,8 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
         cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let mut workspace = Workspace::new(window, cx);
+                let deps = crate::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let mut workspace = Workspace::new(deps, window, cx);
                 workspace.set_session_opener(move |_, spec, _, _| record.borrow_mut().push(spec));
                 workspace
             })
@@ -68,22 +36,32 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
     });
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            let offline = cx.new(|cx| Remote {
-                focus: cx.focus_handle(),
-                spec: spec.clone(),
-                connected: false,
-            });
+            let offline = Remote::new(spec.clone(), false, cx);
             workspace.add_item(offline, window, cx);
             let error = workspace
                 .open_on_host(&target, "nano".into(), vec![], None, "x".into(), window, cx)
                 .unwrap_err();
-            assert!(error.contains("No connected session"), "{error}");
-            let online = cx.new(|cx| Remote {
-                focus: cx.focus_handle(),
-                spec: spec.clone(),
-                connected: true,
-            });
+            assert!(matches!(
+                error,
+                crate::OpenOnHostError::NoConnectedSession { .. }
+            ));
+            assert!(opened.borrow().is_empty());
+            let online = Remote::new(spec.clone(), true, cx);
             workspace.add_item(online, window, cx);
+            let error = workspace
+                .open_on_host(
+                    &target,
+                    "bad\0program".into(),
+                    vec![],
+                    None,
+                    "x".into(),
+                    window,
+                    cx,
+                )
+                .unwrap_err();
+            assert!(matches!(&error, crate::OpenOnHostError::InvalidLaunch(_)));
+            assert!(std::error::Error::source(&error).is_some());
+            assert!(opened.borrow().is_empty());
             workspace
                 .open_on_host(
                     &target,

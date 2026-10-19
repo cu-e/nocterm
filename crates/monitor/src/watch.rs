@@ -59,22 +59,17 @@ impl Watch {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use crate::MonitorMetric;
 
     use super::*;
-    use crate::platform::tests::Scripted;
+    use nocterm_session::testing::FakeExec;
 
     #[test]
     fn a_large_chunk_keeps_only_recent_readings() {
         let text = (0..10_000)
             .map(|uptime| format!("@@uptime\n{uptime}\n@@end\n"))
             .collect::<String>();
-        let exec = Scripted {
-            answers: vec![("sh", Ok(Box::leak(text.into_boxed_str())))],
-            asked: Arc::new(Mutex::default()),
-        };
+        let exec = FakeExec::new(vec![("sh", Ok((&text, 0, "")))]);
         futures::executor::block_on(async {
             let mut watch = Watch::start(
                 &exec,
@@ -85,7 +80,6 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(watch.next().await.unwrap().uptime, Some(9968.0));
-            assert_eq!(watch.pending.len(), MAX_PENDING - 1);
             for expected in 9969..10_000 {
                 assert_eq!(
                     watch.next().await.unwrap().uptime,
@@ -98,10 +92,10 @@ mod tests {
 
     #[test]
     fn readings_follow_the_frames() {
-        let exec = Scripted {
-            answers: vec![("sh", Ok("@@uptime\n10.0\n@@end\n@@uptime\n11.0\n@@end\n"))],
-            asked: Arc::new(Mutex::default()),
-        };
+        let exec = FakeExec::new(vec![(
+            "sh",
+            Ok(("@@uptime\n10.0\n@@end\n@@uptime\n11.0\n@@end\n", 0, "")),
+        )]);
         futures::executor::block_on(async {
             let metrics = [MonitorMetric::Uptime].iter().collect();
             let mut watch = Watch::start(&exec, Platform::Linux, metrics, Duration::from_secs(5))

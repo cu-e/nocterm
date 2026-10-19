@@ -1,4 +1,15 @@
 //! Saved code snippets and exact connection bindings, independent of the UI.
+//!
+//! Owns: snippet/library formats, validation and checked record mutations.
+//! Does not own: identity generation, filesystem persistence or editor views.
+//! Ports provided: blocking SnippetRepository and supplied SnippetIds. Settings section: none. Globals: none.
+//! Invariants: identity is supplied by the caller; stale expected records cannot
+//! overwrite or delete a newer saved record; validation performs no I/O.
+mod repository;
+pub use repository::{SnippetIds, SnippetRepository, SnippetStorageError, StorageOperation};
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -61,10 +72,11 @@ pub struct Snippet {
     #[serde(default)]
     pub groups: Vec<String>,
 }
-impl Default for Snippet {
-    fn default() -> Self {
+impl Snippet {
+    /// Create a draft with the identity provided by the application boundary.
+    pub fn new(id: Uuid) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             name: String::new(),
             description: String::new(),
             content: String::new(),
@@ -73,8 +85,6 @@ impl Default for Snippet {
             groups: Vec::new(),
         }
     }
-}
-impl Snippet {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.name.trim().is_empty() {
             return Err(ValidationError::Name);
@@ -116,7 +126,7 @@ impl Snippet {
             || group.is_some_and(|group| self.groups.iter().any(|name| name == group))
     }
 }
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ValidationError {
     #[error("Enter a snippet name.")]
     Name,
@@ -128,6 +138,21 @@ pub enum ValidationError {
     Binding,
 }
 
+/// Checked library mutations retain semantic errors for application policy.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum LibraryError {
+    #[error(transparent)]
+    Validation(#[from] ValidationError),
+    #[error("Duplicate snippet identifier: {0}.")]
+    DuplicateId(Uuid),
+    #[error("This snippet changed or was deleted. Close the editor and open it again.")]
+    SaveConflict(Uuid),
+    #[error("This snippet was already deleted.")]
+    Deleted(Uuid),
+    #[error("This snippet changed. Review it before deleting.")]
+    DeleteConflict(Uuid),
+}
+
 /// File format and checked mutations. Snapshots prevent stale dialogs overwriting changes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Library {
@@ -135,26 +160,28 @@ pub struct Library {
     pub snippets: Vec<Snippet>,
 }
 impl Library {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), LibraryError> {
         let mut ids = std::collections::HashSet::new();
         for snippet in &self.snippets {
-            snippet.validate().map_err(|error| error.to_string())?;
+            snippet.validate()?;
             if !ids.insert(snippet.id) {
-                return Err("Duplicate snippet identifier.".into());
+                return Err(LibraryError::DuplicateId(snippet.id));
             }
         }
         Ok(())
     }
-    pub fn save(&mut self, snippet: Snippet, expected: Option<&Snippet>) -> Result<(), String> {
-        snippet.validate().map_err(|error| error.to_string())?;
+    pub fn save(
+        &mut self,
+        snippet: Snippet,
+        expected: Option<&Snippet>,
+    ) -> Result<(), LibraryError> {
+        snippet.validate()?;
         let index = self
             .snippets
             .iter()
             .position(|saved| saved.id == snippet.id);
         if index.map(|index| &self.snippets[index]) != expected {
-            return Err(
-                "This snippet changed or was deleted. Close the editor and open it again.".into(),
-            );
+            return Err(LibraryError::SaveConflict(snippet.id));
         }
         if let Some(index) = index {
             self.snippets[index] = snippet;
@@ -163,14 +190,14 @@ impl Library {
         }
         Ok(())
     }
-    pub fn delete(&mut self, expected: &Snippet) -> Result<(), String> {
+    pub fn delete(&mut self, expected: &Snippet) -> Result<(), LibraryError> {
         let index = self
             .snippets
             .iter()
             .position(|saved| saved.id == expected.id)
-            .ok_or("This snippet was already deleted.")?;
+            .ok_or(LibraryError::Deleted(expected.id))?;
         if &self.snippets[index] != expected {
-            return Err("This snippet changed. Review it before deleting.".into());
+            return Err(LibraryError::DeleteConflict(expected.id));
         }
         self.snippets.remove(index);
         Ok(())

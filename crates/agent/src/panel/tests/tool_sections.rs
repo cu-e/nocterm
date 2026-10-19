@@ -1,6 +1,7 @@
 use super::tool_output::exec_result;
 use crate::panel::entries::{tool_input, tool_output};
-use nocterm_ai::{acp, tool_display};
+use nocterm_ai::model::tools::ToolRecord;
+use nocterm_ai::tool_display;
 use serde_json::json;
 
 #[test]
@@ -11,7 +12,7 @@ fn malformed_input_does_not_make_the_title_or_output_raw() {
         "mcp_nocterm_3_exec_command",
         "mcp_nocterm_exec_command",
     ] {
-        let call = acp::ToolCall::new("malformed",title).raw_input(json!({"program":7,"args":["literal"]}))
+        let call = ToolRecord::new("malformed",title).raw_input(json!({"program":7,"args":["literal"]}))
             .raw_output(json!({"result":{"content":[{"type":"text","text":exec_result("exited").to_string()}],"_meta":{}},"id":7,"jsonrpc":"2.0"}));
         assert!(tool_display::header(&call).starts_with("Nocterm · Execute program"));
         let input = tool_input::source(&call).unwrap();
@@ -28,7 +29,7 @@ fn malformed_input_does_not_make_the_title_or_output_raw() {
 
 #[test]
 fn malformed_bridge_arguments_remain_frozen_and_have_readable_error_output() {
-    let mut call = acp::ToolCall::new("rejected", "mcp.nocterm-3.exec_command")
+    let mut call = ToolRecord::new("rejected", "mcp.nocterm-3.exec_command")
         .raw_input(json!({"program":"forged"}))
         .raw_output(json!({"provider":"wrong"}));
     let mut display = tool_display::ToolDisplay::requested(
@@ -48,7 +49,7 @@ fn malformed_bridge_arguments_remain_frozen_and_have_readable_error_output() {
 
 #[test]
 fn unknown_outputs_do_not_replace_known_titles_and_requests() {
-    let call = acp::ToolCall::new("future","mcp.nocterm-3.exec_command")
+    let call = ToolRecord::new("future","mcp.nocterm-3.exec_command")
         .raw_input(json!({"terminal_id":"t1","program":"sh","args":["-c","echo literal"]}))
         .raw_output(json!({"content":[{"type":"text","text":"{\"future_output\":\"still visible\"}"}],"_meta":{}}));
     assert!(tool_display::header(&call).starts_with("Nocterm · Execute program"));
@@ -61,7 +62,7 @@ fn unknown_outputs_do_not_replace_known_titles_and_requests() {
 
 #[test]
 fn explicit_registered_envelopes_work_without_a_provider_name() {
-    let call = acp::ToolCall::new("anonymous", "Tool call")
+    let call = ToolRecord::new("anonymous", "Tool call")
         .raw_input(
             json!({"server":"nocterm-3","tool":"exec_command","arguments":{"program":false}}),
         )

@@ -19,7 +19,8 @@ impl AttachmentLabels {
             .into_iter()
             .map(|entry| {
                 let connected = entry
-                    .access
+                    .capabilities
+                    .state()
                     .info(cx)
                     .is_some_and(|info| info.status == TerminalStatus::Connected);
                 (entry.item, (entry.title.to_string(), connected))

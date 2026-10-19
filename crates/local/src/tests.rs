@@ -33,6 +33,24 @@ fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
     rx.recv_timeout(std::time::Duration::from_secs(10))
         .expect("PTY event timed out")
 }
+#[test]
+fn invalid_launch_reports_typed_failure_before_starting_a_pty() {
+    let launch = ShellLaunch {
+        program: Some("/a/nonexistent/program".into()),
+        env: [("AUTH_TOKEN".into(), "private-value\0tail".into())].into(),
+        ..Default::default()
+    };
+    let session = LocalTransport(launch.clone()).open(request(launch));
+    let event = block_on(session.next_event()).unwrap();
+    assert!(
+        matches!(event, Event::Closed(CloseReason::Failed(SessionError::InvalidLaunch(
+        nocterm_session::LaunchValidationError::NulEnvironmentValue { ref key }
+    ))) if key == "AUTH_TOKEN")
+    );
+    assert!(!format!("{event:?}").contains("private-value"));
+    assert!(block_on(session.next_event()).is_none());
+}
+
 #[cfg(unix)]
 #[test]
 fn isolated_command_has_only_explicit_environment() {

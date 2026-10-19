@@ -10,6 +10,7 @@ publish = false
 layer = "adapter"
 
 [dependencies]
+nocterm-core.workspace = true
 nocterm-session.workspace = true
 
 futures.workspace = true
@@ -21,6 +22,7 @@ uuid.workspace = true
 zeroize.workspace = true
 hmac.workspace = true
 sha1.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs"] }

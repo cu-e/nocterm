@@ -19,6 +19,17 @@ pub(super) struct ExplorerRow {
 }
 
 impl ExplorerRow {
+    pub(super) fn local(entry: &crate::local::LocalEntry, selected: bool, cx: &App) -> Self {
+        use nocterm_ui::ActiveDesign as _;
+        Self {
+            name: entry.name.clone(),
+            directory: entry.kind == nocterm_session::fs::EntryKind::Directory,
+            symlink: entry.symlink,
+            selected,
+            font_size: cx.design().typography.explorer_size.unwrap_or(12.0),
+        }
+    }
+
     pub(super) fn render(&self, hovered: bool, cx: &App) -> Div {
         div()
             .w_full()

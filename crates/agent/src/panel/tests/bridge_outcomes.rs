@@ -1,7 +1,9 @@
 //! Bridge-owned outcomes are independent of provider result envelopes.
-use super::provider_intersections::update;
+use super::provider_fixtures::update;
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolRecord, ToolStatus};
 use nocterm_ai::{TerminalCall, thread::Entry, tool_display};
 use serde_json::{Value, json};
 
@@ -18,7 +20,7 @@ fn send(
     request: TerminalCall,
     arguments: Value,
     cx: &mut TestAppContext,
-) -> oneshot::Receiver<Result<Value, String>> {
+) -> oneshot::Receiver<Result<Value, nocterm_ai::ToolFailure>> {
     let (respond, receive) = oneshot::channel();
     f.calls
         .try_send(BridgeCall {
@@ -34,7 +36,7 @@ fn send(
 }
 
 fn assert_error(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) {
-    let Entry::Tool(call) = &thread.read(cx).state.entries[index] else {
+    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
         panic!("tool row");
     };
     assert!(tool_display::header(call).contains("Execute program"));
@@ -77,10 +79,10 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             json!({"terminal_id":terminal,"program":"sh","args":["-c","echo requested"]}),
         ),
     ] {
-        let row = acp::ToolCall::new(id, title(provider, tool))
+        let row = ToolRecord::new(id, title(provider, tool))
             .raw_input(args.clone())
             .raw_output(json!({"new_provider_wrapper":"provider garbage"}));
-        update(&f, &session, acp::SessionUpdate::ToolCall(row), cx);
+        update(&f, &session, SessionUpdate::ToolCall(Box::new(row)), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
             mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
@@ -106,14 +108,16 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             if id == "denial" {
                 assert!(receive.try_recv().unwrap().is_none());
                 cx.update(|cx| {
-                    thread.update(cx, |thread, cx| thread.approve_tool(0, false, false, cx))
+                    thread.update(cx, |thread, cx| {
+                        thread.approve_tool(thread.tool_cards()[0].token(), false, false, cx)
+                    })
                 });
             }
             assert!(receive.try_recv().unwrap().is_some());
         }
     }
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool row");
         };
         let output = tool_output::source(call, false).unwrap();
@@ -131,13 +135,16 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
 ) {
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
-    *f.access.executor.borrow_mut() =
-        Some(Arc::new(super::provider_intersections::Program::default()));
+    *f.access.executor().borrow_mut() =
+        Some(Arc::new(super::provider_fixtures::Program::default()));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.terminal_write = nocterm_ai::ApprovalPolicy::Allow;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_write = nocterm_ai::ApprovalPolicy::Allow;
+            })
+            .detach()
     });
     cx.run_until_parked();
     new_chat(&f, cx);
@@ -149,10 +156,9 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("active", title("codex", "exec_command"))
-                .raw_input(arguments.clone()),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("active", title("codex", "exec_command")).raw_input(arguments.clone()),
+        )),
         cx,
     );
     let mut pending = send(
@@ -165,9 +171,9 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
+        )),
         cx,
     );
     assert!(
@@ -179,7 +185,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.stop(cx);
-            let Entry::Tool(active) = &thread.state.entries[0] else {
+            let Entry::Tool(active) = &thread.transcript().entries[0] else {
                 panic!("tool row");
             };
             assert!(matches!(
@@ -188,7 +194,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
                     .outcome,
                 Some(tool_display::ToolOutcome::Err(_))
             ));
-            let Entry::Tool(complete) = &thread.state.entries[1] else {
+            let Entry::Tool(complete) = &thread.transcript().entries[1] else {
                 panic!("tool row");
             };
             assert!(matches!(
@@ -211,9 +217,9 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("late", title("codex", "typo")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("late", title("codex", "typo")).raw_input(json!({})),
+        )),
         cx,
     );
     cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
@@ -227,7 +233,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool row");
         };
         assert!(tool_display::ToolDisplay::from_call(call).is_none());
@@ -236,7 +242,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
 
 #[test]
 fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
-    let mut call = acp::ToolCall::new("error", title("codex", "list_terminals"));
+    let mut call = ToolRecord::new("error", title("codex", "list_terminals"));
     let mut display = tool_display::ToolDisplay::requested("list_terminals".into(), json!({}));
     display.finish(Err("password=private-value".into()));
     display.attach(&mut call);
@@ -248,4 +254,34 @@ fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
             .unwrap()
             .contains("private-value")
     );
+}
+
+#[test]
+fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
+    let mut call = ToolRecord::new("call-1", "mcp.nocterm-11.exec_command")
+        .raw_input(
+            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+                "terminal_id":"t1", "program":"/bin/sh",
+                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
+                "timeout_ms":1_800_000, "yield_ms":1000,
+            }}),
+        )
+        .raw_output(json!({"result":null, "error":{
+            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+        }}));
+    call.status = ToolStatus::Failed;
+    assert_eq!(
+        tool_display::header(&call),
+        "Nocterm · Execute program · Failed"
+    );
+    let input = tool_input::source(&call).unwrap();
+    assert_eq!(input.label, "Requested command");
+    assert_eq!(
+        input.text,
+        "cd ~/dev/NOUMMA && cargo build --release --locked -j 4"
+    );
+    let output = tool_output::source(&call, false).unwrap();
+    assert_eq!(output.sections.len(), 1);
+    assert_eq!(output.sections[0].label, "Error");
+    assert!(output.sections[0].text.starts_with("tool call error"));
 }

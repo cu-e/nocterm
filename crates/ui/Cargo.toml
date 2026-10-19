@@ -10,10 +10,14 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-terminal-model.workspace = true
+
+futures.workspace = true
 nocterm-core.workspace = true
+nocterm-store.workspace = true
 nocterm-session.workspace = true
-nocterm-ai.workspace = true
 nocterm-themes.workspace = true
+nocterm-theme-service.workspace = true
 nocterm-design.workspace = true
 nocterm-settings.workspace = true
 
@@ -22,9 +26,11 @@ schemars.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tracing.workspace = true
-futures.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-store = { workspace = true, features = ["test-support"] }
+nocterm-themes = { workspace = true, features = ["test-support"] }
 toml.workspace = true
 gpui-kit = {workspace = true,features = ["test-support"]}
 tempfile.workspace = true

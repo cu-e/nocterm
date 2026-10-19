@@ -1,26 +1,49 @@
+//! Agent lifecycle and durable chat orchestration.
+//!
+//! Owns: pure admission policy, connection/lease owners, document identity, bounded
+//! keyed write admission, lazy history hydration and usage projections.
+//! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
+//! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
+//! AccountUsageSource, WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! at installation.
+//! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
+//! Settings section: ai consumer. Globals: none.
+//! Invariants: one current document owner per ID; delete seals an ID; persistence
+//! admission and physical publication are separate revision-bearing events. Registry
+//! stamps change only after writer acceptance; final work reads no App and joins
+//! captured admission failures with publication failures. Shared cleanup diagnostics
+//! retain the original typed AgentError through standard source traversal.
+use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
+use nocterm_ai::model::controls::ConfigOption;
+use nocterm_ai::model::session::SessionUpdate;
+
+mod handle;
+pub use handle::RuntimeHandle;
 mod admission;
+mod bridge;
+mod catalog;
 mod client;
+mod releases;
+mod usage;
+pub use catalog::PreparedHistory;
+mod connections;
 mod documents;
 mod lease;
 mod lifecycle;
-mod settings;
-mod shutdown;
+mod process_cleanup;
 mod startup;
+mod state;
+use futures::future::BoxFuture;
+mod storage;
 pub use client::{Client, ClientState, SessionClient, SessionEvent};
-use gpui::{App, Context, Entity, EntityId, Global, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 pub use lease::SessionLease;
 use nocterm_ai::{
     AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
-    ConnectRequest, ToolBridge, acp,
+    ToolBridge,
 };
-use settings::AiSettingsExt as _;
-pub use settings::AiSettingsSource;
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+pub use storage::{AgentPersistenceError, AgentStorage, HistoryReader};
 
 pub struct TerminalAuthRequest {
     pub program: String,
@@ -31,13 +54,13 @@ pub struct TerminalAuthRequest {
 }
 /// What the runtime connects agents with, and where it keeps their state.
 pub struct RuntimeServices {
+    pub settings: nocterm_store::SettingsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
-    pub state_file: PathBuf,
-    /// Saved chats, one file each.
-    pub chats_dir: PathBuf,
-    /// Where Codex keeps its session logs, read for its plan limits.
-    pub codex_home: Option<PathBuf>,
+    pub storage: AgentStorage,
+    /// Account usage is read through a host-injected native capability.
+    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+    pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     /// Whether the host can run an agent's sign-in command in a terminal.
     pub terminal_auth: bool,
@@ -48,8 +71,6 @@ pub struct RuntimeServices {
     /// tools' socket directory.
     pub shared_dirs: Vec<PathBuf>,
 }
-pub struct RuntimeGlobal(pub Entity<Runtime>);
-impl Global for RuntimeGlobal {}
 struct Connection {
     chat_id: String,
     launch: AgentLaunch,
@@ -63,128 +84,57 @@ struct Connection {
     _events: Option<Task<()>>,
     _connecting: Option<Task<()>>,
     cancellation: nocterm_ai::ConnectionCancellation,
-    startup_completion: Option<futures::channel::oneshot::Receiver<Result<(), String>>>,
+    startup_completion: Option<startup::Completion>,
 }
 pub struct Runtime {
-    pub services: RuntimeServices,
-    pub favorites: nocterm_ai::favorites::AgentStateFile,
-    pub favorites_error: Option<String>,
-    favorites_revision: u64,
-    favorites_writer: Option<Task<()>>,
-    favorites_io: nocterm_core::persist::WriteGate,
-    connections: HashMap<u64, Connection>,
-    documents: HashMap<EntityId, Client>,
-    document_owners: HashMap<String, EntityId>,
-    pending_activation: std::collections::VecDeque<Client>,
-    closing: HashMap<u64, String>,
-    /// Cleanup ownership survives a foreground close/FIFO barrier.
-    closing_commands: HashMap<u64, Arc<dyn AgentCommands>>,
-    idle_since: HashMap<u64, std::time::Instant>,
-    _lifecycle: Option<Task<()>>,
+    services: RuntimeServices,
+    state: state::AgentStateStore,
+    chats: documents::ChatStore,
+    connections: connections::ConnectionManager,
+    admission: admission::AdmissionState,
     shutting_down: bool,
-    chat_revisions: HashMap<String, (EntityId, u64)>,
-    pub registrations: HashMap<u64, Client>,
-    /// Chats read from disk and not yet shown by a panel; `None` while reading.
-    pub saved_chats: Option<Vec<nocterm_ai::history::SavedChat>>,
-    pub history_gate: nocterm_ai::history::HistoryGate,
-    pub saved_catalog: Option<Vec<nocterm_ai::history::ChatSummary>>,
-    /// Latest unsaved snapshot of each chat, written in order by `chat_writer`.
-    chat_writes: HashMap<String, Option<Arc<nocterm_ai::history::SharedChat>>>,
-    chat_writer: Option<Task<()>>,
-    chat_in_flight: Option<documents::PendingChatWrite>,
-    chat_io: nocterm_core::persist::WriteGate,
-    /// Deleted chats, never written again by a late save.
-    deleted_chats: std::collections::HashSet<String>,
-    _loading_chats: Option<Task<()>>,
-    /// Plan limits last reported, by agent.
-    limits: HashMap<String, nocterm_ai::usage::Limits>,
-    /// Agents whose limits are being read.
-    reading_limits: std::collections::HashSet<String>,
-    serial: u64,
-    /// Leases dropped by their threads, waiting to be released.
-    lease_releases: async_channel::Sender<lease::ReleasedLease>,
-    _releasing: Task<()>,
-    _bridge: Option<Task<()>>,
+    usage: usage::UsageLimits,
+    releases: releases::LeaseInbox,
+    bridge: bridge::BridgeRegistry,
 }
 impl Runtime {
-    pub fn global(cx: &App) -> Entity<Self> {
-        cx.global::<RuntimeGlobal>().0.clone()
+    fn ai<'a>(&self, cx: &'a App) -> &'a nocterm_ai::AiSettings {
+        self.services.settings.setting::<nocterm_ai::AiSettings>(cx)
     }
-    pub fn new(services: RuntimeServices, cx: &mut Context<Self>) -> Self {
-        for warning in nocterm_ai::AgentRegistry::new(cx.ai()).warnings {
+    fn ai_enabled(&self, cx: &App) -> bool {
+        self.ai(cx).enabled
+    }
+
+    pub fn new(mut services: RuntimeServices, cx: &mut Context<Self>) -> Self {
+        services.settings.register::<nocterm_ai::AiSettings>(cx);
+        for warning in
+            nocterm_ai::AgentRegistry::new(services.settings.setting::<nocterm_ai::AiSettings>(cx))
+                .warnings
+        {
             tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
         }
-        let favorites =
-            nocterm_ai::favorites::AgentStateFile::load(&services.state_file).unwrap_or_default();
-        let chats_dir = services.chats_dir.clone();
-        let loading = cx
-            .background_executor()
-            .spawn(async move { nocterm_ai::history::load_catalog(&chats_dir) });
-        let loading_chats = cx.spawn(async move |this, cx| {
-            let chats = loading.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.shutting_down {
-                    return;
-                }
-                this.saved_catalog = Some(chats);
-                cx.notify();
-            });
-        });
-        let (lease_releases, released) = async_channel::unbounded();
-        let releasing = cx.spawn(async move |this, cx| {
-            while let Ok(lease) = released.recv().await {
-                if this
-                    .update(cx, |this, cx| this.release_lease(lease, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        let state = state::AgentStateStore::new(&services.storage, cx);
+        let chats = documents::ChatStore::new(&mut services.storage, cx);
+        let releases = releases::LeaseInbox::new(cx);
+        let usage = usage::UsageLimits::new(services.usage_source.clone());
         Self {
-            saved_chats: None,
-            saved_catalog: None,
-            history_gate: Default::default(),
-            chat_writes: HashMap::new(),
-            chat_writer: None,
-            chat_in_flight: None,
-            chat_io: Default::default(),
-            deleted_chats: Default::default(),
-            _loading_chats: Some(loading_chats),
-            limits: HashMap::new(),
-            reading_limits: Default::default(),
-            favorites,
-            favorites_error: None,
-            favorites_revision: 0,
-            favorites_writer: None,
-            favorites_io: Default::default(),
+            state,
+            chats,
+            usage,
             services,
-            connections: HashMap::new(),
-            documents: HashMap::new(),
-            document_owners: HashMap::new(),
-            pending_activation: Default::default(),
-            closing: Default::default(),
-            closing_commands: Default::default(),
-            idle_since: Default::default(),
-            _lifecycle: None,
+            connections: Default::default(),
+            admission: Default::default(),
             shutting_down: false,
-            chat_revisions: Default::default(),
-            registrations: HashMap::new(),
-            serial: 0,
-            lease_releases,
-            _releasing: releasing,
-            _bridge: None,
+            releases,
+            bridge: Default::default(),
         }
     }
     /// Applies changed AI settings to the running agents.
     pub fn settings_changed(&mut self, cx: &mut Context<Self>) {
-        if !cx.ai_enabled() {
-            let ids = self.documents.keys().copied().collect::<Vec<_>>();
-            for id in ids {
-                self.capture_and_detach_document(id, cx);
-            }
+        if self.shutting_down {
+            return;
         }
-        let registry = nocterm_ai::AgentRegistry::new(cx.ai());
+        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
         for warning in &registry.warnings {
             tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");
         }
@@ -197,14 +147,20 @@ impl Runtime {
         for key in keys {
             self.stop_connection(key, "Agent configuration changed. Start a new chat.", cx);
         }
+        if !self.ai_enabled(cx) {
+            for id in self.chats.capture_and_detach_all(cx) {
+                self.admission.withdraw(id);
+            }
+        }
         self.apply_isolation(cx);
-        if !cx.ai_enabled() {
-            self.registrations.clear();
+        if !self.ai_enabled(cx) {
+            self.bridge.stop();
             self.services.bridge.stop();
         }
         let clients: Vec<_> = self
             .connections
-            .values()
+            .iter()
+            .map(|(_, connection)| connection)
             .flat_map(|connection| connection.users.values().cloned())
             .collect();
         for client in clients {
@@ -214,7 +170,7 @@ impl Runtime {
     /// Isolation is a security boundary: it applies to running agents at once
     /// rather than to the next chat.
     fn apply_isolation(&mut self, cx: &mut Context<Self>) {
-        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
+        let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
         let keys: Vec<_> = self
             .connections
             .iter()
@@ -240,204 +196,121 @@ impl Runtime {
         value: &str,
         cx: &mut Context<Self>,
     ) {
-        self.favorites.toggle(agent, option, value);
-        self.save_state(cx);
+        if self.shutting_down {
+            return;
+        }
+        self.state.edit(
+            |state| {
+                state.toggle(agent, option, value);
+            },
+            cx,
+        );
     }
     /// Keeps the configuration options `agent` reported, for chats that
     /// have not connected yet.
     pub fn remember_options(
         &mut self,
         agent: &str,
-        options: &[nocterm_ai::acp::SessionConfigOption],
+        options: &[ConfigOption],
         cx: &mut Context<Self>,
     ) {
-        if self.favorites.remember_options(agent, options) {
-            self.save_state(cx);
+        if self.shutting_down {
+            return;
         }
+        self.state.edit(
+            |state| {
+                state.remember_options(agent, options);
+            },
+            cx,
+        );
     }
     /// Keeps a model or reasoning effort choice for `agent`'s next chats.
     pub fn remember_choice(
         &mut self,
         agent: &str,
-        option: &nocterm_ai::acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &nocterm_ai::session_config::ConfigValue,
         cx: &mut Context<Self>,
     ) {
-        if self.favorites.remember_choice(agent, option, value) {
-            self.save_state(cx);
-        }
-    }
-    /// Remembers `agent` as the one new chats start with by default.
-    pub fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
-        if self.favorites.last_agent.as_deref() == Some(agent) {
-            return;
-        }
-        self.favorites.last_agent = Some(agent.to_owned());
-        self.save_state(cx);
-    }
-    fn save_state(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {
             return;
         }
-        self.favorites_revision += 1;
-        cx.notify();
-        if self.favorites_writer.is_some() {
+        self.state.edit(
+            |state| {
+                state.remember_choice(agent, option, value);
+            },
+            cx,
+        );
+    }
+    /// Remembers `agent` as the one new chats start with by default.
+    pub fn set_last_agent(&mut self, agent: &str, cx: &mut Context<Self>) {
+        if self.shutting_down {
             return;
         }
-        let gate = self.favorites_io.clone();
-        self.favorites_writer = Some(cx.spawn(async move |this, cx| {
-            loop {
-                if gate.is_frozen() {
-                    return;
-                }
-                let Ok((state, path, revision)) = this.read_with(cx, |this, _| {
-                    (
-                        this.favorites.clone(),
-                        this.services.state_file.clone(),
-                        this.favorites_revision,
-                    )
-                }) else {
-                    return;
-                };
-                let disk_gate = gate.clone();
-                let result = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let Some(_guard) = disk_gate.normal().await else {
-                            return Ok(());
-                        };
-                        if let Some(parent) = path.parent() {
-                            nocterm_core::paths::ensure_private_dir(parent)
-                                .map_err(|error| error.to_string())?;
-                        }
-                        state.save(&path)
-                    })
-                    .await;
-                if gate.is_frozen() {
-                    return;
-                }
-                let done = this
-                    .update(cx, |this, cx| {
-                        this.favorites_error = result.err();
-                        cx.notify();
-                        if this.favorites_revision == revision {
-                            this.favorites_writer.take();
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(true);
-                if done {
-                    return;
-                }
-            }
-        }));
+        self.state
+            .edit(|state| state.last_agent = Some(agent.to_owned()), cx);
+    }
+    pub fn favorites<'a>(&'a self, cx: &'a App) -> &'a nocterm_ai::favorites::AgentStateFile {
+        self.state.visible(cx)
+    }
+    pub fn favorites_error(&self, cx: &App) -> Option<AgentPersistenceError> {
+        self.state.error(cx)
+    }
+    pub fn history_reader(&self) -> HistoryReader {
+        self.chats.reader()
     }
     /// The plan limits last reported for `agent`.
     pub fn limits(&self, agent: &str) -> Option<&nocterm_ai::usage::Limits> {
-        self.limits.get(agent).filter(|limits| !limits.is_empty())
+        self.usage.get(agent)
     }
     /// Reads `agent`'s plan limits again, from agents that keep them in their
     /// own files. Others report them along with usage.
     pub fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        let codex = nocterm_ai::AgentRegistry::new(cx.ai())
-            .get(agent)
-            .is_some_and(nocterm_ai::usage::is_codex);
-        let Some(home) = self.services.codex_home.clone().filter(|_| codex) else {
+        if self.shutting_down {
+            return;
+        }
+        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
+        let Some(launch) = registry.get(agent) else {
             return;
         };
-        if !self.reading_limits.insert(agent.to_owned()) {
-            return;
-        }
-        let agent = agent.to_owned();
-        let reading = cx
-            .background_executor()
-            .spawn(async move { nocterm_ai::usage::read_codex_limits(&home) });
-        cx.spawn(async move |this, cx| {
-            let limits = reading.await;
-            let _ = this.update(cx, |this, cx| {
-                this.reading_limits.remove(&agent);
-                if let Some(limits) = limits {
-                    this.limits.entry(agent).or_default().replace(limits);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        self.usage
+            .refresh(nocterm_ai::usage::UsageAgent::from(launch), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
-        if self._bridge.is_some() {
+        if self.shutting_down {
             return;
         }
-        let calls = self.services.bridge.calls();
-        let rejections = self.services.bridge.rejections();
-        self._bridge = Some(cx.spawn(async move |this, cx| {
-            loop {
-                use futures::future::{Either, select};
-                let event = if rejections.is_closed() && rejections.is_empty() {
-                    match calls.recv().await {
-                        Ok(call) => SessionEvent::Tool(call),
-                        Err(_) => break,
-                    }
-                } else {
-                    match select(Box::pin(calls.recv()), Box::pin(rejections.recv())).await {
-                        Either::Left((Ok(call), _)) => SessionEvent::Tool(call),
-                        Either::Right((Ok(rejected), _)) => SessionEvent::ToolRejected(rejected),
-                        Either::Left((Err(_), _)) => break,
-                        Either::Right((Err(_), _)) => continue,
-                    }
-                };
-                let registration = match &event {
-                    SessionEvent::Tool(call) => call.registration_id,
-                    SessionEvent::ToolRejected(rejected) => rejected.registration_id,
-                    _ => unreachable!(),
-                };
-                let client = this
-                    .read_with(cx, |this, _| {
-                        this.registrations
-                            .get(&registration)
-                            .filter(|client| client.alive())
-                            .cloned()
-                    })
-                    .ok()
-                    .flatten();
-                if let Some(client) = client {
-                    cx.update(|cx| client.emit(event, cx));
-                } else if let SessionEvent::Tool(call) = event {
-                    let _ = call
-                        .respond
-                        .send(Err("Chat was closed or AI is disabled.".into()));
-                }
-            }
-        }));
+        self.bridge.start(self.services.bridge.clone(), cx);
     }
 
     pub fn register_bridge(
         &mut self,
         client: &Client,
         cx: &mut Context<Self>,
-    ) -> Result<BridgeRegistration, String> {
-        if !cx.ai_enabled() {
-            return Err("AI is disabled.".into());
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
+        if !self.ai_enabled(cx) {
+            return Err(nocterm_ai::connection::BridgeRegistrationError::AiDisabled);
         }
         let registration = self.services.bridge.register()?;
-        self.registrations.insert(registration.id, client.clone());
+        self.bridge.insert(registration.id, client.clone());
         self.start_bridge(cx);
         Ok(registration)
     }
     pub fn terminal_auth_request(
         &self,
         key: u64,
-        method: &acp::AuthMethodTerminal,
+        method: &AuthMethod,
     ) -> Option<TerminalAuthRequest> {
-        let connection = self.connections.get(&key)?;
+        let AuthFlow::TerminalSetup(setup) = &method.flow else {
+            return None;
+        };
+        let connection = self.connections.get(key)?;
         let launch = &connection.launch;
         let mut args = launch.args.clone();
-        args.extend(method.args.iter().cloned());
+        args.extend(setup.args.iter().cloned());
         let mut env = nocterm_ai::env::sanitized_environment(launch, std::env::vars());
         env.extend(
-            method
+            setup
                 .env
                 .iter()
                 .filter(|(key, value)| {
@@ -452,10 +325,9 @@ impl Runtime {
             args,
             env,
             cwd: connection.workdir.clone(),
-            title: format!("Sign in: {}", method.name),
+            title: format!("Sign in: {}", method.label),
         })
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub fn connect(
         &mut self,
         client: Client,
@@ -463,14 +335,14 @@ impl Runtime {
         launch: AgentLaunch,
         cx: &mut Context<Self>,
     ) {
-        if !cx.ai_enabled() {
+        if self.shutting_down || !self.ai_enabled(cx) {
             return;
         }
         let workdir = client
             .state(cx)
             .and_then(|state| state.workdir)
             .unwrap_or_else(|| {
-                cx.ai()
+                self.ai(cx)
                     .working_directory
                     .as_ref()
                     .map(PathBuf::from)
@@ -485,27 +357,31 @@ impl Runtime {
             );
             return;
         }
-        let isolated = cx.ai().sandbox == nocterm_ai::SandboxMode::Workspace;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        launch.hash(&mut hasher);
-        workdir.hash(&mut hasher);
-        isolated.hash(&mut hasher);
-        self.serial += 1;
-        self.serial.hash(&mut hasher);
-        let key = hasher.finish();
+        let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
+        let key = self.connections.reserve_key(&launch, &workdir, isolated);
         let registration = match self.register_bridge(&client, cx) {
             Ok(registration) => registration,
             Err(error) => {
-                client.emit(SessionEvent::Failed(error), cx);
+                client.emit(SessionEvent::Failed(error.to_string()), cx);
                 return;
             }
         };
-        let lease = SessionLease::new(client.id(), key, registration, self.lease_releases.clone());
+        let lease = SessionLease::new(client.id(), key, registration, self.releases.sender());
         client.emit(SessionEvent::Leased(lease), cx);
-        self.serial += 1;
-        let serial = self.serial;
+        let serial = self.connections.serial();
         let cancellation = nocterm_ai::ConnectionCancellation::default();
-        let (startup_ack, startup_completion) = futures::channel::oneshot::channel();
+        let (delivery, startup_completion) = startup::start(
+            startup::StartupConfig::for_connection(
+                &self.services,
+                launch.clone(),
+                workdir.clone(),
+                isolated,
+                self.ai(cx).resources.clone(),
+                cancellation.clone(),
+            ),
+            self.services.connector.clone(),
+            cx.background_executor(),
+        );
         self.connections.insert(
             key,
             Connection {
@@ -523,124 +399,74 @@ impl Runtime {
                 startup_completion: Some(startup_completion),
             },
         );
-        let connector = self.services.connector.clone();
-        let private_workdir = workdir == self.services.workdir;
-        let terminal_auth = self.services.terminal_auth;
-        let private_dirs = self.services.private_dirs.clone();
-        let shared_dirs = self.services.shared_dirs.clone();
-        let resources = cx.ai().resources.clone();
-        let future = cx.background_executor().spawn(async move {
-            if cancellation.is_cancelled() {
-                return (
-                    Err(nocterm_ai::AgentError::Io(
-                        "Agent startup cancelled.".into(),
-                    )),
-                    workdir,
-                );
-            }
-            let (effective, sandbox) = match startup::workspace(
-                &workdir,
-                private_workdir,
-                isolated,
-                &private_dirs,
-                &shared_dirs,
-            ) {
-                Ok(root) => root,
-                Err(error) => return (Err(error), workdir),
-            };
-            if cancellation.is_cancelled() {
-                return (
-                    Err(nocterm_ai::AgentError::Io(
-                        "Agent startup cancelled.".into(),
-                    )),
-                    effective,
-                );
-            }
-            let result = connector
-                .connect(ConnectRequest {
-                    launch,
-                    working_directory: effective.clone(),
-                    terminal_auth,
-                    sandbox,
-                    resources,
-                    cancellation,
-                })
-                .await;
-            (result, effective)
-        });
         let connecting = cx.spawn(async move |this, cx| {
-            let (result, effective) = future.await;
-            let uncertain = match &result {
-                Err(nocterm_ai::AgentError::CleanupUnconfirmed(error)) => Some(error.clone()),
-                _ => None,
-            };
-            let orphan = result
-                .as_ref()
-                .ok()
-                .map(|connection| connection.commands.clone());
-            let accepted = this
-                .update(cx, |this, cx| {
-                    if !this
-                        .connections
-                        .get(&key)
-                        .is_some_and(|connection| connection.serial == serial)
-                        || !cx.ai_enabled()
-                    {
-                        return false;
-                    }
-                    match result {
-                        Ok(connection) => {
-                            let slot = this.connections.get_mut(&key).expect("checked connection");
-                            slot.workdir = effective;
-                            slot.commands = Some(connection.commands.clone());
-                            slot.info = Some(connection.info.clone());
-                            let workdir = slot.workdir.clone();
-                            let clients: Vec<_> = slot.users.values().cloned().collect();
-                            for client in clients {
-                                client.emit(
-                                    SessionEvent::Connected {
-                                        commands: connection.commands.clone(),
-                                        info: Box::new(connection.info.clone()),
-                                        workdir: workdir.clone(),
-                                    },
-                                    cx,
-                                );
-                            }
-                            slot._events = Some(cx.spawn(async move |this, cx| {
-                                while let Ok(event) = connection.events.recv().await {
-                                    if this
-                                        .update(cx, |this, cx| this.event(key, serial, event, cx))
-                                        .is_err()
-                                    {
-                                        break;
-                                    }
-                                }
-                            }));
-                        }
-                        Err(error) => this.stop_connection(
-                            key,
-                            &nocterm_ai::redact::redact(&error.to_string()),
-                            cx,
-                        ),
-                    }
-                    true
-                })
-                .unwrap_or(false);
-            let cleanup = if let Some(error) = uncertain {
-                Err(error)
-            } else if !accepted && let Some(commands) = orphan {
-                commands
-                    .shutdown_gracefully()
-                    .await
-                    .map_err(|error| error.to_string())
-            } else {
-                Ok(())
-            };
-            let _ = startup_ack.send(cleanup);
+            if let Ok(delivery) = delivery.await {
+                let (result, effective, decision) = delivery.into_parts();
+                let accepted = this
+                    .update(cx, |this, cx| {
+                        this.accept_startup(key, serial, result, effective, cx)
+                    })
+                    .unwrap_or(false);
+                let _ = decision.send(accepted);
+            }
         });
-        if let Some(connection) = self.connections.get_mut(&key) {
-            connection._connecting = Some(connecting);
+        self.connections.connecting(key, connecting);
+    }
+    fn accept_startup(
+        &mut self,
+        key: u64,
+        serial: u64,
+        result: Result<nocterm_ai::AgentConnection, nocterm_ai::AgentError>,
+        effective: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self
+            .connections
+            .get(key)
+            .is_some_and(|connection| connection.serial == serial)
+            || !self.ai_enabled(cx)
+            || self.shutting_down
+        {
+            return false;
         }
+        match result {
+            Ok(connection) => {
+                let commands = connection.commands.clone();
+                let info = connection.info.clone();
+                let workdir = effective.clone();
+                let events = cx.spawn(async move |this, cx| {
+                    while let Ok(event) = connection.events.recv().await {
+                        if this
+                            .update(cx, |this, cx| this.event(key, serial, event, cx))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+                for client in self.connections.connected(
+                    key,
+                    commands.clone(),
+                    info.clone(),
+                    effective,
+                    events,
+                ) {
+                    client.emit(
+                        SessionEvent::Connected {
+                            connection: key,
+                            commands: commands.clone(),
+                            info: Box::new(info.clone()),
+                            workdir: workdir.clone(),
+                        },
+                        cx,
+                    );
+                }
+            }
+            Err(error) => {
+                self.stop_connection(key, &nocterm_ai::redact::redact(&error.to_string()), cx)
+            }
+        }
+        true
     }
     fn event(&mut self, key: u64, serial: u64, event: AgentEvent, cx: &mut Context<Self>) {
         if let AgentEvent::Barrier(ack) = event {
@@ -649,7 +475,7 @@ impl Runtime {
         }
         let Some(connection) = self
             .connections
-            .get(&key)
+            .get(key)
             .filter(|connection| connection.serial == serial)
         else {
             return;
@@ -657,14 +483,14 @@ impl Runtime {
         match event {
             AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
-                if let acp::SessionUpdate::UsageUpdate(update) = &notification.update
+                if let SessionUpdate::UsageUpdate(update) = &notification.update
                     && let Some(limit) = nocterm_ai::usage::claude_limit(update)
                 {
                     let agent = connection.launch.id.clone();
-                    self.limits.entry(agent).or_default().merge(limit);
+                    self.usage.merge(agent, limit);
                     cx.notify();
                 }
-                let Some(connection) = self.connections.get(&key) else {
+                let Some(connection) = self.connections.get(key) else {
                     return;
                 };
                 let notification = std::rc::Rc::new(notification);
@@ -678,9 +504,9 @@ impl Runtime {
                     .users
                     .values()
                     .find(|client| {
-                        client.state(cx).is_some_and(|state| {
-                            state.session.as_ref() == Some(&request.session_id)
-                        })
+                        client
+                            .state(cx)
+                            .is_some_and(|state| state.session.as_ref() == Some(&request.session))
                     })
                     .cloned();
                 // A request no thread takes is answered `Cancelled` on drop.
@@ -705,13 +531,19 @@ impl Runtime {
         }
     }
     fn stop_connection(&mut self, key: u64, message: &str, cx: &mut Context<Self>) {
-        let Some(connection) = self.connections.get(&key) else {
+        let Some(connection) = self.connections.get(key) else {
             return;
         };
         connection.cancellation.cancel();
         let clients: Vec<_> = connection.users.values().cloned().collect();
         for client in clients {
-            client.emit(SessionEvent::Stopped(message.to_owned()), cx);
+            client.emit(
+                SessionEvent::Stopped {
+                    connection: key,
+                    message: message.to_owned(),
+                },
+                cx,
+            );
         }
     }
 }

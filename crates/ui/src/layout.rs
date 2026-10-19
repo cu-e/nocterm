@@ -1,198 +1,171 @@
-//! How the user arranged the window — widths of resizable columns and
-//! choices such as which side a panel is on — remembered across restarts.
+//! Remembered column widths and layout choices.
 //!
-//! Views read a value by key when they lay out and record it when the user
-//! changes it. The values live in a small JSON file in the state directory;
-//! without a file (tests, a read-only home) they last for the session.
+//! Owns: named layout values and their JSON encoding.
+//! Does not own: persistence queues, write ordering or shutdown deadlines.
+//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: layout values and
+//! caller-owned observation of one normalized visible size.
+//! Settings section: none. Globals: none.
+//! Invariants: valid user changes are immediately visible; failed persistence
+//! leaves the desired arrangement intact.
 
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use gpui_kit::{App, Global, Pixels, Task, px};
-use nocterm_core::persist::{self, ShutdownDeadline, WriteGate};
+use gpui_kit::{App, AppContext as _, Entity, Pixels, Subscription, px};
+use nocterm_core::persist;
+use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 struct Saved {
     sizes: BTreeMap<String, f32>,
     flags: BTreeMap<String, bool>,
 }
 
-#[derive(Default)]
-pub struct LayoutMemory {
-    saved: Saved,
-    file: Option<PathBuf>,
-    gate: WriteGate,
-    revision: Arc<AtomicU64>,
-    writer: Option<Task<()>>,
-    #[cfg(test)]
-    captures: Arc<AtomicU64>,
+pub struct LayoutMemory;
+
+/// An explicit window dependency sharing the registered layout persistence owner.
+#[derive(Clone)]
+pub struct LayoutHandle {
+    persisted: Entity<Persisted<Saved>>,
 }
 
-impl Global for LayoutMemory {}
-
-impl LayoutMemory {
-    /// Installs the arrangement read from `file`.
-    pub fn init(file: Option<PathBuf>, cx: &mut App) {
-        let saved = file
-            .as_ref()
-            .and_then(|file| std::fs::read_to_string(file).ok())
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
-        cx.set_global(Self {
-            saved,
-            file,
-            ..Self::default()
-        });
-        cx.on_app_quit(|cx| {
-            let memory = cx.global::<Self>();
-            memory.gate.freeze();
-            let saved = memory.saved.clone();
-            let file = memory
-                .file
-                .clone()
-                .filter(|_| memory.revision.load(Ordering::Acquire) > 0);
-            let gate = memory.gate.clone();
-            let executor = cx.background_executor().clone();
-            let deadline = ShutdownDeadline::new(Duration::from_millis(180));
-            async move {
-                let Some(file) = file else { return };
-                let work = executor.spawn(async move {
-                    let _guard = gate.final_write().await;
-                    write(file, saved);
-                });
-                if matches!(
-                    futures::future::select(work, executor.timer(deadline.remaining())).await,
-                    futures::future::Either::Right(_)
-                ) {
-                    tracing::warn!("timed out saving final layout during shutdown");
-                }
-            }
-        })
-        .detach();
+impl LayoutHandle {
+    /// Creates unsaved layout state for an isolated window or fixture.
+    pub fn in_memory(cx: &mut App) -> Self {
+        Self {
+            persisted: cx.new(|_| {
+                Persisted::new(
+                    Saved::default(),
+                    writer(None),
+                    Publication::Optimistic,
+                    4096,
+                )
+            }),
+        }
     }
 
-    /// The remembered size for `key`, if the user ever set one.
-    pub fn get(key: &str, cx: &App) -> Option<Pixels> {
-        cx.try_global::<Self>()?
-            .saved
+    pub fn get(&self, key: &str, cx: &App) -> Option<Pixels> {
+        self.persisted
+            .read(cx)
+            .visible()
             .sizes
             .get(key)
             .filter(|size| size.is_finite() && **size > 0.)
             .map(|size| px(*size))
     }
 
-    /// Remembers `size` for `key`.
-    pub fn set(key: &str, size: Pixels, cx: &mut App) {
-        let size = f32::from(size).round();
-        if !size.is_finite() || size <= 0. {
-            return;
-        }
-        let memory = cx.default_global::<Self>();
-        if memory.saved.sizes.get(key) == Some(&size) {
-            return;
-        }
-        memory.saved.sizes.insert(key.to_owned(), size);
-        Self::save(cx);
+    /// Observes the latest visible size for one key, excluding unrelated changes.
+    /// The caller owns the subscription; initial state is available through `get`.
+    pub fn observe_size(
+        &self,
+        key: &str,
+        cx: &mut App,
+        mut on_change: impl FnMut(Option<Pixels>, &mut App) + 'static,
+    ) -> Subscription {
+        let key = key.to_owned();
+        let handle = self.clone();
+        let mut last = self.get(&key, cx);
+        cx.observe(&self.persisted, move |_, cx| {
+            let current = handle.get(&key, cx);
+            if current != last {
+                last = current;
+                on_change(current, cx);
+            }
+        })
     }
 
-    /// The remembered choice `key`; off until the user turns it on.
-    pub fn flag(key: &str, cx: &App) -> bool {
-        cx.try_global::<Self>()
-            .and_then(|memory| memory.saved.flags.get(key).copied())
+    pub fn flag(&self, key: &str, cx: &App) -> bool {
+        self.persisted
+            .read(cx)
+            .visible()
+            .flags
+            .get(key)
+            .copied()
             .unwrap_or(false)
     }
 
-    /// Remembers choice `key`.
-    pub fn set_flag(key: &str, value: bool, cx: &mut App) {
-        let memory = cx.default_global::<Self>();
-        if memory.saved.flags.get(key).copied().unwrap_or(false) == value {
-            return;
+    pub fn set(&self, key: &str, size: Pixels, cx: &mut App) -> Result<(), StoreError> {
+        let size = f32::from(size).round();
+        if !size.is_finite() || size <= 0. {
+            return Ok(());
         }
-        memory.saved.flags.insert(key.to_owned(), value);
-        Self::save(cx);
+        let key = key.to_owned();
+        self.persisted
+            .update(cx, |state, cx| {
+                state.update_latest(
+                    move |saved| {
+                        saved.sizes.insert(key, size);
+                    },
+                    cx,
+                )
+            })
+            .map(|_| ())
     }
 
-    /// Writes the file in the background.
-    fn save(cx: &mut App) {
-        let memory = cx.global_mut::<Self>();
-        if memory.file.is_none() {
-            return;
+    pub fn set_flag(&self, key: &str, value: bool, cx: &mut App) -> Result<(), StoreError> {
+        if self.flag(key, cx) == value {
+            return Ok(());
         }
-        if memory.gate.is_frozen() {
-            return;
-        }
-        memory.revision.fetch_add(1, Ordering::AcqRel);
-        if memory.writer.is_some() {
-            return;
-        }
-        let gate = memory.gate.clone();
-        let latest = memory.revision.clone();
-        let task = cx.spawn(async move |cx| {
-            loop {
-                if gate.is_frozen() {
-                    return;
-                }
-                let (file, saved, revision) = cx.update(|cx| {
-                    let memory = cx.global::<Self>();
-                    #[cfg(test)]
-                    memory.captures.fetch_add(1, Ordering::Relaxed);
-                    (
-                        memory.file.clone(),
-                        memory.saved.clone(),
-                        latest.load(Ordering::Acquire),
-                    )
-                });
-                let disk_gate = gate.clone();
-                let disk_latest = latest.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let Some(_guard) = disk_gate.normal().await else {
-                            return;
-                        };
-                        if disk_latest.load(Ordering::Acquire) == revision
-                            && let Some(file) = file
-                        {
-                            write(file, saved);
-                        }
-                    })
-                    .await;
-                if gate.is_frozen() {
-                    return;
-                }
-                let again = cx.update(|cx| {
-                    let memory = cx.global_mut::<Self>();
-                    if latest.load(Ordering::Acquire) == revision {
-                        memory.writer = None;
-                        false
-                    } else {
-                        true
-                    }
-                });
-                if !again {
-                    return;
-                }
-            }
-        });
-        cx.global_mut::<Self>().writer = Some(task);
+        let key = key.to_owned();
+        self.persisted
+            .update(cx, |state, cx| {
+                state.update_latest(
+                    move |saved| {
+                        saved.flags.insert(key, value);
+                    },
+                    cx,
+                )
+            })
+            .map(|_| ())
     }
 }
 
-fn write(file: PathBuf, saved: Saved) {
-    let result = serde_json::to_string_pretty(&saved)
-        .map_err(|error| error.to_string())
-        .and_then(|text| persist::save_text(&file, &text).map_err(|error| error.to_string()));
-    if let Err(error) = result {
-        tracing::warn!(%error, file = %file.display(), "layout was not saved");
+impl LayoutMemory {
+    /// Installs the arrangement and delegates the existing quit hook to the
+    /// explicitly supplied coordinator. Other owners register with that handle.
+    pub fn init(
+        file: Option<PathBuf>,
+        shutdown: &ShutdownCoordinator,
+        cx: &mut App,
+    ) -> LayoutHandle {
+        let saved = file
+            .as_ref()
+            .and_then(|file| std::fs::read_to_string(file).ok())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        let persisted =
+            cx.new(|_| Persisted::new(saved, writer(file), Publication::Optimistic, 4096));
+        if let Err(error) = shutdown.register(&persisted) {
+            tracing::warn!(%error, "layout shutdown participant was not registered");
+        }
+        let shutdown = shutdown.clone();
+        cx.on_app_quit(move |cx| {
+            let captured = shutdown.capture_all(cx);
+            async move {
+                let report = captured.await;
+                for error in report.failures() {
+                    tracing::warn!(%error, "application state shutdown persistence failed");
+                }
+            }
+        })
+        .detach();
+        LayoutHandle { persisted }
     }
+}
+
+fn writer(file: Option<PathBuf>) -> SnapshotWriter<Saved> {
+    Arc::new(move |saved| {
+        let file = file.clone();
+        Box::pin(async move {
+            let Some(file) = file else { return Ok(()) };
+            let text = serde_json::to_string_pretty(&saved).map_err(StoreError::backend)?;
+            persist::save_text(&file, &text).map_err(|error| {
+                tracing::warn!(%error, file = %file.display(), "layout was not saved");
+                StoreError::backend(error)
+            })
+        })
+    })
 }
 
 #[cfg(test)]

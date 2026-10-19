@@ -1,26 +1,27 @@
 use super::*;
 use gpui_kit::base::TestSupportExt as _;
+use nocterm_workspace::UnlockVault;
 
 impl TerminalView {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     pub(super) fn render_find(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let field = self.find.as_ref()?;
         let find = self.terminal.read(cx).find();
-        let label = if let Some(error) = &find.error {
-            error.clone()
-        } else if find.query.is_empty() {
+        let label = if let Some(error) = find.error() {
+            error.to_owned()
+        } else if find.query().is_empty() {
             "".into()
-        } else if find.searching {
+        } else if find.searching() {
             "Searching…".into()
-        } else if find.result.count == 0 {
+        } else if find.result().count == 0 {
             "No matches".into()
         } else {
-            format!("{} of {}", find.result.ordinal, find.result.count)
+            format!("{} of {}", find.result().ordinal, find.result().count)
         };
-        let disabled = find.query.is_empty()
-            || find.searching
-            || find.result.count == 0
-            || find.error.is_some();
+        let disabled = find.query().is_empty()
+            || find.searching()
+            || find.result().count == 0
+            || find.error().is_some();
         Some(
             v_flex()
                 .flex_shrink_0()
@@ -53,7 +54,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label(".*")
-                                .selected(find.options.regex)
+                                .selected(find.options().regex)
                                 .tooltip("Use regular expression (per logical line)")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -68,7 +69,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label("Aa")
-                                .selected(find.options.case_sensitive)
+                                .selected(find.options().case_sensitive)
                                 .tooltip("Match case")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -83,7 +84,7 @@ impl TerminalView {
                                 .ghost()
                                 .small()
                                 .label("ab")
-                                .selected(find.options.whole_word)
+                                .selected(find.options().whole_word)
                                 .tooltip("Match whole word")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_find_option(
@@ -132,7 +133,7 @@ impl TerminalView {
                             .text_xs()
                             .min_w_0()
                             .truncate()
-                            .text_color(if find.error.is_some() {
+                            .text_color(if find.error().is_some() {
                                 cx.theme().danger
                             } else {
                                 cx.theme().muted_foreground
@@ -171,7 +172,7 @@ impl TerminalView {
                 replacement_error,
                 ..
             } => {
-                let details = host_key::ChangedKey {
+                let details = ChangedKey {
                     host: if *port == 22 {
                         host.clone()
                     } else {
@@ -342,24 +343,11 @@ fn capitalize(text: &str) -> String {
 impl Render for TerminalView {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = TerminalStyle::current(cx);
+        let style = self.terminal_style(cx);
         self.sync_palette(&style, cx);
         let background = nocterm_ui::hsla(style.background);
 
-        let element = TerminalElement {
-            view: cx.entity(),
-            terminal: self.terminal.clone(),
-            focus: self.focus_handle.clone(),
-            style,
-            focused: self.focus_handle.is_focused(window),
-            cursor_lit: self.cursor_lit,
-            marked_text: self.marked_text.clone().map(SharedString::from),
-            frame: self.frame.clone(),
-            frame_dirty: self.frame_dirty.clone(),
-            frame_version: self.frame_version.clone(),
-            highlights: self.highlights.clone(),
-            geometry: self.geometry.clone(),
-        };
+        let element = self.paint_element(cx.entity(), style, self.focus_handle.is_focused(window));
 
         let grid = div()
             .id("terminal-drop-target")
@@ -400,7 +388,7 @@ impl Render for TerminalView {
         let command = terminal.is_command();
         let connected = terminal.is_connected();
         let path = recording
-            .and_then(|recording| recording.path)
+            .and_then(|recording| recording.path())
             .map(|path| path.to_string_lossy().into_owned());
         self.on_commands(v_flex(), cx)
             .size_full()
@@ -447,5 +435,206 @@ impl Render for TerminalView {
                             }),
                     ),
             )
+    }
+}
+
+impl TerminalView {
+    pub(super) fn render_host_key(
+        &mut self,
+        host: String,
+        algorithm: String,
+        fingerprint: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        self.card("Unknown host key", cx)
+            .child(div().text_sm().child(format!(
+                "This is the first connection to {host}. Check that the fingerprint \
+                         below is the one the host's administrator gives you."
+            )))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .p_2()
+                    .rounded(theme.radius)
+                    .bg(theme.muted)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(algorithm),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_family(theme.mono_font_family.clone())
+                            .child(fingerprint),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("host-key-reject")
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.answer_host_key(HostKeyDecision::Reject, window, cx);
+                            })),
+                    )
+                    .child(Button::new("host-key-once").label("Connect Once").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.answer_host_key(HostKeyDecision::AcceptOnce, window, cx);
+                        }),
+                    ))
+                    .child(
+                        Button::new("host-key-remember")
+                            .primary()
+                            .label("Trust and Connect")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.answer_host_key(
+                                    HostKeyDecision::AcceptAndRemember,
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+pub(super) struct ChangedKey {
+    host: String,
+    algorithm: String,
+    old_fingerprints: Vec<String>,
+    fingerprint: String,
+    known_hosts: std::path::PathBuf,
+    line: usize,
+    replacement_error: Option<String>,
+}
+impl TerminalView {
+    pub(super) fn render_changed_host_key(
+        &mut self,
+        key: ChangedKey,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let unavailable = key.replacement_error.is_some();
+        self.card("Host key changed", cx)
+            .child(div().text_sm().child(format!(
+                "The identity of {} has changed. This can happen after a server reinstall, or if someone intercepts the connection. Verify the new fingerprint with the host's administrator before connecting.", key.host
+            )))
+            .child(v_flex().id("changed-host-fingerprints").max_h(rems(12.)).overflow_y_scroll().overflow_x_scroll().gap_1().p_2().rounded(theme.radius).bg(theme.muted)
+                .child(div().text_xs().text_color(theme.muted_foreground).child(key.algorithm))
+                .child(div().text_xs().child("Previously trusted"))
+                .children(key.old_fingerprints.into_iter().map(|fingerprint| div().text_sm().font_family(theme.mono_font_family.clone()).child(fingerprint)))
+                .child(div().text_xs().child("New fingerprint"))
+                .child(div().text_sm().font_family(theme.mono_font_family.clone()).child(key.fingerprint)))
+            .child(div().text_xs().text_color(theme.muted_foreground).child(format!("Conflicting record: {} (line {})", key.known_hosts.display(), key.line)))
+            .children(key.replacement_error.map(|reason| div().text_sm().child(reason)))
+            .child(h_flex().flex_wrap().justify_end().gap_2()
+                .child(Button::new("host-key-reject").ghost().label("Cancel").on_click(cx.listener(|this, _, window, cx| {
+                    this.answer_host_key(HostKeyDecision::Reject, window, cx);
+                })))
+                .child(Button::new("host-key-once").label("Connect Once").on_click(cx.listener(|this, _, window, cx| {
+                    this.answer_host_key(HostKeyDecision::AcceptOnce, window, cx);
+                })))
+                .child(Button::new("host-key-remember").primary().disabled(unavailable).label("Trust New Key and Connect").on_click(cx.listener(|this, _, window, cx| {
+                    this.answer_host_key(HostKeyDecision::AcceptAndRemember, window, cx);
+                }))))
+            .into_any_element()
+    }
+}
+
+impl TerminalView {
+    pub(super) fn render_secret(
+        &mut self,
+        request: &SecretRequest,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let input = self.secret.as_ref()?.input.clone();
+        let (title, retry, masked) = crate::credentials::describe(request);
+        let danger = cx.theme().danger;
+
+        let rememberable = !matches!(request, SecretRequest::Interactive { .. });
+        let unlocked = self.terminal.read(cx).vault_unlocked(cx);
+        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        let message = self
+            .terminal
+            .read(cx)
+            .credential_message()
+            .map(str::to_owned);
+        let field = Input::new(&input).id("secret-input");
+        let field = if masked { field.mask_toggle() } else { field };
+
+        Some(
+            self.card(title, cx)
+                .when(retry, |card| {
+                    card.child(
+                        div()
+                            .text_sm()
+                            .text_color(danger)
+                            .child("That was not accepted. Try again."),
+                    )
+                })
+                .child(field)
+                .when_some(message, |card, message| {
+                    card.child(div().text_xs().child(message))
+                })
+                .when(rememberable, |card| {
+                    card.child(
+                        h_flex()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                gpui_kit::component::checkbox::Checkbox::new("remember-credential")
+                                    .small()
+                                    .label("Remember after sign in")
+                                    .checked(remember && unlocked)
+                                    .disabled(!unlocked)
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        if let Some(field) = &mut this.secret {
+                                            field.remember = *checked;
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .when(!unlocked, |row| {
+                                row.child(
+                                    Button::new("auth-open-vault")
+                                        .link()
+                                        .small()
+                                        .icon(IconName::Lock)
+                                        .label("Unlock vault…")
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(UnlockVault), cx)
+                                        }),
+                                )
+                            }),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("secret-cancel")
+                                .ghost()
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel_secret(cx))),
+                        )
+                        .child(
+                            Button::new("secret-submit")
+                                .primary()
+                                .label("Continue")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.submit_secret(window, cx)
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }

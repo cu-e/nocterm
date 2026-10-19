@@ -10,12 +10,17 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-store.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-keymap.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
+
+[features]
+test-support = []
 
 [lints]
 workspace = true

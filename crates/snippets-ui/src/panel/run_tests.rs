@@ -5,8 +5,8 @@ use gpui_kit::{
     point, px,
 };
 use nocterm_workspace::{
-    Item, ItemEvent, LocalTerminal, SignInPrompt, TerminalAccess, TerminalInfo, TerminalStatus,
-    TerminalText, TextRequest,
+    ExpectedSession, Item, ItemEvent, LocalTerminal, SignInPrompt, TerminalCapabilities,
+    TerminalInfo, TerminalState, TerminalStatus, UserPromptToken, UserTerminalPaste,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -22,14 +22,14 @@ struct Access {
 
 #[gpui_kit::test]
 fn hidden_bottom_refuses_run_and_show_restores_the_same_terminal(cx: &mut TestAppContext) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let access = Access::new(true);
     let workspace = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let item = terminal(access.clone(), cx);
             workspace.update(cx, |workspace, cx| {
                 workspace.set_local_terminal(item.clone(), window, cx)
@@ -87,6 +87,7 @@ impl Access {
     fn new(local: bool) -> Rc<Self> {
         Rc::new(Self {
             info: RefCell::new(Some(TerminalInfo {
+                expected: ExpectedSession::new(0u64.into(), 0),
                 title: if local { "Local" } else { "Remote" }.into(),
                 local,
                 target: None,
@@ -104,30 +105,35 @@ impl Access {
         })
     }
 }
-impl TerminalAccess for Access {
+impl TerminalState for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         self.info.borrow().clone()
     }
-    fn read(&self, _: TextRequest, _: &App) -> Result<TerminalText, String> {
-        Err("Unused by snippets".into())
-    }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), String> {
-        panic!("Snippets must use the native paste contract")
-    }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), String> {
-        panic!("Snippets must preserve agent command guards")
-    }
-    fn paste_snippet(&self, text: &str, execute: bool, _: &mut App) -> Result<(), String> {
+}
+impl UserTerminalPaste for Access {
+    fn paste(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        execute: bool,
+        _: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
+        if self
+            .info
+            .borrow()
+            .as_ref()
+            .is_none_or(|info| info.expected != expected)
+        {
+            return Err(nocterm_workspace::TerminalError::StaleSession);
+        }
         if self.reject.get() {
-            return Err("Input queue rejected the snippet".into());
+            return Err(nocterm_workspace::TerminalError::PasteQueueRejected);
         }
         self.sent.borrow_mut().push((text.to_owned(), execute));
         Ok(())
     }
-    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), String> {
-        panic!("Snippets must never answer authentication")
-    }
 }
+
 struct Terminal {
     access: Rc<Access>,
     focus: FocusHandle,
@@ -147,8 +153,14 @@ impl Item for Terminal {
     fn tab_title(&self, _: &App) -> SharedString {
         "Terminal".into()
     }
-    fn terminal_access(&self) -> Option<Rc<dyn TerminalAccess>> {
-        Some(self.access.clone())
+    fn terminal_capabilities(
+        &self,
+        owner: gpui_kit::WeakEntity<Self>,
+    ) -> Option<TerminalCapabilities> {
+        if let Some(info) = self.access.info.borrow_mut().as_mut() {
+            info.expected = ExpectedSession::new(owner.entity_id(), info.expected.epoch());
+        }
+        Some(TerminalCapabilities::new(self.access.clone()).with_paste(self.access.clone()))
     }
 }
 impl LocalTerminal for Terminal {
@@ -160,8 +172,8 @@ impl LocalTerminal for Terminal {
         _: PathBuf,
         _: &mut Window,
         _: &mut Context<Self>,
-    ) -> Result<(), String> {
-        Err("Unused by snippets".into())
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
+        Err(nocterm_workspace::LocalDirectoryError::UnsupportedShell)
     }
 }
 
@@ -217,15 +229,15 @@ fn click_row(id: SharedString, count: usize, window: &mut Window, cx: &mut App) 
 fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_actions(
     cx: &mut TestAppContext,
 ) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let remote = Access::new(false);
     let local = Access::new(true);
     let (workspace, remote_item, local_item) = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let remote_item = terminal(remote.clone(), cx);
             let local_item = terminal(local.clone(), cx);
             workspace.update(cx, |workspace, cx| {
@@ -246,7 +258,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
             workspace.activate_panel_of::<SnippetsPanel>(window, cx)
         });
         window.render_frame(cx);
-        assert!(panel.read(cx).profile.is_none());
+        assert_eq!(window.find("snippet-context").label(), Some("Local"));
         window.click("run", cx);
         assert!(
             local_item.read(cx).focus_handle(cx).is_focused(window),
@@ -301,7 +313,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
             workspace.activate_panel_of::<SnippetsPanel>(window, cx)
         });
         window.render_frame(cx);
-        assert_eq!(panel.read(cx).profile.as_deref(), Some("remote-profile"));
+        assert_eq!(window.find("snippet-context").label(), Some("Remote"));
         window.click("run", cx);
         assert!(
             remote_item.read(cx).focus_handle(cx).is_focused(window),
@@ -340,7 +352,8 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(panel.read(cx).profile.is_none());
+        window.render_frame(cx);
+        assert_eq!(window.find("snippet-context").label(), Some("Local"));
         workspace.update(cx, |workspace, cx| {
             workspace.close_local_terminal(window, cx)
         });
@@ -350,7 +363,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(panel.read(cx).profile.as_deref(), Some("remote-profile"));
+        assert_eq!(window.find("snippet-context").label(), Some("Remote"));
         window.click("run", cx);
         assert_eq!(
             remote.sent.borrow().len(),
@@ -369,14 +382,14 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn run_refuses_authentication_alternate_closed_and_background_terminals(cx: &mut TestAppContext) {
-    let (handle, panel) = fixture(cx);
+    let (handle, panel, workspace, installed) = fixture(cx);
     let original = snippet();
-    seed(&original, cx);
+    seed(&original, &installed, cx);
     let row: SharedString = format!("snippet-{}", original.id).into();
     let access = Access::new(false);
     let (workspace, item) = cx
         .update_window(handle, |_, window, cx| {
-            let workspace = panel.read(cx).workspace.upgrade().unwrap();
+            let workspace = workspace.clone();
             let item = terminal(access.clone(), cx);
             workspace.update(cx, |workspace, cx| {
                 workspace.add_item(item.clone(), window, cx)
@@ -416,6 +429,7 @@ fn run_refuses_authentication_alternate_closed_and_background_terminals(cx: &mut
             info.status = TerminalStatus::Connected;
             info.alt_screen = !authentication;
             info.sign_in = authentication.then(|| SignInPrompt {
+                token: UserPromptToken::new(info.expected, 0),
                 label: "Password".into(),
                 retry: false,
                 masked: true,

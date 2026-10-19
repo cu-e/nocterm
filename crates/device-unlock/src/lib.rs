@@ -1,5 +1,11 @@
 //! Native key-release adapters, injected by the application composition root.
-#[cfg(any(target_os = "macos", test))]
+//!
+//! Owns: platform registration, authenticated key release and native cancellation scopes.
+//! Does not own: vault format, file publication, accepted key state or unlock views.
+//! Ports provided: `DeviceUnlockProvider` from `nocterm-vault`.
+//! Settings section: none. Globals: none.
+//! Invariants: provider construction does not prompt; release checks binding and cancellation.
+#[cfg(any(target_os = "macos", test, feature = "test-support"))]
 mod cancellation;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -42,3 +48,6 @@ mod tests {
         assert!(Arc::ptr_eq(&provider, &clone));
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;

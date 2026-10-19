@@ -1,11 +1,11 @@
 //! The Vault page's tabs.
 use gpui_kit::{
     AnyElement, ClipboardItem, Context, Window,
+    base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::Input,
         switch::Switch,
         tab::{Tab as TabButton, TabBar},
         v_flex,
@@ -14,7 +14,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_ui::{IconName, SettingsExt as _, form};
+use nocterm_ui::{IconName, form};
 use nocterm_vault::DeviceAvailability;
 
 use crate::view::{Tab, VaultView};
@@ -51,11 +51,9 @@ impl Render for VaultView {
             .child(tabs)
             .child(body)
             .when_some(self.message.clone(), |page, (message, error)| {
-                page.child(if error {
-                    form::error_text(message, cx)
-                } else {
-                    form::note(message, cx)
-                })
+                page.child(div().id("vault-message").role(gpui_kit::Role::Alert).aria_label(message.clone()).test_support().child(if error {
+                    form::error_text(message,cx)
+                }else{form::note(message,cx)}))
             })
             .when(self.busy, |page| {
                 page.child(
@@ -141,8 +139,20 @@ impl VaultView {
             } else {
                 "Choose a master password"
             }))
-            .child(Input::new(&self.password))
-            .when(!exists, |form| form.child(Input::new(&self.confirm)))
+            .child(
+                div()
+                    .id("vault-password")
+                    .test_support()
+                    .child(self.form.password_input()),
+            )
+            .when(!exists, |form| {
+                form.child(
+                    div()
+                        .id("vault-confirm")
+                        .test_support()
+                        .child(self.form.confirm_input()),
+                )
+            })
             .child(
                 h_flex().child(
                     Button::new("vault-submit")
@@ -243,8 +253,18 @@ impl VaultView {
                 .w_full()
                 .py_3()
                 .gap_2()
-                .child(Input::new(&self.password))
-                .child(Input::new(&self.confirm))
+                .child(
+                    div()
+                        .id("vault-password")
+                        .test_support()
+                        .child(self.form.password_input()),
+                )
+                .child(
+                    div()
+                        .id("vault-confirm")
+                        .test_support()
+                        .child(self.form.confirm_input()),
+                )
                 .child(
                     h_flex().child(
                         Button::new("vault-submit")
@@ -313,10 +333,14 @@ impl VaultView {
             .child(form::row(
                 "Lock automatically",
                 "Minutes without using the vault before it locks, 1–1440.",
-                div().w(rems(6.)).child(Input::new(&self.auto_lock).small()),
+                div()
+                    .id("vault-auto-lock")
+                    .test_support()
+                    .w(rems(6.))
+                    .child(self.form.auto_lock_input()),
                 cx,
             ))
-            .when_some(self.auto_lock_error.clone(), |row, error| {
+            .when_some(self.form.auto_lock_error(), |row, error| {
                 row.child(form::error_text(error, cx))
             })
             .into_any_element();
@@ -324,13 +348,18 @@ impl VaultView {
             "Ask for the master password at startup",
             "Open this page when nocterm starts, so saved credentials are ready.",
             Switch::new("vault-prompt-on-startup")
-                .checked(cx.setting::<crate::VaultSettings>().prompt_on_startup)
-                .on_click(cx.listener(|_, checked: &bool, _, cx| {
+                .checked(
+                    self.settings
+                        .setting::<crate::VaultSettings>(cx)
+                        .prompt_on_startup,
+                )
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
                     let checked = *checked;
-                    cx.update_setting::<crate::VaultSettings>(move |settings| {
-                        settings.prompt_on_startup = checked
-                    })
-                    .detach();
+                    this.settings
+                        .update::<crate::VaultSettings>(cx, move |settings| {
+                            settings.prompt_on_startup = checked
+                        })
+                        .detach();
                     cx.notify();
                 })),
             cx,

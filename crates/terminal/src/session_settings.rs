@@ -65,6 +65,16 @@ pub(crate) fn open(terminal: Entity<Terminal>, window: &mut Window, cx: &mut App
     });
 }
 
+#[derive(Debug, thiserror::Error)]
+enum ApplyOptionsError {
+    #[error(transparent)]
+    Input(#[from] nocterm_ui::SessionOptionsInputError),
+    #[error(transparent)]
+    Validation(#[from] nocterm_session::SessionOptionsError),
+    #[error("This session is no longer available. Close this dialog.")]
+    Unavailable,
+}
+
 struct SessionSettings {
     terminal: WeakEntity<Terminal>,
     options: Entity<SessionOptionsEditor>,
@@ -97,18 +107,20 @@ impl SessionSettings {
         if self.closed {
             return;
         }
-        let result = self.options.read(cx).options(cx).and_then(|options| {
+        let result: Result<(), ApplyOptionsError> = (|| {
+            let options = self.options.read(cx).options(cx)?;
             self.terminal
                 .update(cx, |terminal, cx| terminal.set_session_options(options, cx))
-                .map_err(|_| "This session is no longer available. Close this dialog.".to_owned())?
-        });
+                .map_err(|_| ApplyOptionsError::Unavailable)??;
+            Ok(())
+        })();
         match result {
             Ok(()) => {
                 self.closed = true;
                 window.close_dialog(cx);
             }
             Err(error) => {
-                self.error = Some(error);
+                self.error = Some(error.to_string());
                 cx.notify();
             }
         }
@@ -169,17 +181,25 @@ mod tests {
                 program: Some("/bin/bash".into()),
                 ..Default::default()
             }),
-            credential: Some(nocterm_session::CredentialId::generate().unwrap()),
+            credential: Some(nocterm_session::CredentialId::from_bytes([42; 16])),
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
-            nocterm_ui::init(
+            let ui = nocterm_ui::init(
                 nocterm_ui::DesignTokens::builtin(),
-                nocterm_ui::SettingsStore::in_memory(Default::default()),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
+                cx,
+            );
+            let installed = crate::install(
+                crate::Deps::new(
+                    std::sync::Arc::new(nocterm_session::testing::ScriptedTransport::default()),
+                    crate::LocalSessions::disabled("/bin/bash".into()),
+                ),
+                &ui,
                 cx,
             );
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| crate::TerminalView::new(spec.clone(), window, cx))
+                cx.new(|cx| crate::TerminalView::new(installed.clone(), spec.clone(), window, cx))
             })
             .unwrap()
         });
@@ -210,6 +230,34 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn invalid_override_returns_its_typed_cause_without_changing_the_session(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, terminal, expected) = fixture(Default::default(), cx);
+        cx.update_window(handle, |_, _, cx| {
+            let error = terminal
+                .update(cx, |terminal, cx| {
+                    terminal.set_session_options(
+                        SessionOptions {
+                            term: Some("invalid TERM".into()),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .unwrap_err();
+            assert_eq!(
+                error,
+                nocterm_session::SessionOptionsError::Term(
+                    nocterm_session::TermError::InvalidCharacter
+                )
+            );
+            assert_eq!(terminal.read(cx).spec(), &expected);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     fn native_apply_changes_only_transient_options(cx: &mut TestAppContext) {
         let (handle, terminal, mut expected) = fixture(Default::default(), cx);
         choose_term(cx, handle);
@@ -226,9 +274,9 @@ mod tests {
         })
         .unwrap();
         cx.read(|cx| {
-            let store = cx.global::<nocterm_ui::SettingsStore>();
+            let settings = terminal.read(cx).installed().settings().clone();
             assert_eq!(
-                store.revision(),
+                settings.revision(cx),
                 0,
                 "applying a session setting saved nothing"
             );

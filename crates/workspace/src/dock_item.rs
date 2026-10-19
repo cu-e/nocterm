@@ -84,7 +84,6 @@ impl DockItem {
             cx.notify();
         }
     }
-    #[cfg(test)]
     pub(crate) fn group_color(&self) -> Option<usize> {
         self.group_color
     }

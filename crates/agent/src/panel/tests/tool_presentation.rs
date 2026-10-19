@@ -1,6 +1,11 @@
 use super::tool_output::{call, exec_result, expanded_fixture, settle};
 use super::*;
 use crate::panel::entries::tool_input::source;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::ToolRecord;
+use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch};
+use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display;
 use serde_json::json;
 
@@ -116,4 +121,115 @@ fn unmatched_historical_command_is_readable_without_current_attachment_host() {
         tool_display::header(&call),
         "Nocterm · Execute program · Completed"
     );
+}
+
+fn expanded_thought_and_tool(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> Entity<crate::thread::AgentThread> {
+    new_chat(f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        let mut entries = vec![
+            Entry::Thought("short".into()),
+            Entry::Tool(ToolRecord::new("call", "Tool")),
+        ];
+        entries.extend((0..30).map(|i| Entry::User(vec![Content::text(format!("question {i}"))])));
+        restore_entries(f, thread, entries, cx);
+        for index in 0..thread.transcript().entries.len() {
+            thread.mark_dirty(index);
+        }
+        cx.notify();
+    });
+    super::navigation::scroll_to(f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(("thought", 0usize), cx);
+        window.render_frame(cx);
+        window.click(("tool-call", 1usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    thread
+}
+
+fn assert_static_row(f: &Fixture, index: usize, cx: &mut TestAppContext) {
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find(("agent-entry", index)).bounds()
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(("agent-entry", index)).bounds(), before);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let thread = expanded_thought_and_tool(&f, cx);
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find(("agent-entry", 0usize)).bounds().size.height
+        })
+        .unwrap();
+    thread.update(cx, |thread, cx| {
+        let mut entries = thread.history_entries().to_vec();
+        entries[0] = Entry::Thought("thought line\n\n".repeat(10));
+        restore_entries(&f, thread, entries, cx);
+        thread.mark_dirty(0);
+        cx.notify();
+    });
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let thought = window.find(("agent-entry", 0usize)).bounds();
+        assert!(thought.size.height > before);
+        assert!(window.find(("agent-entry", 1usize)).bounds().origin.y >= thought.bottom());
+    })
+    .unwrap();
+    assert_static_row(&f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(
+            (
+                gpui_kit::ElementId::from("agent-transcript"),
+                "jump-to-latest",
+            ),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, _| {
+        assert!(window.try_find(("tool-output", 1usize)).is_none());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "call",
+                ToolChanges::default().content(vec![ToolContent::from("tool line\n".repeat(12))]),
+            ))),
+            cx,
+        );
+        thread.mark_dirty(1);
+        cx.notify();
+    });
+    super::navigation::scroll_to(&f, 1, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tool = window.find(("agent-entry", 1usize)).bounds();
+        assert!(tool.size.height > gpui_kit::px(160.));
+        assert!(window.find(("agent-entry", 2usize)).bounds().origin.y >= tool.bottom());
+    })
+    .unwrap();
+    assert_static_row(&f, 1, cx);
 }

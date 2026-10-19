@@ -12,10 +12,10 @@ layer = "feature"
 [dependencies]
 nocterm-keymap.workspace = true
 nocterm-ui.workspace = true
-nocterm-workspace.workspace = true
 gpui-kit.workspace = true
 
 [dev-dependencies]
+nocterm-store.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
 

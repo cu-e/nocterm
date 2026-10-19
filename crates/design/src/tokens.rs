@@ -14,15 +14,42 @@ use serde::{
 
 use crate::Color;
 
+mod codec;
+mod layout;
+mod terminal;
+pub use layout::{Layout, WidthBounds};
+pub use terminal::{AnsiColors, TerminalColors};
+
 const BUILTIN: &str = include_str!("../tokens/default.toml");
 
 /// A token file is malformed or holds a value nocterm cannot render with.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum TokenError {
-    #[error("invalid design tokens: {0}")]
-    Parse(#[from] Box<toml::de::Error>),
-    #[error("invalid design token `{token}`: {reason}")]
+    Parse(Box<toml::de::Error>),
     Invalid { token: &'static str, reason: String },
+}
+impl fmt::Display for TokenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(source) => write!(formatter, "invalid design tokens: {source}"),
+            Self::Invalid { token, reason } => {
+                write!(formatter, "invalid design token `{token}`: {reason}")
+            }
+        }
+    }
+}
+impl std::error::Error for TokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(source) => Some(source.as_ref()),
+            Self::Invalid { .. } => None,
+        }
+    }
+}
+impl From<Box<toml::de::Error>> for TokenError {
+    fn from(source: Box<toml::de::Error>) -> Self {
+        Self::Parse(source)
+    }
 }
 
 /// Everything that determines how nocterm looks.
@@ -93,48 +120,6 @@ pub struct Shape {
     pub shadow: Option<bool>,
 }
 
-/// Sizes of the interface's fixed regions, in rem.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Layout {
-    /// Initial width of the AI panel, in rem.
-    pub agent_panel_width: f32,
-    /// Minimum AI panel width, in rem.
-    pub agent_panel_min_width: f32,
-    /// Maximum AI panel width, in rem.
-    pub agent_panel_max_width: f32,
-    /// Initial width of the left sidebar.
-    pub sidebar_width: f32,
-    /// Narrowest the sidebar can be dragged.
-    pub sidebar_min_width: f32,
-    /// Widest the sidebar can be dragged.
-    pub sidebar_max_width: f32,
-    /// Width past which a session tab ellipsizes its title.
-    pub tab_max_width: f32,
-    /// Space between the terminal grid and the edge of its pane.
-    pub terminal_padding: f32,
-    /// Width of the "new tab" picker.
-    pub picker_width: f32,
-    /// Width of the connection editor dialog.
-    pub dialog_width: f32,
-    /// Maximum width of the settings form and its footer.
-    pub settings_width: f32,
-    /// Width of the connection editor including its section navigation.
-    pub connection_editor_width: f32,
-    /// Maximum height of the connection editor's scrolling form.
-    pub connection_editor_height: f32,
-    /// Width of the connection editor's section navigation.
-    pub connection_nav_width: f32,
-    /// Height of the connection description text area.
-    pub connection_description_height: f32,
-    /// Height of a default button; other button sizes keep their relative hierarchy.
-    pub button_height: f32,
-    /// Horizontal padding of a default button.
-    pub button_padding: f32,
-    /// Initial height of the independent local terminal dock, in rem.
-    pub local_terminal_height: f32,
-}
-
 /// The colours of one appearance, light or dark.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -150,80 +135,6 @@ pub struct Palette {
     pub canvas: Option<Color>,
     /// Colours of the terminal grid.
     pub terminal: TerminalColors,
-}
-
-/// Colours of the terminal grid.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TerminalColors {
-    /// Terminal background. Unset: the interface background.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub background: Option<Color>,
-    /// Default text colour. Unset: the interface foreground.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub foreground: Option<Color>,
-    /// Cursor colour. Unset: the terminal foreground.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Color>,
-    /// Selection highlight. Unset: the interface selection colour.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<Color>,
-    /// ANSI colour 0.
-    pub black: Color,
-    /// ANSI colour 1.
-    pub red: Color,
-    /// ANSI colour 2.
-    pub green: Color,
-    /// ANSI colour 3.
-    pub yellow: Color,
-    /// ANSI colour 4.
-    pub blue: Color,
-    /// ANSI colour 5.
-    pub magenta: Color,
-    /// ANSI colour 6.
-    pub cyan: Color,
-    /// ANSI colour 7.
-    pub white: Color,
-    /// ANSI colour 8.
-    pub bright_black: Color,
-    /// ANSI colour 9.
-    pub bright_red: Color,
-    /// ANSI colour 10.
-    pub bright_green: Color,
-    /// ANSI colour 11.
-    pub bright_yellow: Color,
-    /// ANSI colour 12.
-    pub bright_blue: Color,
-    /// ANSI colour 13.
-    pub bright_magenta: Color,
-    /// ANSI colour 14.
-    pub bright_cyan: Color,
-    /// ANSI colour 15.
-    pub bright_white: Color,
-}
-
-impl TerminalColors {
-    /// The sixteen ANSI colours in index order.
-    pub fn ansi(&self) -> [Color; 16] {
-        [
-            self.black,
-            self.red,
-            self.green,
-            self.yellow,
-            self.blue,
-            self.magenta,
-            self.cyan,
-            self.white,
-            self.bright_black,
-            self.bright_red,
-            self.bright_green,
-            self.bright_yellow,
-            self.bright_blue,
-            self.bright_magenta,
-            self.bright_cyan,
-            self.bright_white,
-        ]
-    }
 }
 
 /// Interface colour overrides, keyed by the component theme's colour names.
@@ -403,39 +314,39 @@ impl DesignTokens {
         let layout = &self.layout;
         within(
             "layout.sidebar_min_width",
-            layout.sidebar_min_width,
+            layout.sidebar.min_width,
             4.0,
             100.0,
         )?;
         within(
             "layout.sidebar_max_width",
-            layout.sidebar_max_width,
-            layout.sidebar_min_width,
+            layout.sidebar.max_width,
+            layout.sidebar.min_width,
             200.0,
         )?;
         within(
             "layout.sidebar_width",
-            layout.sidebar_width,
-            layout.sidebar_min_width,
-            layout.sidebar_max_width,
+            layout.sidebar.width,
+            layout.sidebar.min_width,
+            layout.sidebar.max_width,
         )?;
         within(
             "layout.agent_panel_min_width",
-            layout.agent_panel_min_width,
+            layout.agent_panel.min_width,
             1.0,
             100.0,
         )?;
         within(
             "layout.agent_panel_max_width",
-            layout.agent_panel_max_width,
-            layout.agent_panel_min_width,
+            layout.agent_panel.max_width,
+            layout.agent_panel.min_width,
             100.0,
         )?;
         within(
             "layout.agent_panel_width",
-            layout.agent_panel_width,
-            layout.agent_panel_min_width,
-            layout.agent_panel_max_width,
+            layout.agent_panel.width,
+            layout.agent_panel.min_width,
+            layout.agent_panel.max_width,
         )?;
         within("layout.tab_max_width", layout.tab_max_width, 4.0, 100.0)?;
         within("layout.terminal_padding", layout.terminal_padding, 0.0, 8.0)?;
@@ -512,8 +423,12 @@ fn merge(base: &mut toml::Table, overlay: toml::Table) {
 }
 
 #[cfg(test)]
+mod format_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error as _;
 
     #[test]
     fn builtin_tokens_are_valid() {
@@ -547,13 +462,16 @@ mod tests {
         let builtin = DesignTokens::builtin();
 
         assert_eq!(tokens.typography.mono_size, Some(15.0));
-        assert_eq!(tokens.dark.terminal.red, Color::rgb(255, 0, 0));
+        assert_eq!(tokens.dark.terminal.normal.red, Color::rgb(255, 0, 0));
         // Siblings of an overridden key keep their built-in values.
         assert_eq!(
             tokens.typography.terminal_line_height,
             builtin.typography.terminal_line_height
         );
-        assert_eq!(tokens.dark.terminal.green, builtin.dark.terminal.green);
+        assert_eq!(
+            tokens.dark.terminal.normal.green,
+            builtin.dark.terminal.normal.green
+        );
         assert_eq!(tokens.light, builtin.light);
     }
 
@@ -588,6 +506,20 @@ mod tests {
         let error = DesignTokens::with_overrides("[layout]\nsidebar_widht = 20.0\n").unwrap_err();
 
         assert!(error.to_string().contains("sidebar_widht"), "{error}");
+        let TokenError::Parse(source) = &error else {
+            panic!("a rejected TOML token must retain its parser classification");
+        };
+        let native = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, source.as_ref()));
+        assert!(native.source().is_none(), "the codec exposes a leaf error");
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {native}")
+        );
     }
 
     #[test]
@@ -595,6 +527,20 @@ mod tests {
         let error = DesignTokens::with_overrides("[dark.ui]\nbackground = \"blue\"\n").unwrap_err();
 
         assert!(error.to_string().contains("blue"), "{error}");
+        let TokenError::Parse(source) = &error else {
+            panic!("a rejected TOML token must retain its parser classification");
+        };
+        let native = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(native, source.as_ref()));
+        assert!(native.source().is_none(), "the codec exposes a leaf error");
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {native}")
+        );
     }
 
     #[test]
@@ -614,12 +560,42 @@ mod tests {
     }
 
     #[test]
+    fn boxed_parse_conversion_retains_original_codec_allocation_and_display() {
+        let native = Box::new(toml::from_str::<toml::Table>("name = ").unwrap_err());
+        let original = native.as_ref() as *const toml::de::Error;
+        let description = native.to_string();
+        let error = TokenError::from(native);
+        assert!(matches!(&error, TokenError::Parse(_)));
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<toml::de::Error>()
+            .unwrap();
+        assert!(std::ptr::eq(source, original));
+        assert!(source.source().is_none());
+        assert_eq!(
+            error.to_string(),
+            format!("invalid design tokens: {description}")
+        );
+        let invalid =
+            DesignTokens::with_overrides("[layout]\nsidebar_width = 500.0\n").unwrap_err();
+        assert!(matches!(
+            &invalid,
+            TokenError::Invalid {
+                token: "layout.sidebar_width",
+                ..
+            }
+        ));
+        assert!(invalid.source().is_none());
+    }
+
+    #[test]
     fn ansi_colours_are_in_index_order() {
         let colors = DesignTokens::builtin().dark.terminal;
         let ansi = colors.ansi();
 
-        assert_eq!(ansi[1], colors.red);
-        assert_eq!(ansi[8], colors.bright_black);
-        assert_eq!(ansi[15], colors.bright_white);
+        assert_eq!(ansi[1], colors.normal.red);
+        assert_eq!(ansi[8], colors.bright.black);
+        assert_eq!(ansi[15], colors.bright.white);
     }
 }

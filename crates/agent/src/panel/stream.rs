@@ -1,11 +1,6 @@
 //! Display-only reveal visits changed rows and the live backlog, never the whole history.
-use super::AgentPanel;
-use gpui_kit::Context;
 use nocterm_ai::thread::Entry;
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub(super) struct StreamReveal {
     bytes: HashMap<usize, usize>,
@@ -102,65 +97,6 @@ impl StreamReveal {
     #[cfg(test)]
     pub(super) fn backlog_len(&self) -> usize {
         self.backlog.len()
-    }
-}
-impl AgentPanel {
-    pub(super) fn sync_stream(&mut self, dirty: &[usize], cx: &mut Context<Self>) {
-        let Some(thread) = self.current() else {
-            return;
-        };
-        let mut changed = dirty.to_vec();
-        changed.extend(self.stream.observe(
-            &thread.read(cx).state.entries,
-            dirty,
-            thread.read(cx).lifecycle.generating(),
-            cx.reduce_motion(),
-        ));
-        self.remeasure_rows(changed, cx);
-        self.schedule_stream_tick(cx);
-    }
-    fn remeasure_rows(&mut self, mut rows: Vec<usize>, cx: &mut Context<Self>) {
-        if rows.is_empty() {
-            return;
-        }
-        rows.sort_unstable();
-        rows.dedup();
-        self.list.update(cx, |list, cx| {
-            let mut start = rows[0];
-            let mut end = start + 1;
-            for index in rows.into_iter().skip(1) {
-                if index == end {
-                    end += 1;
-                } else {
-                    list.remeasure_items(start..end, cx);
-                    start = index;
-                    end = index + 1;
-                }
-            }
-            list.remeasure_items(start..end, cx);
-        });
-    }
-    fn schedule_stream_tick(&mut self, cx: &mut Context<Self>) {
-        if !self.stream.pending() || self.stream_tick.is_some() {
-            return;
-        }
-        self.stream_tick = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(16))
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.stream_tick = None;
-                let Some(thread) = this.current() else {
-                    return;
-                };
-                let changed = this
-                    .stream
-                    .advance(&thread.read(cx).state.entries, cx.reduce_motion());
-                this.remeasure_rows(changed, cx);
-                this.schedule_stream_tick(cx);
-                cx.notify();
-            });
-        }));
     }
 }
 #[cfg(test)]

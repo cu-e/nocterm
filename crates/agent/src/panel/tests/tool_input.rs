@@ -1,14 +1,16 @@
 use super::*;
 use gpui_kit::px;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus};
 use nocterm_ai::thread::Entry;
 use serde_json::{Value, json};
 
 use crate::panel::{entries::tool_input::source, widgets::short_hover_label};
 use nocterm_ai::tool_display::{self, ToolDisplay};
 
-fn verified_call(tool: &str, input: Value) -> acp::ToolCall {
+fn verified_call(tool: &str, input: Value) -> ToolRecord {
     let request = tool_display::parse(tool, input.clone()).unwrap();
-    let mut call = acp::ToolCall::new("verified", format!("mcp.nocterm-3.{tool}"));
+    let mut call = ToolRecord::new("verified", format!("mcp.nocterm-3.{tool}"));
     call.raw_input = Some(json!({"server":"nocterm-3","tool":tool,"arguments":input}));
     ToolDisplay::new(
         &request,
@@ -131,7 +133,7 @@ fn display_snapshot_takes_precedence_over_mutated_provider_inputs() {
 
 #[test]
 fn historical_nocterm_input_is_requested_data_without_a_guessed_destination() {
-    let mut call = acp::ToolCall::new("historical", "mcp.nocterm-3.run_command").raw_input(json!({
+    let mut call = ToolRecord::new("historical", "mcp.nocterm-3.run_command").raw_input(json!({
         "server":"nocterm-3", "tool":"run_command", "arguments":{"terminal_id":"t1", "command":"echo original", "timeout_ms":10000,"idle_ms":1000}
     }));
     let selected = source(&call).unwrap();
@@ -167,14 +169,14 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
         json!({"command":3,"script":literal,"code":"other"}),
         json!({"code":literal}),
     ] {
-        let mut call = acp::ToolCall::new("call", "provider summary");
+        let mut call = ToolRecord::new("call", "provider summary");
         call.raw_input = Some(input.clone());
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Script");
         assert_eq!(selected.text, literal);
         assert_eq!(call.raw_input.as_ref(), Some(&input));
     }
-    let mut call = acp::ToolCall::new("call", "summary");
+    let mut call = ToolRecord::new("call", "summary");
     call.raw_input = Some(json!(literal));
     let selected = source(&call).unwrap();
     assert_eq!(selected.label, "Tool input");
@@ -184,14 +186,14 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
         json!([1, "two"]),
         json!(false),
     ] {
-        let mut call = acp::ToolCall::new("call", "summary\nwith lines");
+        let mut call = ToolRecord::new("call", "summary\nwith lines");
         call.raw_input = Some(input.clone());
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Tool input");
         assert_eq!(selected.text, serde_json::to_string_pretty(&input).unwrap());
     }
     for input in [None, Some(Value::Null)] {
-        let mut call = acp::ToolCall::new("call", literal);
+        let mut call = ToolRecord::new("call", literal);
         call.raw_input = input.clone();
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Tool details");
@@ -220,19 +222,19 @@ fn settle(f: &Fixture, cx: &mut TestAppContext) {
 }
 
 fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> Fixture {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        let mut call = acp::ToolCall::new("script", title);
-        call.status = acp::ToolCallStatus::Completed;
+        let mut call = ToolRecord::new("script", title);
+        call.status = ToolStatus::Succeeded;
         call.raw_input = input;
         call.content = serde_json::from_value(json!([
             {"type":"content", "content":{"type":"text", "text":"original result"}}
         ]))
         .unwrap();
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -261,7 +263,7 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
         let thread = f.panel.read(cx).current().unwrap();
-        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
             panic!("tool missing")
         };
         assert_eq!(call.raw_input, Some(json!({"command":script})));
@@ -283,14 +285,12 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
             .unwrap()
     });
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::ToolCallUpdate(
-                serde_json::from_value(json!({
-                    "toolCallId":"script", "rawInput":{"script":updated}
-                }))
-                .unwrap(),
-            ),
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "script",
+                ToolChanges::default().raw_input(json!({"script":updated})),
+            ))),
         )))
         .unwrap();
     cx.run_until_parked();
@@ -375,11 +375,11 @@ fn actual_hover_tooltip_is_short_and_bounded(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-fn set_verified(f: &Fixture, mut call: acp::ToolCall, cx: &mut TestAppContext) {
-    call.status = acp::ToolCallStatus::Completed;
+fn set_verified(f: &Fixture, mut call: ToolRecord, cx: &mut TestAppContext) {
+    call.status = ToolStatus::Succeeded;
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
@@ -506,7 +506,7 @@ struct ConnectedAccess {
     base: Rc<Access>,
     target: std::cell::RefCell<nocterm_session::Target>,
 }
-impl TerminalAccess for ConnectedAccess {
+impl TerminalState for ConnectedAccess {
     fn info(&self, cx: &App) -> Option<TerminalInfo> {
         let mut info = self.base.info(cx)?;
         info.local = false;
@@ -514,17 +514,38 @@ impl TerminalAccess for ConnectedAccess {
         info.target = Some(self.target.borrow().clone());
         Some(info)
     }
-    fn read(&self, request: TextRequest, cx: &App) -> Result<TerminalText, String> {
-        self.base.read(request, cx)
+}
+impl TerminalTextSource for ConnectedAccess {
+    fn read(
+        &self,
+        expected: ExpectedSession,
+        request: TextRequest,
+        cx: &App,
+    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
+        self.base.read(expected, request, cx)
     }
-    fn send_text(&self, text: &str, cx: &mut App) -> Result<(), String> {
-        self.base.send_text(text, cx)
+}
+impl TerminalInput for ConnectedAccess {
+    fn send_text(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
+        self.base.send_text(expected, text, cx)
     }
-    fn run_command(&self, text: &str, cx: &mut App) -> Result<(), String> {
-        self.base.run_command(text, cx)
+}
+impl SignInPrompts for ConnectedAccess {
+    fn pending(&self, cx: &App) -> Option<nocterm_workspace::SignInPrompt> {
+        self.info(cx)?.sign_in
     }
-    fn answer_sign_in(&self, answer: String, cx: &mut App) -> Result<(), String> {
-        self.base.answer_sign_in(answer, cx)
+    fn answer(
+        &self,
+        token: UserPromptToken,
+        answer: nocterm_session::Secret,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
+        self.base.answer(token, answer, cx)
     }
 }
 
@@ -545,7 +566,10 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     });
     let entry = nocterm_workspace::TerminalEntry {
         item: f.terminal,
-        access: access.clone(),
+        capabilities: TerminalCapabilities::new(access.clone())
+            .with_text(access.clone())
+            .with_input(access.clone())
+            .with_prompts(access.clone()),
         title: "Production".into(),
         active: true,
         bottom: false,
@@ -578,13 +602,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
             thread.read(cx).registration().as_ref().unwrap().id
         )
     });
-    let mut call = acp::ToolCall::new("snapshot", format!("mcp.{server}.run_command"));
+    let mut call = ToolRecord::new("snapshot", format!("mcp.{server}.run_command"));
     call.raw_input = Some(
         json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo snapshot"}}),
     );
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.apply_presented_update(acp::SessionUpdate::ToolCall(call));
+            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo snapshot"})),
@@ -594,22 +618,20 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 respond,
             };
             thread.record_tool_display(&mut request, Some(&entry), cx);
-            thread.composer.attachments.clear();
+            thread.clear_composer_context(cx);
         })
     });
     directory.0.borrow_mut()[0].name = "Renamed".into();
     *access.target.borrow_mut() = nocterm_session::Target::new("reconnected", "new.example", 22);
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            thread.apply_presented_update(acp::SessionUpdate::ToolCallUpdate(
-                acp::ToolCallUpdate::new(
-                    "snapshot",
-                    acp::ToolCallUpdateFields::new()
-                        .title("Renamed")
-                        .status(acp::ToolCallStatus::Completed),
-                ),
-            ));
-            let Entry::Tool(call) = &thread.state.entries[0] else {
+            thread.apply_presented_update(SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "snapshot",
+                ToolChanges::default()
+                    .title("Renamed")
+                    .status(ToolStatus::Succeeded),
+            ))));
+            let Entry::Tool(call) = &thread.transcript().entries[0] else {
                 unreachable!()
             };
             assert_eq!(
@@ -626,13 +648,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
         json!({"terminal_id":"t1","command":"echo ipv6"}),
     )
     .unwrap();
-    let mut call = acp::ToolCall::new("ipv6", format!("mcp.{server}.run_command"));
+    let mut call = ToolRecord::new("ipv6", format!("mcp.{server}.run_command"));
     call.raw_input = Some(
         json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo ipv6"}}),
     );
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.apply_presented_update(acp::SessionUpdate::ToolCall(call));
+            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo ipv6"})),
@@ -642,7 +664,7 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 respond,
             };
             thread.record_tool_display(&mut request, Some(&entry), cx);
-            let Entry::Tool(call) = &thread.state.entries[1] else {
+            let Entry::Tool(call) = &thread.transcript().entries[1] else {
                 unreachable!()
             };
             assert!(

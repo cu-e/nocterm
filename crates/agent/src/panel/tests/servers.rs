@@ -25,25 +25,21 @@ fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummar
 /// Opens sessions the way the connections feature does: by updating the
 /// workspace it is handed.
 struct OpeningDirectory {
+    after_background_open: RefCell<Option<AfterBackgroundOpen>>,
     servers: Vec<nocterm_workspace::ConnectionSummary>,
     opened: Cell<usize>,
     background: RefCell<Vec<gpui_kit::EntityId>>,
     sign_in: Rc<SignIn>,
+    /// Every session opened, in order.
+    accesses: RefCell<Vec<Rc<Access>>>,
 }
+type AfterBackgroundOpen = Box<dyn FnOnce(&mut Window, &mut App)>;
+
 impl OpeningDirectory {
     fn terminal(&self, id: &str, cx: &mut Context<Workspace>) -> Entity<FakeTerminal> {
-        let access = Rc::new(Access {
-            executor: Default::default(),
-            lease: Default::default(),
-            at_prompt: Cell::new(true),
-            sent: Default::default(),
-            profile: RefCell::new(Some(id.to_owned().into())),
-            sign_in: self.sign_in.clone(),
-        });
-        cx.new(|cx| FakeTerminal {
-            access,
-            focus: cx.focus_handle(),
-        })
+        let access = Access::new(Some(id.to_owned().into()), self.sign_in.clone());
+        self.accesses.borrow_mut().push(access.clone());
+        cx.new(|cx| FakeTerminal::new(access, cx))
     }
 }
 impl nocterm_workspace::ConnectionDirectory for OpeningDirectory {
@@ -79,16 +75,22 @@ impl nocterm_workspace::ConnectionDirectory for OpeningDirectory {
             })
             .ok()?;
         self.background.borrow_mut().push(item);
+        let after_open = self.after_background_open.borrow_mut().take();
+        if let Some(after_open) = after_open {
+            after_open(window, cx);
+        }
         Some(item)
     }
 }
 
 fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
     let directory = Rc::new(OpeningDirectory {
+        after_background_open: RefCell::default(),
         servers: vec![summary("web", Some("prod")), summary("db", Some("prod"))],
         opened: Cell::new(0),
         background: RefCell::new(Vec::new()),
         sign_in: Default::default(),
+        accesses: Default::default(),
     });
     cx.update(|cx| {
         f.workspace.update(cx, |workspace, _| {
@@ -109,6 +111,10 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.try_find("Active sessions").is_some());
         assert!(window.try_find("Saved servers").is_some());
+        // A server inside a folder is indented, yet its button stays in the menu.
+        let menu = window.try_find("agent-picker").unwrap().bounds();
+        let open = window.try_find("open-connection-web").unwrap().bounds();
+        assert!(open.right() <= menu.right(), "{open:?} overflows {menu:?}");
         window.click("open-connection-web", cx);
     })
     .unwrap();
@@ -116,8 +122,12 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
     cx.update(|cx| {
         assert_eq!(directory.opened.get(), 1);
         assert_eq!(f.workspace.read(cx).items().count(), 2);
-        assert!(f.panel.read(cx).menu.is_none(), "the menu closes");
     });
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-picker").is_none(), "the menu closes");
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -145,10 +155,10 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
     assert!(context.contains(&server));
     let (respond, response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -156,13 +166,18 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
                         server_id: server.clone(),
                     }),
                     respond,
-                },
-                cx,
-            );
-            assert_eq!(thread.tools.len(), 1, "connecting asks first");
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let answer = response.now_or_never().unwrap().unwrap().unwrap();
@@ -173,7 +188,7 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
         assert!(workspace.is_background(background));
         assert_eq!(workspace.items().count(), 1, "no tab was opened");
         thread.update(cx, |thread, cx| {
-            assert_eq!(thread.background, vec![background]);
+            assert_eq!(thread.background_items(), vec![background]);
             assert!(thread.resolved(cx).iter().any(|(id, _, _)| *id == terminal));
             assert_eq!(thread.offline_servers(cx).len(), 1, "web is online now");
             // Detaching the folder ends the session the chat opened.
@@ -215,7 +230,7 @@ fn a_background_session_can_be_shown_in_a_tab(cx: &mut TestAppContext) {
 fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let directory = install(&f, cx);
-    directory.sign_in.vault_locked.set(true);
+    directory.sign_in.vault_locked().set(true);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let server = cx.update(|cx| {
@@ -226,10 +241,10 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     });
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -237,20 +252,26 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
                         server_id: server,
                     }),
                     respond,
-                },
-                cx,
-            );
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
     let unlocks = Rc::new(Cell::new(0));
     let counter = unlocks.clone();
     cx.update_window(f.handle, |_, window, cx| {
-        assert_eq!(thread.read(cx).sign_ins.len(), 1);
-        assert!(thread.read(cx).sign_ins[0].vault);
+        assert_eq!(thread.read(cx).sign_in_waits().len(), 1);
+        assert!(thread.read(cx).sign_in_waits()[0].vault());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
@@ -266,13 +287,21 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
         "the button asks to open the unlock dialog"
     );
     // Unlocking answers the session's prompt with the saved secret.
-    directory.sign_in.vault_locked.set(false);
+    directory.sign_in.vault_locked().set(false);
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let answer = response.try_recv().unwrap().unwrap().unwrap();
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
-        assert!(thread.read(cx).sign_ins.is_empty());
+        assert!(thread.read(cx).sign_in_waits().is_empty());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }
@@ -281,7 +310,7 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
 fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let directory = install(&f, cx);
-    directory.sign_in.asks.set(true);
+    directory.sign_in.asks().set(true);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let server = cx.update(|cx| {
@@ -292,10 +321,10 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     });
     let (respond, mut response) = oneshot::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: registration,
@@ -303,33 +332,46 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
                         server_id: server,
                     }),
                     respond,
-                },
-                cx,
-            );
-            thread.approve_tool(0, true, true, cx);
+                })
+                .unwrap();
         })
     });
-    cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    assert!(response.try_recv().unwrap().is_none(), "still signing in");
-    let item = cx.update(|cx| thread.read(cx).sign_ins[0].item);
     cx.update_window(f.handle, |_, window, cx| {
-        assert!(!thread.read(cx).sign_ins[0].vault);
-        assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
         window.render_frame(cx);
-        assert!(window.try_find(("vault-unlock", 0usize)).is_none());
-        let input = f.panel.read(cx).sign_in_inputs[&item].input.clone();
-        input.update(cx, |input, cx| input.set_value("hunter2", window, cx));
-        window.click(("sign-in-submit", 0usize), cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
     })
     .unwrap();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    assert_eq!(*directory.sign_in.answers.borrow(), ["hunter2"]);
+    assert!(response.try_recv().unwrap().is_none(), "still signing in");
+    cx.update_window(f.handle, |_, window, cx| {
+        assert!(!thread.read(cx).sign_in_waits()[0].vault());
+        assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
+        window.render_frame(cx);
+        assert!(window.try_find(("vault-unlock", 0usize)).is_none());
+        window.click(("sign-in-input", 0usize), cx);
+        window.input("hunter2", cx);
+        window.click(("sign-in-submit", 0usize), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(*directory.sign_in.answers().borrow(), ["hunter2"]);
     let answer = response.try_recv().unwrap().unwrap().unwrap();
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
-        assert!(thread.read(cx).sign_ins.is_empty());
+        assert!(thread.read(cx).sign_in_waits().is_empty());
         assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
     });
 }
@@ -339,14 +381,14 @@ fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppCon
     let f = fixture(cx);
     install(&f, cx);
     // The chat's terminal is a session of `web`, filed under `prod`.
-    *f.access.profile.borrow_mut() = Some("web".into());
+    *f.access.profile().borrow_mut() = Some("web".into());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let attachments = |cx: &mut gpui_kit::App| thread.read(cx).composer.attachments.clone();
+    let attachments = |cx: &mut gpui_kit::App| thread.read(cx).composer().attachments().to_vec();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.attach(Attachment::Terminal(f.terminal), cx);
-            assert!(thread.composer.attachments.is_empty());
+            assert!(thread.composer().attachments().is_empty());
         })
     });
     let terminal = format!("attach-{:?}", f.terminal);
@@ -404,3 +446,201 @@ fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
         );
     });
 }
+
+fn open_server(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    server: &str,
+    cx: &mut TestAppContext,
+) -> serde_json::Value {
+    let (respond, mut response) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, _| {
+            let registration = thread.registration().as_ref().unwrap().id;
+            f.calls
+                .try_send(BridgeCall {
+                    arguments: None,
+                    display_token: None,
+                    registration_id: registration,
+                    call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
+                        server_id: server.to_owned(),
+                    }),
+                    respond,
+                })
+                .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        if thread.read(cx).has_pending_approvals() {
+            window.click(("tool-Allow for this server", 0usize), cx);
+        }
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    response.try_recv().unwrap().expect("answered").unwrap()
+}
+
+#[gpui_kit::test]
+fn a_dropped_background_session_is_reconnected_rather_than_replaced(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let directory = install(&f, cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let server = cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Connection("web".into()), cx);
+            thread.offline_servers(cx)[0].0.server_id.clone()
+        })
+    });
+    let first = open_server(&f, &thread, &server, cx);
+    let access = directory.accesses.borrow()[0].clone();
+    access.link().remote().set(true);
+    access.link().closed().set(true);
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                thread.offline_servers(cx).len(),
+                1,
+                "the dropped server is offline"
+            )
+        })
+    });
+
+    let again = open_server(&f, &thread, &server, cx);
+    assert_eq!(again["terminal"]["id"], first["terminal"]["id"]);
+    assert_eq!(access.link().reconnects().get(), 1);
+    assert_eq!(directory.background.borrow().len(), 1, "no second session");
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            assert!(thread.offline_servers(cx).is_empty())
+        })
+    });
+}
+
+fn show_hidden_sign_in(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
+    let directory = install(f, cx);
+    directory.sign_in.asks().set(true);
+    new_chat(f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let server = cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.attach(Attachment::Group("prod".into()), cx);
+            thread.offline_servers(cx)[0].0.server_id.clone()
+        })
+    });
+    let (respond, _response) = oneshot::channel();
+    cx.update(|cx| {
+        thread.update(cx, |thread, _| {
+            f.calls
+                .try_send(BridgeCall {
+                    arguments: None,
+                    display_token: None,
+                    registration_id: thread.registration().as_ref().unwrap().id,
+                    call: nocterm_ai::TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
+                        server_id: server,
+                    }),
+                    respond,
+                })
+                .unwrap();
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("tool-Allow for this server", 0usize), cx);
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    directory
+}
+
+#[gpui_kit::test]
+fn old_sign_in_click_and_enter_never_answer_an_identical_replacement_prompt(
+    cx: &mut TestAppContext,
+) {
+    for enter in [false, true] {
+        let f = fixture(cx);
+        let directory = show_hidden_sign_in(&f, cx);
+        cx.update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("sign-in-input", 0usize), cx);
+            window.input("old draft", cx);
+        })
+        .unwrap();
+        directory.accesses.borrow()[0].replace_prompt();
+        cx.update_window(f.handle, |_, window, cx| {
+            // Submit the still-painted original card before the waiter publishes its new token.
+            if enter {
+                window.press("enter", cx);
+            } else {
+                window.click(("sign-in-submit", 0usize), cx);
+            }
+        })
+        .unwrap();
+        assert!(directory.sign_in.answers().borrow().is_empty());
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("sign-in-submit", 0usize), cx);
+        })
+        .unwrap();
+        assert!(
+            directory.sign_in.answers().borrow().is_empty(),
+            "replacement field is empty"
+        );
+        cx.update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("sign-in-input", 0usize), cx);
+            window.input("new answer", cx);
+            window.click(("sign-in-submit", 0usize), cx);
+        })
+        .unwrap();
+        assert_eq!(*directory.sign_in.answers().borrow(), ["new answer"]);
+    }
+}
+
+#[gpui_kit::test]
+fn stale_background_opening_cannot_close_a_replacement_session(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let directory = show_hidden_sign_in(&f, cx);
+    let item = directory.background.borrow()[0];
+    let original = cx.update(|cx| {
+        f.workspace
+            .read(cx)
+            .terminals(cx)
+            .into_iter()
+            .find(|entry| entry.item == item)
+            .unwrap()
+            .capabilities
+            .state()
+            .info(cx)
+            .unwrap()
+            .expected
+    });
+    directory.accesses.borrow()[0].replace_connection();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let workspace = f.workspace.read(cx);
+        assert!(workspace.is_background(item));
+        let current = workspace
+            .terminals(cx)
+            .into_iter()
+            .find(|entry| entry.item == item)
+            .unwrap()
+            .capabilities
+            .state()
+            .info(cx)
+            .unwrap()
+            .expected;
+        assert_eq!(current.item(), original.item());
+        assert_ne!(current.epoch(), original.epoch());
+    });
+}
+
+mod background_opening;

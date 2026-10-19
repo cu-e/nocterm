@@ -1,12 +1,18 @@
-//! Shared kernel: standard file locations and atomic, comment-preserving TOML
-//! persistence.
+//! Shared error ownership, filesystem primitives and standard application locations.
 //!
-//! This crate is the bottom of the dependency graph. It knows nothing about
-//! SSH, terminals or the UI; it holds only the primitives that more than one
-//! crate needs.
+//! Owns: paths, exclusive private creation, atomic publication, TOML persistence,
+//! ordered write queues, shutdown deadlines and immutable concrete error causes.
+//! Does not own: transport protocols, encryption, storage schemas, views or tasks.
+//! Ports used/provided: none. Settings section: none. Globals: none.
+//! Invariants: staging is exclusive; failed precommit writes retain old bytes;
+//! private publication replaces final symlinks, while TOML saves follow them.
+//! Parent directories must be trusted; traversal capabilities belong to adapters.
 
+pub mod error;
+pub mod fs;
 pub mod paths;
 pub mod persist;
 
+pub use error::{SharedCause, SharedError};
 pub use paths::{Paths, PathsError};
 pub use persist::PersistError;

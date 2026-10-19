@@ -39,14 +39,22 @@ fn token(registration: &BridgeRegistration) -> String {
 fn launches_the_relay_under_the_chat_server_name() {
     let dir = tempfile::tempdir().unwrap();
     let registration = bridge(&dir).register().unwrap();
-    let nocterm_ai::acp::McpServer::Stdio(server) = registration.mcp_server() else {
-        panic!("stdio relay");
-    };
+    let server = registration.endpoint();
     assert_eq!(server.name, format!("nocterm-{}", registration.id));
-    assert_eq!(server.command, std::env::current_exe().unwrap());
-    assert_eq!(server.args, ["agent-bridge"]);
-    let names: Vec<_> = server.env.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(server.launch.program, std::env::current_exe().unwrap());
+    assert_eq!(server.launch.args, ["agent-bridge"]);
+    let names: Vec<_> = server.launch.env.iter().map(|v| v.0.as_str()).collect();
     assert_eq!(names, [ENDPOINT_VARIABLE, TOKEN_VARIABLE]);
+}
+#[test]
+#[cfg(unix)]
+fn reports_why_the_listener_could_not_open() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("run"), b"not a directory").unwrap();
+    let paths = Paths::rooted_at(dir.path());
+    let expected = format!("Bridge error: {}", paths.ensure_runtime_dir().unwrap_err());
+    let error = bridge(&dir).register().err().expect("registration fails");
+    assert_eq!(error.to_string(), expected);
 }
 #[test]
 fn refuses_a_registration_whose_relay_program_is_gone() {
@@ -59,6 +67,7 @@ fn refuses_a_registration_whose_relay_program_is_gone() {
         },
     );
     let error = server.register().err().unwrap();
+    let error = error.to_string();
     assert!(error.contains("nocterm (deleted)"), "{error}");
     assert!(error.contains("Restart nocterm"), "{error}");
 }

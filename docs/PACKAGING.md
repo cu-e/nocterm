@@ -69,6 +69,13 @@ The Vault settings page shows this exact command when the broker is missing.
 
 ## License notices
 
+Vendored forks are reproduced from authenticated published archives, explicit
+omissions and ordered binary patches. Run `python3 scripts/check-vendor-patches.py`
+before updating or distributing a fork; the independent CI replay job checks its
+complete source set and file modes. See [vendor patch provenance and updates](../vendor/patches/README.md).
+An upstream revision records source provenance; the checksum-pinned published
+archive remains the replay base. Native platform tests still verify behavior.
+
 All four installer formats include the application's `LICENSE` and
 `THIRD_PARTY_NOTICES.txt`. The notices preserve third-party license texts and
 copyright notices; they cover the application and the Linux vault broker,

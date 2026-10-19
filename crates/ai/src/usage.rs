@@ -4,14 +4,13 @@
 //! ACP reports the context window (`usage_update`) and, at the end of a turn,
 //! the session's token totals. Plan limits are not part of ACP: the Claude
 //! adapter attaches them to `usage_update` under `_claude/rateLimit`, and
-//! Codex writes them into its own session logs, which are read here.
+//! Codex writes them into session logs read through an injected account source.
+use crate::model::content::Content;
 
-use std::{
-    io::{Read as _, Seek as _, SeekFrom},
-    path::{Path, PathBuf},
-};
+mod source;
+pub use source::{AccountUsageSource, UsageAgent, UsageReadError};
 
-use crate::{acp, thread::Entry};
+use crate::{model::usage::ContextUsage, thread::Entry};
 
 /// The span a plan limit counts usage over.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -43,7 +42,7 @@ impl Window {
         }
     }
 
-    fn from_minutes(minutes: u64) -> Self {
+    pub fn from_minutes(minutes: u64) -> Self {
         match minutes {
             300 => Self::FiveHour,
             10_080 => Self::Weekly,
@@ -98,7 +97,7 @@ impl Limits {
 }
 
 /// The plan limit the Claude adapter attached to `update`, if any.
-pub fn claude_limit(update: &acp::UsageUpdate) -> Option<RateLimit> {
+pub fn claude_limit(update: &ContextUsage) -> Option<RateLimit> {
     let info = update.meta.as_ref()?.get("_claude/rateLimit")?;
     let window = match info.get("rateLimitType")?.as_str()? {
         "five_hour" => Window::FiveHour,
@@ -117,84 +116,6 @@ pub fn claude_limit(update: &acp::UsageUpdate) -> Option<RateLimit> {
         resets_at: info.get("resetsAt").and_then(serde_json::Value::as_u64),
         reached: info.get("status").and_then(serde_json::Value::as_str) == Some("rejected"),
     })
-}
-
-/// The plan limits in one line of a Codex session log, if it reports them.
-pub fn codex_limits(line: &str) -> Option<Vec<RateLimit>> {
-    if !line.contains("\"rate_limits\"") {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    let limits = value.get("payload")?.get("rate_limits")?;
-    let reached = limits
-        .get("rate_limit_reached_type")
-        .is_some_and(|reached| !reached.is_null());
-    let parsed: Vec<_> = ["primary", "secondary"]
-        .into_iter()
-        .filter_map(|key| {
-            let window = limits.get(key)?;
-            let used = window.get("used_percent")?.as_f64()? / 100.;
-            Some(RateLimit {
-                window: Window::from_minutes(window.get("window_minutes")?.as_u64()?),
-                used: Some(used.clamp(0., 1.)),
-                resets_at: window.get("resets_at").and_then(serde_json::Value::as_u64),
-                reached: reached && used >= 1.,
-            })
-        })
-        .collect();
-    (!parsed.is_empty()).then_some(parsed)
-}
-
-/// Whether `launch` runs Codex, whose limits are read from its logs.
-pub fn is_codex(launch: &crate::AgentLaunch) -> bool {
-    std::iter::once(&launch.command)
-        .chain(&launch.args)
-        .any(|part| part.contains("codex"))
-}
-
-/// Where Codex keeps its data.
-pub fn codex_home() -> Option<PathBuf> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-}
-
-/// How much of the end of a session log is searched for limits.
-const CODEX_TAIL_BYTES: u64 = 256 * 1024;
-
-/// The plan limits Codex last wrote into its newest session log under
-/// `home`. Logs are laid out by date, `sessions/YYYY/MM/DD/rollout-*.jsonl`.
-pub fn read_codex_limits(home: &Path) -> Option<Vec<RateLimit>> {
-    let mut dir = home.join("sessions");
-    // Year, month, day: the greatest name is the newest.
-    for _ in 0..3 {
-        dir = newest(&dir, |path| path.is_dir())?;
-    }
-    let log = newest(&dir, |path| {
-        path.extension()
-            .is_some_and(|extension| extension == "jsonl")
-    })?;
-    let mut file = std::fs::File::open(log).ok()?;
-    let length = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(length.saturating_sub(CODEX_TAIL_BYTES)))
-        .ok()?;
-    let mut tail = Vec::new();
-    file.take(CODEX_TAIL_BYTES).read_to_end(&mut tail).ok()?;
-    String::from_utf8_lossy(&tail)
-        .lines()
-        .rev()
-        .find_map(codex_limits)
-}
-
-/// The entry of `dir` with the greatest name that passes `keep`.
-fn newest(dir: &Path, keep: impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| keep(path))
-        .max_by(|a, b| a.file_name().cmp(&b.file_name()))
 }
 
 /// What fills the context window, estimated from the transcript.
@@ -223,7 +144,7 @@ impl Breakdown {
             match entry {
                 Entry::User(blocks) => {
                     for block in blocks {
-                        if let acp::ContentBlock::Text(text) = block {
+                        if let Content::Text(text) = block {
                             parts.messages += tokens(&text.text);
                         }
                     }
@@ -258,8 +179,12 @@ impl Breakdown {
 mod tests {
     use super::*;
 
-    fn update(meta: serde_json::Value) -> acp::UsageUpdate {
-        acp::UsageUpdate::new(10, 100).meta(meta.as_object().cloned())
+    fn update(meta: serde_json::Value) -> ContextUsage {
+        ContextUsage::new(10, 100).meta(
+            meta.as_object()
+                .cloned()
+                .map(crate::model::extensions::Extensions::from),
+        )
     }
 
     #[test]
@@ -286,49 +211,8 @@ mod tests {
         assert_eq!(reached.used, None);
         assert!(reached.reached);
 
-        assert!(claude_limit(&acp::UsageUpdate::new(1, 2)).is_none());
+        assert!(claude_limit(&ContextUsage::new(1, 2)).is_none());
         assert!(claude_limit(&update(serde_json::json!({"other": 1}))).is_none());
-    }
-
-    const CODEX_LINE: &str = r#"{"timestamp":"2026-10-03T17:42:09Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":38.0,"window_minutes":10080,"resets_at":1791588105},"secondary":{"used_percent":7.5,"window_minutes":300,"resets_at":1791500000},"rate_limit_reached_type":null}}}"#;
-
-    #[test]
-    fn codex_limits_come_from_its_session_log() {
-        let limits = codex_limits(CODEX_LINE).unwrap();
-        assert_eq!(limits.len(), 2);
-        assert_eq!(limits[0].window, Window::Weekly);
-        assert_eq!(limits[0].used, Some(0.38));
-        assert_eq!(limits[0].resets_at, Some(1_791_588_105));
-        assert_eq!(limits[1].window, Window::FiveHour);
-        assert!(codex_limits(r#"{"payload":{"type":"agent_message"}}"#).is_none());
-        assert!(codex_limits(r#"{"payload":{"rate_limits":{"primary":null}}}"#).is_none());
-    }
-
-    #[test]
-    fn the_newest_codex_log_is_read() {
-        let home = tempfile::tempdir().unwrap();
-        let day = |path: &str| {
-            let dir = home.path().join("sessions").join(path);
-            std::fs::create_dir_all(&dir).unwrap();
-            dir
-        };
-        std::fs::write(
-            day("2026/09/30").join("rollout-a.jsonl"),
-            CODEX_LINE.replace("38.0", "99.0"),
-        )
-        .unwrap();
-        let newest = day("2026/10/03");
-        std::fs::write(newest.join("rollout-a.jsonl"), "{}\n").unwrap();
-        std::fs::write(
-            newest.join("rollout-b.jsonl"),
-            format!("{CODEX_LINE}\n{{\"payload\":{{\"type\":\"agent_message\"}}}}\n"),
-        )
-        .unwrap();
-
-        let limits = read_codex_limits(home.path()).unwrap();
-
-        assert_eq!(limits[0].used, Some(0.38));
-        assert!(read_codex_limits(&home.path().join("missing")).is_none());
     }
 
     #[test]
@@ -354,9 +238,7 @@ mod tests {
     #[test]
     fn breakdown_splits_reported_usage_by_transcript() {
         let entries = vec![
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                "a".repeat(400),
-            ))]),
+            Entry::User(vec![Content::text("a".repeat(400))]),
             Entry::Thought("b".repeat(80)),
             Entry::Agent("c".repeat(400)),
         ];

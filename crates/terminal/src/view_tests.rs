@@ -2,7 +2,11 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{AnyWindowHandle, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_session::{ConnectRequest, Event, Session, SessionDriver, Transport};
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Default)]
 pub(super) struct Scripted {
@@ -30,18 +34,32 @@ impl Transport for Scripted {
 pub(super) fn fixture(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
+    fixture_with_credentials(cx, None)
+}
+pub(super) fn fixture_with_credentials(
+    cx: &mut TestAppContext,
+    credentials: Option<crate::CredentialProvider>,
+) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
     let transport = Arc::new(Scripted::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
         let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
-        crate::init(transport.clone(), &ui, cx);
+        let mut deps = crate::Deps::new(
+            transport.clone(),
+            crate::LocalSessions::disabled("/bin/bash".into()),
+        );
+        if let Some(credentials) = credentials {
+            deps = deps.with_credentials(credentials);
+        }
+        let installed = crate::install(deps, &ui, cx);
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 TerminalView::new(
+                    installed.clone(),
                     SessionSpec {
                         profile: None,
                         title: "test".into(),
@@ -80,7 +98,7 @@ fn complete(cx: &mut TestAppContext, view: &Entity<TerminalView>) {
     for _ in 0..500 {
         cx.executor().advance_clock(Duration::from_millis(20));
         cx.run_until_parked();
-        if view.read_with(cx, |v, cx| !v.terminal.read(cx).find().searching) {
+        if view.read_with(cx, |v, cx| !v.terminal.read(cx).find().searching()) {
             return;
         }
     }
@@ -119,8 +137,8 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.count, 2);
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 1);
+        assert_eq!(v.terminal.read(cx).find().result().count, 2);
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 1);
     });
     cx.update_window(handle, |_, window, cx| {
         window.press("enter", cx);
@@ -129,7 +147,7 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 2)
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 2)
     });
     cx.update_window(handle, |_, window, cx| {
         window.press("shift-enter", cx);
@@ -138,7 +156,7 @@ fn find_typing_enter_escape_and_native_copy_stay_out_of_the_shell(cx: &mut TestA
     cx.run_until_parked();
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.ordinal, 1)
+        assert_eq!(v.terminal.read(cx).find().result().ordinal, 1)
     });
     cx.update_window(handle, |_, window, cx| {
         window.dispatch_action(Box::new(native_input::SelectAll), cx);
@@ -178,14 +196,13 @@ fn selection_search_and_screen_native_actions_keep_independent_text(cx: &mut Tes
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
-                t.update_emulator(cx, |e| {
-                    e.start_selection(
-                        SelectionKind::Cells,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                    e.update_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right);
-                })
+                t.begin_selection(
+                    SelectionKind::Cells,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
+                t.extend_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right, 0, cx);
             });
             v.find_selection(&nocterm_workspace::FindNextSelection, window, cx);
         });
@@ -195,7 +212,7 @@ fn selection_search_and_screen_native_actions_keep_independent_text(cx: &mut Tes
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
         let t = v.terminal.read(cx);
-        assert_eq!(t.find().result.ordinal, 2);
+        assert_eq!(t.find().result().ordinal, 2);
         assert_eq!(t.emulator().selection_text().as_deref(), Some("target"));
         let mut frame = Frame::default();
         t.emulator().snapshot(&mut frame);
@@ -316,7 +333,7 @@ fn rapid_output_invalidates_highlights_then_search_resumes_and_can_cancel(cx: &m
     }
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
-        assert_eq!(v.terminal.read(cx).find().result.count, 5)
+        assert_eq!(v.terminal.read(cx).find().result().count, 5)
     });
     emit(cx, &transport, 0, Event::Output(b"\r\nneedle".to_vec()));
     cx.update_window(handle, |_, window, cx| {
@@ -327,7 +344,7 @@ fn rapid_output_invalidates_highlights_then_search_resumes_and_can_cancel(cx: &m
     cx.run_until_parked();
     view.read_with(cx, |v, cx| {
         assert!(v.find.is_none());
-        assert!(v.terminal.read(cx).find().query.is_empty());
+        assert!(v.terminal.read(cx).find().query().is_empty());
         let mut frame = Frame::default();
         v.terminal.read(cx).emulator().snapshot(&mut frame);
         assert!(!frame.cells.iter().any(|c| c.search_hit));
@@ -345,12 +362,18 @@ fn osc52_requires_opt_in_and_focus_on_the_actual_terminal_screen(cx: &mut TestAp
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("original"));
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| {
-            s.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
-        })
-        .now_or_never()
-        .unwrap()
-        .unwrap();
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| {
+                s.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
+            })
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     });
     emit(cx, &transport, 0, request());
     assert_eq!(clipboard(cx).as_deref(), Some("remote"));
@@ -385,12 +408,18 @@ fn osc52_cannot_write_from_a_focused_terminal_in_an_inactive_window(cx: &mut Tes
     }
     let (handle, view, transport) = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|settings| {
-            settings.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
-        })
-        .now_or_never()
-        .unwrap()
-        .unwrap();
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |settings| {
+                settings.clipboard_write = nocterm_ui::ClipboardWritePolicy::FocusedTerminal;
+            })
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             window.activate_window();
             cx.new(|_| OtherWindow)
@@ -437,7 +466,7 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     .unwrap();
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         2
     );
     for (button, count) in [
@@ -455,7 +484,7 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
         .unwrap();
         complete(cx, &view);
         assert_eq!(
-            view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+            view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
             count
         );
     }
@@ -468,12 +497,12 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     view.read_with(cx, |v, cx| {
         let find = v.terminal.read(cx).find();
         assert!(
-            find.error
+            find.error()
                 .as_ref()
                 .unwrap()
                 .contains("Invalid or oversized")
         );
-        assert_eq!(find.result.count, 0);
+        assert_eq!(find.result().count, 0);
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -481,10 +510,63 @@ fn find_switches_preserve_query_focus_and_recover_from_invalid_regex(cx: &mut Te
     })
     .unwrap();
     complete(cx, &view);
-    assert!(view.read_with(cx, |v, cx| v.terminal.read(cx).find().error.is_none()));
+    assert!(view.read_with(cx, |v, cx| v.terminal.read(cx).find().error().is_none()));
     assert!(
         drain(&driver).is_empty(),
         "search switches leaked input to shell"
+    );
+}
+
+#[gpui_kit::test]
+fn bounded_regex_failure_is_inline_and_a_new_search_clears_it(cx: &mut TestAppContext) {
+    let (_, view, transport) = fixture(cx);
+    let driver = scripted_driver(&transport, 0);
+    emit(
+        cx,
+        &transport,
+        0,
+        Event::Output(vec![b'a'; nocterm_vt::MAX_REGEX_LINE_BYTES + 1]),
+    );
+    let terminal = view.read_with(cx, |view, _| view.terminal().clone());
+    terminal.update(cx, |terminal, cx| {
+        terminal.set_find_options(
+            nocterm_vt::SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        terminal.begin_find("a+".into(), nocterm_vt::SearchDirection::Next, None, cx);
+    });
+    complete(cx, &view);
+    terminal.read_with(cx, |terminal, _| {
+        assert_eq!(terminal.find().error(), Some("Regular expression search is limited to 65536 bytes per logical line. Use literal mode for longer lines."));
+        assert_eq!(terminal.find().result().count, 0);
+        assert!(!terminal.find().searching());
+    });
+    terminal.update(cx, |terminal, cx| {
+        terminal.set_find_options(Default::default(), cx);
+        terminal.begin_find("aaa".into(), nocterm_vt::SearchDirection::Next, None, cx);
+    });
+    complete(cx, &view);
+    terminal.read_with(cx, |terminal, _| {
+        assert!(terminal.find().error().is_none());
+        assert_eq!(
+            terminal.find().result().count,
+            (nocterm_vt::MAX_REGEX_LINE_BYTES - 1) as u64
+        );
+    });
+    terminal.update(cx, |terminal, cx| terminal.clear_find(cx));
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    terminal.read_with(cx, |terminal, _| {
+        assert!(terminal.find().query().is_empty());
+        assert!(terminal.find().error().is_none());
+        assert!(!terminal.find().searching());
+    });
+    assert!(
+        drain(&driver).is_empty(),
+        "search sent text to the terminal input"
     );
 }
 
@@ -514,14 +596,14 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
     emit(cx, &transport, 0, Event::Output(b"ID4 ".to_vec()));
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         3
     );
     // Completed scans restart after the output throttle with the same options.
     emit(cx, &transport, 0, Event::Output(b"id5 ".to_vec()));
     complete(cx, &view);
     assert_eq!(
-        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result.count),
+        view.read_with(cx, |v, cx| v.terminal.read(cx).find().result().count),
         4
     );
     cx.update(|cx| {
@@ -534,8 +616,10 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
     complete(cx, &view);
     view.read_with(cx, |v, cx| {
         let find = v.terminal.read(cx).find();
-        assert_eq!(find.result.count, 4);
-        assert!(find.options.regex && !find.options.case_sensitive && find.options.whole_word);
+        assert_eq!(find.result().count, 4);
+        assert!(
+            find.options().regex && !find.options().case_sensitive && find.options().whole_word
+        );
     });
 }
 
@@ -543,12 +627,26 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
 fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
     cx: &mut TestAppContext,
 ) {
-    let (handle, view, _) = fixture(cx);
+    let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
+    store.fail_next(nocterm_session::testing::FakeCredentialError::NotFound);
+    let provider = crate::CredentialProvider::new(store, |_, _, _| Task::ready(Ok(())));
+    let (handle, view, _) = fixture_with_credentials(cx, Some(provider));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.terminal.update(cx, |t, _| {
-                t.credentials.message =
-                    Some("Credential was not saved; unlock the vault and retry.".into())
+            v.terminal.update(cx, |t, cx| {
+                let (reply, _) = nocterm_session::Reply::channel();
+                t.handle_event(
+                    Event::Prompt(Prompt::Secret {
+                        request: SecretRequest::Password {
+                            target: t.spec().target.clone(),
+                            retry: false,
+                        },
+                        reply,
+                    }),
+                    cx,
+                );
+                t.answer_secret_and_remember(Secret::new("temporary test secret"), true, cx);
+                t.handle_event(Event::Connected, cx);
             });
         });
         window.render_frame(cx);
@@ -611,6 +709,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
 #[gpui_kit::test]
 fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
+    let _projection = theme_fixture::projection(&view, cx);
     emit(
         cx,
         &transport,
@@ -621,39 +720,57 @@ fn semantic_highlighting_updates_open_tabs_without_changing_terminal_text(cx: &m
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let view = view.read(cx);
-            let frame = view.frame.borrow();
+            let frame = view.painted_frame();
             assert_eq!(frame.row_text(0), "Failed password from 192.0.2.1");
             assert_eq!(
-                view.highlights.borrow().role_at(0, &frame.cells[0]),
+                view.painted_highlights().role_at(0, &frame.cells[0]),
                 expected
             );
         })
         .unwrap();
     };
     assert_role(Some(crate::highlighting::Role::Error), cx);
-    let scans = view.read_with(cx, |view, _| view.highlights.borrow().scan_count());
+    let scans = view.read_with(cx, |view, _| view.painted_highlights().scan_count());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::AppearanceSettings>(|s| {
-            s.mode = nocterm_ui::AppearanceMode::Light;
-            s.detect_server_country = false;
-        })
-        .detach()
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::AppearanceSettings>(cx, |s| {
+                s.mode = nocterm_ui::AppearanceMode::Light;
+                s.detect_server_country = false;
+            })
+            .detach()
     });
     cx.run_until_parked();
     assert_role(Some(crate::highlighting::Role::Error), cx);
     assert_eq!(
-        view.read_with(cx, |view, _| view.highlights.borrow().scan_count()),
+        view.read_with(cx, |view, _| view.painted_highlights().scan_count()),
         scans
     );
 
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = false)
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| s.semantic_highlighting = false)
             .detach()
     });
     cx.run_until_parked();
     assert_role(None, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.semantic_highlighting = true)
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| s.semantic_highlighting = true)
             .detach()
     });
     cx.run_until_parked();
@@ -677,3 +794,6 @@ mod pointer_tests;
 
 #[path = "view/interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[path = "view/theme_fixture.rs"]
+mod theme_fixture;

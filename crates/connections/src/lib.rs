@@ -9,28 +9,48 @@
 //!
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
+//!
+//! Owns: views, editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
+//! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
+//! credentials, remote OS acquisition, DNS, HTTP, flag files or
+//! persistence worker lifecycle.
+//! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
+//! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
+//! Ports provided: ConnectionDirectory. Settings section: none.
+//! Globals: none. Installed retains exact owners/settings and observer lifetimes.
+//! Invariants: profiles publish after physical success; independent recents survive
+//! profile failure; derived recent effects require a successful profile projection.
+//! Connections aliases the actual service entity; windows/actions use supplied installation.
+//! Raw facts/jobs belong to the supplied actual service entity. Original Item
+//! capability receipts retain session authority independently of window projection.
 
+mod installed;
+mod session_intents;
+pub use installed::{Installed, install};
+pub use session_intents::{connect, spec_for_profile};
+mod country_policy;
 mod directory;
 mod editor;
-mod facts;
+mod facts_presentation;
 mod geo;
 mod menu;
-mod model;
 pub mod os;
 mod panel;
-pub mod store;
+mod prepared;
+mod probe_sources;
+pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]
 mod test_support;
 
-use gpui_kit::{App, Context, Window, prelude::*};
-use nocterm_core::Paths;
+use gpui_kit::{Context, Window, prelude::*};
 use nocterm_workspace::Workspace;
 
 pub use editor::{ConnectionEditor, open_editor};
-pub use facts::ServerFacts;
 pub use menu::NewTabMenu;
-pub use model::{Connections, connect, spec_for_profile};
+pub use nocterm_connections_store::ObservationDeps;
+pub use nocterm_connections_store::{ConnectionStore as Connections, ConnectionsError};
+pub use nocterm_connections_store::{FactsPrepared, FactsService};
 pub use panel::ConnectionsPanel;
 
 gpui_kit::actions!(
@@ -43,60 +63,66 @@ gpui_kit::actions!(
     ]
 );
 
-/// Loads the saved connections and what is known about their servers. With
-/// no `paths`, nothing is read, written or fetched.
-pub fn init(paths: Option<&Paths>, cx: &mut App) {
-    menu::init(cx);
-    match paths {
-        Some(paths) => Connections::load(paths),
-        None => Connections::in_memory(),
-    }
-    .install(cx);
-    match paths {
-        Some(paths) => ServerFacts::load(paths),
-        None => ServerFacts::in_memory(),
-    }
-    .install(cx);
-}
-
 /// Adds the connections panel, the new-tab menu and the commands to a
 /// workspace.
-pub fn register(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-    workspace.set_connection_directory(std::rc::Rc::new(directory::Directory));
-    let connections = Connections::global(cx);
-    cx.observe(&connections, |_, _, cx| {
+pub fn register(
+    installed: &Installed,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace.set_connection_directory(std::rc::Rc::new(directory::Directory::new(
+        installed.clone(),
+    )));
+    let connections = installed.connections();
+    cx.observe(connections, |_, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ItemsChanged);
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
         cx.notify();
     })
     .detach();
     // Facts feed cached panels and the recent servers on the empty screen.
-    cx.observe(&ServerFacts::global(cx), |workspace, _, cx| {
+    cx.observe(installed.facts(), |workspace, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
         if workspace.items().next().is_none() && !workspace.local_terminal_is_visible(cx) {
             cx.notify();
         }
     })
     .detach();
+    installed.sources().register(cx.entity().downgrade());
     // Learn about servers as their sessions come up.
-    cx.subscribe(&cx.entity(), |workspace, _, event, cx| {
+    let projection = installed.sources().clone();
+    let observed_facts = installed.facts().downgrade();
+    let observed_connections = installed.connections().downgrade();
+    cx.subscribe(&cx.entity(), move |_, _, event, cx| {
         if *event == nocterm_workspace::WorkspaceEvent::ItemsChanged {
-            facts::probe_sessions(workspace, cx);
+            let (projection, facts, connections) = (
+                projection.clone(),
+                observed_facts.clone(),
+                observed_connections.clone(),
+            );
+            // App::defer escapes the subscriber lease; weak collaborators cannot retain app teardown.
+            gpui_kit::App::defer(cx, move |cx| {
+                if let (Some(connections), Some(facts)) = (connections.upgrade(), facts.upgrade()) {
+                    projection.scan(&connections, &facts, cx);
+                }
+            });
         }
     })
     .detach();
     let handle = cx.entity().downgrade();
 
-    let panel = cx.new(|cx| ConnectionsPanel::new(connections.clone(), handle.clone(), window, cx));
+    let panel = cx.new(|cx| ConnectionsPanel::new(installed.clone(), handle.clone(), window, cx));
     workspace.add_panel(panel, cx);
 
-    let menu = cx.new(|cx| NewTabMenu::new(connections, handle, window, cx));
+    let menu = cx.new(|cx| NewTabMenu::new(installed.clone(), handle, window, cx));
     workspace.set_new_tab_menu(menu, cx);
 
     workspace.register_action(|workspace, _: &ToggleServers, window, cx| {
         workspace.toggle_panel_of::<ConnectionsPanel>(window, cx);
     });
-    workspace.register_action(|_, _: &NewConnection, window, cx| {
-        open_editor(None, cx.entity().downgrade(), window, cx);
+    let editors = installed.clone();
+    workspace.register_action(move |_, _: &NewConnection, window, cx| {
+        open_editor(editors.clone(), None, cx.entity().downgrade(), window, cx);
     });
 }

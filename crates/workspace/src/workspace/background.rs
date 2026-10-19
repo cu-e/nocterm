@@ -1,120 +1,95 @@
-//! Sessions without a tab.
-//!
-//! An agent working on a saved server nobody has open gets a session in the
-//! background: it connects and runs like a tab, but is not shown. The user
-//! can bring it into a tab at any time; one that needs the user (a password
-//! or host key prompt) is brought into a tab by its owner.
-use gpui_kit::{Context, Entity, EntityId, Subscription, Window};
-use std::rc::Rc;
+//! Background membership owns its typed Item and subscriptions until promotion/close.
+use super::*;
+use bindings::{PreparedTab, WorkspaceBindings};
 
-use super::{SessionSpec, Workspace, WorkspaceEvent};
-use crate::{Item, ItemEvent, ItemHandle};
-
-type Show = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
-
-pub(super) struct BackgroundItem {
-    pub(super) handle: Rc<dyn ItemHandle>,
-    /// Moves the item into a tab; typed, because tabs subscribe to the item.
-    show: Option<Show>,
-    _subscription: Subscription,
+pub(super) trait BackgroundRecord {
+    fn handle(&self) -> &dyn ItemHandle;
+    fn close(self: Box<Self>, window: &mut Window, cx: &mut App);
+    fn into_tab(
+        self: Box<Self>,
+        bindings: &WorkspaceBindings,
+        origin: Rc<Cell<Option<EntityId>>>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> PreparedTab;
 }
 
-impl Workspace {
-    /// Opens a session that is not shown in a tab, and returns its item.
-    pub fn open_background_session(
-        &mut self,
-        spec: SessionSpec,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<EntityId> {
-        self.factory().open_background(self, spec, window, cx)
+struct BackgroundEntry<T: Item> {
+    item: Entity<T>,
+    handle: Rc<dyn ItemHandle>,
+    subscription: Subscription,
+}
+impl<T: Item> BackgroundRecord for BackgroundEntry<T> {
+    fn handle(&self) -> &dyn ItemHandle {
+        self.handle.as_ref()
     }
-
-    /// Keeps `item` running without a tab.
-    pub fn add_background_item<T: Item>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> EntityId {
-        let id = item.entity_id();
-        let subscription =
-            cx.subscribe_in(
-                &item,
-                window,
-                move |this, _, event, window, cx| match event {
-                    ItemEvent::Changed => cx.emit(WorkspaceEvent::ItemsChanged),
-                    ItemEvent::CloseRequested => this.close_background_session(id, window, cx),
-                },
-            );
-        let typed = item.clone();
-        self.background.push(BackgroundItem {
-            handle: Rc::new(item),
-            show: Some(Box::new(move |workspace, window, cx| {
-                workspace.add_item(typed, window, cx)
-            })),
-            _subscription: subscription,
-        });
-        cx.emit(WorkspaceEvent::ItemsChanged);
-        cx.notify();
-        id
+    fn close(self: Box<Self>, window: &mut Window, cx: &mut App) {
+        let Self {
+            item,
+            handle,
+            subscription,
+        } = *self;
+        drop(subscription);
+        handle.close(window, cx);
+        drop(item);
     }
+    fn into_tab(
+        self: Box<Self>,
+        bindings: &WorkspaceBindings,
+        origin: Rc<Cell<Option<EntityId>>>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> PreparedTab {
+        let Self {
+            item,
+            handle,
+            subscription,
+        } = *self;
+        drop(subscription);
+        // Keep the original Item strongly owned across removing the old bindings.
+        let prepared = bindings.prepare(item, None, origin, window, cx);
+        drop(handle);
+        prepared
+    }
+}
 
-    /// Whether `id` is a session without a tab.
-    pub fn is_background(&self, id: EntityId) -> bool {
-        self.background
+#[derive(Default)]
+pub(super) struct BackgroundSessions {
+    entries: Vec<Box<dyn BackgroundRecord>>,
+}
+impl BackgroundSessions {
+    pub(super) fn contains(&self, id: EntityId) -> bool {
+        self.entries
             .iter()
-            .any(|item| item.handle.item_id() == id)
+            .any(|entry| entry.handle().item_id() == id)
     }
-
-    /// Moves a background session into a tab, keeping its connection.
-    pub fn show_background_session(
-        &mut self,
-        id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(index) = self
-            .background
-            .iter()
-            .position(|item| item.handle.item_id() == id)
-        else {
+    pub(super) fn insert<T: Item>(&mut self, item: Entity<T>, subscription: Subscription) -> bool {
+        if self.contains(item.entity_id()) {
             return false;
-        };
-        let mut item = self.background.remove(index);
-        if let Some(show) = item.show.take() {
-            show(self, window, cx);
         }
+        self.entries.push(Box::new(BackgroundEntry {
+            handle: Rc::new(item.clone()),
+            item,
+            subscription,
+        }));
         true
     }
-
-    /// Ends a background session.
-    pub fn close_background_session(
-        &mut self,
-        id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(index) = self
-            .background
+    pub(super) fn take(&mut self, id: EntityId) -> Option<Box<dyn BackgroundRecord>> {
+        let index = self
+            .entries
             .iter()
-            .position(|item| item.handle.item_id() == id)
-        {
-            let item = self.background.remove(index);
-            item.handle.close(window, cx);
-            cx.emit(WorkspaceEvent::ItemsChanged);
-            cx.notify();
-        }
+            .position(|entry| entry.handle().item_id() == id)?;
+        Some(self.entries.remove(index))
     }
-
-    pub(super) fn background_entries(&self, cx: &gpui_kit::App) -> Vec<crate::TerminalEntry> {
-        self.background
+    pub(super) fn terminals(&self, cx: &App) -> Vec<crate::TerminalEntry> {
+        self.entries
             .iter()
-            .filter_map(|item| {
+            .filter_map(|entry| {
+                let item = entry.handle();
                 Some(crate::TerminalEntry {
-                    item: item.handle.item_id(),
-                    access: item.handle.terminal_access(cx)?,
-                    title: item.handle.tab_title(cx),
+                    item: item.item_id(),
+                    capabilities: item.terminal_capabilities(cx)?,
+                    title: item.tab_title(cx),
                     active: false,
                     bottom: false,
                     background: true,

@@ -1,34 +1,47 @@
 use super::*;
 #[test]
-fn precedence_duplicates_broken_files_and_appearances() {
-    let root = tempfile::tempdir().unwrap();
-    let dirs = ThemeDirs {
-        user: root.path().join("user"),
-        installed: root.path().join("installed"),
-    };
-    fs::create_dir(&dirs.user).unwrap();
-    fs::write(dirs.user.join("user.json"),r#"{"name":"User","themes":[{"name":"Same","appearance":"light","style":{}},{"name":"Nocterm Default","appearance":"dark","style":{}}]}"#).unwrap();
-    fs::write(dirs.user.join("broken.json"), "bad").unwrap();
-    for id in ["a", "b"] {
-        let path = dirs.installed.join(id);
-        fs::create_dir_all(path.join("themes")).unwrap();
-        fs::write(
-            path.join("extension.toml"),
-            format!("id = '{id}'\nname = 'Pack'\nversion = '1'\n"),
-        )
-        .unwrap();
-        fs::write(path.join("themes/a.json"),r#"{"themes":[{"name":"Same","appearance":"dark","style":{}},{"name":"Other","appearance":"dark","style":{}}]}"#).unwrap();
-    }
-    let catalog = ThemeCatalog::load(&dirs);
-    assert_eq!(catalog.entries().len(), 2);
-    assert_eq!(catalog.packs().len(), 2);
-    assert_eq!(catalog.problems().len(), 5);
-    assert!(matches!(
-        catalog.find("Same", Appearance::Light).unwrap().source,
-        ThemeSource::User(_)
-    ));
-    assert!(
-        matches!(&catalog.find("Other",Appearance::Dark).unwrap().source,ThemeSource::Installed{id,..} if id=="a")
+fn supplied_documents_reserve_names_and_keep_first_precedence() {
+    let mut builder = CatalogBuilder::new();
+    let document = br##"{"themes":[{"name":"First","appearance":"dark","style":{}},{"name":"Nocterm Default","appearance":"light","style":{}}]}"##;
+    builder.document(
+        Path::new("a.json"),
+        ThemeSource::User("a.json".into()),
+        document,
     );
-    assert!(catalog.find("Same", Appearance::Dark).is_none());
+    builder.document(
+        Path::new("b.json"),
+        ThemeSource::User("b.json".into()),
+        document,
+    );
+    let catalog = builder.finish();
+    assert_eq!(catalog.entries().len(), 1);
+    assert_eq!(catalog.problems().len(), 3);
+    assert!(
+        matches!(&catalog.entries()[0].source,ThemeSource::User(path) if path == Path::new("a.json"))
+    );
+}
+#[test]
+fn empty_pack_metadata_is_retained_and_manifest_identity_checked() {
+    let mut builder = CatalogBuilder::new();
+    assert!(
+        builder
+            .manifest(
+                Path::new("extension.toml"),
+                "x",
+                b"id='x'\nname='X'\nversion='1'"
+            )
+            .is_some()
+    );
+    assert!(
+        builder
+            .manifest(
+                Path::new("wrong.toml"),
+                "y",
+                b"id='x'\nname='X'\nversion='1'"
+            )
+            .is_none()
+    );
+    let catalog = builder.finish();
+    assert_eq!(catalog.packs().len(), 1);
+    assert_eq!(catalog.problems().len(), 1);
 }

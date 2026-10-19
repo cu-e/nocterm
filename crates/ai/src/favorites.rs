@@ -1,12 +1,7 @@
-use crate::{
-    acp,
-    session_config::{self, Choices, ConfigValue, StoredOption},
-};
+use crate::model::controls::ConfigOption;
+use crate::session_config::{self, Choices, ConfigValue, StoredOption};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentStateFile {
@@ -23,7 +18,7 @@ pub struct AgentStateFile {
 }
 impl AgentStateFile {
     /// Keeps the options `agent` reported. Returns whether they changed.
-    pub fn remember_options(&mut self, agent: &str, options: &[acp::SessionConfigOption]) -> bool {
+    pub fn remember_options(&mut self, agent: &str, options: &[ConfigOption]) -> bool {
         let stored = session_config::store(options);
         if stored.is_empty() || self.options.get(agent) == Some(&stored) {
             return false;
@@ -36,7 +31,7 @@ impl AgentStateFile {
     pub fn remember_choice(
         &mut self,
         agent: &str,
-        option: &acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &ConfigValue,
     ) -> bool {
         if !session_config::remembered(option) {
@@ -55,13 +50,11 @@ impl AgentStateFile {
     }
     /// The options a chat of `agent` shows before its session opens: the
     /// last reported ones with the remembered choices.
-    pub fn preview(&self, agent: &str) -> Vec<acp::SessionConfigOption> {
-        let mut options =
-            session_config::restore(self.options.get(agent).map_or(&[], Vec::as_slice));
-        for (id, value) in self.choices.get(agent).into_iter().flatten() {
-            session_config::choose(&mut options, id, value);
-        }
-        options
+    pub fn preview(&self, agent: &str) -> Vec<ConfigOption> {
+        session_config::with_choices(
+            session_config::restore(self.options.get(agent).map_or(&[], Vec::as_slice)),
+            &self.choices(agent),
+        )
     }
     pub fn contains(&self, agent: &str, option: &str, value: &str) -> bool {
         self.favorites
@@ -91,16 +84,5 @@ impl AgentStateFile {
         id: impl Fn(&T) -> &'a str,
     ) {
         values.sort_by_key(|v| !self.contains(agent, option, id(v)));
-    }
-    pub fn load(path: &Path) -> Result<Self, String> {
-        match std::fs::read_to_string(path) {
-            Ok(value) => toml::from_str(&value).map_err(|e| e.to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-    /// Caller serializes writes in snapshot order. Atomic rename prevents partial files.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        nocterm_core::persist::save(path, self).map_err(|error| error.to_string())
     }
 }

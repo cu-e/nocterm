@@ -1,13 +1,15 @@
 //! The vault as the [`CredentialStore`] terminals answer prompts from.
 use futures::{FutureExt as _, TryFutureExt as _, future::BoxFuture};
-use nocterm_session::{CredentialFuture, CredentialId, CredentialStore, Secret, SecretRequest};
-use nocterm_vault::{CredentialBinding, VaultService};
+use nocterm_session::{
+    CredentialFuture, CredentialId, CredentialStore, CredentialStoreError, Secret, SecretRequest,
+};
+use nocterm_vault::{CredentialBinding, VaultAccess};
 use std::sync::Arc;
 
-pub struct VaultCredentials(Arc<VaultService>);
+pub struct VaultCredentials(Arc<dyn VaultAccess>);
 
 impl VaultCredentials {
-    pub fn new(service: Arc<VaultService>) -> Self {
+    pub fn new(service: Arc<dyn VaultAccess>) -> Self {
         Self(service)
     }
 }
@@ -27,7 +29,10 @@ fn binding(request: &SecretRequest) -> Option<CredentialBinding> {
 }
 
 fn not_storable<T: Send + 'static>() -> CredentialFuture<T> {
-    futures::future::ready(Err("One-time answers are never saved.".to_owned())).boxed()
+    futures::future::ready(Err(CredentialStoreError::Failed(
+        "One-time answers are never saved.".to_owned(),
+    )))
+    .boxed()
 }
 
 impl CredentialStore for VaultCredentials {
@@ -45,7 +50,7 @@ impl CredentialStore for VaultCredentials {
         };
         self.0
             .get(id, binding)
-            .map_err(|error| error.to_string())
+            .map_err(|error| CredentialStoreError::Failed(error.to_string()))
             .boxed()
     }
 
@@ -62,7 +67,7 @@ impl CredentialStore for VaultCredentials {
         // edited profile.
         self.0
             .put(None, label, binding, secret)
-            .map_err(|error| error.to_string())
+            .map_err(|error| CredentialStoreError::Failed(error.to_string()))
             .boxed()
     }
 }

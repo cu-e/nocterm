@@ -80,17 +80,24 @@ pub(super) fn validate_batch(chunks: &[Vec<u8>]) -> Result<(), FsError> {
     }
     Ok(())
 }
+pub(super) async fn poison_upload(uploads: &Uploads, id: Uuid) -> Result<(), FsError> {
+    get_upload(uploads, id).await?.lock().await.failed = true;
+    Ok(())
+}
 pub(super) async fn write_batch(
     sftp: &Sftp,
     uploads: &Uploads,
     id: Uuid,
     chunks: Vec<Vec<u8>>,
 ) -> Result<(), FsError> {
-    validate_batch(&chunks)?;
     let upload = get_upload(uploads, id).await?;
     // One writer owns the complete contiguous offset range until every
     // acknowledgement arrives. Other writes and finish cannot overtake it.
     let mut upload = upload.lock().await;
+    if let Err(error) = validate_batch(&chunks) {
+        upload.failed = true;
+        return Err(error);
+    }
     if upload.failed {
         return Err(FsError::Other(
             "upload failed; cancel and start again".into(),
@@ -110,29 +117,80 @@ pub(super) async fn write_batch(
     }
     // Unlike try_join_all, this drains all replies even after one fails.
     // Never publish a partial batch or release the writer with pending ACKs.
+    upload.failed = true; // Uncertain or cancelled ACKs must never authorize publication.
     let replies = futures::future::join_all(writes).await;
     if let Some(error) = replies.into_iter().find_map(Result::err) {
         upload.failed = true;
         return Err(fs_error(error, &upload.destination));
     }
+    upload.failed = false;
     upload.offset = end;
     Ok(())
 }
 pub(super) async fn finish(sftp: &Sftp, uploads: &Uploads, id: Uuid) -> Result<String, FsError> {
-    let upload = get_upload(uploads, id).await?;
-    let mut upload = upload.lock().await;
+    publish(sftp, uploads, id, None).await
+}
+pub(super) async fn publish_as(
+    sftp: &Sftp,
+    uploads: &Uploads,
+    id: Uuid,
+    name: String,
+) -> Result<String, FsError> {
+    if !nocterm_session::fs::valid_publication_name(&name) {
+        return Err(FsError::Other("invalid publication leaf name".into()));
+    }
+    publish(sftp, uploads, id, Some(name)).await
+}
+async fn publish(
+    sftp: &Sftp,
+    uploads: &Uploads,
+    id: Uuid,
+    name: Option<String>,
+) -> Result<String, FsError> {
+    let entry = get_upload(uploads, id).await?;
+    let mut upload = entry.lock().await;
     if upload.failed {
         return Err(FsError::Other("failed upload cannot be published".into()));
     }
+    let destination = name.map_or_else(
+        || upload.destination.clone(),
+        |name| path::join(path::parent(&upload.destination), &name),
+    );
+    seal(sftp, &mut upload).await?;
+    upload.failed = true; // A cancelled/uncertain rename is not safe to retry.
+    if let Err(error) = publish_sealed(sftp, &upload, &destination).await {
+        // SFTP v3 reports a no-clobber collision as FAILURE. Only that
+        // definite rejection can be checked for the two surviving names;
+        // an uncertain ACK cannot be reconstructed from later path stats.
+        if upload.mode == UploadMode::Create
+            && matches!(&error, SftpError::Status(status) if status.status_code == StatusCode::Failure)
+            && stat(sftp, &destination).await?.is_some()
+            && stat(sftp, &upload.temporary).await?.is_some()
+        {
+            upload.failed = false;
+            return Err(FsError::AlreadyExists { path: destination });
+        }
+        upload.failed = true;
+        return Err(fs_error(error, &destination));
+    }
+    uploads.lock().await.remove(&id);
+    Ok(destination)
+}
+async fn seal(sftp: &Sftp, upload: &mut Upload) -> Result<(), FsError> {
     if let Some(handle) = upload.handle.take() {
+        upload.failed = true;
         sftp.raw
             .close(handle)
             .await
-            .map_err(|e| fs_error(e, &upload.temporary))?;
+            .map_err(|error| fs_error(error, &upload.temporary))?;
+        upload.failed = false;
     }
-    let result = if upload.mode == UploadMode::Replace {
+    Ok(())
+}
+async fn publish_sealed(sftp: &Sftp, upload: &Upload, destination: &str) -> Result<(), SftpError> {
+    if upload.mode == UploadMode::Replace {
         let mut data = Vec::new();
-        for path in [&upload.temporary, &upload.destination] {
+        for path in [upload.temporary.as_str(), destination] {
             data.extend_from_slice(&(path.len() as u32).to_be_bytes());
             data.extend_from_slice(path.as_bytes());
         }
@@ -140,24 +198,14 @@ pub(super) async fn finish(sftp: &Sftp, uploads: &Uploads, id: Uuid) -> Result<S
             Ok(Packet::Status(status)) if status.status_code == StatusCode::Ok => Ok(()),
             Ok(Packet::Status(status)) => Err(SftpError::Status(status)),
             Ok(_) => Err(SftpError::UnexpectedPacket),
-            Err(e) => Err(e),
+            Err(error) => Err(error),
         }
     } else {
         sftp.raw
-            .rename(&upload.temporary, &upload.destination)
+            .rename(&upload.temporary, destination)
             .await
             .map(|_| ())
-    };
-    if let Err(error) = result {
-        if upload.mode == UploadMode::Create && stat(sftp, &upload.destination).await?.is_some() {
-            return Err(FsError::AlreadyExists {
-                path: upload.destination.clone(),
-            });
-        }
-        return Err(fs_error(error, &upload.destination));
     }
-    uploads.lock().await.remove(&id);
-    Ok(upload.destination.clone())
 }
 pub(super) async fn cancel(sftp: &Sftp, uploads: &Uploads, id: Uuid) -> Result<(), FsError> {
     let Some(upload) = uploads.lock().await.remove(&id) else {

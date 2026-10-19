@@ -1,16 +1,27 @@
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 #[gpui_kit::test]
 fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    // Codex writes its limits into its own logs.
-    let logs = f._directory.path().join("codex/sessions/2026/10/03");
-    std::fs::create_dir_all(&logs).unwrap();
-    std::fs::write(
-        logs.join("rollout-a.jsonl"),
-        r#"{"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":38.0,"window_minutes":10080,"resets_at":1791588105},"secondary":{"used_percent":12.0,"window_minutes":300,"resets_at":1791500000}}}}"#,
-    )
-    .unwrap();
+    let source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
+    source.push(Ok(Some(vec![
+        nocterm_ai::usage::RateLimit {
+            window: nocterm_ai::usage::Window::Weekly,
+            used: Some(0.38),
+            resets_at: Some(1_791_588_105),
+            reached: false,
+        },
+        nocterm_ai::usage::RateLimit {
+            window: nocterm_ai::usage::Window::FiveHour,
+            used: Some(0.12),
+            resets_at: Some(1_791_500_000),
+            reached: false,
+        },
+    ])));
+    let f = fixture_with_width(cx, 26., source, workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -19,28 +30,36 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(25_900, 256_000)),
+            SessionUpdate::UsageUpdate(ContextUsage::new(25_900, 256_000)),
         )))
         .unwrap();
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
     finish
-        .send(
-            acp::PromptResponse::new(acp::StopReason::EndTurn)
-                .usage(acp::Usage::new(30_000, 25_000, 5_000).cached_read_tokens(20_000)),
-        )
+        .send(PromptOutcome {
+            usage: Some(TokenTotals {
+                cache_read: Some(20_000),
+                ..TokenTotals::new(30_000, 25_000, 5_000)
+            }),
+            ..PromptOutcome::new(StopReason::EndTurn)
+        })
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let runtime = Runtime::global(cx).read(cx);
-        let limits: Vec<_> = runtime.limits("codex").unwrap().iter().cloned().collect();
+        let runtime = f.installation.installed.runtime();
+        let limits: Vec<_> = runtime
+            .limits("codex", cx)
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
         assert_eq!(limits.len(), 2);
         assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread.read(cx).state.tokens.as_ref().unwrap().total_tokens,
+            thread.read(cx).transcript().tokens.as_ref().unwrap().total,
             30_000
         );
     });
@@ -105,8 +124,8 @@ fn attach_menu_lists_servers_under_their_folders(cx: &mut TestAppContext) {
         assert!(
             thread
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .contains(&Attachment::Group("homelab".into()))
         );
     })
@@ -119,43 +138,67 @@ fn implicit_markdown_images_are_disabled_and_config_labels_show_selection() {
         crate::panel::widgets::safe_markdown("![secret](file:///hidden)<img src='x'>"),
         "[secret](file:///hidden)&lt;img src='x'>"
     );
-    let option = acp::SessionConfigOption::select(
+    let option = ConfigOption::select(
         "model",
         "Model",
         "one",
-        vec![acp::SessionConfigSelectOption::new("one", "First")],
+        vec![ConfigChoice::new("one", "First")],
     );
     assert_eq!(crate::thread::config_label(&option), "First");
 }
 #[gpui_kit::test]
 fn image_preparation_runs_once_and_renders_a_cached_small_static_preview(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    let mut png = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(image::RgbaImage::new(800, 800))
-        .write_to(&mut png, image::ImageFormat::Png)
+    let codec = image_codec();
+    let f = fixture_with_width(
+        cx,
+        26.,
+        usage_source(),
+        workspace_resolver(),
+        crate::ImageDeps::new(codec.clone(), codec.clone()),
+    );
+    f.connector.support_images();
+    new_chat(&f, cx);
+    let data = image_bytes();
+    let expected = Arc::new(gpui_kit::Image::from_bytes(
+        gpui_kit::ImageFormat::Png,
+        data,
+    ));
+    cx.update(|cx| assert!(!expected.is_asset_cached(cx)));
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
+    });
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
-    let data = png.into_inner();
-    let key = (1usize, data.len(), false);
-    cx.update(|cx| {
-        f.panel.update(cx, |panel, cx| {
-            panel.cached_image(key, || data, false, cx);
-            assert!(matches!(
-                panel.image_cache.get(&key),
-                Some(crate::panel::CachedImage::Loading(_))
-            ));
-        })
-    });
     cx.run_until_parked();
-    cx.update(|cx| {
-        f.panel.update(cx, |panel, cx| {
-            let Some(crate::panel::CachedImage::Ready(image)) = panel.image_cache.get(&key) else {
-                panic!("preview not ready");
-            };
-            let decoded = image::load_from_memory(&image.bytes).unwrap();
-            assert!(decoded.width() <= 640 && decoded.height() <= 640);
-            panel.cached_image(key, || panic!("cache hit must not decode again"), false, cx);
+    assert_eq!(codec.requests().len(), 1);
+    // Draw the real composer strip, then deliver its image asset completion.
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let rendered = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert!(expected.is_asset_cached(cx));
+            expected
+                .clone()
+                .get_render_image(window, cx)
+                .expect("successful preview rendering must load its supplied PNG")
         })
-    });
+        .unwrap();
+    assert_eq!(rendered.frame_count(), 1);
+    assert_eq!(rendered.size(0), gpui_kit::size(2u32.into(), 2u32.into()));
+    assert_eq!(rendered.as_bytes(0).unwrap().len(), 2 * 2 * 4);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.draw(cx).clear(cx);
+        assert!(window.has_image_atlas_entry(&rendered));
+        let reused = expected.clone().get_render_image(window, cx).unwrap();
+        assert!(Arc::ptr_eq(&rendered, &reused));
+    })
+    .unwrap();
+    assert_eq!(codec.requests().len(), 1);
 }
 
 #[gpui_kit::test]
@@ -184,18 +227,21 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    f.commands.config.set_options(vec![ConfigOption::select(
+        "model",
+        "Model",
+        "one",
+        vec![
+            ConfigChoice::new(
+                "one",
+                "Very long selected model name that must fit the narrow panel",
+            ),
+            ConfigChoice::new("two", "Second"),
+        ],
+    )]);
+    f.commands.config.set_modes(ask_and_code());
     new_chat(&f, cx);
-    cx.update(|cx| {
-        f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
-            thread.state.config_options = vec![acp::SessionConfigOption::select("model", "Model", "one", vec![
-                acp::SessionConfigSelectOption::new("one", "Very long selected model name that must fit the narrow panel"),
-                acp::SessionConfigSelectOption::new("two", "Second"),
-            ])];
-            thread.state.modes = Some(serde_json::from_value(serde_json::json!({"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]})).unwrap());
-            cx.notify();
-        });
-    });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let composer = window.find("agent-composer").bounds();
@@ -234,8 +280,8 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
                 .current()
                 .unwrap()
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .is_empty()
         );
         window.press("escape", cx);
@@ -261,8 +307,8 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow() {
     let title = crate::thread::chat_title;
     assert_eq!(title(None, &state), "New Agent");
     assert_eq!(title(Some("Mine"), &state), "Mine");
-    state.entries.push(Entry::User(vec![acp::ContentBlock::Text(
-        acp::TextContent::new("Привет 🌍"),
+    state.entries.push(Entry::User(vec![Content::Text(
+        nocterm_ai::model::content::Text::new("Привет 🌍"),
     )]));
     assert_eq!(title(None, &state), "Provider title");
     assert_eq!(title(Some("  "), &state), "Provider title");
@@ -275,9 +321,20 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow() {
         (100, 0, 0.),
         (85, 100, 0.85),
     ] {
-        let usage = serde_json::from_value(serde_json::json!({"used":used,"size":size})).unwrap();
+        let usage = ContextUsage::new(used, size);
         assert_eq!(crate::panel::usage::usage_fraction(Some(&usage)), expected);
     }
+}
+
+fn ask_and_code() -> nocterm_ai::model::controls::Modes {
+    use nocterm_ai::model::controls::{ModeChoice, Modes};
+    Modes::new(
+        "ask",
+        vec![
+            ModeChoice::new("ask", "Ask"),
+            ModeChoice::new("code", "Code"),
+        ],
+    )
 }
 
 #[test]
@@ -307,32 +364,24 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
-    cx.update(|cx| {
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| {
-                thread.state.entries = vec![
-                    nocterm_ai::thread::Entry::User(vec![acp::ContentBlock::Text(
-                        acp::TextContent::new("Question"),
-                    )]),
-                    nocterm_ai::thread::Entry::Thought(
-                        "Inspecting the current terminal carefully before running commands".into(),
-                    ),
-                ];
-                thread
-                    .lifecycle
-                    .force_phase(nocterm_ai::session::SessionPhase::Prompting);
-                cx.notify();
-            });
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("Question".into(), cx));
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::AgentThoughtChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "Inspecting the current terminal carefully before running commands",
+            ))),
+            cx,
+        )
     });
+    cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let chips = window.find("agent-attachment-chips").bounds();
@@ -367,20 +416,12 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
         );
     })
     .unwrap();
-    cx.update(|cx| {
-        cx.set_reduce_motion(false);
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| {
-                thread
-                    .lifecycle
-                    .force_phase(nocterm_ai::session::SessionPhase::Ready);
-                cx.notify();
-            });
-    });
+    cx.update(|cx| cx.set_reduce_motion(false));
+    complete_active(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Deliver final publication/layout callbacks before checking sustained animation.
+        window.simulate_next_frame(cx);
         window.render_frame(cx);
         assert_eq!(
             window.simulate_next_frame(cx),
@@ -394,8 +435,8 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
                 .current()
                 .unwrap()
                 .read(cx)
-                .composer
-                .attachments
+                .composer()
+                .attachments()
                 .is_empty()
         );
     })
@@ -404,12 +445,12 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
 
 #[gpui_kit::test]
 fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {
         f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
-            thread.state.entries = vec![nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"mcp","title":format!("terminal.run_command {long}"),"status":"completed","kind":"execute","content":[{"type":"content","content":{"type":"text","text":long}}]})).unwrap())];
+            restore_entries(&f,thread,vec![nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"mcp","title":format!("terminal.run_command {long}"),"status":"completed","kind":"execute","content":[{"type":"content","content":{"type":"text","text":long}}]})).unwrap())],cx);
             cx.notify();
         });
     });
@@ -426,10 +467,16 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
             assert!(bounds.origin.x >= panel.origin.x);
         }
         // Wrapped, the output is tall enough to push the header out of view.
-        f.panel.update(cx, |panel, cx| {
-            panel.expanded.clear();
-            cx.notify();
-        });
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(1_000_000.),
+            )),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click(("tool-call", 0usize), cx);
         window.render_frame(cx);
         assert!(window.try_find(("tool-output", 0usize)).is_none());
     })
@@ -440,9 +487,14 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                thread.state.entries = vec![nocterm_ai::thread::Entry::Thought(format!(
-                    "Inspecting command `{long}`\n\n```json\n{{\"command\":\"{long}\"}}\n```"
-                ))];
+                restore_entries(
+                    &f,
+                    thread,
+                    vec![nocterm_ai::thread::Entry::Thought(format!(
+                        "Inspecting command `{long}`\n\n```json\n{{\"command\":\"{long}\"}}\n```"
+                    ))],
+                    cx,
+                );
                 cx.notify();
             });
     });
@@ -459,4 +511,55 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
         }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn prompt_completion_refreshes_its_original_usage_source_after_another_installation(
+    cx: &mut TestAppContext,
+) {
+    let source = usage_source();
+    source.push(Ok(Some(vec![nocterm_ai::usage::RateLimit {
+        window: nocterm_ai::usage::Window::Weekly,
+        used: Some(0.38),
+        resets_at: None,
+        reached: false,
+    }])));
+    let first = fixture_with_width(cx, 26., source.clone(), workspace_resolver(), image_deps());
+    new_chat(&first, cx);
+    let thread = cx.update(|cx| first.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("original prompt".into(), cx));
+    cx.run_until_parked();
+    let finish = first.commands.pending.lock().unwrap().take().unwrap();
+    let other_source = usage_source();
+    let second = fixture_with_width(
+        cx,
+        26.,
+        other_source.clone(),
+        workspace_resolver(),
+        image_deps(),
+    );
+    finish
+        .send(PromptOutcome::new(StopReason::EndTurn))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(source.requests().len(), 1);
+    assert!(other_source.requests().is_empty());
+    cx.update(|cx| {
+        assert!(
+            first
+                .installation
+                .installed
+                .runtime()
+                .limits("codex", cx)
+                .is_some()
+        );
+        assert!(
+            second
+                .installation
+                .installed
+                .runtime()
+                .limits("codex", cx)
+                .is_none()
+        );
+    });
 }

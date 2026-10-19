@@ -1,419 +1,694 @@
-//! The composer: attachments, images, the message field and the controls
-//! under it.
-use gpui_kit::{
-    Anchor, AnyElement, App, ClipboardEntry, ClipboardItem, Context, Entity, Focusable as _,
-    SharedString, TestSupportExt as _, WeakEntity,
-    component::{
-        ActiveTheme as _, Disableable as _, Sizable as _,
-        button::{Button, ButtonVariants as _},
-        h_flex,
-        input::Textarea,
-        v_flex,
-    },
-    div,
-    prelude::*,
-    px, rems,
-};
-use nocterm_ai::{acp, thread::ThreadState};
-use nocterm_ui::IconName;
-
+use super::*;
 use super::{
-    AgentPanel, MenuKind,
-    widgets::{attachment_icon, menu_variant, mode_label, running_dot},
+    commands::CommandOrigin,
+    images::ImageAttachError,
+    menu::{ConfigurationSelection, FavoriteSelection, ModeSelection},
 };
-use crate::thread::{AgentThread, config_label};
+use crate::thread::Attachment;
+use gpui_kit::{AnyElement, PathPromptOptions};
+use nocterm_ai::images::PromptImage;
+use nocterm_ai::model::ids::AuthMethodId;
+use nocterm_ai::model::usage::ContextUsage;
+use std::path::PathBuf;
 
 impl AgentPanel {
+    pub(super) fn on_composer_input_changed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer.observe_input(cx) {
+            return;
+        }
+        if self.menus.is_open(&MenuKind::Usage) {
+            self.close_usage(window, cx);
+        }
+        self.sync_composer_draft(cx);
+        self.sync_command_token(window, cx);
+        cx.notify();
+    }
+    pub(super) fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send(window, cx);
+    }
+    pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preparing_images() {
+            return;
+        }
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let text = if self.composer.editing() {
+            self.composer.text(cx).to_string()
+        } else {
+            self.original_composer_text(cx)
+        };
+        let replace = self.composer.replacement_for(thread.entity_id());
+        let result = thread.update(cx, |thread, cx| thread.submit(text, replace, cx));
+        match result {
+            Ok(true) => {
+                self.composer.set_text("", window, cx);
+                self.finish_queue_edit(window, cx);
+            }
+            Ok(false) => return,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        }
+        self.menus.reset();
+        cx.notify();
+    }
+    pub(super) fn toggle_menu(&mut self, menu: MenuKind, cx: &mut Context<Self>) {
+        self.menus.toggle(menu);
+        cx.notify();
+    }
+    pub(super) fn reset_commands(&mut self) {
+        self.composer.reset_commands();
+    }
+    pub(super) fn refresh_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let key = (
+            thread.entity_id(),
+            thread.read(cx).configuration().commands_revision(),
+        );
+        let commands = thread.read(cx).configuration().commands().to_vec();
+        if self.composer.refresh_commands(key, &commands, window, cx) {
+            cx.notify();
+        }
+    }
+    pub(super) fn command_matches(&self, cx: &App) -> Vec<usize> {
+        self.current()
+            .map(|thread| {
+                self.composer
+                    .command_matches(thread.read(cx).configuration().commands(), cx)
+            })
+            .unwrap_or_default()
+    }
+    pub(super) fn sync_command_token(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let commands = self
+            .current()
+            .map(|thread| thread.read(cx).configuration().commands().to_vec())
+            .unwrap_or_default();
+        self.composer.sync_command_token(&commands, window, cx);
+    }
+    pub(super) fn complete_command(
+        &mut self,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.confirm_command(name, window, cx);
+        cx.notify();
+    }
+    pub(super) fn command_action(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer.focus(cx).is_focused(window) {
+            return;
+        }
+        let indices = self.command_matches(cx);
+        if indices.is_empty()
+            || !matches!(
+                key,
+                "up" | "down" | "escape" | "tab" | "shift-tab" | "enter"
+            )
+        {
+            return;
+        }
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let names = indices
+            .iter()
+            .map(|index| {
+                thread.read(cx).configuration().commands()[*index]
+                    .name
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        self.composer.command_action(key, &names, window, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }
+    pub(super) fn render_commands(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.composer.command_menu(self.current(), window, cx)
+    }
+    pub(super) fn on_command_selected(
+        &mut self,
+        origin: CommandOrigin,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current().is_some_and(|thread| {
+            origin.matches(
+                thread.entity_id(),
+                thread.read(cx).configuration().commands_revision(),
+            )
+        }) {
+            self.complete_command(name, window, cx);
+        }
+    }
+    pub(super) fn on_command_token_clicked(
+        &mut self,
+        range: std::ops::Range<usize>,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.select_command_token(range, window, cx);
+    }
     pub(super) fn render_composer(
         &mut self,
         thread: &Entity<AgentThread>,
-        state: &ThreadState,
-        labels: &super::attachments::AttachmentLabels,
+        usage: Option<&ContextUsage>,
+        labels: &attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let chips = self.render_attachment_chips(thread, labels, cx);
-        let images = self.render_image_strip(thread, cx);
-        let input = self.render_input(cx);
-        let footer = self.render_footer(thread, state, cx);
-        let notices = self.render_notices(thread, cx);
-        v_flex()
-            .id("agent-composer")
-            .test_support()
-            .when(!self.command_matches(cx).is_empty(), |composer| {
-                composer.key_context("AgentSlashCommands")
-            })
-            .m_3()
-            .p_2()
-            .gap_2()
-            .min_w_0()
-            .rounded(px(16.))
-            .bg(cx.theme().muted)
-            .border_1()
-            .border_color(cx.theme().border)
-            .children(chips)
-            .children(images)
-            .child(input)
-            .child(footer)
-            .children(notices)
-            .into_any_element()
-    }
-
-    /// The session's configuration and mode pickers.
-    fn render_config_controls(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        state: &ThreadState,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let generating = thread.read(cx).lifecycle.generating();
-        let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
-        for option in &state.config_options {
-            let id = option.id.to_string();
-            controls = controls.child(
-                self.menu_popover(
-                    SharedString::from(format!("config-popover-{id}")),
-                    MenuKind::Config(id.clone()),
-                    Button::new(SharedString::from(format!("config-picker-{id}")))
-                        .ghost()
-                        .small()
-                        .max_w_full()
-                        .label(config_label(option))
-                        .dropdown_caret(true)
-                        .tooltip(super::commands::config_hint(option))
-                        .disabled(generating),
-                    Anchor::BottomLeft,
-                    cx,
-                ),
-            );
-        }
-        if !state.config_overrides_modes() && state.modes.is_some() {
-            controls = controls.child(
-                self.menu_popover(
-                    "mode-popover",
-                    MenuKind::Modes,
-                    Button::new("mode-picker")
-                        .ghost()
-                        .small()
-                        .max_w_full()
-                        .label(mode_label(state))
-                        .dropdown_caret(true)
-                        .disabled(generating),
-                    Anchor::BottomLeft,
-                    cx,
-                ),
-            );
-        }
-        controls.into_any_element()
-    }
-
-    /// Removable chips for the attached terminals and servers.
-    fn render_attachment_chips(
-        &self,
-        thread: &Entity<AgentThread>,
-        labels: &super::attachments::AttachmentLabels,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if thread.read(cx).composer.attachments.is_empty() {
-            return None;
-        }
-        let mut chips = h_flex()
-            .id("agent-attachment-chips")
-            .test_support()
-            .min_w_0()
-            .gap_1()
-            .flex_wrap()
-            .items_start();
-        for attachment in &thread.read(cx).composer.attachments {
-            let value = attachment.clone();
-            let label = labels.label(attachment);
-            let running = labels.connected(attachment);
-            chips = chips.child(
-                Button::new(SharedString::from(format!("chip-{label}")))
-                    .custom(menu_variant(cx))
-                    .small()
-                    .icon(attachment_icon(attachment))
-                    .max_w_full()
-                    .label(label.clone())
-                    .tooltip(format!(
-                        "Remove {label}{}",
-                        if running { " · Running session" } else { "" }
-                    ))
-                    .when(running, |button| button.child(running_dot(cx)))
-                    .child(gpui_kit::component::Icon::new(IconName::X).xsmall())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(thread) = this.current() {
-                            thread.update(cx, |thread, cx| thread.attach(value.clone(), cx));
-                        }
-                    })),
-            );
-        }
-        Some(chips.into_any_element())
-    }
-
-    /// Thumbnails of the images the next message will carry.
-    fn render_image_strip(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let previews = thread
-            .read(cx)
-            .composer
-            .images
-            .iter()
-            .map(|image| {
-                let key = (image.bytes().as_ptr() as usize, image.bytes().len(), false);
-                (
-                    key,
-                    (!self.image_cache.contains_key(&key)).then(|| image.bytes().to_vec()),
-                )
-            })
-            .collect::<Vec<_>>();
-        if previews.is_empty() {
-            return None;
-        }
-        let mut strip = h_flex().id("agent-image-strip").flex_wrap().gap_2();
-        for (index, (key, data)) in previews.into_iter().enumerate() {
-            let thumbnail = self.cached_image(key, || data.unwrap_or_default(), false, cx);
-            strip = strip.child(
-                div()
-                    .relative()
-                    .size(rems(3.5))
-                    .rounded(cx.theme().radius)
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(thumbnail)
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .child(remove_image(index, cx)),
-                    ),
-            );
-        }
-        Some(strip.into_any_element())
-    }
-
-    /// The message field, with slash-command tokens and image paste.
-    fn render_input(&self, cx: &mut Context<Self>) -> AnyElement {
-        let weak = cx.weak_entity();
-        let command_panel = cx.weak_entity();
-        let command_input = self.input.clone();
-        Textarea::new(&self.input)
-            .appearance(false)
-            .bordered(false)
-            .token(move |token, _, cx| {
-                let name = token.token().id().to_string();
-                let owner = command_panel.clone();
-                div()
-                    .id("composer-command-token")
-                    .test_support()
-                    .h(token.line_height())
-                    .rounded(px(4.))
-                    .px_1()
-                    .bg(cx.theme().accent)
-                    .text_color(cx.theme().accent_foreground)
-                    .child(token.token().label().clone())
-                    .hoverable_tooltip(move |_, cx| {
-                        super::commands::tooltip(name.clone(), owner.clone(), cx)
-                    })
-            })
-            .on_token_click(move |event, window, cx| {
-                command_input.update(cx, |input, cx| {
-                    input.set_selected_range(event.range(), cx);
-                    window.focus(&input.focus_handle(cx), cx);
-                });
-            })
-            .on_paste(move |clipboard, _, cx| paste(&weak, clipboard, cx))
-            .into_any_element()
-    }
-
-    /// Attach buttons, session controls, usage and send.
-    fn render_footer(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        state: &ThreadState,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let context_tooltip = format!(
-            "{} attached terminals · sent metadata {} B · terminal output {} B",
-            thread.read(cx).composer.attachments.len(),
-            thread.read(cx).context_bytes,
-            thread.read(cx).tool_bytes
+        let chips =
+            composer_renderer::ComposerRenderer::render_attachment_chips(thread, labels, cx);
+        let previews =
+            preview_operation::PreviewOperation::composer_previews(&mut self.messages, thread, cx);
+        let images = composer_renderer::ComposerRenderer::render_image_strip(
+            thread.entity_id(),
+            previews,
+            cx,
         );
-        let images_supported = thread
-            .read(cx)
-            .info
-            .as_ref()
-            .is_some_and(|info| info.capabilities.prompt_capabilities.image);
-        let controls = self.render_config_controls(thread, state, cx);
-        h_flex()
-            .gap_1()
-            .child(
-                self.menu_popover(
-                    "context-popover",
-                    MenuKind::Context,
-                    Button::new("agent-attach-context")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Plus)
-                        .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
-                    Anchor::BottomLeft,
-                    cx,
-                ),
-            )
-            .child(
-                Button::new("agent-attach-image")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ImagePlus)
-                    .tooltip("Attach image")
-                    .disabled(self.preparing_images() || !images_supported)
-                    .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
-            )
-            .child(div().flex_1().min_w_0().child(controls))
-            .child(self.usage_button(state.usage.as_ref(), cx))
-            .child(self.render_send(thread, cx))
-            .into_any_element()
+        let input = composer_renderer::ComposerRenderer::render_input(&self.composer, cx);
+        let footer = composer_renderer::ComposerRenderer::render_footer(
+            &self.composer,
+            &self.menus,
+            thread,
+            usage,
+            cx,
+        );
+        let notices = composer_renderer::ComposerRenderer::render_notices(
+            &self.composer,
+            self.host.auth().is_some(),
+            thread,
+            cx,
+        );
+        composer_renderer::ComposerRenderer::compose(
+            chips,
+            images,
+            input,
+            footer,
+            notices,
+            self.command_matches(cx),
+            cx,
+        )
     }
-
-    /// Whether the send button stops the running turn instead.
-    fn stops(&self, thread: &Entity<AgentThread>, cx: &App) -> bool {
-        thread.read(cx).lifecycle.generating()
-            && self.input.read(cx).value().trim().is_empty()
-            && thread.read(cx).composer.images.is_empty()
-            && self.composer.edit.is_none()
-    }
-
-    fn render_send(&self, thread: &Entity<AgentThread>, cx: &mut Context<Self>) -> AnyElement {
-        let stop = self.stops(thread, cx);
-        Button::new("agent-send")
-            .primary()
-            .small()
-            .icon(if stop {
-                IconName::CircleStop
-            } else {
-                IconName::ArrowUp
-            })
-            .rounded(px(999.))
-            .accessibility_label(if stop {
-                "Stop generation"
-            } else {
-                "Send message"
-            })
-            .flex_shrink_0()
-            .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(thread.read(cx).lifecycle.sign_in_required() || self.preparing_images())
-            .on_click(cx.listener(|this, _, window, cx| match this.current() {
-                Some(thread) if this.stops(&thread, cx) => {
-                    thread.update(cx, |thread, cx| thread.stop(cx));
-                }
-                _ => this.send(window, cx),
-            }))
-            .into_any_element()
-    }
-
-    /// Image preparation, restart and sign-in rows under the controls.
-    fn render_notices(
-        &self,
-        thread: &Entity<AgentThread>,
+    pub(super) fn prepare_images(
+        &mut self,
+        work: impl std::future::Future<Output = Result<Vec<PromptImage>, ImageAttachError>>
+        + Send
+        + 'static,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let mut notices = Vec::new();
-        if self.preparing_images() {
-            notices.push(
-                h_flex()
-                    .gap_1()
-                    .child(running_dot(cx))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Preparing images…"),
-                    )
-                    .into_any_element(),
-            );
-        }
-        if thread.read(cx).ended() && !thread.read(cx).lifecycle.generating() {
-            notices.push(
-                Button::new("agent-restart")
-                    .label("Restart chat")
-                    .on_click(cx.listener(|this, _, window, cx| this.restart(window, cx)))
-                    .into_any_element(),
-            );
-        }
-        if thread.read(cx).lifecycle.sign_in_required()
-            && let Some(info) = &thread.read(cx).info
+    ) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        if self.preparing_queue_edit()
+            || !thread
+                .read(cx)
+                .agent_info()
+                .is_some_and(|info| info.capabilities.image_prompts)
         {
-            let terminal = crate::TerminalAuth::opener(cx).is_some();
-            for method in &info.auth_methods {
-                if matches!(method, acp::AuthMethod::Terminal(_)) && !terminal {
-                    continue;
-                }
-                let id = method.id().clone();
-                notices.push(
-                    Button::new(SharedString::from(format!("authenticate-{id}")))
-                        .ghost()
-                        .small()
-                        .label(format!("Sign in: {}", method.name()))
-                        .disabled(thread.read(cx).lifecycle.signing_in())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(thread) = this.current() {
-                                thread.update(cx, |thread, cx| {
-                                    thread.authenticate(id.clone(), window, cx)
-                                });
-                            }
-                        }))
-                        .into_any_element(),
-                );
-            }
+            return;
         }
-        notices
+        let binding = self.composer.prepare_images(thread.entity_id());
+        cx.notify();
+        let ticket = thread.read(cx).session_ticket();
+        let owner = thread.downgrade();
+        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work)).launch(cx);
     }
-}
-
-fn remove_image(index: usize, cx: &mut Context<AgentPanel>) -> Button {
-    Button::new(("remove-image", index))
-        .ghost()
-        .xsmall()
-        .icon(IconName::X)
-        .tooltip("Remove image")
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if let Some(thread) = this.current() {
-                thread.update(cx, |thread, cx| {
-                    if index < thread.composer.images.len() {
-                        thread.composer.images.remove(index);
+    pub(super) fn on_composer_images_prepared(
+        &mut self,
+        binding: composer_view::ComposerBinding,
+        owner: gpui_kit::WeakEntity<crate::thread::AgentThread>,
+        ticket: nocterm_ai::session::Ticket,
+        result: Result<Vec<PromptImage>, ImageAttachError>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = owner.upgrade() else {
+            return;
+        };
+        if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
+            || self
+                .current()
+                .is_none_or(|current| current.entity_id() != thread.entity_id())
+            || !self.composer.images_completed(&binding)
+        {
+            return;
+        }
+        thread.update(cx, |thread, cx| {
+            if !thread.session_request_current(ticket) {
+                return;
+            }
+            match result {
+                Ok(images) => {
+                    let mut collection = thread.composer().images().to_vec();
+                    collection.extend(images);
+                    if let Err(error) = thread.accept_composer_images(collection, cx) {
+                        self.notices.set_error(Some(error.to_string()));
                     }
-                    cx.notify();
+                }
+                Err(error) => self.notices.set_error(Some(error.to_string())),
+            }
+            cx.notify();
+        });
+        cx.notify();
+    }
+    pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        let inspector = self.messages.inspector();
+        self.prepare_images(
+            async move { Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?]) },
+            cx,
+        );
+    }
+    pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let inspector = self.messages.inspector();
+        self.prepare_images(
+            async move { images::read_images(paths, inspector.as_ref()) },
+            cx,
+        );
+    }
+    pub(super) fn on_image_paths_picked(
+        &mut self,
+        operation: image_picker::ImagePickerOperation,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        if operation.current(
+            self.current().map(|thread| thread.entity_id()),
+            self.composer.revision(),
+        ) {
+            self.add_images(paths, cx);
+        }
+    }
+    pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
+        let operation = image_picker::ImagePickerOperation::new(
+            self.current().map(|thread| thread.entity_id()),
+            self.composer.revision(),
+        );
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = picked.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.on_image_paths_picked(operation, paths, cx)
                 });
             }
-        }))
+        })
+        .detach();
+    }
+    pub(super) fn on_menu_open_changed(
+        &mut self,
+        kind: MenuKind,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if open {
+            self.menus.open(kind);
+        } else {
+            self.menus.close_if_same(&kind);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn on_configuration_selected(
+        &mut self,
+        action: ConfigurationSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let (thread, config, value) = action.into_parts();
+        if self.chats.contains(thread.entity_id()) {
+            thread.update(cx, |thread, cx| thread.set_config(config, value, cx));
+        }
+        self.menus.reset();
+        cx.notify();
+    }
+    pub(super) fn on_mode_selected(&mut self, action: ModeSelection, cx: &mut Context<Self>) {
+        let (thread, mode) = action.into_parts();
+        if self.chats.contains(thread.entity_id()) {
+            thread.update(cx, |thread, cx| thread.set_mode(mode, cx));
+        }
+        self.menus.reset();
+        cx.notify();
+    }
+    pub(super) fn on_favorite_selected(
+        &mut self,
+        action: FavoriteSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let (agent, config, value, _selected) = action.into_parts();
+        self.host
+            .runtime()
+            .toggle_favorite(&agent, &config, &value, cx);
+    }
+    pub(super) fn preparing_images(&self) -> bool {
+        self.composer.preparing()
+    }
+    pub(super) fn preparing_queue_edit(&self) -> bool {
+        self.composer.preparing_edit()
+    }
+    pub(super) fn original_composer_text(&self, cx: &gpui_kit::App) -> String {
+        if let Some(draft) = self.composer.original_draft() {
+            return draft.to_owned();
+        }
+        let value = self.composer_text(cx).to_string();
+        if self.composer.waiting_for_draft(&value) {
+            self.current()
+                .and_then(|thread| thread.read(cx).draft_text().map(str::to_owned))
+                .unwrap_or_default()
+        } else {
+            value
+        }
+    }
+    pub(super) fn restore_queue_edit(
+        &mut self,
+        resume: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let (chat, draft) = self.composer.take_edit()?.into_parts();
+        if let Some(thread) = self
+            .chats
+            .iter()
+            .find(|thread| thread.entity_id() == chat)
+            .cloned()
+        {
+            thread.update(cx, |thread, cx| thread.end_composer_edit(resume, cx));
+        }
+        Some(draft)
+    }
+    pub(super) fn leave_composer(&mut self, cx: &mut Context<Self>) {
+        self.leave_composer_with(false, cx);
+    }
+    pub(super) fn leave_composer_with(&mut self, discard: bool, cx: &mut Context<Self>) {
+        self.composer.leave();
+        let draft = self
+            .restore_queue_edit(!discard, cx)
+            .unwrap_or_else(|| self.original_composer_text(cx));
+        if !discard && let Some(thread) = self.current() {
+            thread.update(cx, |thread, cx| {
+                thread.set_draft(draft, cx);
+                thread.save(cx);
+            });
+        }
+    }
+    pub(super) fn load_composer(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let binding = self.composer.bind_loading(thread.entity_id(), cx);
+        let Some(window) = thread.read(cx).window() else {
+            return;
+        };
+        let owner = thread.downgrade();
+        let panel = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = cx.update_window(window, |_, window, cx| {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.on_draft_hydrated(binding, owner, window, cx)
+                });
+            });
+        });
+    }
+    pub(super) fn on_draft_hydrated(
+        &mut self,
+        binding: composer_view::ComposerBinding,
+        owner: gpui_kit::WeakEntity<AgentThread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = owner.upgrade() else {
+            return;
+        };
+        if self
+            .current()
+            .is_none_or(|current| current.entity_id() != thread.entity_id())
+            || !self.composer.current(&binding)
+        {
+            return;
+        }
+        self.sync_composer_draft(cx);
+        if !self.composer.current(&binding) {
+            return;
+        }
+        let archived = thread.read(cx).is_archived();
+        let draft = if archived {
+            String::new()
+        } else {
+            thread
+                .read(cx)
+                .composer()
+                .draft()
+                .cloned()
+                .unwrap_or_default()
+        };
+        self.composer
+            .finish_loading(&binding, draft, archived, window, cx);
+    }
+    pub(super) fn edit_queued(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer.editing() || self.preparing_images() {
+            return;
+        }
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let Some(prompt) = thread
+            .read(cx)
+            .composer()
+            .queue()
+            .iter()
+            .find(|prompt| prompt.saved.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let draft = self.original_composer_text(cx);
+        let ready = prompt.saved.images.is_empty();
+        let binding = self
+            .composer
+            .begin_edit(thread.entity_id(), id, draft.clone(), ready);
+        thread.update(cx, |thread, cx| {
+            thread.set_draft(draft, cx);
+            thread.begin_composer_edit(Vec::new(), prompt.attachments, cx);
+            cx.notify();
+        });
+        if !ready {
+            self.prepare_queue_images(&thread, id, binding, prompt.saved.clone(), cx);
+        }
+        self.reset_commands();
+        self.composer
+            .set_text(prompt.saved.text.clone(), window, cx);
+        self.composer.open_queue();
+        self.focus_composer(window, cx);
+        cx.notify();
+    }
+    pub(super) fn prepare_queue_images(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        id: u64,
+        binding: composer_view::ComposerBinding,
+        saved: std::sync::Arc<nocterm_ai::history::SavedPrompt>,
+        cx: &mut Context<Self>,
+    ) {
+        let task = queue_image_preparation::QueueImagePreparation::new(
+            binding.clone(),
+            thread.downgrade(),
+            thread.read(cx).session_ticket(),
+            id,
+            saved,
+            self.messages.inspector(),
+        )
+        .launch(cx);
+        self.composer.install_edit_preparation(&binding, id, task);
+    }
+    pub(super) fn on_queue_image_prepared(
+        &mut self,
+        binding: composer_view::ComposerBinding,
+        id: u64,
+        owner: gpui_kit::WeakEntity<AgentThread>,
+        ticket: nocterm_ai::session::Ticket,
+        result: Result<Vec<PromptImage>, ImageAttachError>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer.edit_preparation_current(&binding, id)
+            || !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
+        {
+            return;
+        }
+        let _ = owner.update(cx, |thread, cx| {
+            if !thread.session_request_current(ticket) {
+                return;
+            }
+            match result {
+                Ok(images) => match thread.accept_composer_images(images, cx) {
+                    Ok(()) => self.composer.edit_images_accepted(&binding, id),
+                    Err(error) => self.notices.set_error(Some(error.to_string())),
+                },
+                Err(error) => self.notices.set_error(Some(error.to_string())),
+            }
+            cx.notify();
+        });
+        cx.notify();
+    }
+    pub(super) fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
+        let editing = self.composer.editing_id();
+        if let Some(thread) = self.current() {
+            thread.update(cx, |thread, cx| thread.remove_queued(id, editing, cx));
+        }
+    }
+    pub(super) fn finish_queue_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = self.restore_queue_edit(true, cx) else {
+            return;
+        };
+        self.reset_commands();
+        self.composer.set_text(draft, window, cx);
+    }
+
+    pub(super) fn on_queue_height_observed(
+        &mut self,
+        chat: EntityId,
+        height: gpui_kit::Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer.observe_queue_height(chat, height) {
+            cx.notify();
+        }
+    }
+    pub(super) fn sync_composer_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let text = self.composer.text(cx).to_string();
+        if self.composer.draft_changed(thread.entity_id(), &text) {
+            thread.update(cx, |thread, cx| thread.set_draft(text, cx));
+        }
+    }
+    /// Reads the plan limits again when the card opens.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
+        self.menus.reset();
+        cx.notify();
+    }
+    pub(super) fn on_queue_toggled(&mut self, origin: EntityId, cx: &mut Context<Self>) {
+        if self
+            .current()
+            .is_none_or(|thread| thread.entity_id() != origin)
+        {
+            return;
+        }
+        self.composer.toggle_queue();
+        cx.notify();
+    }
+    pub(super) fn on_attachment_selected(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        value: Attachment,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.chats.find(chat).cloned() {
+            thread.update(cx, |thread, cx| thread.attach(value, cx));
+        }
+    }
+    pub(super) fn on_image_removed(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.chats.find(chat).cloned() {
+            thread.update(cx, |thread, cx| {
+                thread.remove_composer_image(index, cx);
+                cx.notify();
+            });
+        }
+    }
+    pub(super) fn on_send_clicked(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.current().filter(|thread| thread.entity_id() == chat) {
+            if composer_renderer::ComposerRenderer::stops(&self.composer, &thread, cx) {
+                thread.update(cx, |thread, cx| thread.stop(cx));
+            } else {
+                self.send(window, cx);
+            }
+        }
+    }
+    pub(super) fn on_restart_clicked(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == chat)
+        {
+            self.restart(window, cx);
+        }
+    }
+    pub(super) fn on_authenticate_clicked(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        id: AuthMethodId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.chats.find(chat).cloned() {
+            thread.update(cx, |thread, cx| thread.authenticate(id, window, cx));
+        }
+    }
 }
 
-/// Pasted files and images become attachments; anything else is text.
-fn paste(panel: &WeakEntity<AgentPanel>, clipboard: &ClipboardItem, cx: &mut App) -> bool {
-    let paths = clipboard
-        .entries()
-        .iter()
-        .filter_map(|entry| match entry {
-            ClipboardEntry::ExternalPaths(paths) => Some(paths.paths().to_vec()),
-            _ => None,
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-    if !paths.is_empty() {
-        let _ = panel.update(cx, |panel, cx| panel.add_images(paths, cx));
-        return true;
+impl AgentPanel {
+    pub(super) fn on_queue_send_now(&mut self, chat: EntityId, id: u64, cx: &mut Context<Self>) {
+        if let Some(thread) = self.current().filter(|thread| thread.entity_id() == chat) {
+            thread.update(cx, |thread, cx| thread.send_now(id, cx));
+        }
     }
-    let image = clipboard.entries().iter().find_map(|entry| match entry {
-        ClipboardEntry::Image(image) => Some(image.clone()),
-        _ => None,
-    });
-    if let Some(image) = image {
-        let _ = panel.update(cx, |panel, cx| panel.add_image_bytes(image.bytes, cx));
-        return true;
+    pub(super) fn on_queue_edit_requested(
+        &mut self,
+        chat: EntityId,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == chat)
+        {
+            self.edit_queued(id, window, cx);
+        }
     }
-    false
+    pub(super) fn on_queue_remove_requested(
+        &mut self,
+        chat: EntityId,
+        id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == chat)
+        {
+            self.remove_queued(id, cx);
+        }
+    }
 }

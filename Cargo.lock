@@ -4913,25 +4913,41 @@ dependencies = [
  "gpui-kit",
  "nocterm-acp",
  "nocterm-agent",
+ "nocterm-agent-runtime",
+ "nocterm-agent-storage",
  "nocterm-ai",
  "nocterm-connections",
+ "nocterm-connections-io",
+ "nocterm-connections-model",
  "nocterm-containers-ui",
  "nocterm-core",
  "nocterm-design",
  "nocterm-device-unlock",
  "nocterm-files",
+ "nocterm-image-codec",
  "nocterm-keymap",
  "nocterm-keymap-ui",
  "nocterm-local",
+ "nocterm-localfs",
  "nocterm-monitor-ui",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-settings-ui",
+ "nocterm-snippets",
+ "nocterm-snippets-io",
+ "nocterm-snippets-store",
  "nocterm-snippets-ui",
  "nocterm-ssh",
+ "nocterm-store",
  "nocterm-terminal",
+ "nocterm-theme-service",
  "nocterm-themes",
+ "nocterm-themes-registry",
+ "nocterm-transfer-runtime",
+ "nocterm-transfers",
  "nocterm-ui",
+ "nocterm-vault",
+ "nocterm-vault-store",
  "nocterm-vault-ui",
  "nocterm-workspace",
  "serde_json",
@@ -4939,6 +4955,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "winresource",
 ]
 
@@ -4947,6 +4964,7 @@ name = "nocterm-acp"
 version = "0.0.0"
 dependencies = [
  "agent-client-protocol",
+ "agent-client-protocol-schema",
  "async-channel",
  "async-io",
  "async-process",
@@ -4960,6 +4978,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4971,15 +4990,17 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
- "image",
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-session",
+ "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -4992,25 +5013,40 @@ dependencies = [
  "gpui-pre",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-store",
+ "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "nocterm-agent-storage"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-ai",
+ "nocterm-core",
+ "serde_json",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+ "uuid",
 ]
 
 [[package]]
 name = "nocterm-ai"
 version = "0.0.0"
 dependencies = [
- "agent-client-protocol-schema",
  "async-channel",
  "base64 0.22.1",
  "futures",
- "image",
  "nocterm-core",
  "nocterm-settings",
  "regex",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "serde_with",
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
@@ -5023,17 +5059,63 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
- "gpui-pre-reqwest",
- "nocterm-core",
+ "nocterm-connections-model",
+ "nocterm-connections-store",
  "nocterm-session",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "serde",
  "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-connections-io"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre-reqwest",
+ "nocterm-connections-model",
+ "nocterm-core",
+ "nocterm-session",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "nocterm-connections-model"
+version = "0.0.0"
+dependencies = [
+ "nocterm-core",
+ "nocterm-session",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "uuid",
+]
+
+[[package]]
+name = "nocterm-connections-store"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-connections-model",
+ "nocterm-core",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-store",
+ "schemars 1.2.2",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "tracing",
 ]
 
 [[package]]
@@ -5043,6 +5125,7 @@ dependencies = [
  "futures",
  "nocterm-session",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5054,6 +5137,7 @@ dependencies = [
  "nocterm-containers",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
 ]
@@ -5087,17 +5171,14 @@ name = "nocterm-device-unlock"
 version = "0.0.0"
 dependencies = [
  "chacha20poly1305",
- "futures",
  "getrandom 0.4.3",
  "hkdf 0.12.4",
  "nix 0.31.3",
- "nocterm-session",
  "nocterm-vault",
  "security-framework",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "tid-rs",
  "tokio",
  "windows 0.62.2",
@@ -5107,26 +5188,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-explorer"
+version = "0.0.0"
+dependencies = [
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-files"
 version = "0.0.0"
 dependencies = [
- "atomicwrites",
  "chrono",
- "directories",
  "futures",
  "gpui-kit",
- "nix 0.28.0",
+ "nocterm-explorer",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-transfers",
  "nocterm-ui",
  "nocterm-workspace",
  "parking_lot",
- "rustix 1.1.5",
- "schemars 1.2.2",
- "serde",
  "tempfile",
- "uuid",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-image-codec"
+version = "0.0.0"
+dependencies = [
+ "image",
+ "nocterm-ai",
 ]
 
 [[package]]
@@ -5137,6 +5232,7 @@ dependencies = [
  "nocterm-core",
  "serde",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
@@ -5148,8 +5244,8 @@ dependencies = [
  "gpui-kit",
  "nocterm-keymap",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
- "nocterm-workspace",
 ]
 
 [[package]]
@@ -5159,10 +5255,28 @@ dependencies = [
  "async-channel",
  "futures",
  "nix 0.28.0",
+ "nocterm-core",
  "nocterm-session",
  "portable-pty",
  "process-wrap",
  "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nocterm-localfs"
+version = "0.0.0"
+dependencies = [
+ "atomicwrites",
+ "directories",
+ "getrandom 0.4.3",
+ "nix 0.28.0",
+ "nocterm-session",
+ "rustix 1.1.5",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5172,8 +5286,10 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "nocterm-session",
+ "nocterm-settings",
  "schemars 1.2.2",
  "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5185,10 +5301,10 @@ dependencies = [
  "nocterm-monitor",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "schemars 1.2.2",
- "serde",
+ "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -5198,7 +5314,7 @@ version = "0.0.0"
 dependencies = [
  "async-channel",
  "futures",
- "getrandom 0.4.3",
+ "nocterm-core",
  "nocterm-settings",
  "schemars 1.2.2",
  "secrecy",
@@ -5214,6 +5330,7 @@ dependencies = [
  "nocterm-core",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
 ]
@@ -5222,18 +5339,11 @@ dependencies = [
 name = "nocterm-settings-ui"
 version = "0.0.0"
 dependencies = [
- "flate2",
  "gpui-kit",
- "nocterm-ai",
- "nocterm-session",
- "nocterm-settings",
- "nocterm-themes",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "serde",
- "serde_json",
- "tar",
- "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5246,18 +5356,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-snippets-io"
+version = "0.0.0"
+dependencies = [
+ "nocterm-core",
+ "nocterm-snippets",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "nocterm-snippets-store"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-snippets",
+ "nocterm-store",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "nocterm-snippets-ui"
 version = "0.0.0"
 dependencies = [
- "futures",
  "gpui-kit",
- "nocterm-core",
  "nocterm-session",
  "nocterm-snippets",
+ "nocterm-snippets-store",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "tempfile",
- "tracing",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
@@ -5266,16 +5398,33 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "hmac 0.13.0",
+ "nocterm-core",
  "nocterm-session",
  "russh",
  "russh-sftp",
  "rustix 1.1.5",
  "sha1",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "nocterm-store"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-monitor",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-terminal-model",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5287,28 +5436,79 @@ dependencies = [
  "gpui-kit",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
+ "nocterm-terminal-model",
+ "nocterm-theme-service",
+ "nocterm-themes",
  "nocterm-ui",
  "nocterm-vt",
  "nocterm-workspace",
  "regex",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "nocterm-terminal-model"
+version = "0.0.0"
+dependencies = [
+ "nocterm-session",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-theme-service"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-themes",
+ "serde_json",
 ]
 
 [[package]]
 name = "nocterm-themes"
 version = "0.0.0"
 dependencies = [
- "flate2",
- "gpui-pre-reqwest",
  "nocterm-design",
  "serde",
  "serde_json",
  "serde_json_lenient",
- "tar",
- "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-themes-registry"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "gpui-pre-reqwest",
+ "nocterm-core",
+ "nocterm-themes",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-transfer-runtime"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-session",
+ "nocterm-transfers",
+ "parking_lot",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -5316,14 +5516,9 @@ name = "nocterm-transfers"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "nocterm-core",
  "nocterm-session",
- "parking_lot",
- "rustix 1.1.5",
- "tempfile",
  "thiserror 2.0.21",
- "tokio",
- "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5332,16 +5527,19 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
- "nocterm-ai",
  "nocterm-core",
  "nocterm-design",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
+ "nocterm-terminal-model",
+ "nocterm-theme-service",
  "nocterm-themes",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
@@ -5352,15 +5550,14 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
- "event-listener",
- "fs2",
  "futures",
- "getrandom 0.4.3",
  "nocterm-session",
+ "nocterm-settings",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
  "zeroize",
 ]
 
@@ -5378,6 +5575,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-vault-store"
+version = "0.0.0"
+dependencies = [
+ "event-listener",
+ "fs2",
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-core",
+ "nocterm-session",
+ "nocterm-vault",
+ "tempfile",
+]
+
+[[package]]
 name = "nocterm-vault-ui"
 version = "0.0.0"
 dependencies = [
@@ -5385,11 +5596,10 @@ dependencies = [
  "gpui-kit",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
  "nocterm-vault",
  "nocterm-workspace",
- "schemars 1.2.2",
- "serde",
  "tempfile",
 ]
 
@@ -5400,6 +5610,7 @@ dependencies = [
  "alacritty_terminal",
  "regex",
  "regex-syntax",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5410,7 +5621,9 @@ dependencies = [
  "nocterm-keymap",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-store",
  "nocterm-ui",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -10895,12 +11108,13 @@ dependencies = [
  "anyhow",
  "nocterm-ai",
  "nocterm-design",
- "nocterm-files",
- "nocterm-monitor-ui",
+ "nocterm-explorer",
+ "nocterm-monitor",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-terminal-model",
  "nocterm-ui",
- "nocterm-vault-ui",
+ "nocterm-vault",
  "proc-macro2",
  "schemars 1.2.2",
  "serde",

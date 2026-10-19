@@ -164,9 +164,9 @@ fn matching_truncated_fence_previews_use_only_the_complete_raw_result() {
             raw,
             false,
         );
-        call.content = vec![nocterm_ai::acp::ToolCallContent::from(truncated_fence(
-            &full, 120,
-        ))];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(
+            truncated_fence(&full, 120),
+        )];
         let output = source(&call, false).unwrap();
         assert_eq!(output.sections.len(), 2);
         assert_eq!(output.sections[0].label, "Standard output");
@@ -222,7 +222,7 @@ fn incomplete_fences_and_extra_text_need_exact_matching_raw_proof() {
             raw,
             false,
         );
-        call.content = vec![nocterm_ai::acp::ToolCallContent::from(content.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(content.clone())];
         assert!(
             source(&call, false)
                 .unwrap()
@@ -248,7 +248,7 @@ fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text(
             raw,
             false,
         );
-        call.content = vec![nocterm_ai::acp::ToolCallContent::from(preview.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(preview.clone())];
         assert_eq!(source(&call, false).unwrap().sections.len(), 2);
     }
     for (preview, raw) in [
@@ -271,7 +271,7 @@ fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text(
             raw,
             false,
         );
-        call.content = vec![nocterm_ai::acp::ToolCallContent::from(preview.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(preview.clone())];
         assert!(
             source(&call, false)
                 .unwrap()

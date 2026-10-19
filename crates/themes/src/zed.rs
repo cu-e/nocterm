@@ -72,11 +72,10 @@ fn color(value: &Value) -> Option<Color> {
 /// Parse comments, trailing commas and BOMs, ignoring unsupported style fields.
 pub fn parse_family(bytes: &[u8]) -> Result<ThemeFamily, ThemeError> {
     if bytes.len() > FILE_LIMIT {
-        return Err(ThemeError::Invalid("theme file exceeds 8 MiB".into()));
+        return Err(ThemeError::FileLimit);
     }
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-    let value: Value = serde_json_lenient::from_slice(bytes)
-        .map_err(|e| ThemeError::Invalid(format!("invalid Zed theme: {e}")))?;
+    let value: Value = serde_json_lenient::from_slice(bytes)?;
     let mut family = ThemeFamily {
         name: value["name"]
             .as_str()
@@ -131,9 +130,7 @@ pub fn parse_family(bytes: &[u8]) -> Result<ThemeFamily, ThemeError> {
         });
     }
     if family.themes.is_empty() {
-        return Err(ThemeError::Invalid(
-            "theme family has no valid themes".into(),
-        ));
+        return Err(ThemeError::NoVariants);
     }
     Ok(family)
 }

@@ -23,6 +23,9 @@ pub(super) struct MessageNavigation {
 }
 
 impl MessageNavigation {
+    pub(super) fn has_rows(&self) -> bool {
+        self.known_rows > 0
+    }
     pub(super) fn clear(&mut self) {
         *self = Self::default();
     }
@@ -66,45 +69,25 @@ impl MessageNavigation {
         matches!(entry, Entry::User(_))
     }
 
-    fn previous(&self, top: ListOffset) -> Option<usize> {
+    pub(super) fn previous(&self, top: ListOffset) -> Option<usize> {
         let end = self.anchors.partition_point(|&index| {
             index < top.item_ix || (index == top.item_ix && top.offset_in_item > px(0.))
         });
         end.checked_sub(1).map(|index| self.anchors[index])
     }
 
-    fn first(&self, top: ListOffset) -> Option<usize> {
+    pub(super) fn first(&self, top: ListOffset) -> Option<usize> {
         (self.known_rows > 0 && (top.item_ix > 0 || top.offset_in_item > px(0.))).then_some(0)
     }
 }
 
-impl AgentPanel {
-    fn jump_to_message(&mut self, first: bool, cx: &mut Context<Self>) {
-        if self.current().map(|thread| thread.entity_id()) != self.navigation.owner {
-            return;
-        }
-        let top = self.list.read(cx).logical_scroll_top();
-        let target = if first {
-            self.navigation.first(top)
-        } else {
-            self.navigation.previous(top)
-        };
-        if let Some(index) = target {
-            self.list.update(cx, |list, cx| {
-                list.scroll_to_item(index, cx);
-            });
-            cx.notify();
-        }
-    }
-
-    pub(super) fn render_message_navigation(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let list = self.list.read(cx);
-        if !list.is_scrolled_up() || self.navigation.known_rows == 0 {
-            return None;
-        }
-        let top = list.logical_scroll_top();
-        let previous = self.navigation.previous(top);
-        let first = self.navigation.first(top);
+pub(super) struct NavigationRenderer;
+impl NavigationRenderer {
+    pub(super) fn render(
+        messages: &super::message_list::MessageList,
+        cx: &mut Context<AgentPanel>,
+    ) -> Option<AnyElement> {
+        let (first, previous) = messages.navigation_targets(cx)?;
         Some(
             v_flex()
                 .id("agent-message-navigation")

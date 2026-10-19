@@ -145,7 +145,7 @@ fn native_new_session_focuses_the_connection_menu_after_dismissal(cx: &mut TestA
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(workspace.read(cx).new_tab_menu_open);
+        assert!(workspace.read(cx).new_tab_menu_is_open());
         assert!(menu.read(cx).focus_handle(cx).contains_focused(window, cx));
         assert!(window.try_find("popup-menu").is_none());
     })
@@ -226,10 +226,12 @@ fn copy_connection_name_uses_the_display_alias_without_editing_it(cx: &mut TestA
         let item = probe(cx, Rc::new(Cell::new(0)));
         workspace.update(cx, |workspace, cx| {
             workspace.add_item(item, window, cx);
-            workspace.items[0]
-                .dock_item
-                .update(cx, |dock, _| dock.alias = Some("Production west".into()));
+            workspace.rename_active_tab(window, cx);
         });
+        window.render_frame(cx);
+        window.press("ctrl-a", cx);
+        window.input("Production west", cx);
+        window.press("enter", cx);
         window.render_frame(cx);
         window.dispatch_action(Box::new(crate::CopyConnectionName), cx);
     })
@@ -241,11 +243,7 @@ fn copy_connection_name_uses_the_display_alias_without_editing_it(cx: &mut TestA
             "Production west"
         );
         assert_eq!(
-            workspace.read(cx).items[0]
-                .dock_item
-                .read(cx)
-                .alias
-                .as_deref(),
+            workspace.read(cx).tabs(cx)[0].alias(),
             Some("Production west")
         );
     });
@@ -257,7 +255,10 @@ fn menu_snapshots_are_window_local_and_refresh_only_on_opening(cx: &mut TestAppC
     let (first, workspace) = fixture(cx);
     let (second, other) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Workspace::new(window, cx))
+            cx.new(|cx| {
+                let deps = crate::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                Workspace::new(deps, window, cx)
+            })
         })
         .unwrap()
     });

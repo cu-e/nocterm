@@ -1,6 +1,6 @@
 //! The active connection's snippets precede the collapsible remaining library.
 mod run;
-use crate::{editor, model::Snippets};
+use crate::{Installed, editor};
 use gpui_kit::{
     App, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable, SharedString,
     Subscription, WeakEntity, Window,
@@ -20,7 +20,7 @@ use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace, WorkspaceEvent};
 
 pub struct SnippetsPanel {
-    model: Entity<Snippets>,
+    installed: Installed,
     workspace: WeakEntity<Workspace>,
     focus: FocusHandle,
     search: Entity<InputState>,
@@ -34,14 +34,17 @@ pub struct SnippetsPanel {
 }
 impl SnippetsPanel {
     pub(crate) fn new(
-        model: Entity<Snippets>,
+        installed: Installed,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search snippets…"));
+        let observed_panel = cx.weak_entity();
         let subscriptions = vec![
-            cx.observe(&model, |_, _, cx| cx.notify()),
+            installed.observe(cx, move |cx| {
+                let _ = observed_panel.update(cx, |_, cx| cx.notify());
+            }),
             cx.observe(&search, |_, _, cx| cx.notify()),
             cx.subscribe(&workspace, |_, _, event, cx| {
                 if matches!(
@@ -63,7 +66,7 @@ impl SnippetsPanel {
             }),
         ];
         let panel = Self {
-            model,
+            installed,
             workspace: workspace.downgrade(),
             focus: cx.focus_handle(),
             search,
@@ -89,7 +92,7 @@ impl SnippetsPanel {
             return;
         };
         let workspace = workspace.read(cx);
-        let target = self.target(cx).ok().map(|target| target.info);
+        let target = self.target(cx).ok().map(run::RunTarget::into_info);
         self.run_enabled = target.as_ref().is_some_and(Self::ready);
         self.profile = target
             .as_ref()
@@ -107,9 +110,9 @@ impl SnippetsPanel {
         self.context = saved.map_or(title, |connection| connection.name);
     }
     fn confirm_delete(&self, snippet: Snippet, window: &mut Window, cx: &mut Context<Self>) {
-        let model = self.model.clone();
+        let installed = self.installed.clone();
         window.open_alert_dialog(cx, move |alert, _, _| {
-            let model = model.clone();
+            let installed = installed.clone();
             let snippet = snippet.clone();
             alert
                 .title(format!("Delete snippet “{}”?", snippet.name))
@@ -117,7 +120,7 @@ impl SnippetsPanel {
                 .ok_text("Delete")
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
-                    let saved = model.update(cx, |model, cx| model.delete(snippet.clone(), cx));
+                    let saved = installed.delete(snippet.clone(), cx);
                     window
                         .spawn(cx, async move |cx| {
                             if let Err(error) = saved.await {
@@ -127,7 +130,7 @@ impl SnippetsPanel {
                                         cx,
                                         "snippet-delete",
                                         "Could not delete snippet",
-                                        error,
+                                        error.to_string(),
                                     )
                                 });
                             }
@@ -213,6 +216,7 @@ impl SnippetsPanel {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 editor::open(
+                                    this.installed.clone(),
                                     Some(edit.clone()),
                                     this.workspace.clone(),
                                     window,
@@ -256,13 +260,13 @@ impl Focusable for SnippetsPanel {
 }
 impl Render for SnippetsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = self.model.read(cx);
-        let error = model.error().map(ToOwned::to_owned);
-        let writable = model.writable();
+        let model = &self.installed;
+        let error = model.error(cx).map(|error| error.to_string());
+        let writable = model.writable(cx);
         let query = self.search.read(cx).value();
         let (current, other) =
             model
-                .library
+                .library(cx)
                 .partition(self.profile.as_deref(), self.group.as_deref(), &query);
         let current: Vec<_> = current.into_iter().cloned().collect();
         let other: Vec<_> = other.into_iter().cloned().collect();
@@ -270,9 +274,9 @@ impl Render for SnippetsPanel {
         let searching = !query.trim().is_empty();
         let theme = cx.theme().clone();
         v_flex().track_focus(&self.focus).size_full().gap_1()
-            .child(h_flex().px_3().gap_1().text_xs().text_color(theme.muted_foreground).child(Icon::new(IconName::Server).xsmall()).child(div().flex_1().min_w_0().truncate().child(self.context.clone()))
-                .child(Button::new("snippet-new").ghost().xsmall().icon(IconName::Plus).tooltip("New snippet").disabled(!writable).on_click(cx.listener(|this, _, window, cx| { editor::open(None, this.workspace.clone(), window, cx); }))))
-            .child(div().px_3().py_1().child(Input::new(&self.search).small()))
+            .child(h_flex().px_3().gap_1().text_xs().text_color(theme.muted_foreground).child(Icon::new(IconName::Server).xsmall()).child(div().id("snippet-context").test_support().aria_label(self.context.clone()).flex_1().min_w_0().truncate().child(self.context.clone()))
+                .child(Button::new("snippet-new").ghost().xsmall().icon(IconName::Plus).tooltip("New snippet").disabled(!writable).on_click(cx.listener(|this, _, window, cx| { editor::open(this.installed.clone(), None, this.workspace.clone(), window, cx); }))))
+            .child(div().id("snippet-library-search").test_support().px_3().py_1().child(Input::new(&self.search).small()))
             .when_some(error, |panel, error| panel.child(div().px_3().py_2().text_xs().text_color(theme.danger).child(format!("Could not save or load snippets: {error}"))))
             .child(v_flex().id("snippets-list").flex_1().min_h_0().overflow_y_scroll()
                 .when(!current.is_empty(), |list| list.child(div().px_3().pt_2().pb_1().text_xs().font_medium().text_color(theme.muted_foreground).child("For this server")).children(current.iter().map(|snippet| self.row(snippet, cx))))

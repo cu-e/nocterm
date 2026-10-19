@@ -12,8 +12,8 @@ use gpui_kit::App;
 const DEFAULT_KEYMAP: &str = include_str!("../assets/keymap.toml");
 
 /// Binds the default keymap and the user's changes from `user_file`.
-pub(crate) fn load(user_file: Option<PathBuf>, cx: &mut App) {
-    nocterm_keymap::Keymap::init(DEFAULT_KEYMAP, user_file, cx);
+pub(crate) fn load(user_file: Option<PathBuf>, cx: &mut App) -> nocterm_keymap::KeymapHandle {
+    nocterm_keymap::KeymapHandle::install(DEFAULT_KEYMAP, user_file, cx)
 }
 
 #[cfg(test)]

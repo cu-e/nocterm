@@ -1,5 +1,11 @@
-//! Local PTY adapter. Bounded I/O workers and an independent close observer
-//! ensure process cleanup never waits behind a blocked PTY write.
+//! Native local PTY, structured commands and detached external editors.
+//! Owns: native launch, bounded I/O, exclusive pinned output logs and process ownership.
+//! Does not own: session contracts, filesystem traversal, editor selection or views.
+//! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
+//! recording::OutputLogFactory. Output-log operations run only on their caller executor.
+//! Settings section: local options are composed by the app. Globals: none.
+//! Invariants: PTY/exec cancellation owns process cleanup; external editors instead
+//! retain a bounded independent wait owner and survive receipt/application exit.
 
 use std::{
     io::{Read, Write},
@@ -20,8 +26,12 @@ use nocterm_session::{
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
 mod exec;
+mod program_opener;
+mod recording;
 
 pub use exec::LocalExec;
+pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
+pub use recording::LocalOutputLogFactory;
 
 /// A local shell factory, configured when a new terminal is opened.
 #[derive(Clone, Debug)]
@@ -45,13 +55,16 @@ impl Transport for IsolatedLocalTransport {
 
 /// Starts `launch` on a new PTY, on a thread of its own.
 fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
+    if let Err(error) = launch.validate() {
+        return Session::failed(SessionError::InvalidLaunch(error));
+    }
     let (session, driver) = channel(None);
     let session = session.with_exec(Arc::new(LocalExec));
     thread::spawn(move || {
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
             block_on(
                 driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                    error,
+                    error.to_string(),
                 )))),
             );
         }
@@ -68,6 +81,18 @@ fn size(s: PtySize) -> NativeSize {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum LaunchError {
+    #[error("native PTY error: {0}")]
+    Pty(String),
+    #[error("native PTY has no file descriptor")]
+    MissingFd,
+    #[error("file descriptor control error: {0}")]
+    Fcntl(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn start(
     launch: ShellLaunch,
@@ -75,11 +100,10 @@ fn start(
     term: String,
     pty: PtySize,
     driver: nocterm_session::SessionDriver,
-) -> Result<(), String> {
-    launch.validate()?;
+) -> Result<(), LaunchError> {
     let pair = native_pty_system()
         .openpty(size(pty))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     let program = launch.program.clone().unwrap_or_else(default_shell);
     let mut command = CommandBuilder::new(&program);
     if isolated {
@@ -102,12 +126,18 @@ fn start(
     }
     #[cfg(unix)]
     nonblocking(pair.master.as_ref())?;
-    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-    let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     let mut child = pair
         .slave
         .spawn_command(command)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LaunchError::Pty(e.to_string()))?;
     #[cfg(unix)]
     let child_pid = child.process_id();
     drop(pair.slave);
@@ -191,7 +221,7 @@ fn start(
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 // The owned shell can also exit normally while a background
                 // job retains the slave; stop after its buffered output drains.
-                if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                if child.try_wait()?.is_some() {
                     done_tx.close();
                     break;
                 }
@@ -217,7 +247,7 @@ fn start(
             }
         }
     }
-    let exit = child.wait().map_err(|e| e.to_string())?;
+    let exit = child.wait()?;
     done_tx.close();
     // Keep ephemeral scripts alive until the shell has exited.
     drop(integration);
@@ -232,17 +262,15 @@ fn start(
 }
 
 #[cfg(unix)]
-fn nonblocking(master: &dyn portable_pty::MasterPty) -> Result<(), String> {
+fn nonblocking(master: &dyn portable_pty::MasterPty) -> Result<(), LaunchError> {
     use nix::fcntl::{FcntlArg, OFlag, fcntl};
-    let fd = master
-        .as_raw_fd()
-        .ok_or("native PTY has no file descriptor")?;
-    let flags = fcntl(fd, FcntlArg::F_GETFL).map_err(|e| e.to_string())?;
+    let fd = master.as_raw_fd().ok_or(LaunchError::MissingFd)?;
+    let flags = fcntl(fd, FcntlArg::F_GETFL).map_err(|e| LaunchError::Fcntl(e.to_string()))?;
     fcntl(
         fd,
         FcntlArg::F_SETFL(OFlag::from_bits_retain(flags) | OFlag::O_NONBLOCK),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| LaunchError::Fcntl(e.to_string()))?;
     Ok(())
 }
 
@@ -332,7 +360,7 @@ pub fn default_shell() -> String {
 fn prepare_integration(
     program: &str,
     command: &mut CommandBuilder,
-) -> Result<Option<tempfile::TempDir>, String> {
+) -> Result<Option<tempfile::TempDir>, std::io::Error> {
     let stem = Path::new(program)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -356,17 +384,18 @@ fn prepare_integration(
         ),
         _ => return Ok(None),
     };
-    let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let directory = tempfile::tempdir()?;
     let path = directory.path().join(name);
-    std::fs::write(&path, script).map_err(|e| e.to_string())?;
+    std::fs::write(&path, script)?;
     match stem {
         "bash" => {
             command.args(["--rcfile", &path.to_string_lossy(), "-i"]);
         }
         "zsh" => {
-            std::fs::write(directory.path().join(".zshenv"),
-                "__nocterm_temp_zdotdir=$ZDOTDIR\nif [[ -n $NOCTERM_ORIGINAL_ZDOTDIR ]]; then ZDOTDIR=$NOCTERM_ORIGINAL_ZDOTDIR; else unset ZDOTDIR; fi\n[[ -f ${ZDOTDIR:-$HOME}/.zshenv ]] && source \"${ZDOTDIR:-$HOME}/.zshenv\"\nNOCTERM_ORIGINAL_ZDOTDIR=${ZDOTDIR:-}\nZDOTDIR=$__nocterm_temp_zdotdir\n")
-                .map_err(|e|e.to_string())?;
+            std::fs::write(
+                directory.path().join(".zshenv"),
+                "__nocterm_temp_zdotdir=$ZDOTDIR\nif [[ -n $NOCTERM_ORIGINAL_ZDOTDIR ]]; then ZDOTDIR=$NOCTERM_ORIGINAL_ZDOTDIR; else unset ZDOTDIR; fi\n[[ -f ${ZDOTDIR:-$HOME}/.zshenv ]] && source \"${ZDOTDIR:-$HOME}/.zshenv\"\nNOCTERM_ORIGINAL_ZDOTDIR=${ZDOTDIR:-}\nZDOTDIR=$__nocterm_temp_zdotdir\n",
+            )?;
             command.env(
                 "NOCTERM_ORIGINAL_ZDOTDIR",
                 std::env::var("ZDOTDIR").unwrap_or_default(),

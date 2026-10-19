@@ -1,0 +1,14 @@
+# Explicit plain-data exemptions only. Stateful entities are never DTOs.
+[dto]
+"nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
+"nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
+"nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
+"nocterm_connections::os::Os" = "Detected operating-system facts value."
+"nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
+"nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
+"nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."
+"nocterm_explorer::settings::OpenRule" = "Serialized opener rule."
+"nocterm_explorer::settings::OpenSettings" = "Serialized opener settings."
+"nocterm_explorer::settings::Opener" = "Serialized opener description."
+"nocterm_monitor::settings::MonitorSettings" = "Serialized settings section."
+"nocterm_vault::settings::VaultSettings" = "Serialized settings section."

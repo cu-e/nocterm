@@ -2,50 +2,71 @@
 //!
 //! The runtime knows no chat type. A chat registers a [`SessionClient`] and
 //! changes its own state when it receives a [`SessionEvent`]. Events are
-//! delivered synchronously, in the order the runtime emits them.
+//! delivered synchronously, in the order the runtime emits them. A chat
+//! releases its connection by dropping its lease, which the runtime learns
+//! of a moment later; events naming a connection let the chat ignore those
+//! of one it no longer holds.
 use super::SessionLease;
 use gpui::{App, EntityId};
-use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
+use nocterm_ai::{
+    AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder,
+    model::{auth::ProviderPermission, ids::SessionId, session::SessionNotice},
+};
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 /// What the runtime tells a chat.
 pub enum SessionEvent {
     /// A connection is being started for the chat; the lease holds it.
     Leased(SessionLease),
-    /// The agent process is up: open or load the session.
+    /// The agent process of connection `connection` is up: open or load
+    /// the session.
     Connected {
+        connection: u64,
         commands: Arc<dyn AgentCommands>,
         info: Box<AgentInfo>,
         workdir: PathBuf,
     },
     /// An update for the chat's connection; it may belong to another session.
-    Update(Rc<acp::SessionNotification>),
+    Update(Rc<SessionNotice>),
     /// The agent asks to use a tool. Dropping `respond` answers `Cancelled`.
     Permission {
-        request: Box<acp::RequestPermissionRequest>,
+        request: Box<ProviderPermission>,
         respond: PermissionResponder,
     },
     /// A call to one of the chat's terminal tools.
     Tool(BridgeCall),
     ToolRejected(BridgeRejection),
-    /// The connection ended with `0`.
-    Stopped(String),
+    /// Connection `connection` ended with `message`.
+    Stopped {
+        connection: u64,
+        message: String,
+    },
     /// The connection could not be started.
     Failed(String),
     /// The chat's agent was removed from the settings before it started.
     AgentRemoved,
-    /// The connection was closed to free a slot; the conversation stays.
-    Idle,
+    /// Connection `connection` is closed to free a slot; the conversation
+    /// stays.
+    Idle {
+        connection: u64,
+    },
     /// The agent process may still be running after its connection closed.
     CleanupUnconfirmed(String),
     /// The previous session's close finished; a new one may start.
     SessionClosed,
+    /// The shared writer accepted and owns this revision's immutable candidate.
+    SaveAdmitted {
+        revision: u64,
+    },
     /// The chat's snapshot at `revision` was written.
     Saved {
         revision: u64,
     },
     /// The chat's last snapshot could not be written.
-    SaveFailed(String),
+    SaveFailed {
+        revision: u64,
+        error: super::AgentPersistenceError,
+    },
     /// The permission settings changed.
     PolicyChanged,
     /// The application is quitting: release everything the agent holds.
@@ -58,7 +79,7 @@ pub struct ClientState {
     /// Restored chat directory, resolved before process and sandbox launch.
     pub workdir: Option<PathBuf>,
     pub agent_id: String,
-    pub session: Option<acp::SessionId>,
+    pub session: Option<SessionId>,
     /// Whether the session is doing work that closing it would interrupt.
     pub busy: bool,
     /// Whether the chat holds a connection.

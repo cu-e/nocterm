@@ -176,7 +176,8 @@ impl HostKeys {
         let _guard = MUTATIONS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.revalidate().map_err(RememberError::TrustChanged)?;
+        self.revalidate()
+            .map_err(|e| RememberError::TrustChanged(e.to_string()))?;
         let current = Self::load(self.writable.clone(), self.read_only.clone())
             .map_err(|error| RememberError::TrustChanged(error.to_string()))?;
         match current.check(host, port, key) {

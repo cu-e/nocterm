@@ -1,10 +1,9 @@
-mod find;
 mod input;
+mod lifecycle;
 mod output;
 mod presentation;
 
 use std::{
-    cell::RefCell,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -12,19 +11,21 @@ use std::{
 
 use gpui_kit::{Context, EventEmitter, SharedString, Subscription, Task};
 use nocterm_session::{
-    CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, RemoteFs, Secret, Session,
-    SessionError, Transport,
+    CloseReason, ConnectRequest, ConnectStage, Event, Prompt, PtySize, SessionError, Transport,
 };
-use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
+use nocterm_session::{LocalShellSettings, SshSettings};
+#[cfg(test)]
+use nocterm_session::{Secret, Session};
+#[cfg(test)]
+use nocterm_store::SettingsConfig;
 use nocterm_ui::{CursorShape, TerminalSettings};
-use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_vt::{
     Effect, Emulator, EmulatorOptions, Palette, Scroll, SearchDirection, SearchOptions,
     SearchPoint, SearchProgress, SearchResult, TermSize,
 };
 use nocterm_workspace::SessionSpec;
 
-use crate::{ActiveTransport, LocalTransportFactory, integration::ShellIntegration};
+use crate::Installed;
 
 /// Where a terminal's session stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,47 +50,41 @@ pub enum TerminalEvent {
 
 #[derive(Default)]
 pub struct FindState {
-    pub query: String,
-    pub options: SearchOptions,
-    pub searching: bool,
+    query: String,
+    options: SearchOptions,
+    searching: bool,
     /// Counts are final when `searching` is false; active may be an early preview.
-    pub result: SearchResult,
-    pub error: Option<String>,
+    result: SearchResult,
+    error: Option<String>,
+}
+impl FindState {
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+    pub fn options(&self) -> SearchOptions {
+        self.options
+    }
+    pub fn searching(&self) -> bool {
+        self.searching
+    }
+    pub fn result(&self) -> &SearchResult {
+        &self.result
+    }
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 type CommandCompletion = Box<dyn FnOnce(CloseReason, &mut gpui_kit::App)>;
 
 /// A session and the screen it draws on.
 pub struct Terminal {
-    codec: crate::codec::TextCodec,
-    text_error: Option<String>,
-    input_error: RefCell<Option<String>>,
-    recording: Option<crate::recording::Recorder>,
-    recording_options: nocterm_session::LoggingOptions,
-    recording_watch: Option<Task<()>>,
-    pub(crate) credentials: crate::credentials::CredentialState,
-    spec: SessionSpec,
-    local: bool,
-    local_transport: Option<Arc<dyn Transport>>,
-    command_completion: Option<CommandCompletion>,
-    integration: RefCell<ShellIntegration>,
-    agent_input: RefCell<input::AgentInput>,
-    shell_program: String,
-    shell_syntax: Option<nocterm_workspace::ShellSyntax>,
-    session: Option<Session>,
-    fs: Option<Arc<dyn RemoteFs>>,
-    status: Status,
-    prompt: Option<Prompt>,
-    prompt_epoch: u64,
-    connection_epoch: u64,
-    emulator: Emulator,
-    display_revision: u64,
-    find: FindState,
-    find_task: Option<Task<()>>,
-    /// What the running program called its window.
-    program_title: Option<String>,
-    _pump: Option<Task<()>>,
-    sync_timer: Option<Task<()>>,
+    deps: Installed,
+    lifecycle: lifecycle::SessionLifecycle,
+    input: input::TerminalInput,
+    recording: crate::OutputRecording,
+    credentials: crate::credentials::CredentialState,
+    screen: presentation::TerminalScreen,
     _settings: Subscription,
 }
 
@@ -97,12 +92,13 @@ impl EventEmitter<TerminalEvent> for Terminal {}
 
 impl Terminal {
     /// A terminal that starts connecting to `spec` at once.
-    pub fn new(spec: SessionSpec, cx: &mut Context<Self>) -> Self {
-        Self::new_kind(spec, false, None, None, cx)
+    pub fn new(deps: Installed, spec: SessionSpec, cx: &mut Context<Self>) -> Self {
+        Self::new_kind(deps, spec, false, None, None, cx)
     }
 
-    pub fn new_local(cx: &mut Context<Self>) -> Self {
+    pub fn new_local(deps: Installed, cx: &mut Context<Self>) -> Self {
         Self::new_kind(
+            deps,
             SessionSpec {
                 profile: None,
                 options: Default::default(),
@@ -120,6 +116,7 @@ impl Terminal {
     }
 
     pub fn new_local_command(
+        deps: Installed,
         launch: nocterm_session::ShellLaunch,
         title: SharedString,
         transport: Arc<dyn Transport>,
@@ -135,65 +132,71 @@ impl Terminal {
             launch: Some(launch),
             credential: None,
         };
-        Self::new_kind(spec, true, Some(transport), Some(Box::new(completion)), cx)
+        Self::new_kind(
+            deps,
+            spec,
+            true,
+            Some(transport),
+            Some(Box::new(completion)),
+            cx,
+        )
     }
 
     fn new_kind(
+        deps: Installed,
         spec: SessionSpec,
         local: bool,
         local_transport: Option<Arc<dyn Transport>>,
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
+        let options = emulator_options(deps.settings().setting::<nocterm_ui::TerminalSettings>(cx));
+        let weak = cx.entity().downgrade();
         let mut this = Self {
-            codec: crate::codec::TextCodec::new(
-                cx.setting::<nocterm_ui::TerminalSettings>().charset,
+            deps: deps.clone(),
+            lifecycle: lifecycle::SessionLifecycle::new(
+                spec,
+                local,
+                local_transport,
+                command_completion,
             ),
-            input_error: RefCell::default(),
-            text_error: None,
-            recording: None,
-            recording_options: Default::default(),
-            recording_watch: None,
-            credentials: Default::default(),
-            spec,
-            local,
-            local_transport,
-            command_completion,
-            integration: RefCell::default(),
-            agent_input: RefCell::default(),
-            shell_program: String::new(),
-            shell_syntax: None,
-            session: None,
-            fs: None,
-            status: Status::Connecting(ConnectStage::Connecting),
-            prompt: None,
-            prompt_epoch: 0,
-            connection_epoch: 0,
-            emulator: Emulator::new(TermSize::default(), options),
-            display_revision: 0,
-            find: FindState::default(),
-            find_task: None,
-            program_title: None,
-            _pump: None,
-            sync_timer: None,
-            _settings: cx.observe_global::<SettingsStore>(|this, cx| {
-                let options = emulator_options(cx.setting::<nocterm_ui::TerminalSettings>());
-                this.emulator.set_options(options);
-                this.refresh_find(cx);
-                this.emit_output(cx);
+            input: input::TerminalInput::new(
+                deps.settings()
+                    .setting::<nocterm_ui::TerminalSettings>(cx)
+                    .charset,
+            ),
+            recording: crate::OutputRecording::default(),
+            credentials: crate::credentials::CredentialState::default(),
+            screen: presentation::TerminalScreen::new(options),
+            _settings: deps.settings().observe(cx, move |cx| {
+                if let Some(terminal) = weak.upgrade() {
+                    terminal.update(cx, |this, cx| {
+                        let options = emulator_options(
+                            this.deps
+                                .settings()
+                                .setting::<nocterm_ui::TerminalSettings>(cx),
+                        );
+                        this.screen.apply_options(options);
+                        this.refresh_find(cx);
+                        this.emit_output(cx);
+                    });
+                }
             }),
         };
         this.connect(cx);
         this
     }
 
+    pub(crate) fn installed(&self) -> &Installed {
+        &self.deps
+    }
+
     pub(crate) fn set_credential_id(&mut self, id: nocterm_session::CredentialId) {
-        self.spec.credential = Some(id);
+        self.lifecycle.set_credential(id);
     }
 
     pub fn spec(&self) -> &SessionSpec {
-        &self.spec
+        self.lifecycle.spec()
     }
 
     /// Changes this tab's next-launch options without changing a saved profile.
@@ -201,36 +204,39 @@ impl Terminal {
         &mut self,
         options: nocterm_session::SessionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        options.validate()?;
-        self.spec.options = options;
+    ) -> Result<(), nocterm_session::SessionOptionsError> {
+        self.lifecycle.apply_options(options)?;
         cx.emit(TerminalEvent::Changed);
         Ok(())
     }
 
     pub fn status(&self) -> &Status {
-        &self.status
+        self.lifecycle.status()
     }
 
     /// The question the session is waiting on, if any.
     pub fn prompt(&self) -> Option<&Prompt> {
-        self.prompt.as_ref()
+        self.lifecycle.prompt()
+    }
+
+    pub(crate) fn connection_epoch(&self) -> u64 {
+        self.lifecycle.epoch()
     }
 
     pub(crate) fn prompt_epoch(&self) -> u64 {
-        self.prompt_epoch
+        self.lifecycle.prompt_epoch()
     }
 
     pub fn program_title(&self) -> Option<&str> {
-        self.program_title.as_deref()
+        self.screen.title()
     }
 
     pub fn emulator(&self) -> &Emulator {
-        &self.emulator
+        self.screen.emulator()
     }
 
     pub fn is_connected(&self) -> bool {
-        self.status == Status::Connected
+        self.status() == &Status::Connected
     }
 
     // ── Session ──────────────────────────────────────────────────────────────
@@ -238,58 +244,60 @@ impl Terminal {
     /// Opens a new session, replacing the current one.
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(&mut self, cx: &mut Context<Self>) {
-        self.close();
-        if let Err(error) = self.spec.options.validate() {
+        self.close(cx);
+        if let Err(error) = self.lifecycle.spec().options.validate() {
             self.set_status(
-                Status::Closed(CloseReason::Failed(SessionError::Other(error))),
+                Status::Closed(CloseReason::Failed(SessionError::InvalidOptions(error))),
                 cx,
             );
             return;
         }
-        self.codec = crate::codec::TextCodec::new(
-            self.spec
+        self.input.reset_charset(
+            self.lifecycle
+                .spec()
                 .options
                 .charset
-                .unwrap_or(cx.setting::<TerminalSettings>().charset),
+                .unwrap_or(self.deps.settings().setting::<TerminalSettings>(cx).charset),
         );
-        self.recording_options = self
-            .spec
+        let mut recording_options = self
+            .lifecycle
+            .spec()
             .options
             .logging
             .clone()
-            .unwrap_or_else(|| cx.setting::<LoggingOptions>().clone());
-        if self.local_transport.is_some() {
-            self.recording_options.auto_start = false;
+            .unwrap_or_else(|| {
+                self.deps
+                    .settings()
+                    .setting::<nocterm_session::LoggingOptions>(cx)
+                    .clone()
+            });
+        if self.lifecycle.is_local() {
+            recording_options.auto_start = false;
         }
-        self.text_error = None;
-        *self.input_error.borrow_mut() = None;
-        let launch = if self.local {
-            self.spec
-                .launch
-                .clone()
-                .unwrap_or_else(|| shell_launch(cx.setting::<LocalShellSettings>()))
+        self.recording.set_options(recording_options);
+        self.input.clear_errors();
+        let launch = if self.lifecycle.is_local() {
+            self.lifecycle.spec().launch.clone().unwrap_or_else(|| {
+                shell_launch(self.deps.settings().setting::<LocalShellSettings>(cx))
+            })
         } else {
-            self.spec
-                .launch
-                .clone()
-                .unwrap_or_else(|| shell_launch(&cx.setting::<SshSettings>().launch))
+            self.lifecycle.spec().launch.clone().unwrap_or_else(|| {
+                shell_launch(&self.deps.settings().setting::<SshSettings>(cx).launch)
+            })
         };
-        self.shell_program = launch.program.clone().unwrap_or_else(|| {
-            if self.local {
-                std::env::var(if cfg!(windows) { "COMSPEC" } else { "SHELL" }).unwrap_or_default()
+        let shell_program = launch.program.clone().unwrap_or_else(|| {
+            if self.lifecycle.is_local() {
+                self.deps.default_program().to_owned()
             } else {
                 String::new()
             }
         });
-        if self.local {
-            *self.integration.borrow_mut() = ShellIntegration::default();
-        }
-        let transport = match &self.local_transport {
-            Some(transport) => Some(transport.clone()),
-            None if self.local => cx
-                .try_global::<LocalTransportFactory>()
-                .map(|factory| (factory.0)(launch.clone())),
-            None => cx.try_global::<ActiveTransport>().map(|t| t.0.clone()),
+        self.input
+            .set_shell(shell_program, self.lifecycle.is_local());
+        let transport = match self.lifecycle.transport() {
+            Some(transport) => Some(transport),
+            None if self.lifecycle.is_local() => self.deps.local_transport(launch.clone()),
+            None => Some(self.deps.remote()),
         };
         let Some(transport) = transport else {
             self.set_status(
@@ -300,24 +308,32 @@ impl Terminal {
             );
             return;
         };
-        let ssh = cx.setting::<SshSettings>().clone();
+        let ssh = self.deps.settings().setting::<SshSettings>(cx).clone();
         let request = ConnectRequest {
             proxy: self
-                .spec
+                .lifecycle
+                .spec()
                 .options
                 .proxy
                 .clone()
                 .unwrap_or_else(|| ssh.proxy.clone()),
             launch,
-            target: self.spec.target.clone(),
-            auth: self.spec.auth.clone(),
+            target: self.lifecycle.spec().target.clone(),
+            auth: self.lifecycle.spec().auth.clone(),
             term: self
-                .spec
+                .lifecycle
+                .spec()
                 .options
                 .term
                 .clone()
-                .unwrap_or_else(|| cx.setting::<TerminalSettings>().term.clone()),
-            size: pty_size(self.emulator.size()),
+                .unwrap_or_else(|| {
+                    self.deps
+                        .settings()
+                        .setting::<TerminalSettings>(cx)
+                        .term
+                        .clone()
+                }),
+            size: pty_size(self.emulator().size()),
             connect_timeout: Duration::from_secs(ssh.connect_timeout_secs.into()),
             keepalive_interval: Some(ssh.keepalive_interval_secs)
                 .filter(|secs| *secs > 0)
@@ -325,13 +341,12 @@ impl Terminal {
         };
 
         let session = transport.open(request);
-        self.fs = session.fs();
-        self.session = Some(session.clone());
-        self.prompt = None;
+        self.lifecycle.accept_session(session.clone());
         self.set_status(Status::Connecting(ConnectStage::Connecting), cx);
         cx.emit(TerminalEvent::Changed);
 
-        self.spawn_pump(session, cx);
+        let pump = pump::spawn(session, self.connection_epoch(), cx);
+        self.lifecycle.install_pump(pump);
     }
 
     /// Replaces a live connection as well as reconnecting a closed one.
@@ -339,31 +354,33 @@ impl Terminal {
         if self.is_command() {
             return;
         }
-        self.emulator.advance(b"\r\n");
+        self.screen.advance(b"\r\n");
         self.connect(cx);
         self.refresh_find(cx);
     }
 
-    /// Ends the session.
-    pub fn close(&mut self) {
-        self.agent_input.borrow_mut().revoke();
-        *self.integration.borrow_mut() = ShellIntegration::default();
-        self.connection_epoch = self.connection_epoch.wrapping_add(1);
-        self._pump = None;
-        self.sync_timer = None;
-        if let Some(session) = self.session.take() {
+    fn close_session(&mut self) {
+        if let Some(session) = self.lifecycle.retire_session() {
             session.close();
         }
-        self.fs = None;
-        self.prompt = None;
-        self.prompt_epoch = self.prompt_epoch.wrapping_add(1);
         self.clear_credentials();
-        self.stop_recording();
+    }
+
+    /// Ends the session, invalidating authority before external cleanup.
+    pub fn close(&mut self, cx: &mut Context<Self>) {
+        let session = self.lifecycle.close();
+        self.input.revoke();
+        self.screen.stop_sync();
+        self.clear_credentials();
+        if let Some(session) = session {
+            session.close();
+        }
+        self.stop_recording(cx);
     }
 
     /// Immediately publishes disconnection, including a cancelled handshake.
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
-        self.close();
+        self.close(cx);
         self.set_status(Status::Closed(CloseReason::ClosedByUser), cx);
         cx.emit(TerminalEvent::Changed);
     }
@@ -374,7 +391,7 @@ impl Terminal {
             Event::Connected => {
                 self.set_status(Status::Connected, cx);
                 self.save_authenticated_credential(cx);
-                if self.recording_options.auto_start {
+                if self.recording.options().auto_start {
                     self.start_recording(cx);
                 }
             }
@@ -382,24 +399,20 @@ impl Terminal {
             Event::Prompt(prompt) => {
                 // A newer question supersedes an unanswered one, including an
                 // identical retry. Views must discard the previous input state.
-                self.prompt_epoch = self.prompt_epoch.wrapping_add(1);
-                self.prompt = Some(prompt);
+                self.lifecycle.accept_prompt(prompt);
                 self.retrieve_credential(cx);
                 cx.emit(TerminalEvent::Changed);
             }
             Event::Closed(reason) => {
-                let tail = self.codec.decode(&[], true);
-                if let Some(recording) = &mut self.recording {
-                    recording.output(&tail);
-                    recording.stop();
-                }
+                let tail = self.input.decode(&[], true);
+                self.recording.output(&tail, cx);
+                self.recording.stop(cx);
                 if !tail.is_empty() {
-                    let effects = self.emulator.advance(&tail);
+                    let effects = self.screen.advance(&tail);
                     self.apply(effects, cx);
                 }
                 self.clear_credentials();
-                self.prompt = None;
-                self.fs = None;
+                self.lifecycle.finish();
                 self.refresh_find(cx);
                 self.set_status(Status::Closed(reason), cx);
             }
@@ -407,13 +420,11 @@ impl Terminal {
     }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        if let Status::Closed(reason) = &status
-            && let Some(completion) = self.command_completion.take()
-        {
-            completion(reason.clone(), cx);
+        let (changed, completion) = self.lifecycle.set_status(status);
+        if let Some((callback, reason)) = completion {
+            callback(reason, cx);
         }
-        if self.status != status {
-            self.status = status;
+        if changed {
             cx.emit(TerminalEvent::Changed);
         }
     }
@@ -426,15 +437,18 @@ impl Terminal {
                     self.send_protocol(bytes);
                 }
                 Effect::Title(title) => {
-                    if self.program_title != title {
-                        self.program_title = title;
+                    if self.screen.set_title(title) {
                         cx.emit(TerminalEvent::Changed);
                     }
                 }
                 Effect::Bell => cx.emit(TerminalEvent::Bell),
                 Effect::CopyToClipboard(text) => {
                     if text.len() <= 1024 * 1024
-                        && cx.setting::<nocterm_ui::TerminalSettings>().clipboard_write
+                        && self
+                            .deps
+                            .settings()
+                            .setting::<nocterm_ui::TerminalSettings>(cx)
+                            .clipboard_write
                             == nocterm_ui::ClipboardWritePolicy::FocusedTerminal
                     {
                         cx.emit(TerminalEvent::ClipboardWrite(text));
@@ -444,146 +458,87 @@ impl Terminal {
         }
     }
 
-    /// Makes sure a synchronized update the program never ends is ended for it.
     fn schedule_sync(&mut self, cx: &mut Context<Self>) {
-        if self.sync_timer.is_some() {
-            return;
+        self.screen.schedule_sync(cx);
+    }
+    fn finish_sync(&mut self, cx: &mut Context<Self>) {
+        if let Some(effects) = self.screen.finish_sync() {
+            self.apply(effects, cx);
+            self.refresh_find(cx);
+            self.emit_output(cx);
+        } else {
+            self.schedule_sync(cx);
         }
-        let Some(deadline) = self.emulator.sync_deadline() else {
-            return;
-        };
-        let wait = deadline.saturating_duration_since(Instant::now());
-        self.sync_timer = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            let _ = this.update(cx, |this, cx| {
-                this.sync_timer = None;
-                match this.emulator.sync_deadline() {
-                    Some(deadline) if deadline <= Instant::now() => {
-                        let effects = this.emulator.finish_sync();
-                        this.apply(effects, cx);
-                        this.refresh_find(cx);
-                        this.emit_output(cx);
-                    }
-                    // The program ended it, or began another one since.
-                    _ => this.schedule_sync(cx),
-                }
-            });
-        }));
     }
 
     /// Whether this model owns a local PTY.
     pub fn is_local(&self) -> bool {
-        self.local
+        self.lifecycle.is_local()
     }
 
     /// Directory announced by OSC 7, never guessed from prompt text.
     pub fn cwd(&self) -> Option<PathBuf> {
-        self.integration.borrow().cwd.clone()
+        self.input.cwd()
     }
 
     pub fn text_error(&self) -> Option<String> {
-        self.text_error
-            .clone()
-            .or_else(|| self.input_error.borrow().clone())
+        self.input.text_error()
     }
     pub fn recording_status(&self) -> Option<crate::RecordingStatus> {
-        self.recording.as_ref().map(|recording| recording.status())
+        self.recording.status()
     }
     pub fn is_recording(&self) -> bool {
-        self.recording
-            .as_ref()
-            .is_some_and(|recording| recording.active())
+        self.recording.is_active()
     }
-    pub fn stop_recording(&mut self) {
-        if let Some(recording) = &mut self.recording {
-            recording.stop();
-        }
+    pub fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.recording.stop(cx);
+        cx.emit(TerminalEvent::Changed);
     }
     pub fn toggle_recording(&mut self, cx: &mut Context<Self>) {
         if self.is_recording() {
-            self.stop_recording();
-            cx.emit(TerminalEvent::Changed);
+            self.stop_recording(cx);
         } else {
             self.start_recording(cx);
         }
     }
     pub fn start_recording(&mut self, cx: &mut Context<Self>) {
-        if self.local_transport.is_some() || self.is_recording() {
+        if self.lifecycle.is_command() || self.is_recording() {
             return;
         }
         if !self.is_connected() {
             return;
         }
-        let directory = self.recording_options.directory.clone().or_else(|| {
-            cx.try_global::<crate::RecordingDirectory>()
-                .map(|directory| directory.path.clone())
-        });
-        let Some(directory) = directory else {
-            self.text_error =
-                Some("Recording is unavailable: no log directory is configured.".into());
-            cx.emit(TerminalEvent::Changed);
-            return;
-        };
-        match crate::recording::Recorder::start(directory, self.recording_options.max_file_mib) {
-            Ok(recording) => {
-                if let Some(directory) = cx.try_global::<crate::RecordingDirectory>() {
-                    directory.registry.track(&recording);
-                }
-                let mut previous = recording.status();
-                self.recording = Some(recording);
-                self.recording_watch = Some(cx.spawn(async move |this, cx| {
-                    loop {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(250))
-                            .await;
-                        let Ok(active) = this.update(cx, |this, cx| {
-                            let Some(recording) = &this.recording else {
-                                return false;
-                            };
-                            let status = recording.status();
-                            if previous.error != status.error
-                                || previous.path != status.path
-                                || previous.finished != status.finished
-                            {
-                                cx.emit(TerminalEvent::Changed);
-                            }
-                            let active = !status.finished;
-                            previous = status;
-                            active
-                        }) else {
-                            break;
-                        };
-                        if !active {
-                            break;
-                        }
-                    }
-                }));
-            }
-            Err(error) => self.text_error = Some(format!("Could not start recording: {error}")),
+        if let Some(registry) = self.deps.recording() {
+            self.recording.set_registry(registry);
         }
-        cx.emit(TerminalEvent::Changed);
+        if let Err(error) = self.recording.start(cx) {
+            self.input
+                .set_text_error(Some(format!("Could not start recording: {error}")));
+            cx.emit(TerminalEvent::Changed);
+        } else {
+            cx.emit(TerminalEvent::Changed);
+        }
     }
 
     /// Lays the grid out anew, and tells the remote program.
     pub fn resize(&mut self, size: TermSize, cx: &mut Context<Self>) {
-        if size == self.emulator.size() {
+        if !self.screen.resize(size) {
             return;
         }
-        self.emulator.resize(size);
         self.refresh_find(cx);
-        if let Some(session) = &self.session {
+        if let Some(session) = self.lifecycle.session() {
             session.resize(pty_size(size));
         }
     }
 
     pub fn set_palette(&mut self, palette: Palette) {
-        self.emulator.set_palette(palette);
+        self.screen.set_palette(palette);
     }
 }
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        self.close();
+        self.close_session();
     }
 }
 
@@ -627,5 +582,3 @@ mod credential_tests;
 mod local_tests;
 #[cfg(test)]
 mod recording_tests;
-
-mod prompts;

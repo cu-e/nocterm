@@ -1,50 +1,45 @@
 use super::*;
+use crate::model::controls::{ConfigCategory, ConfigChoice, ConfigGroup, ConfigOption};
+use crate::model::ids::ConfigId;
 
-fn options() -> Vec<acp::SessionConfigOption> {
+fn options() -> Vec<ConfigOption> {
     vec![
-        acp::SessionConfigOption::select(
+        ConfigOption::select(
             "model",
             "Model",
             "sonnet",
             vec![
-                acp::SessionConfigSelectGroup::new(
-                    "fast",
-                    "Fast",
-                    vec![acp::SessionConfigSelectOption::new("sonnet", "Sonnet")],
-                ),
-                acp::SessionConfigSelectGroup::new(
+                ConfigGroup::new("fast", "Fast", vec![ConfigChoice::new("sonnet", "Sonnet")]),
+                ConfigGroup::new(
                     "deep",
                     "Deep",
-                    vec![
-                        acp::SessionConfigSelectOption::new("opus", "Opus")
-                            .description("Slower".to_string()),
-                    ],
+                    vec![ConfigChoice::new("opus", "Opus").description("Slower".to_string())],
                 ),
             ],
         )
-        .category(acp::SessionConfigOptionCategory::Model),
-        acp::SessionConfigOption::select(
+        .category(ConfigCategory::Model),
+        ConfigOption::select(
             "effort",
             "Effort",
             "low",
             vec![
-                acp::SessionConfigSelectOption::new("low", "Low"),
-                acp::SessionConfigSelectOption::new("high", "High"),
+                ConfigChoice::new("low", "Low"),
+                ConfigChoice::new("high", "High"),
             ],
         )
-        .category(acp::SessionConfigOptionCategory::ThoughtLevel),
-        acp::SessionConfigOption::select(
+        .category(ConfigCategory::ThoughtLevel),
+        ConfigOption::select(
             "mode",
             "Mode",
             "ask",
             vec![
-                acp::SessionConfigSelectOption::new("ask", "Ask"),
-                acp::SessionConfigSelectOption::new("auto", "Auto"),
+                ConfigChoice::new("ask", "Ask"),
+                ConfigChoice::new("auto", "Auto"),
             ],
         )
-        .category(acp::SessionConfigOptionCategory::Mode),
-        acp::SessionConfigOption::boolean("web", "Web search", false)
-            .category(acp::SessionConfigOptionCategory::Other("_tools".into())),
+        .category(ConfigCategory::Mode),
+        ConfigOption::boolean("web", "Web search", false)
+            .category(ConfigCategory::Other("_tools".into())),
     ]
 }
 
@@ -96,13 +91,13 @@ fn an_open_session_receives_only_the_choices_it_lacks_in_option_order() {
     assert_eq!(
         requests,
         [
-            (acp::SessionConfigId::new("model"), value("opus")),
-            (acp::SessionConfigId::new("effort"), value("high")),
+            (ConfigId::new("model"), value("opus")),
+            (ConfigId::new("effort"), value("high")),
         ]
     );
     let mut applied = options();
     for (id, value) in &requests {
-        choose(&mut applied, &id.0, value);
+        choose(&mut applied, id.as_str(), value);
     }
     assert!(super::requests(&applied, &choices).is_empty());
 }
@@ -118,8 +113,29 @@ fn only_model_and_effort_carry_over_to_new_chats() {
 }
 
 #[test]
-fn values_round_trip_through_the_protocol() {
+fn values_round_trip_through_settings() {
     for value in [value("opus"), ConfigValue::Flag(true)] {
-        assert_eq!(ConfigValue::from_acp(&value.to_acp()), Some(value));
+        assert_eq!(ConfigValue::from_setting(&value.to_setting()), value);
     }
+}
+
+#[test]
+fn a_chat_keeps_every_current_value_and_shows_its_choices_over_reported_options() {
+    let current = current(&options());
+    assert_eq!(current.get("model"), Some(&value("sonnet")));
+    assert_eq!(current.get("mode"), Some(&value("ask")));
+    assert_eq!(current.get("web"), Some(&ConfigValue::Flag(false)));
+    let choices = Choices::from([
+        ("model".into(), value("opus")),
+        ("mode".into(), value("auto")),
+        ("effort".into(), value("unknown")),
+    ]);
+    let shown = super::current(&with_choices(options(), &choices));
+    assert_eq!(shown.get("model"), Some(&value("opus")));
+    assert_eq!(shown.get("mode"), Some(&value("auto")));
+    assert_eq!(
+        shown.get("effort"),
+        Some(&value("low")),
+        "a value the agent does not offer is not shown"
+    );
 }

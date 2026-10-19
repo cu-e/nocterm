@@ -15,14 +15,18 @@ test-support = []
 [dependencies]
 nocterm-ai.workspace = true
 nocterm-core.workspace = true
+nocterm-store.workspace = true
 gpui.workspace = true
 futures.workspace = true
 async-channel.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+nocterm-ai = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

@@ -1,8 +1,8 @@
 //! nocterm: the application.
 //!
 //! This is the composition root. It reads the user's files, installs the
-//! globals every crate expects, and plugs the features into one workspace
-//! window. It is the only crate that names every other one; nothing else
+//! retained service dependencies, validates settings catalogs and plugs the features
+//! into each workspace window. It is the only crate that names every other one; nothing else
 //! does any wiring.
 
 // Release builds are GUI applications without a console window on Windows.
@@ -12,26 +12,22 @@ mod agent_auth;
 mod app_menus;
 mod application;
 mod bootstrap;
+mod connection_setup;
 mod keymap;
+mod settings_pages;
+mod startup;
 
 #[cfg(test)]
 mod gui_tests;
 
-use std::{fs, io, sync::Arc};
+use std::io;
 
-use anyhow::Context as _;
 use gpui_kit::{
     App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, component::TitleBar,
     px, size,
 };
-use nocterm_core::Paths;
-use nocterm_design::DesignTokens;
-use nocterm_settings::{SettingsDocument, SettingsFile};
-use nocterm_ssh::{SshConfig, SshTransport};
-use nocterm_ui::SettingsStore;
-use nocterm_workspace::{
-    DefaultSessionSettings, OpenAiSettings, OpenKeymap, OpenSSHSettings, OpenVault, Workspace,
-};
+
+use nocterm_workspace::Workspace;
 use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
@@ -46,7 +42,7 @@ fn main() -> anyhow::Result<()> {
         .is_some_and(|arg| arg == "agent-host")
     {
         return nocterm_acp::run_agent_host(std::env::args_os().skip(2))
-            .map_err(anyhow::Error::msg);
+            .map_err(anyhow::Error::from);
     }
     if std::env::args_os()
         .nth(1)
@@ -61,64 +57,14 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    // Resolved before anything can replace the binary: afterwards Linux reports
-    // the running image as "<path> (deleted)", which no agent can start.
-    let executable = std::env::current_exe().context("locating the nocterm executable")?;
-    let paths = Paths::discover()?;
-    let tokens = load_tokens(&paths);
-    let settings = load_settings(&paths);
-    let theme_dirs = nocterm_themes::ThemeDirs {
-        user: paths.user_themes_dir(),
-        installed: paths.installed_themes_dir(),
-    };
-    let catalog = nocterm_themes::ThemeCatalog::load(&theme_dirs);
-    let registry =
-        Arc::new(nocterm_themes::ZedRegistry::new().context("creating the theme registry client")?);
-    let transport = SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
-
+    let prepared = startup::PreparedApp::load()?;
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets)
-        .run(move |cx| {
-            let booted = bootstrap::bootstrap(
-                bootstrap::Services {
-                    tokens,
-                    settings,
-                    paths: paths.clone(),
-                    persist: true,
-                    transport: Arc::new(transport),
-                    local: true,
-                    themes: Some(bootstrap::Themes {
-                        dirs: theme_dirs,
-                        catalog,
-                        registry,
-                    }),
-                    agent: agent_services(&paths, executable),
-                    vault: Some(bootstrap::VaultSetup {
-                        file: paths.config_dir().join("vault.bin"),
-                        device_unlock: true,
-                    }),
-                },
-                cx,
-            );
-            let vault_ready = booted.vault_ready();
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-
-            if let Err(error) = open_main_window(cx, vault_ready) {
-                tracing::error!(%error, "could not open the window");
-                cx.quit();
-            }
-            report_settings_errors(cx);
-            cx.activate(true);
-        });
+        .run(move |cx| prepared.install_when_ready(cx));
     Ok(())
 }
 
-fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
+fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<()> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
@@ -133,13 +79,14 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
     gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("Nocterm");
         // "System" appearance follows the desktop as it changes.
+        let themes = booted.themes().clone();
         window
-            .observe_window_appearance(|_, cx| nocterm_ui::apply_theme(cx))
+            .observe_window_appearance(move |_, cx| themes.apply(cx))
             .detach();
 
         let workspace = cx.new(|cx| {
-            let mut workspace = Workspace::new(window, cx);
-            bootstrap::build_workspace(&mut workspace, vault_ready, window, cx);
+            let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
+            bootstrap::build_workspace(&mut workspace, booted, window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);
@@ -148,111 +95,10 @@ fn open_main_window(cx: &mut App, vault_ready: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn agent_services(paths: &Paths, executable: std::path::PathBuf) -> nocterm_agent::AgentServices {
-    nocterm_agent::AgentServices {
-        connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
-        terminal_auth: Some(Arc::new(agent_auth::open)),
-        bridge: Arc::new(nocterm_acp::BridgeServer::new(
-            paths.clone(),
-            nocterm_acp::RelayCommand {
-                program: executable,
-                args: vec![AGENT_BRIDGE.into()],
-            },
-        )),
-        state_file: paths.state_dir().join("agents.toml"),
-        chats_dir: paths.state_dir().join("agent-chats"),
-        codex_home: nocterm_ai::usage::codex_home(),
-        workdir: paths.state_dir().join("agent-workspace"),
-        private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
-        shared_dirs: vec![paths.effective_runtime_dir()],
-    }
-}
-
-fn register_settings(workspace: &mut Workspace, vault_ready: bool) {
-    let mut pages = vec![
-        nocterm_keymap_ui::settings_page(),
-        nocterm_monitor_ui::settings_page(),
-        nocterm_files::settings_page(),
-    ];
-    if vault_ready {
-        pages.push(nocterm_vault_ui::settings_page());
-    }
-    nocterm_settings_ui::register_with_pages(workspace, pages.clone());
-    /// Opens Settings at page `id` when `A` runs.
-    fn open_on<A: gpui_kit::Action>(
-        workspace: &mut Workspace,
-        id: &'static str,
-        pages: &[nocterm_workspace::SettingsPageSpec],
-    ) {
-        let pages = pages.to_vec();
-        workspace.register_action(move |_, _: &A, window, cx| {
-            let workspace = cx.entity().downgrade();
-            let pages = pages.clone();
-            window.defer(cx, move |window, cx| {
-                let _ = workspace.update(cx, |workspace, cx| {
-                    nocterm_settings_ui::open_page(workspace, id, &pages, window, cx);
-                });
-            });
-        });
-    }
-    open_on::<DefaultSessionSettings>(workspace, "ssh", &pages);
-    open_on::<OpenAiSettings>(workspace, "ai", &pages);
-    open_on::<OpenSSHSettings>(workspace, "ssh", &pages);
-    open_on::<OpenKeymap>(workspace, "keymap", &pages);
-    open_on::<nocterm_monitor_ui::OpenMonitorSettings>(workspace, "monitor", &pages);
-    open_on::<nocterm_files::OpenExplorerSettings>(workspace, "explorer", &pages);
-    if vault_ready {
-        open_on::<OpenVault>(workspace, "vault", &pages);
-    }
-}
-
-/// The built-in design tokens with the user's `theme.toml` over them. A
-/// broken theme is reported and ignored, so the window still opens.
-fn load_tokens(paths: &Paths) -> DesignTokens {
-    let file = paths.theme_file();
-    let overrides = match fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return DesignTokens::builtin(),
-        Err(error) => {
-            tracing::error!(file = %file.display(), %error, "could not read the theme");
-            return DesignTokens::builtin();
-        }
-    };
-    DesignTokens::with_overrides(&overrides).unwrap_or_else(|error| {
-        tracing::error!(file = %file.display(), %error, "the theme is invalid; using the default");
-        DesignTokens::builtin()
-    })
-}
-
 /// Logs the sections of the settings file that could not be read. Every
 /// section is registered once the window's features are.
-fn report_settings_errors(cx: &App) {
-    for error in cx.global::<SettingsStore>().section_errors() {
+fn report_settings_errors(settings: &nocterm_store::SettingsHandle, cx: &App) {
+    for error in settings.section_errors(cx) {
         tracing::error!(%error, "a settings section is invalid; using its defaults");
-    }
-}
-
-/// The user's settings. A broken section runs on its defaults and is shown on
-/// the settings page; saving leaves it in the file. A file that is not TOML
-/// at all is replaced by the defaults for this run only, so nothing in it is
-/// lost.
-fn load_settings(paths: &Paths) -> SettingsStore {
-    let file = SettingsFile::new(paths.settings_file());
-    match file.load() {
-        Ok(document) => SettingsStore::new(document, file),
-        Err(error) => {
-            tracing::error!(%error, "could not read the settings; changes will not be saved");
-            SettingsStore::in_memory(SettingsDocument::default())
-        }
-    }
-}
-
-fn ssh_config(paths: &Paths) -> SshConfig {
-    let openssh = paths.openssh_dir();
-    SshConfig {
-        known_hosts: paths.known_hosts_file(),
-        read_only_known_hosts: openssh.iter().map(|dir| dir.join("known_hosts")).collect(),
-        identity_dir: openssh,
-        use_agent: true,
     }
 }

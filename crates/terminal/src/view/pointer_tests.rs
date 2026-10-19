@@ -9,7 +9,7 @@ fn geometry(
 ) -> Geometry {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        view.read(cx).geometry.get().unwrap()
+        view.read(cx).painted_geometry().unwrap()
     })
     .unwrap()
 }
@@ -229,7 +229,13 @@ fn double_click_words_triple_click_lines_and_copy_on_release(cx: &mut TestAppCon
         Event::Output(b"alpha beta\r\nsecond line".to_vec()),
     );
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|s| s.copy_on_select = true)
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |s| s.copy_on_select = true)
             .detach()
     });
     cx.run_until_parked();

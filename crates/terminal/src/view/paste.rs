@@ -1,87 +1,17 @@
 //! Clipboard and Explorer drops share native terminal paste encoding.
+#[cfg(test)]
 use super::*;
+use crate::file_drop::FileDropError;
 use nocterm_workspace::FileDrag;
 
-impl TerminalView {
-    pub(super) fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.paste_text(&text, cx);
-        }
-    }
-
-    fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        let modes = self.terminal.read(cx).emulator().modes();
-        self.type_text(
-            std::str::from_utf8(&encode_paste(text, modes))
-                .expect("paste wrapping preserves UTF-8"),
-            cx,
-        );
-    }
-
-    pub(super) fn drop_files(
-        &mut self,
-        files: &FileDrag,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.stop_propagation();
-        let terminal = self.terminal.read(cx);
-        let result =
-            if terminal.is_connected() && terminal.prompt().is_none() && !terminal.awaiting_vault()
-            {
-                dropped_paths(files).and_then(|paths| {
-                    quote_paths_with_syntax(
-                        &paths,
-                        terminal.drop_shell(),
-                        terminal.is_local(),
-                        terminal.drop_syntax(),
-                    )
-                })
-            } else {
-                Err("Connect and finish authentication before dropping paths.".into())
-            };
-        match result {
-            Ok(text) => {
-                let result = self.terminal.update(cx, |terminal, cx| {
-                    terminal.paste_paths(&text, cx)?;
-                    terminal.update_emulator(cx, |emulator| {
-                        emulator.scroll(Scroll::Bottom);
-                        emulator.clear_selection();
-                    });
-                    Ok::<_, String>(())
-                });
-                if let Err(error) = result {
-                    nocterm_ui::notice::warning(
-                        window,
-                        cx,
-                        "terminal-file-drop",
-                        "Could not insert file paths",
-                        error,
-                    );
-                } else {
-                    window.focus(&self.focus_handle, cx);
-                    self.wake_cursor(cx);
-                }
-            }
-            Err(error) => nocterm_ui::notice::warning(
-                window,
-                cx,
-                "terminal-file-drop",
-                "Could not insert file paths",
-                error,
-            ),
-        }
-    }
-}
-
-fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, String> {
+pub(super) fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, FileDropError> {
     match files {
         FileDrag::Local(paths) => paths
             .iter()
             .map(|path| {
                 path.to_str()
                     .map(str::to_owned)
-                    .ok_or_else(|| "This path cannot be represented as terminal text.".into())
+                    .ok_or(FileDropError::NonUtf8Path)
             })
             .collect(),
         FileDrag::Remote(files) => Ok(files.sources.clone()),
@@ -89,18 +19,18 @@ fn dropped_paths(files: &FileDrag) -> Result<Vec<String>, String> {
 }
 
 #[cfg(test)]
-fn quote_paths(paths: &[String], program: &str, local: bool) -> Result<String, String> {
+fn quote_paths(paths: &[String], program: &str, local: bool) -> Result<String, FileDropError> {
     quote_paths_with_syntax(paths, program, local, None)
 }
 
-fn quote_paths_with_syntax(
+pub(super) fn quote_paths_with_syntax(
     paths: &[String],
     program: &str,
     local: bool,
     syntax: Option<nocterm_workspace::ShellSyntax>,
-) -> Result<String, String> {
+) -> Result<String, FileDropError> {
     if paths.is_empty() {
-        return Err("No file paths were selected.".into());
+        return Err(FileDropError::EmptySelection);
     }
     let executable = program
         .rsplit(['/', '\\'])
@@ -118,13 +48,13 @@ fn quote_paths_with_syntax(
         // transport defaults to /bin/sh when SHELL is unavailable.
         || (stem.is_empty() && (!local || !cfg!(windows)));
     if !powershell && !posix && syntax != Some(nocterm_workspace::ShellSyntax::Posix) {
-        return Err("Path insertion needs a supported POSIX shell or PowerShell.".into());
+        return Err(FileDropError::UnsupportedShell);
     }
     let mut length = 0usize;
     let mut quoted = Vec::with_capacity(paths.len());
     for path in paths {
         if path.chars().any(char::is_control) {
-            return Err("Paths containing control characters cannot be inserted safely.".into());
+            return Err(FileDropError::ControlCharacters);
         }
         let argument = if powershell {
             nocterm_session::quote_powershell(path)
@@ -133,7 +63,7 @@ fn quote_paths_with_syntax(
         };
         length = length.saturating_add(argument.len() + 1);
         if length > 256 * 1024 {
-            return Err("The selected paths exceed 256 KiB; select fewer items.".into());
+            return Err(FileDropError::TooLarge);
         }
         quoted.push(argument);
     }

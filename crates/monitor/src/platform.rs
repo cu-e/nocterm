@@ -82,45 +82,16 @@ async fn output(exec: &dyn HostExec, request: ExecRequest) -> Result<String, Exe
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use nocterm_session::{ExecFuture, ExecOutput};
-
     use super::*;
+    use nocterm_session::testing::FakeExec;
 
-    /// Answers each program by name with canned output.
-    pub(crate) struct Scripted {
-        pub(crate) answers: Vec<(&'static str, Result<&'static str, ExecError>)>,
-        pub(crate) asked: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl HostExec for Scripted {
-        fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-            self.asked.lock().unwrap().push(request.program.clone());
-            let answer = self
-                .answers
-                .iter()
-                .find(|(program, _)| *program == request.program)
-                .map(|(_, answer)| answer.clone())
-                .unwrap_or(Err(ExecError::Failed("not found".into())));
-            Box::pin(async move {
-                let text = answer?;
-                let (sink, output) = ExecOutput::channel();
-                if !text.is_empty() {
-                    sink.send(text.as_bytes().to_vec()).await;
-                }
-                Ok(output)
-            })
-        }
-    }
-
-    fn detect_with(
-        answers: Vec<(&'static str, Result<&'static str, ExecError>)>,
-    ) -> Result<Platform, ExecError> {
-        let exec = Scripted {
-            answers,
-            asked: Arc::default(),
-        };
+    fn detect_with(answers: Vec<(&str, Result<&str, ExecError>)>) -> Result<Platform, ExecError> {
+        let exec = FakeExec::new(
+            answers
+                .into_iter()
+                .map(|(program, answer)| (program, answer.map(|text| (text, 0, ""))))
+                .collect(),
+        );
         futures::executor::block_on(detect(&exec))
     }
 

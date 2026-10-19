@@ -11,10 +11,14 @@ layer = "adapter"
 
 [dependencies]
 nocterm-session.workspace = true
+nocterm-core.workspace = true
+uuid.workspace = true
 portable-pty.workspace = true
 async-channel.workspace = true
 futures.workspace = true
+tracing.workspace = true
 tempfile.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["signal", "fs", "event"] }

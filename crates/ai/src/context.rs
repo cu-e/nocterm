@@ -74,7 +74,7 @@ impl OpaqueIds {
 }
 /// How an agent may reach the user's servers, sent with each prompt ahead of
 /// the [`context_block`].
-pub const TERMINAL_RULES: &str = "Reach the user's terminals and servers only through the nocterm tools, and only those listed in <nocterm_context>. nocterm holds their passwords and keys: never connect on your own with ssh, scp or similar. When a terminal or server is missing, closed or cannot be connected, tell the user right away in one short sentence (which one and why) and ask them to attach or reconnect it in nocterm, instead of trying workarounds.";
+pub const TERMINAL_RULES: &str = "Reach the user's terminals and servers only through the nocterm tools, and only those listed in <nocterm_context>. nocterm holds their passwords and keys: never connect on your own with ssh, scp or similar. A closed server terminal reconnects by itself when you use it, and an offline server connects with open_terminal: use them instead of asking the user. Only when a terminal or server is missing or still cannot be connected, tell the user right away in one short sentence (which one and why), instead of trying workarounds.";
 
 /// The terminals and offline servers of a chat, as JSON between delimiters
 /// the agent can recognize. User-editable text is filtered for secrets.

@@ -1,12 +1,16 @@
 //! Structural accounting before serde allocates protocol objects and their vectors.
+use super::HistoryCodecError;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use std::{fs::File, io::Read, path::Path};
 pub(super) const LIMIT: usize = 64 * 1024 * 1024;
-struct Budget(usize);
+struct Budget {
+    bytes: usize,
+    exceeded: bool,
+}
 impl Budget {
     fn add<E: serde::de::Error>(&mut self, bytes: usize) -> Result<(), E> {
-        self.0 = self.0.saturating_add(bytes);
-        if self.0 > LIMIT {
+        self.bytes = self.bytes.saturating_add(bytes);
+        if self.bytes > LIMIT {
+            self.exceeded = true;
             Err(E::custom(
                 "saved document exceeds its structural memory limit",
             ))
@@ -58,26 +62,19 @@ impl<'de> Visitor<'de> for Node<'_> {
         Ok(())
     }
 }
-pub(super) fn read(path: &Path) -> Result<Vec<u8>, String> {
-    let file = File::open(path).map_err(|error| error.to_string())?;
-    if file.metadata().map_err(|error| error.to_string())?.len() > super::MAX_FILE_BYTES {
-        return Err("Saved chat exceeds the storage limit.".into());
-    }
-    let mut bytes = Vec::new();
-    file.take(super::MAX_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > super::MAX_FILE_BYTES {
-        return Err("Saved chat exceeds the storage limit.".into());
-    }
-    Ok(bytes)
-}
-pub(super) fn check(bytes: &[u8]) -> Result<usize, String> {
-    let mut budget = Budget(0);
+pub(super) fn check(bytes: &[u8]) -> Result<usize, HistoryCodecError> {
+    let mut budget = Budget {
+        bytes: 0,
+        exceeded: false,
+    };
     let mut decoder = serde_json::Deserializer::from_slice(bytes);
-    Node(&mut budget)
-        .deserialize(&mut decoder)
-        .map_err(|error| error.to_string())?;
-    decoder.end().map_err(|error| error.to_string())?;
-    Ok(budget.0)
+    if let Err(error) = Node(&mut budget).deserialize(&mut decoder) {
+        return Err(if budget.exceeded {
+            HistoryCodecError::StructuralLimit
+        } else {
+            error.into()
+        });
+    }
+    decoder.end().map_err(HistoryCodecError::from)?;
+    Ok(budget.bytes)
 }

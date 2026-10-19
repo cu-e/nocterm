@@ -36,3 +36,19 @@ impl AgentConnector for ScriptedConnector {
         Box::pin(async move { result })
     }
 }
+
+mod storage;
+pub use storage::{InMemoryAgentRepository, StorageOperation};
+
+mod usage;
+pub use usage::ScriptedUsageSource;
+
+mod sandbox;
+mod workspace;
+pub use sandbox::ScriptedSandboxProbe;
+pub use workspace::ScriptedWorkdirResolver;
+pub mod images;
+pub use images::{ImageRequest, ScriptedImageCodec};
+
+mod metadata;
+pub use metadata::{MetadataRequests, ScriptedChatMetadata};

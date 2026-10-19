@@ -3,9 +3,9 @@ use super::*;
 
 #[gpui_kit::test]
 fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
-    let (handle, workspace, opened) = crate::test_support::workspace(cx);
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     let profile = |name: &str, group: Option<&str>| Profile {
-        id: ProfileId::generate(),
+        id: nocterm_connections_model::test_support::profile_id_for(name),
         name: name.into(),
         group: group.map(Into::into),
         target: nocterm_session::Target::new("ci", name, 22),
@@ -24,7 +24,7 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
         profile("c", Some("Work")),
     );
     cx.update_window(handle, |_, window, cx| {
-        let connections = Connections::global(cx);
+        let connections = installed.connections();
         connections.update(cx, |connections, cx| {
             for p in [&a, &b, &c] {
                 connections
@@ -34,9 +34,8 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
                     .unwrap();
             }
         });
-        let panel = cx.new(|cx| {
-            ConnectionsPanel::new(connections.clone(), workspace.downgrade(), window, cx)
-        });
+        let panel = cx
+            .new(|cx| ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx));
         workspace.update(cx, |workspace, cx| workspace.add_panel(panel, cx));
         window.render_frame(cx);
         window.drag_to(
@@ -49,9 +48,10 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let order = |cx: &mut TestAppContext, group: Option<&'static str>| {
         cx.read(|cx| {
-            Connections::global(cx)
+            installed
+                .connections()
                 .read(cx)
-                .profiles()
+                .profiles(cx)
                 .in_group(group, "")
                 .iter()
                 .map(|p| p.name.clone())

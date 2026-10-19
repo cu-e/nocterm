@@ -17,7 +17,7 @@ impl TerminalView {
         let command = terminal.is_command();
         let connected = terminal.is_connected();
         let recording = terminal.is_recording();
-        let searchable = !terminal.find().query.is_empty() && terminal.find().error.is_none();
+        let searchable = !terminal.find().query().is_empty() && terminal.find().error().is_none();
         element
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::session_settings))
@@ -53,8 +53,7 @@ impl TerminalView {
         element
             .on_action(cx.listener(|this, _: &native_input::SelectAll, _, cx| {
                 cx.stop_propagation();
-                this.terminal
-                    .update(cx, |t, cx| t.update_emulator(cx, |e| e.select_all()));
+                this.terminal.update(cx, |t, cx| t.select_all(cx));
             }))
             .when(selected, |el| {
                 el.on_action(cx.listener(|this, _: &native_input::Copy, _, cx| {
@@ -106,8 +105,7 @@ impl TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminal
-            .update(cx, |t, cx| t.update_emulator(cx, |e| e.clear_selection()));
+        self.terminal.update(cx, |t, cx| t.clear_selection(cx));
     }
 
     pub(super) fn disconnect(
@@ -125,8 +123,7 @@ impl TerminalView {
 
     fn stop_recording(&mut self, _: &StopRecording, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |t, cx| {
-            t.stop_recording();
-            cx.emit(TerminalEvent::Changed);
+            t.stop_recording(cx);
         });
     }
 
@@ -144,10 +141,22 @@ impl TerminalView {
 }
 
 impl Item for TerminalView {
-    fn terminal_access(&self) -> Option<std::rc::Rc<dyn nocterm_workspace::TerminalAccess>> {
-        Some(std::rc::Rc::new(crate::access::Access(
-            self.terminal.downgrade(),
-        )))
+    fn terminal_capabilities(
+        &self,
+        owner: gpui_kit::WeakEntity<Self>,
+    ) -> Option<nocterm_workspace::TerminalCapabilities> {
+        let access = std::rc::Rc::new(crate::access::Access::new(owner, self.terminal.downgrade()));
+        Some(
+            nocterm_workspace::TerminalCapabilities::new(access.clone())
+                .with_fact_session(access.clone())
+                .with_text(access.clone())
+                .with_input(access.clone())
+                .with_live(access.clone())
+                .with_execution(access.clone())
+                .with_prompts(access.clone())
+                .with_reconnect(access.clone())
+                .with_paste(access),
+        )
     }
 
     fn tab_title(&self, cx: &App) -> SharedString {

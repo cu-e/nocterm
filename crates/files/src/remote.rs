@@ -3,16 +3,41 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct Browser {
-    pub(crate) generation: u64,
-    pub(crate) path: Option<String>,
+    generation: u64,
+    path: Option<String>,
     /// The session's home directory, once a listing resolved it.
-    pub(crate) home: Option<String>,
-    pub(crate) entries: Vec<DirEntry>,
-    pub(crate) loading: bool,
-    pub(crate) error: Option<FsError>,
+    home: Option<String>,
+    entries: Vec<DirEntry>,
+    loading: bool,
+    error: Option<FsError>,
 }
 
 impl Browser {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub(crate) fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+    pub(crate) fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+    pub(crate) fn home(&self) -> Option<&str> {
+        self.home.as_deref()
+    }
+    pub(crate) fn entries(&self) -> &[DirEntry] {
+        &self.entries
+    }
+    pub(crate) fn loading(&self) -> bool {
+        self.loading
+    }
+    pub(crate) fn error(&self) -> Option<&FsError> {
+        self.error.as_ref()
+    }
+    pub(crate) fn remember_current_path_as_home(&mut self) {
+        self.home = self.path.clone();
+    }
+
     pub(crate) fn begin(&mut self) -> u64 {
         self.generation = self.generation.wrapping_add(1);
         self.loading = true;

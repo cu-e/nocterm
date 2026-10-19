@@ -19,6 +19,28 @@ fn executor(output: Option<ExecOutput>) -> Arc<Executor> {
     })
 }
 #[test]
+fn rejects_a_fifth_active_command_and_foreign_command_ids() {
+    let mut registry = Jobs::default();
+    let mut first = String::new();
+    for index in 0..MAX_ACTIVE {
+        let (id, _, _) = registry.insert("t1".into(), executor(None)).unwrap();
+        if index == 0 {
+            first = id;
+        }
+    }
+    assert_eq!(
+        registry.insert("t1".into(), executor(None)).err(),
+        Some(JobError::Busy)
+    );
+    for (id, terminal) in [("c99", "t1"), (first.as_str(), "t2"), ("x", "t1")] {
+        assert_eq!(registry.get(id, terminal).err(), Some(JobError::Unknown));
+    }
+    assert_eq!(
+        nocterm_ai::ToolFailure::from(JobError::Busy).message(),
+        "This chat already has four active commands. Read or cancel one first."
+    );
+}
+#[test]
 fn cancelled_or_expired_before_first_poll_never_starts_a_program() {
     futures::executor::block_on(async {
         for cancelled in [true, false] {
@@ -159,5 +181,37 @@ fn cancelling_running_program_drops_output_and_keeps_exit_unknown() {
         let state = registry.get(&id, "t1").unwrap().snapshot();
         assert_eq!(state.state, State::Cancelled);
         assert!(state.exit.is_none());
+    });
+}
+
+#[test]
+fn cancelling_an_owned_start_before_poll_never_requests_native_execution() {
+    futures::executor::block_on(async {
+        let executor = Arc::new(nocterm_session::testing::FakeExec::default());
+        let mut registry = Jobs::default();
+        let start = registry
+            .start(
+                "original terminal".into(),
+                executor.clone(),
+                ExecRequest::new("do-not-run"),
+                futures::future::pending(),
+            )
+            .unwrap();
+        let (id, owned_run) = start.into_run();
+        assert!(executor.requests().is_empty());
+        registry
+            .get(&id, "original terminal")
+            .unwrap()
+            .cancel(State::Cancelled);
+        owned_run.await;
+        assert!(executor.requests().is_empty());
+        assert_eq!(
+            registry
+                .get(&id, "original terminal")
+                .unwrap()
+                .snapshot()
+                .state(),
+            State::Cancelled
+        );
     });
 }

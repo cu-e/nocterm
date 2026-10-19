@@ -11,19 +11,16 @@ fn settle(f: &Fixture, cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.composer.attachments.clear();
+        thread.clear_composer_context(cx);
         thread.send("active".into(), cx);
         thread.send("short".into(), cx);
     });
-    f.panel.update(cx, |panel, cx| {
-        panel.queue_open = true;
-        cx.notify();
-    });
+    open_queue(&f, cx);
     settle(&f, cx);
     let one = cx
         .update_window(f.handle, |_, window, _| {
@@ -56,7 +53,10 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
     .unwrap();
     // Removing an item also shrinks to the new intrinsic height.
     thread.update(cx, |thread, cx| {
-        thread.composer.queue.truncate(1);
+        let ids = thread.queued_prompt_ids().skip(1).collect::<Vec<_>>();
+        for id in ids {
+            thread.remove_queued(id, None, cx);
+        }
         cx.notify();
     });
     settle(&f, cx);
@@ -68,28 +68,22 @@ fn expanded_queue_fits_one_and_two_short_messages_without_blank_height(cx: &mut 
 
 #[gpui_kit::test]
 fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        let mut png = std::io::Cursor::new(Vec::new());
-        image::RgbaImage::new(2, 2)
-            .write_to(&mut png, image::ImageFormat::Png)
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
             .unwrap();
-        thread.composer.images =
-            vec![nocterm_ai::images::PromptImage::validate(png.into_inner()).unwrap()];
-        thread.composer.attachments = vec![Attachment::Group("Production servers".into())];
+        thread.replace_composer_context(vec![Attachment::Group("Production servers".into())], cx);
         thread.send(
             "A long queued instruction that must wrap on this narrow chat panel. ".repeat(80),
             cx,
         );
     });
-    f.panel.update(cx, |panel, cx| {
-        panel.queue_open = true;
-        cx.notify();
-    });
+    open_queue(&f, cx);
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, _| {
         let content = window.find("agent-queue-rows").bounds();
@@ -108,12 +102,22 @@ fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestApp
 
 #[gpui_kit::test]
 fn collapsed_queue_skips_hidden_row_and_image_rendering(cx: &mut TestAppContext) {
-    let f = fixture(cx);
+    let codec = image_codec();
+    let f = fixture_with_width(
+        cx,
+        32.,
+        usage_source(),
+        workspace_resolver(),
+        crate::ImageDeps::new(codec.clone(), codec.clone()),
+    );
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
         thread.send("hidden queue".into(), cx);
     });
     settle(&f, cx);
@@ -124,4 +128,20 @@ fn collapsed_queue_skips_hidden_row_and_image_rendering(cx: &mut TestAppContext)
         assert!(window.try_find("agent-queue-reveal").is_none());
     })
     .unwrap();
+    assert!(
+        !codec
+            .requests()
+            .iter()
+            .any(|request| matches!(request, nocterm_ai::testing::ImageRequest::Thumbnail(..))),
+        "collapsed queue must not prepare hidden thumbnails"
+    );
+    open_queue(&f, cx);
+    settle(&f, cx);
+    assert!(
+        codec
+            .requests()
+            .iter()
+            .any(|request| matches!(request, nocterm_ai::testing::ImageRequest::Thumbnail(..))),
+        "opening queue must prepare its images"
+    );
 }

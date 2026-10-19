@@ -1,33 +1,28 @@
 use super::*;
 use nocterm_ai::ApprovalPolicy;
+use nocterm_ai::model::auth::{
+    PermissionChoice, PermissionEffect, PermissionOutcome, ProviderPermission,
+};
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
 
-fn options() -> Vec<acp::PermissionOption> {
+fn options() -> Vec<PermissionChoice> {
     vec![
-        acp::PermissionOption::new(
-            "reject",
-            "Allow once",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-        acp::PermissionOption::new("always", "Allow", acp::PermissionOptionKind::AllowAlways),
-        acp::PermissionOption::new("once", "Continue", acp::PermissionOptionKind::AllowOnce),
+        PermissionChoice::new("reject", "Allow once", PermissionEffect::DenyOnce),
+        PermissionChoice::new("always", "Allow", PermissionEffect::AllowRemembered),
+        PermissionChoice::new("once", "Continue", PermissionEffect::AllowOnce),
     ]
 }
 
-fn request(
-    session: acp::SessionId,
-    options: Vec<acp::PermissionOption>,
-) -> acp::RequestPermissionRequest {
-    serde_json::from_value(serde_json::json!({
-        "sessionId":session, "toolCall":{"toolCallId":"provider-tool", "title":"Use agent files"}, "options":options
-    })).unwrap()
+fn request(session: SessionId, options: Vec<PermissionChoice>) -> ProviderPermission {
+    permission_request(session, "provider-tool", Some("Use agent files"), options)
 }
 
 fn submit(
     f: &Fixture,
     cx: &mut TestAppContext,
-    session: acp::SessionId,
-    options: Vec<acp::PermissionOption>,
-) -> oneshot::Receiver<acp::RequestPermissionOutcome> {
+    session: SessionId,
+    options: Vec<PermissionChoice>,
+) -> oneshot::Receiver<PermissionOutcome> {
     let (respond, receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
@@ -39,26 +34,29 @@ fn submit(
     receive
 }
 
-fn set_policy(cx: &mut TestAppContext, policy: ApprovalPolicy) {
+fn set_policy(f: &Fixture, cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
-            settings.approval.agent_permissions = policy;
-        })
-        .detach()
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, move |settings| {
+                settings.approval.agent_permissions = policy;
+            })
+            .detach()
     });
     cx.run_until_parked();
 }
 
-fn selected_once(receive: &mut oneshot::Receiver<acp::RequestPermissionOutcome>) {
+fn selected_once(receive: &mut oneshot::Receiver<PermissionOutcome>) {
     assert!(
-        matches!(receive.try_recv().unwrap(), Some(acp::RequestPermissionOutcome::Selected(selected)) if selected.option_id == acp::PermissionOptionId::from("once"))
+        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(selected)) if selected == PermissionOptionId::from("once"))
     );
 }
 
 #[gpui_kit::test]
 fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
@@ -66,12 +64,12 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
     selected_once(&mut receive);
     let mut tool_response = cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            assert!(thread.permissions.is_empty());
-            assert_eq!(thread.approval_generation, 0);
+            assert!(thread.permission_cards().is_empty());
+            assert_eq!(thread.approval_notice_generation(), 0);
             let (respond, receive) = oneshot::channel();
             let terminal_id = thread.resolved(cx)[0].0.clone();
-            thread.handle_tool(
-                BridgeCall {
+            f.calls
+                .try_send(BridgeCall {
                     arguments: None,
                     display_token: None,
                     registration_id: thread.registration().as_ref().unwrap().id,
@@ -81,19 +79,21 @@ fn provider_automatic_approval_does_not_change_terminal_grants(cx: &mut TestAppC
                         press_enter: true,
                     }),
                     respond,
-                },
-                cx,
-            );
-            assert_eq!(
-                thread.tools.len(),
-                1,
-                "terminal_write Ask remains independent"
-            );
+                })
+                .unwrap();
             receive
         })
     });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            thread.read(cx).tool_cards().len(),
+            1,
+            "terminal_write Ask remains independent"
+        );
+    });
     assert!(tool_response.try_recv().unwrap().is_none());
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 #[gpui_kit::test]
@@ -115,31 +115,31 @@ fn changes_handle_pending_requests_in_every_chat_and_ask_again_for_future_reques
     let mut second_receive = submit(&f, cx, sessions[1].clone(), options());
     assert!(first_receive.try_recv().unwrap().is_none());
     assert!(second_receive.try_recv().unwrap().is_none());
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     selected_once(&mut first_receive);
     selected_once(&mut second_receive);
     cx.update(|cx| {
         for thread in [&first, &second] {
-            assert!(thread.read(cx).permissions.is_empty());
+            assert!(thread.read(cx).permission_cards().is_empty());
             assert_eq!(
-                thread.read(cx).approval_generation,
+                thread.read(cx).approval_notice_generation(),
                 1,
                 "draining does not post a new approval notice"
             );
         }
     });
-    set_policy(cx, ApprovalPolicy::Ask);
+    set_policy(&f, cx, ApprovalPolicy::Ask);
     let mut future = submit(&f, cx, sessions[1].clone(), options());
     assert!(future.try_recv().unwrap().is_none());
-    cx.update(|cx| assert_eq!(second.read(cx).permissions.len(), 1));
+    cx.update(|cx| assert_eq!(second.read(cx).permission_cards().len(), 1));
 }
 
 #[gpui_kit::test]
 fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18.);
-    set_policy(cx, ApprovalPolicy::Allow);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
@@ -147,10 +147,10 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
         &f,
         cx,
         session,
-        vec![acp::PermissionOption::new(
+        vec![PermissionChoice::new(
             "always",
             "Allow once",
-            acp::PermissionOptionKind::AllowAlways,
+            PermissionEffect::AllowRemembered,
         )],
     );
     assert!(receive.try_recv().unwrap().is_none());
@@ -163,7 +163,7 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     .unwrap();
     assert_eq!(
         receive.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -179,27 +179,27 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
         &f,
         cx,
         session.clone(),
-        vec![acp::PermissionOption::new(
+        vec![PermissionChoice::new(
             "shared",
             "Allow once",
-            acp::PermissionOptionKind::AllowOnce,
+            PermissionEffect::AllowOnce,
         )],
     );
-    let old_generation = cx.update(|cx| thread.read(cx).permissions[0].generation);
+    let old_generation = cx.update(|cx| thread.read(cx).permission_cards()[0].token());
     let mut always = submit(
         &f,
         cx,
         session,
-        vec![acp::PermissionOption::new(
+        vec![PermissionChoice::new(
             "shared",
             "Remember",
-            acp::PermissionOptionKind::AllowAlways,
+            PermissionEffect::AllowRemembered,
         )],
     );
-    set_policy(cx, ApprovalPolicy::Allow);
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     assert!(matches!(
         once.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Selected(_))
+        Some(PermissionOutcome::Selected(_))
     ));
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
@@ -208,15 +208,15 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
     });
     assert!(always.try_recv().unwrap().is_none());
     cx.update(|cx| {
-        assert_eq!(thread.read(cx).permissions.len(), 1);
-        let current_generation = thread.read(cx).permissions[0].generation;
+        assert_eq!(thread.read(cx).permission_cards().len(), 1);
+        let current_generation = thread.read(cx).permission_cards()[0].token();
         thread.update(cx, |thread, cx| {
             thread.choose_permission_request(current_generation, None, cx)
         });
     });
     assert_eq!(
         always.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -231,38 +231,29 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     let mut invalid = submit(&f, cx, session.clone(), options());
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.choose_permission(0, Some("foreign-id".into()), cx)
+            thread.choose_permission_request(
+                thread.permission_cards()[0].token(),
+                Some("foreign-id".into()),
+                cx,
+            )
         })
     });
     assert_eq!(
         invalid.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     let mut obsolete = submit(&f, cx, session.clone(), options());
-    cx.update(|cx| {
-        thread.update(cx, |thread, _| {
-            thread.lease.as_mut().unwrap().session = Some("replacement-session".into())
-        })
-    });
-    set_policy(cx, ApprovalPolicy::Allow);
+    cx.update(|cx| thread.update(cx, |thread, cx| thread.detach_session(cx)));
+    cx.run_until_parked();
+    set_policy(&f, cx, ApprovalPolicy::Allow);
     assert_eq!(
         obsolete.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     let mut foreign = submit(&f, cx, session.clone(), options());
     assert_eq!(
         foreign.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
-    );
-    let (respond, mut direct_foreign) = nocterm_ai::PermissionResponder::channel();
-    cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
-            thread.permission(request(session, options()), respond, cx)
-        })
-    });
-    assert_eq!(
-        direct_foreign.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -282,19 +273,16 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
         let mut queued = submit(&f, cx, session.clone(), options());
         cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
         cx.update(|cx| {
-            assert!(thread.read(cx).lifecycle.stopped());
-            assert_eq!(thread.read(cx).lifecycle.accepts_updates(), !generating);
+            assert!(thread.read(cx).session_stopped());
+            assert_eq!(thread.read(cx).session_accepts_updates(), !generating);
         });
         assert_eq!(
             queued.try_recv().unwrap(),
-            Some(acp::RequestPermissionOutcome::Cancelled)
+            Some(PermissionOutcome::Cancelled)
         );
-        set_policy(cx, ApprovalPolicy::Allow);
+        set_policy(&f, cx, ApprovalPolicy::Allow);
         let mut late = submit(&f, cx, session, options());
-        assert_eq!(
-            late.try_recv().unwrap(),
-            Some(acp::RequestPermissionOutcome::Cancelled)
-        );
+        assert_eq!(late.try_recv().unwrap(), Some(PermissionOutcome::Cancelled));
     }
 }
 
@@ -316,17 +304,72 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     });
     let mut queued = submit(&f, cx, session, options());
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.enabled = false;
-            settings.approval.agent_permissions = ApprovalPolicy::Allow;
-        })
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.enabled = false;
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
     })
     .await
     .unwrap();
     cx.run_until_parked();
     assert_eq!(
         queued.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[gpui_kit::test]
+fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_read = ApprovalPolicy::Allow;
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
+    f.events
+        .try_send(AgentEvent::Permission {
+            request: permission_request(
+                session,
+                "permission",
+                Some("Provider action"),
+                vec![
+                    PermissionChoice::new("no", "Yes", PermissionEffect::DenyOnce),
+                    allow_once_choice("yes", "No"),
+                ],
+            ),
+            respond,
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(receive.try_recv().unwrap().is_none());
+    cx.update(|cx| assert_eq!(thread.read(cx).permission_cards().len(), 1));
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    assert!(
+        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(choice))
+        if choice == PermissionOptionId::from("yes"))
+    );
+    cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
 }

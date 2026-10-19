@@ -424,6 +424,10 @@ async fn staged_upload_keeps_destination_untouched_until_explicit_atomic_publish
         writer.write(vec![0; 32 * 1024 + 1]).await.is_err(),
         "oversized writes must be rejected before enqueueing data"
     );
+    assert!(writer.publish_as("new.bin".into()).await.is_err());
+    writer.cancel().await.unwrap();
+    assert!(!target.exists());
+    let mut writer = remote.upload(path, UploadMode::Create).await.unwrap();
     let first = vec![0x15; 32 * 1024];
     let second = vec![0xe3; 19_307];
     writer.write(first.clone()).await.unwrap();
@@ -533,8 +537,19 @@ async fn upload_rejects_symlink_destinations_and_late_create_collisions_without_
         .unwrap();
     upload.write(b"incoming".to_vec()).await.unwrap();
     fs::write(&destination, b"newly-created-existing").unwrap();
-    assert!(upload.finish().await.is_err());
+    assert!(matches!(
+        upload.publish_as("race.txt".into()).await,
+        Err(FsError::AlreadyExists { .. })
+    ));
     assert_eq!(fs::read(&destination).unwrap(), b"newly-created-existing");
+    assert!(upload.write(b"must-not-append".to_vec()).await.is_err());
+    assert_eq!(
+        upload.publish_as("race (1).txt".into()).await.unwrap(),
+        folder.join("race (1).txt").to_str().unwrap()
+    );
+    assert_eq!(fs::read(folder.join("race (1).txt")).unwrap(), b"incoming");
+    assert!(upload.publish_as("again.txt".into()).await.is_err());
+    drop(upload);
     wait_no_partials(&folder).await;
     session.close();
     closed(&session, no_prompts).await;
@@ -578,6 +593,73 @@ async fn concurrent_small_sftp_uploads_publish_exact_bytes() {
         );
     }
     assert!(partials(&folder).is_empty());
+    session.close();
+    closed(&session, no_prompts).await;
+}
+
+#[tokio::test]
+async fn publication_leaf_cannot_change_parent_or_escalate_admitted_mode() {
+    use nocterm_session::fs::UploadMode;
+    let Some(sshd) = Sshd::start() else { return };
+    let transport = sshd.transport("plain");
+    let session = transport.open(sshd.request());
+    connect(&session, accept).await;
+    let remote = session.fs().unwrap();
+    let folder = sshd.root().join("uploads");
+    fs::create_dir(&folder).unwrap();
+    let mut upload = remote
+        .upload(
+            folder.join("original").to_str().unwrap(),
+            UploadMode::Create,
+        )
+        .await
+        .unwrap();
+    upload.write(b"sealed".to_vec()).await.unwrap();
+    for name in ["", ".", "..", "../escape", "/escape", "bad\0name"] {
+        assert!(upload.publish_as(name.into()).await.is_err());
+    }
+    assert!(upload.publish_as("a".repeat(1025)).await.is_err());
+    let destination = folder.join("existing");
+    fs::write(&destination, b"external").unwrap();
+    assert!(upload.publish_as("existing".into()).await.is_err());
+    assert_eq!(fs::read(&destination).unwrap(), b"external");
+    upload.cancel().await.unwrap();
+    wait_no_partials(&folder).await;
+    assert!(!sshd.root().join("escape").exists());
+    session.close();
+    closed(&session, no_prompts).await;
+}
+
+#[tokio::test]
+async fn rejected_write_batch_invalidates_its_prefix_and_cannot_publish_partial_bytes() {
+    use nocterm_session::fs::UploadMode;
+    let Some(sshd) = Sshd::start() else { return };
+    let transport = sshd.transport("plain");
+    let session = transport.open(sshd.request());
+    connect(&session, accept).await;
+    let remote = session.fs().unwrap();
+    let folder = sshd.root().join("rejected-writes");
+    fs::create_dir(&folder).unwrap();
+    for (index, chunks) in [vec![vec![1; 32769]], vec![vec![2]; 9]]
+        .into_iter()
+        .enumerate()
+    {
+        let name = format!("file-{index}");
+        let destination = folder.join(&name);
+        let mut upload = remote
+            .upload(destination.to_str().unwrap(), UploadMode::Create)
+            .await
+            .unwrap();
+        upload.write(b"prefix".to_vec()).await.unwrap();
+        assert!(upload.write_batch(chunks).await.is_err());
+        assert!(
+            upload.publish_as(name).await.is_err(),
+            "A failed write cannot authorize publication of its preceding prefix"
+        );
+        assert!(!destination.exists());
+        upload.cancel().await.unwrap();
+    }
+    wait_no_partials(&folder).await;
     session.close();
     closed(&session, no_prompts).await;
 }

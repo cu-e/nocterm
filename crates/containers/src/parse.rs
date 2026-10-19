@@ -7,55 +7,69 @@
 
 use serde_json::{Map, Value};
 
-use crate::model::{Container, Image, State};
+use crate::{
+    ListingEntity, ListingError,
+    model::{Container, Image, State},
+};
 
 /// Compose project labels: Docker Compose's, then podman-compose's.
 const PROJECT_LABELS: [&str; 2] = ["com.docker.compose.project", "io.podman.compose.project"];
 const SERVICE_LABELS: [&str; 2] = ["com.docker.compose.service", "io.podman.compose.service"];
 
-pub(crate) fn containers(output: &str) -> Result<Vec<Container>, String> {
+pub(crate) fn containers(output: &str) -> Result<Vec<Container>, ListingError> {
     objects(output)?
         .iter()
-        .map(container)
-        .collect::<Option<_>>()
-        .ok_or_else(|| "the engine listed a container without an id".into())
-}
-
-pub(crate) fn images(output: &str) -> Result<Vec<Image>, String> {
-    objects(output)?
-        .iter()
-        .map(image)
-        .collect::<Option<_>>()
-        .ok_or_else(|| "the engine listed an image without an id".into())
-}
-
-/// The objects of a listing in either shape.
-fn objects(output: &str) -> Result<Vec<Map<String, Value>>, String> {
-    let output = output.trim();
-    let values = if output.starts_with('[') {
-        match serde_json::from_str(output) {
-            Ok(Value::Array(values)) => values,
-            _ => return Err(unreadable(output)),
-        }
-    } else {
-        output
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).map_err(|_| unreadable(line)))
-            .collect::<Result<_, _>>()?
-    };
-    values
-        .into_iter()
-        .map(|value| match value {
-            Value::Object(object) => Ok(object),
-            other => Err(unreadable(&other.to_string())),
+        .enumerate()
+        .map(|(index, object)| {
+            container(object).ok_or(ListingError::MissingId {
+                entity: ListingEntity::Container,
+                index,
+            })
         })
         .collect()
 }
 
-fn unreadable(text: &str) -> String {
-    let line = text.lines().next().unwrap_or_default();
-    format!("the engine's listing could not be read: {line}")
+pub(crate) fn images(output: &str) -> Result<Vec<Image>, ListingError> {
+    objects(output)?
+        .iter()
+        .enumerate()
+        .map(|(index, object)| {
+            image(object).ok_or(ListingError::MissingId {
+                entity: ListingEntity::Image,
+                index,
+            })
+        })
+        .collect()
+}
+
+/// The objects of a listing in either shape.
+fn objects(output: &str) -> Result<Vec<Map<String, Value>>, ListingError> {
+    let values = if output.trim_start().starts_with('[') {
+        serde_json::from_str::<Vec<Value>>(output).map_err(|source| ListingError::Json {
+            line: source.line(),
+            source,
+        })?
+    } else {
+        output
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| !line.trim().is_empty())
+            .map(|(index, line)| {
+                serde_json::from_str(line).map_err(|source| ListingError::Json {
+                    line: index + source.line(),
+                    source,
+                })
+            })
+            .collect::<Result<_, _>>()?
+    };
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            Value::Object(object) => Ok(object),
+            _ => Err(ListingError::ExpectedObject { index }),
+        })
+        .collect()
 }
 
 fn container(object: &Map<String, Value>) -> Option<Container> {
@@ -227,7 +241,7 @@ mod tests {
     #[test]
     fn listings_that_are_not_json_are_an_error() {
         let error = containers("json\njson\n").unwrap_err();
-        assert!(error.contains("json"), "{error}");
+        assert!(matches!(error, ListingError::Json { line: 1, .. }));
         assert!(containers(r#"{"Names":"no-id"}"#).is_err());
     }
 

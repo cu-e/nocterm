@@ -15,7 +15,7 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(workspace.read(cx).dock.read(cx).zoomed_group().is_some());
+        assert!(workspace.read(cx).zoomed_pane(cx).is_some());
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_local_terminal(window, cx);
         });
@@ -27,8 +27,8 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
         let state = workspace.read(cx);
         assert_eq!(count(&workspace, cx), 2);
         assert!(!state.local_terminal_is_visible(cx));
-        assert!(state.dock.read(cx).has_dock(DockPlacement::Bottom));
-        assert!(state.dock.read(cx).zoomed_group().is_none());
+        assert!(state.dock_region_present(DockPlacement::Bottom, cx));
+        assert!(state.zoomed_pane(cx).is_none());
         assert_eq!(closes.get(), 0);
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_local_terminal(window, cx);
@@ -39,7 +39,7 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert!(workspace.read(cx).local_terminal_is_visible(cx));
-        assert!(workspace.read(cx).dock.read(cx).zoomed_group().is_none());
+        assert!(workspace.read(cx).zoomed_pane(cx).is_none());
         workspace.update(cx, |workspace, cx| {
             workspace.close_local_terminal(window, cx);
         });
@@ -50,7 +50,7 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(count(&workspace, cx), 1);
-        assert!(workspace.read(cx).dock.read(cx).zoomed_group().is_some());
+        assert!(workspace.read(cx).zoomed_pane(cx).is_some());
         workspace.update(cx, |workspace, cx| {
             workspace.close_local_terminal(window, cx);
         });
@@ -59,36 +59,24 @@ fn hiding_and_closing_the_last_zoomed_local_tab_clear_zoom(cx: &mut TestAppConte
     .unwrap();
     cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
-        assert!(workspace.selected_local_id.is_none());
-        assert!(!workspace.dock.read(cx).has_dock(DockPlacement::Bottom));
-        assert!(workspace.dock.read(cx).zoomed_group().is_none());
+        assert!(workspace.selected_local_terminal(cx).is_none());
+        assert!(!workspace.dock_region_present(DockPlacement::Bottom, cx));
+        assert!(workspace.zoomed_pane(cx).is_none());
     });
     assert_eq!(closes.get(), 2);
 }
 
 struct Access;
-impl crate::TerminalAccess for Access {
+impl crate::TerminalState for Access {
     fn info(&self, _: &App) -> Option<crate::TerminalInfo> {
         None
-    }
-    fn read(&self, _: crate::TextRequest, _: &App) -> Result<crate::TerminalText, String> {
-        Err("unused access operation".into())
-    }
-    fn send_text(&self, _: &str, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
-    }
-    fn run_command(&self, _: &str, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
-    }
-    fn answer_sign_in(&self, _: String, _: &mut App) -> Result<(), String> {
-        Err("unused access operation".into())
     }
 }
 
 struct AccessProbe {
     focus: FocusHandle,
     cwd: PathBuf,
-    access: Rc<dyn crate::TerminalAccess>,
+    access: Rc<dyn crate::TerminalState>,
 }
 impl EventEmitter<ItemEvent> for AccessProbe {}
 impl Focusable for AccessProbe {
@@ -105,8 +93,11 @@ impl Item for AccessProbe {
     fn tab_title(&self, _: &App) -> SharedString {
         self.cwd.display().to_string().into()
     }
-    fn terminal_access(&self) -> Option<Rc<dyn crate::TerminalAccess>> {
-        Some(self.access.clone())
+    fn terminal_capabilities(
+        &self,
+        _: gpui_kit::WeakEntity<Self>,
+    ) -> Option<crate::TerminalCapabilities> {
+        Some(crate::TerminalCapabilities::new(self.access.clone()))
     }
 }
 impl crate::LocalTerminal for AccessProbe {
@@ -118,7 +109,7 @@ impl crate::LocalTerminal for AccessProbe {
         path: PathBuf,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::LocalDirectoryError> {
         self.cwd = path;
         cx.emit(ItemEvent::Changed);
         Ok(())
@@ -166,7 +157,10 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
                         &b
                     };
                     assert_eq!(terminal.item, expected.entity_id());
-                    assert!(Rc::ptr_eq(&terminal.access, &expected.read(cx).access));
+                    assert!(Rc::ptr_eq(
+                        terminal.capabilities.state(),
+                        &expected.read(cx).access
+                    ));
                     assert!(terminal.bottom && !terminal.background);
                 }
                 assert!(workspace.focus_terminal(item.entity_id(), window, cx));
@@ -194,35 +188,15 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
     }
 
     cx.update_window(handle, |_, window, cx| {
+        crate::workspace::tests::drag_tab(window, b.entity_id(), central.entity_id(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            let b_panel = PanelId::from(
-                workspace
-                    .local_entry(b.entity_id())
-                    .unwrap()
-                    .dock_item
-                    .entity_id(),
-            );
-            let central_panel = PanelId::from(workspace.items[0].dock_item.entity_id());
-            workspace.dock.update(cx, |dock, cx| {
-                let node = dock
-                    .layout(DockPlacement::Center)
-                    .unwrap()
-                    .find_panel_node(central_panel)
-                    .unwrap();
-                dock.move_panel(
-                    b_panel,
-                    InsertTarget::Tabs {
-                        node,
-                        ix: None,
-                        activate: false,
-                    },
-                    window,
-                    cx,
-                );
-            });
             assert_eq!(
                 workspace
-                    .item_location(b.entity_id(), cx)
+                    .tab_location(b.entity_id(), cx)
                     .map(|(placement, _)| placement),
                 Some(DockPlacement::Center)
             );

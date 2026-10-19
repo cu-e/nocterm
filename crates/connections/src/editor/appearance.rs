@@ -1,12 +1,12 @@
 //! The editor's icon, colour and country choices.
 use gpui_kit::{
-    AnyElement, Context, SharedString,
+    AnyElement, App, Context, Entity, SharedString, Subscription, Window,
     base::TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::Input,
+        input::{Input, InputEvent, InputState},
         v_flex,
     },
     div,
@@ -15,13 +15,147 @@ use gpui_kit::{
 };
 use nocterm_ui::{IconName, form};
 
-use super::{ConnectionEditor, ICON_ROWS_HEIGHT};
+use super::{ConnectionEditor, ICON_ROWS_HEIGHT, field, text};
+use nocterm_connections_model::draft::AppearanceDraft;
+use nocterm_connections_model::profiles::{Profile, ProfileId};
+pub(super) struct AppearanceFields {
+    icon: Option<String>,
+    color: Entity<InputState>,
+    expanded: bool,
+    country: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+impl AppearanceFields {
+    pub(super) fn new(
+        profile: Option<&Profile>,
+        installed: &crate::Installed,
+        window: &mut Window,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> Self {
+        let color = field(
+            "Brand colour",
+            profile
+                .and_then(|p| p.icon_color.clone())
+                .unwrap_or_default(),
+            window,
+            cx,
+        );
+        let country = field(
+            "Auto",
+            profile
+                .and_then(|p| p.country.clone())
+                .map(|code| code.to_uppercase())
+                .unwrap_or_default(),
+            window,
+            cx,
+        );
+        let color_subscription = cx.subscribe_in(&color, window, |this, _, event, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.error = None;
+                cx.notify();
+            }
+        });
+        let flags = installed.facts().downgrade();
+        let country_subscription =
+            cx.subscribe_in(&country, window, move |this, input, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.error = None;
+                    let code = input.read(cx).value().trim().to_ascii_lowercase();
+                    if let (Some(facts), Ok(code)) = (
+                        flags.upgrade(),
+                        nocterm_connections_model::observation::CountryCode::new(&code),
+                    ) {
+                        let _ = facts.update(cx, |facts, cx| facts.request_flag(code, cx));
+                    }
+                    cx.notify();
+                }
+            });
+        Self {
+            icon: profile.and_then(|p| p.icon.clone()),
+            color,
+            expanded: false,
+            country,
+            _subscriptions: vec![color_subscription, country_subscription],
+        }
+    }
+    pub(super) fn color(&self) -> &Entity<InputState> {
+        &self.color
+    }
+    pub(super) fn country(&self) -> &Entity<InputState> {
+        &self.country
+    }
+    pub(super) fn choose(&mut self, icon: Option<&str>) {
+        self.icon = icon.map(str::to_owned);
+    }
+    pub(super) fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
+    pub(super) fn snapshot(&self, cx: &App) -> AppearanceDraft {
+        AppearanceDraft {
+            icon: self.icon.clone().unwrap_or_default(),
+            icon_color: text(&self.color, cx),
+            country: text(&self.country, cx),
+        }
+    }
+}
 
-impl ConnectionEditor {
+impl AppearanceFields {
     /// "Automatic" and every system in the catalog, then the colour and the
     /// country.
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(super) fn appearance_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn rows(
+        &self,
+        id: ProfileId,
+        editing: bool,
+        installed: &crate::Installed,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> Vec<AnyElement> {
+        let color = self.preview_color(cx);
+        let detected = editing.then(|| installed.os(id, cx)).flatten();
+        let chosen = self.icon.as_deref().and_then(crate::os::find).or(detected);
+        let hint = match chosen {
+            Some(os) => format!("Empty: the {} colour, {}.", os.name, os.color),
+            None => "Empty: grey.".to_owned(),
+        };
+        let tiles = self.tiles(detected, color, cx);
+        let background = nocterm_ui::hsla(
+            nocterm_ui::TerminalStyle::with_settings(
+                installed
+                    .settings()
+                    .setting::<nocterm_ui::TerminalSettings>(cx),
+                cx,
+            )
+            .background,
+        );
+        let icon = self.icon_grid(tiles, background, cx);
+        let colour = self.color_control(cx);
+        vec![
+            form::stacked_row(
+                "Icon",
+                "Automatic follows the detected system.",
+                icon,
+                None,
+                cx,
+            ),
+            form::row("Colour", hint, colour, cx),
+            self.render_country(id, editing, installed, cx),
+        ]
+    }
+
+    fn preview_color(&self, cx: &App) -> Option<String> {
+        let typed = self.color.read(cx).value().trim().to_owned();
+        let typed = if typed.is_empty() || typed.starts_with('#') {
+            typed
+        } else {
+            format!("#{typed}")
+        };
+        Some(typed).filter(|color| crate::os::is_valid_color(color))
+    }
+    fn tiles(
+        &self,
+        detected: Option<&'static crate::os::Os>,
+        color: Option<String>,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> Vec<AnyElement> {
         let theme = cx.theme();
         let (muted, border, accent, radius) = (
             theme.muted_foreground,
@@ -29,22 +163,11 @@ impl ConnectionEditor {
             theme.accent,
             theme.radius,
         );
-        let typed = self.icon_color.read(cx).value().trim().to_owned();
-        let typed = if typed.is_empty() || typed.starts_with('#') {
-            typed
-        } else {
-            format!("#{typed}")
-        };
-        let color = Some(typed).filter(|color| crate::os::is_valid_color(color));
-        let detected = self
-            .editing
-            .then(|| crate::ServerFacts::global(cx).read(cx).os(self.id))
-            .flatten();
         let tile = |id: SharedString,
                     choice: Option<&'static str>,
                     os: Option<&'static crate::os::Os>,
                     tooltip: SharedString,
-                    cx: &mut Context<Self>| {
+                    cx: &mut Context<ConnectionEditor>| {
             let selected = self.icon.as_deref() == choice;
             div()
                 .id(id)
@@ -68,14 +191,9 @@ impl ConnectionEditor {
                         .into()
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.icon = choice.map(str::to_owned);
+                    this.appearance.choose(choice);
                     cx.notify();
                 }))
-        };
-        let chosen = self.icon.as_deref().and_then(crate::os::find).or(detected);
-        let hint = match chosen {
-            Some(os) => format!("Empty: the {} colour, {}.", os.name, os.color),
-            None => "Empty: grey.".to_owned(),
         };
         let automatic = match detected {
             Some(os) => format!("Automatic: {}, as detected", os.name),
@@ -89,7 +207,7 @@ impl ConnectionEditor {
             cx,
         )];
         // Collapsed, the chosen icon comes first so it stays in view.
-        let promoted = (!self.icons_expanded)
+        let promoted = (!self.expanded)
             .then(|| self.icon.as_deref().and_then(crate::os::find))
             .flatten();
         let others = crate::os::CATALOG
@@ -104,9 +222,19 @@ impl ConnectionEditor {
                 cx,
             ));
         }
-        let background = form::page_background(cx);
+        tiles
+            .into_iter()
+            .map(IntoElement::into_any_element)
+            .collect()
+    }
+    fn icon_grid(
+        &self,
+        tiles: Vec<AnyElement>,
+        background: gpui_kit::Hsla,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> AnyElement {
         let count = tiles.len();
-        let expanded = self.icons_expanded;
+        let expanded = self.expanded;
         let grid = div()
             .relative()
             .when(!expanded, |grid| {
@@ -144,52 +272,47 @@ impl ConnectionEditor {
                         format!("Show all {count}")
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.icons_expanded = !this.icons_expanded;
+                        this.appearance.toggle_expanded();
                         cx.notify();
                     })),
             ),
         );
+        icon.into_any_element()
+    }
+    fn color_control(&self, cx: &mut Context<ConnectionEditor>) -> AnyElement {
         let colour = h_flex()
             .gap_1()
-            .child(
-                div()
-                    .w(rems(8.))
-                    .child(Input::new(&self.icon_color).small()),
-            )
+            .child(div().w(rems(8.)).child(Input::new(&self.color).small()))
             .child(
                 Button::new("editor-icon-color-reset")
                     .small()
                     .ghost()
                     .label("Reset")
                     .tooltip("Use the system's brand colour")
-                    .disabled(self.icon_color.read(cx).value().is_empty())
+                    .disabled(self.color.read(cx).value().is_empty())
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.icon_color
+                        this.appearance
+                            .color()
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         cx.notify();
                     })),
             );
-        vec![
-            form::stacked_row(
-                "Icon",
-                "Automatic follows the detected system.",
-                icon,
-                None,
-                cx,
-            ),
-            form::row("Colour", hint, colour, cx),
-            self.render_country(cx),
-        ]
+        colour.into_any_element()
     }
 
-    fn render_country(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_country(
+        &self,
+        id: ProfileId,
+        editing: bool,
+        installed: &crate::Installed,
+        cx: &mut Context<ConnectionEditor>,
+    ) -> AnyElement {
         let border = cx.theme().border;
-        let detecting = crate::facts::country_detection_enabled(cx);
-        let facts = crate::ServerFacts::global(cx).read(cx);
+        let detecting = installed.detecting_country(cx);
+        let facts = installed.facts().read(cx);
         let typed = self.country.read(cx).value().trim().to_ascii_lowercase();
-        let detected = self
-            .editing
-            .then(|| facts.country(self.id))
+        let detected = editing
+            .then(|| facts.country(id, cx))
             .flatten()
             .filter(|_| detecting);
         let shown = if typed.is_empty() {
@@ -197,7 +320,7 @@ impl ConnectionEditor {
         } else {
             Some(typed.clone()).filter(|code| crate::geo::is_country_code(code))
         };
-        let flag = shown.as_deref().and_then(|code| facts.flag(code));
+        let flag = shown.as_deref().and_then(|code| installed.flag(code, cx));
         let hint = match (typed.is_empty(), detected) {
             (false, _) => "Two-letter ISO code. Clear it to detect the country again.".to_owned(),
             (true, Some(code)) => {
@@ -225,7 +348,11 @@ impl ConnectionEditor {
                         ),
                 )
             })
-            .child(div().w(rems(5.)).child(Input::new(&self.country).small()));
+            .child(
+                div()
+                    .w(rems(5.))
+                    .child(Input::new(&self.country).id("editor-country").small()),
+            );
         form::row("Country", hint, control, cx)
     }
 }

@@ -4,22 +4,20 @@
 use std::sync::Arc;
 
 use gpui_kit::Context;
-use nocterm_session::{
-    Auth, CloseReason, ProgramTransport, Session, ShellLaunch, Target, Transport,
-};
+use nocterm_session::{Auth, ProgramTransport, ShellLaunch, Target, Transport};
 use nocterm_workspace::{ProgramSpec, SessionContext, SessionSpec};
 
-use super::{Status, Terminal};
+use super::Terminal;
 
 impl Terminal {
     /// Whether this terminal runs a one-shot host command.
     pub fn is_command(&self) -> bool {
-        self.local_transport.is_some()
+        self.lifecycle.is_command()
     }
 
     /// A tab running `spec`'s program over its host's own connection, or on
     /// this computer when the host has no session.
-    pub fn new_program(spec: ProgramSpec, cx: &mut Context<Self>) -> Self {
+    pub fn new_program(deps: crate::Installed, spec: ProgramSpec, cx: &mut Context<Self>) -> Self {
         let ProgramSpec {
             title,
             host,
@@ -48,8 +46,8 @@ impl Terminal {
             launch: Some(launch),
             credential: None,
         };
-        let mut terminal = Self::new_kind(spec, session.is_none(), Some(transport), None, cx);
-        terminal.shell_syntax = shell_syntax;
+        let mut terminal = Self::new_kind(deps, spec, session.is_none(), Some(transport), None, cx);
+        terminal.input.set_shell_syntax(shell_syntax);
         terminal
     }
 
@@ -58,13 +56,6 @@ impl Terminal {
     /// A program tab shows the host it runs on, which stays reachable after
     /// the program ends unless the program lost its connection.
     pub fn session_context(&self) -> SessionContext {
-        let (target, session) = (self.spec.target.clone(), self.session.as_ref());
-        let exec = session.and_then(Session::exec);
-        if !self.is_command() {
-            return SessionContext::new(target, self.fs.clone(), self.is_connected())
-                .with_exec(exec);
-        }
-        let lost = matches!(self.status, Status::Closed(CloseReason::Failed(_)));
-        SessionContext::new(target, session.and_then(Session::fs), !lost).with_exec(exec)
+        self.lifecycle.context()
     }
 }

@@ -3,6 +3,29 @@ use crate::Item;
 use gpui_kit::{App, Context, Entity, EntityId, Window};
 use std::path::PathBuf;
 
+/// Refusal to synchronize a workspace's local shell directory.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LocalDirectoryError {
+    #[error("Local terminal is unavailable")]
+    Unavailable,
+    #[error("Open a connected local terminal first.")]
+    NotConnectedLocal,
+    #[error("The shell cannot represent this directory path.")]
+    NonUtf8Path,
+    #[error("Directory paths with control characters require manual navigation.")]
+    ControlCharacters,
+    #[error(
+        "Directory synchronization needs Bash, Zsh, fish or PowerShell with shell integration enabled."
+    )]
+    UnsupportedShell,
+    #[error("The shell is busy or has unfinished input. Run at an empty prompt: {command}")]
+    Busy { command: String },
+    #[error("{0}")]
+    Encoding(#[from] nocterm_session::TextEncodingError),
+    #[error("Directory change was not sent because the terminal input queue is full.")]
+    QueueFull,
+}
+
 /// Destination for a local shell request; anchors are resolved when it registers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalTerminalTarget {
@@ -21,7 +44,7 @@ pub trait LocalTerminal: Item {
         path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String>;
+    ) -> Result<(), LocalDirectoryError>;
 }
 pub(crate) trait LocalTerminalHandle {
     fn cwd(&self, cx: &App) -> Option<PathBuf>;
@@ -30,7 +53,7 @@ pub(crate) trait LocalTerminalHandle {
         path: PathBuf,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(), String>;
+    ) -> Result<(), LocalDirectoryError>;
 }
 impl<T: LocalTerminal> LocalTerminalHandle for Entity<T> {
     fn cwd(&self, cx: &App) -> Option<PathBuf> {
@@ -41,7 +64,7 @@ impl<T: LocalTerminal> LocalTerminalHandle for Entity<T> {
         path: PathBuf,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(), String> {
+    ) -> Result<(), LocalDirectoryError> {
         self.update(cx, |this, cx| this.change_directory(path, window, cx))
     }
 }

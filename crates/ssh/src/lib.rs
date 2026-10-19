@@ -7,6 +7,12 @@
 //!
 //! The transport owns a small Tokio runtime, so callers need none: a session
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
+//!
+//! Owns: SSH authentication, host-key policy, proxy tunnels, SFTP and remote execution.
+//! Does not own: profiles, credential storage, terminal emulation or session views.
+//! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
+//! Settings section: consumes session SSH options. Globals: none.
+//! Invariants: bounded session channels and independent closure interrupt blocked I/O.
 
 mod auth;
 mod connection;
@@ -67,6 +73,9 @@ impl Transport for SshTransport {
         let Some(runtime) = &self.runtime else {
             return Session::failed(SessionError::Other("the SSH transport has stopped".into()));
         };
+        if let Err(error) = request.launch.validate() {
+            return Session::failed(SessionError::InvalidLaunch(error));
+        }
         let (fs, fs_requests) = sftp::channel();
         let (exec, exec_requests) = exec::channel(runtime.handle().clone());
         let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));

@@ -120,6 +120,11 @@ pub trait RemoteUpload: Send + 'static {
             Ok(())
         })
     }
+    /// Seal and publish the same stage under one leaf in its original parent.
+    /// A Create collision retains the sealed stage for a bounded name retry.
+    /// The mode stays fixed from upload admission; successful publication consumes
+    /// the stage and subsequent writes/publications must fail. Dropping cancels it.
+    fn publish_as(&mut self, name: String) -> FsFuture<String>;
     fn finish(self: Box<Self>) -> FsFuture<String>;
     fn cancel(self: Box<Self>) -> FsFuture<()>;
 }
@@ -170,6 +175,13 @@ pub enum FsError {
 
 /// Operations on remote paths, which are always POSIX paths whatever the
 /// local platform is.
+pub fn valid_publication_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 1024
+        && !matches!(name, "." | "..")
+        && !name.contains(['/', '\0'])
+}
+
 pub mod path {
     /// `parent` with `name` appended.
     pub fn join(parent: &str, name: &str) -> String {

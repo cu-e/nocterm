@@ -9,7 +9,12 @@ publish = false
 [package.metadata.nocterm]
 layer = "domain"
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
+nocterm-core.workspace = true
 nocterm-settings.workspace = true
 async-channel.workspace = true
 futures.workspace = true
@@ -17,7 +22,6 @@ serde.workspace = true
 schemars.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
-getrandom.workspace = true
 
 [lints]
 workspace = true

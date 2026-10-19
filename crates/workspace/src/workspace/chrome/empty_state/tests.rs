@@ -94,7 +94,7 @@ fn empty_center_limits_recent_rows_and_reconnects_exact_saved_id(cx: &mut TestAp
     .unwrap();
     cx.run_until_parked();
     assert_eq!(&*opened.borrow(), &[String::from("id-2")]);
-    assert!(workspace.read_with(cx, |workspace, _| workspace.new_tab_menu_open));
+    assert!(workspace.read_with(cx, |workspace, _| workspace.new_tab_menu_is_open()));
 }
 
 #[gpui_kit::test]
@@ -112,5 +112,5 @@ fn empty_center_new_connection_preserves_new_tab_action_without_recent_servers(
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(workspace.read_with(cx, |workspace, _| workspace.new_tab_menu_open));
+    assert!(workspace.read_with(cx, |workspace, _| workspace.new_tab_menu_is_open()));
 }

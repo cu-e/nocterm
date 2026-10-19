@@ -384,3 +384,80 @@ async fn batch_sends_full_window_drains_failure_and_never_publishes_partial_file
         .unwrap();
     assert!(uploads.lock().await.is_empty());
 }
+
+#[tokio::test]
+async fn uncertain_rename_reply_cannot_authorize_retry_even_when_both_paths_exist() {
+    let (client, mut peer) = tokio::io::duplex(4096);
+    let raw = RawSftpSession::new(client);
+    let server = tokio::spawn(async move {
+        assert_eq!(packet(&mut peer).await[0], 1);
+        send(&mut peer, &[2, 0, 0, 0, 3]).await;
+        let rename = packet(&mut peer).await;
+        assert_eq!(rename[0], 18);
+        let mut unexpected = vec![105]; // ATTRS cannot acknowledge RENAME.
+        unexpected.extend(request_id(&rename).to_be_bytes());
+        unexpected.extend(0u32.to_be_bytes());
+        send(&mut peer, &unexpected).await;
+        loop {
+            let request = packet(&mut peer).await;
+            match request[0] {
+                7 => {
+                    // Fresh observations of both names are not a definitive
+                    // rejection of the earlier rename request.
+                    let mut attrs = vec![105];
+                    attrs.extend(request_id(&request).to_be_bytes());
+                    attrs.extend(4u32.to_be_bytes());
+                    attrs.extend(0o100600u32.to_be_bytes());
+                    send(&mut peer, &attrs).await;
+                }
+                13 => {
+                    assert_eq!(&request[9..], b"/tmp/.partial");
+                    status(&mut peer, request_id(&request), StatusCode::Ok).await;
+                    break;
+                }
+                other => panic!("uncertain publication issued another operation: {other}"),
+            }
+        }
+    });
+    timeout(Duration::from_secs(3), raw.init())
+        .await
+        .unwrap()
+        .unwrap();
+    let sftp = Sftp {
+        raw,
+        atomic_replace: false,
+    };
+    let uploads: Uploads = Arc::default();
+    let id = Uuid::new_v4();
+    uploads.lock().await.insert(
+        id,
+        Arc::new(Mutex::new(Upload {
+            temporary: "/tmp/.partial".into(),
+            destination: "/tmp/target".into(),
+            handle: None,
+            offset: 4,
+            mode: UploadMode::Create,
+            failed: false,
+        })),
+    );
+    let result = timeout(Duration::from_secs(3), finish(&sftp, &uploads, id))
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Err(FsError::Other(_))),
+        "an unexpected rename acknowledgement must not become a retryable collision: {result:?}"
+    );
+    assert!(
+        publish_as(&sftp, &uploads, id, "retry".into())
+            .await
+            .is_err()
+    );
+    timeout(Duration::from_secs(3), cancel(&sftp, &uploads, id))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap();
+}

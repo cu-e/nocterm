@@ -9,6 +9,9 @@ publish = false
 [package.metadata.nocterm]
 layer = "domain"
 
+[features]
+test-support = []
+
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true

@@ -4,14 +4,110 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 
 ## Hard rules
 
-- Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `main` directly.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
+- Run every Cargo command with `CARGO_BUILD_JOBS=1` and serialize top-level Cargo
+  commands, including those from other agents, to stay within available memory.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
   growing file into child modules by responsibility instead of adding to it. Never raise an
   entry in `xtask/oversized-files.toml`.
+
+## Read first
+
+Before designing or changing code, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+the layer note of each touched crate, the [ADR index](docs/adr/README.md) and relevant
+accepted decisions, and the crate's `//!` documentation in `lib.rs`.
+Accepted ADRs are immutable; supersede a decision with a new ADR.
+
+## Where code goes
+
+Name the crate and layer in the plan, in this order:
+
+1. Rules and data formats without I/O belong in domain crates.
+2. Real filesystem, network and process I/O behind contracts belongs in adapters.
+3. GPUI entities with background work and no views belong in service crates.
+4. Views and presentation state belong in feature crates.
+5. Features communicate through narrow workspace ports named for the consumer's
+   need; do not expand a broad trait for another feature pair.
+
+If the right crate does not exist, propose it instead of using the nearest crate.
+Existing mixed responsibilities are migration debt, not a pattern for new code.
+Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
+[ADR 0010](docs/adr/0010-session-lifecycle.md)), `containers` / `containers-ui`, and
+`src/bootstrap.rs` as examples of ownership and composition.
+
+## Reuse before writing
+
+- Ordered persistence: `nocterm_store::{Persisted, ShutdownCoordinator}`
+  ([ADR 0013](docs/adr/0013-persistence-shutdown-service.md)); the common service
+  uses `nocterm_core::persist::{WriteQueue, WriteGate, ShutdownDeadline}`
+  ([ADR 0004](docs/adr/0004-write-queue.md)).
+- Atomic files: `nocterm_core::fs::{write_private_atomic, create_private,
+  AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
+  save_preserving}` for configuration. Check their symlink and format semantics
+  before reuse ([ADR 0015](docs/adr/0015-private-file-publication.md)).
+- Shutdown, link-safe filesystem traversal and test fakes: inspect existing
+  implementations before adding one; propose shared extraction for missing reuse.
+
+Layout, settings, snippets, connection state, Runtime chat/favorites and output
+recording use the shared persistence service; keyed documents and append streams
+share its driver. Native filesystem capabilities are
+`nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented by the injected
+`nocterm-localfs` adapter. Session `test-support` supplies shared in-memory port
+fakes for dev-dependencies. `ProgramOpener` requests external local programs; the
+injected `nocterm-local::LocalProgramOpener` owns their bounded native launch/wait
+lifecycle. `nocterm-local::fs` is not an API.
+
+## Design rules
+
+These rules block review. `cargo xtask architecture` checks layers, file size,
+complexity attributes and the exact debt inventory: field counts, public state,
+impl spread, globals and panicking reads, domain I/O, quit handlers and string
+errors. See [architecture guardrails](docs/architecture/guardrails.md) and
+[ADR 0012](docs/adr/0012-architecture-debt-ratchets.md). Entries in
+`xtask/baseline.toml` may only decrease; update them when debt shrinks.
+
+1. Add state only within a type's single responsibility. Do not add a field when
+   the resulting count exceeds 15 or create a type over that limit; extract an owner with
+   private fields and transition methods. Do not spread its impl across more files.
+2. Stateful types gain no `pub` or `pub(crate)` fields. DTOs and settings may expose
+   plain data; methods preserve stateful invariants.
+3. No new `impl Global`, reads of another crate's global, or `on_app_quit` handlers.
+   Pass collaborators through explicit dependencies and constructors; compose
+   them in bootstrap. Existing globals do not authorize new service lookup.
+4. Fallible APIs crossing crate boundaries use typed errors (`thiserror`);
+   convert them to `String` at display only.
+5. Add no I/O to domain code or protocol-specific types (including ACP) to its APIs, and no
+   domain rules to views. Existing violations do not authorize growth.
+6. Never add `#[expect]` or `#[allow]` for `clippy::too_many_lines` or
+   `clippy::cognitive_complexity`, and never raise a baseline to pass a check.
+7. Extract responsibilities into modules that own types, not extra methods of a
+   parent type. Keep vendor changes separate from application code changes.
+
+## Tests
+
+- Test behavior through actions, events, rendering and public methods; do not
+  read or write private view/model fields to reproduce a regression.
+- Name tests and files after behavior, and extend its existing test file. Do not
+  create files named after review rounds (`audit`, `verification`, `round2`, etc.).
+- Reuse existing port fakes and extend their capabilities. If they cannot be
+  shared yet, propose a shared home instead of duplicating another fake.
+
+## Documents
+
+- `docs/` describes the current system. Plans, progress, session logs and audit
+  trails belong in ignored `.claude/plans/` or the PR description.
+- Never record session authorization or implementation status in `docs/`.
+- When removing or renaming a symbol, search `docs/` and update current references;
+  accepted ADRs retain historical context.
+- Cross-cutting decisions get an ADR. Architecture notes describe layers, ports
+  and invariants; product instructions belong in user documentation.
+- For new crates, start `lib.rs` with a short `//!` card: purpose, `Owns:`,
+  `Does not own:`, ports used/provided, settings section, globals and invariants.
+  Describe actual boundaries; existing crates gain cards when their boundaries change.
 
 ## Pipeline
 
@@ -31,6 +127,23 @@ Gates:
 - **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
 
 Trivial changes (typos, one-line fixes, docs) skip the pipeline.
+Pass the target branch and verification scope to every stage. Review includes
+uncommitted changes as well as commits so it can finish before commit authorization.
+
+## Definition of done
+
+Code changes require `cargo fmt --all --check`,
+`cargo build --workspace --all-targets`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
+`cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
+checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes).
+For documentation-only changes, check links, stale references and generated-doc
+freshness; architecture checks still apply. Build, lint and runtime tests may be
+omitted because executable inputs did not change.
+
+Report each command and its result. Report omitted or unavailable checks with the
+reason. No blocking review findings may remain; commit, push and PR creation
+still require the user's request.
 
 ## Scopes
 
@@ -43,30 +156,43 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 | `design` | design tokens and themes |
 | `themes` | Zed theme import, catalogue and installation |
 | `settings` | settings schema and storage |
-| `session` | transport and remote filesystem contracts |
+| `store` | common persistence service and shutdown coordination |
+| `session` | transport, filesystem and native program contracts |
 | `ssh` | SSH and SFTP adapter |
 | `vt` | terminal emulation and input encoding |
 | `ui` | shared UI theme, assets and settings globals |
 | `workspace` | window, tabs, panels and actions |
-| `terminal` | terminal model and view |
-| `connections` | profiles, recents and connection UI |
+| `terminal-model` | pure terminal display settings and validation |
+| `terminal` | terminal model, view and settings pages |
+| `connections` | connection UI, editor inputs and detected facts |
+| `connections-store` | ordered profile/recent publication and committed authority |
+| `connections-model` | connection formats, rules and capability ports |
+| `connections-io` | native connection files, values and observations |
 | `settings-ui` | settings tab |
 | `keymap` | default and user key bindings |
 | `keymap-ui` | keymap settings page |
 | `ai` | agent registry, thread model, context and tool protocol |
 | `acp` | ACP client and local MCP bridge adapter |
 | `agent-runtime` | agent connections, admission and chat documents |
+| `agent-storage` | history and preferences filesystem repositories |
+| `image-codec` | bounded native image inspection and preview encoding |
 | `agent` | agent panel, threads and composer |
+| `explorer` | pure Explorer indexing and opener rules |
 | `files` | local/remote Explorer and transfer UI |
-| `local` | local PTY and shell integration |
-| `transfers` | bounded upload/download service |
+| `local` | local PTY, shell integration and external program opening |
+| `localfs` | native filesystem capabilities |
+| `transfers` | pure transfer requests, progress and service contract |
+| `transfer-runtime` | bounded streaming transfer execution over injected ports |
 | `monitor` | host resource collection, parsing and history |
 | `monitor-ui` | status bar monitor, details popup and settings page |
 | `snippets` | snippet library, validation and connection bindings |
 | `snippets-ui` | contextual snippet panel and highlighted editor |
+| `snippets-store` | checked snippet library publication |
+| `snippets-io` | native snippet documents and draft identities |
 | `containers` | container engine CLI, listing and actions |
 | `containers-ui` | containers panel, logs and shell tabs |
-| `vault` | encrypted credential storage |
+| `vault` | encrypted format and credential rules |
+| `vault-store` | vault files, entropy and bounded lifecycle worker |
 | `vault-ui` | vault settings and authentication bridge |
 | `device-unlock` | native authenticated vault key release |
 | `vault-broker` | optional privileged Linux fingerprint broker |
@@ -76,6 +202,7 @@ Commit scopes mirror top-level modules. Add a row when a module appears.
 ## Commands
 
 ```sh
+export CARGO_BUILD_JOBS=1
 cargo run
 cargo fmt --all --check
 cargo build --workspace --all-targets
@@ -86,7 +213,7 @@ cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
 cargo machete --skip-target-dir
-cargo doc --workspace --no-deps
+cargo doc --workspace --no-deps -j1
 python3 scripts/generate-license-notices.py --check-inputs
 ```
 

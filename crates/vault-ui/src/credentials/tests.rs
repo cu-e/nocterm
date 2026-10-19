@@ -1,14 +1,13 @@
 use super::*;
 use futures::executor::block_on;
 use nocterm_session::Target;
-use std::time::Duration;
+use nocterm_vault::testing::ScriptedVaultAccess;
 
 const MASTER: &str = "test unique master passphrase";
 
 fn store(directory: &tempfile::TempDir) -> VaultCredentials {
-    let service = Arc::new(
-        VaultService::new(directory.path().join("vault"), Duration::from_secs(60)).unwrap(),
-    );
+    let _ = directory;
+    let service = Arc::new(ScriptedVaultAccess::default());
     block_on(service.create(Secret::new(MASTER))).unwrap();
     VaultCredentials::new(service)
 }
@@ -35,6 +34,7 @@ fn a_saved_answer_returns_for_the_same_question_only() {
     assert_eq!(secret.expose(), "stored account password");
     let other = password(&Target::new("other", "other-host", 22), false);
     let error = block_on(store.get(id, &other)).unwrap_err();
+    let error = error.to_string();
     assert!(error.contains("does not match"), "{error}");
 }
 

@@ -3,7 +3,7 @@ fn snippet() -> Snippet {
     Snippet {
         name: "Deploy".into(),
         content: "echo привет\nls -la\n".into(),
-        ..Default::default()
+        ..Snippet::new(uuid::Uuid::from_u128(1))
     }
 }
 #[test]
@@ -59,4 +59,23 @@ fn partition_filters_and_orders_context_before_other_snippets() {
     assert_eq!(current, [&bound]);
     assert_eq!(other, [&unbound]);
     assert!(library.partition(None, None, "absent").1.is_empty());
+}
+
+#[test]
+fn supplied_identities_and_validation_errors_remain_distinct() {
+    let mut one = Snippet::new(uuid::Uuid::from_u128(1));
+    let two = Snippet::new(uuid::Uuid::from_u128(2));
+    assert_ne!(one.id, two.id);
+    assert_eq!(
+        Library::default().save(one.clone(), None),
+        Err(LibraryError::Validation(ValidationError::Name))
+    );
+    one.name = "name".into();
+    one.content = "content".into();
+    let mut library = Library {
+        snippets: vec![one.clone(), one.clone()],
+    };
+    assert_eq!(library.validate(), Err(LibraryError::DuplicateId(one.id)));
+    library.snippets.clear();
+    assert_eq!(library.delete(&one), Err(LibraryError::Deleted(one.id)));
 }

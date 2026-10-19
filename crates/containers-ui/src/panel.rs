@@ -188,7 +188,7 @@ impl ContainersPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action = intent.action;
+        let action = intent.action();
         let done = self
             .model
             .update(cx, |model, cx| model.perform_intent(intent, cx));

@@ -1,5 +1,11 @@
 //! Host resource monitoring, independent of any UI.
 //!
+//! Owns: collection requests, framed counter parsing, rates and bounded history.
+//! Does not own: native process execution, GUI timers, host connections or views.
+//! Ports used: HostExec. Ports provided: none. Settings section: none. Globals: none.
+//! Invariants: only requested metrics enter the collection script; history is
+//! capacity bounded and successive counter samples determine rates.
+//!
 //! A host is asked about itself through a [`HostExec`]: one long-running
 //! script per watch, written for the host's [`Platform`], prints a frame of
 //! raw counters every interval. This crate builds those scripts, parses their
@@ -11,7 +17,13 @@
 //!
 //! [`HostExec`]: nocterm_session::HostExec
 
+//! Settings schema: owned here, including defaults and sanitization; controls stay in the feature.
+//! Owns: host metric scripts, parsing, bounded histories and monitor settings rules.
+//! Does not own: GPUI views, native host execution or settings publication.
+//! Ports: HostExec. Settings: monitor. Globals: none.
+//! Invariant: sampling and schema rules accept supplied facts without native I/O.
 pub mod format;
+
 mod frame;
 mod history;
 mod linux;
@@ -33,3 +45,6 @@ pub use sampler::{DiskRates, NetworkRates, Sampler, Snapshot, Usage};
 pub use watch::Watch;
 
 pub use metric::MonitorMetric;
+
+mod settings;
+pub use settings::*;

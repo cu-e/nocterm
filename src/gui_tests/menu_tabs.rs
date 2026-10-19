@@ -34,7 +34,7 @@ impl LocalTerminal for LocalTab {
         _: PathBuf,
         _: &mut Window,
         _: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
         Ok(())
     }
 }

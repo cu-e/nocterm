@@ -22,13 +22,13 @@ pub enum McpStep {
 fn error(id: Value, code: i64, message: &str) -> McpStep {
     McpStep::Reply(json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}}))
 }
-pub fn tool_result(id: Value, result: Result<Value, String>) -> Value {
+pub fn tool_result(id: Value, result: Result<Value, ToolFailure>) -> Value {
     match result {
         Ok(value) => {
             json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":value.to_string()}]}})
         }
-        Err(message) => {
-            json!({"jsonrpc":"2.0","id":id,"result":{"isError":true,"content":[{"type":"text","text":crate::redact::redact(&message)}]}})
+        Err(failure) => {
+            json!({"jsonrpc":"2.0","id":id,"result":{"isError":true,"content":[{"type":"text","text":crate::redact::redact(failure.message())}]}})
         }
     }
 }
@@ -89,7 +89,7 @@ fn call(id: Value, params: &Value) -> McpStep {
                 id,
                 tool,
                 arguments: args,
-                error,
+                error: error.to_string(),
             },
         },
         None => McpStep::Rejected {

@@ -1,6 +1,8 @@
 use super::*;
 use crate::panel::entries::tool_output::source;
 use gpui_kit::px;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus};
 use nocterm_ai::{
     thread::Entry,
     tool_display::{self, ToolDisplay},
@@ -12,11 +14,11 @@ pub(super) fn exec_result(state: &str) -> Value {
         "exit_status":null, "total_bytes":27, "truncated":false, "error":null})
 }
 
-pub(super) fn call(tool: &str, args: Value, output: Value, verified: bool) -> acp::ToolCall {
+pub(super) fn call(tool: &str, args: Value, output: Value, verified: bool) -> ToolRecord {
     let request = tool_display::parse(tool, args.clone()).unwrap();
     let mut call =
-        acp::ToolCall::new("screenshot", format!("mcp__nocterm-17__{tool}")).raw_input(args);
-    call.status = acp::ToolCallStatus::Completed;
+        ToolRecord::new("screenshot", format!("mcp__nocterm-17__{tool}")).raw_input(args);
+    call.status = ToolStatus::Succeeded;
     call.raw_output = Some(output);
     if verified {
         let mut display =
@@ -36,18 +38,18 @@ pub(super) fn settle(f: &Fixture, cx: &mut TestAppContext) {
     }
 }
 
-pub(super) fn set_call(f: &Fixture, call: acp::ToolCall, cx: &mut TestAppContext) {
+pub(super) fn set_call(f: &Fixture, call: ToolRecord, cx: &mut TestAppContext) {
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        thread.state.entries = vec![Entry::Tool(call)];
+        restore_entries(f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
     });
     settle(f, cx);
 }
 
-pub(super) fn expanded_fixture(call: acp::ToolCall, cx: &mut TestAppContext) -> Fixture {
-    let f = fixture_with_width(cx, 18.);
+pub(super) fn expanded_fixture(call: ToolRecord, cx: &mut TestAppContext) -> Fixture {
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     set_call(&f, call, cx);
@@ -84,7 +86,7 @@ fn known_result_decodes_direct_mcp_text_and_escaped_raw_output() {
         assert!(decoded.parameters.contains(&"Process: Running".into()));
         assert!(decoded.parameters.contains(&"Exit status: unknown".into()));
         assert!(decoded.parameters.contains(&"Command handle: c7".into()));
-        assert_eq!(call.status, acp::ToolCallStatus::Completed);
+        assert_eq!(call.status, ToolStatus::Succeeded);
     }
 }
 
@@ -311,12 +313,12 @@ fn literal_output_copy_updates_with_late_results_and_stays_bounded(cx: &mut Test
     });
     let payload = exec_result("exited");
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::ToolCallUpdate(
-                serde_json::from_value(json!({"toolCallId":"screenshot", "rawOutput":payload}))
-                    .unwrap(),
-            ),
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "screenshot",
+                ToolChanges::default().raw_output(payload.clone()),
+            ))),
         )))
         .unwrap();
     cx.run_until_parked();
@@ -347,10 +349,13 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
     );
     for redacts in [true, false] {
         cx.update(|cx| {
-            cx.update_setting::<nocterm_ai::AiSettings>(move |settings| {
-                settings.approval.redact_secrets = redacts;
-            })
-            .detach();
+            f.installation
+                .ready
+                .settings()
+                .update::<nocterm_ai::AiSettings>(cx, move |settings| {
+                    settings.approval.redact_secrets = redacts;
+                })
+                .detach();
         });
         cx.run_until_parked();
         settle(&f, cx);
@@ -366,7 +371,7 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
                 }
             );
             let thread = f.panel.read(cx).current().unwrap();
-            let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+            let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                 unreachable!()
             };
             assert_eq!(call.raw_output.as_ref().unwrap()["stdout"], original);
@@ -377,7 +382,7 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
 
 #[test]
 fn many_generic_blocks_share_one_literal_preview_and_keep_every_block() {
-    let mut call = acp::ToolCall::new("foreign", "Foreign tool");
+    let mut call = ToolRecord::new("foreign", "Foreign tool");
     call.content = (0..1000).map(|index| serde_json::from_value(json!({"type":"content","content":{"type":"text","text":format!("block {index}\n")}})).unwrap()).collect();
     let output = source(&call, false).unwrap();
     assert_eq!(output.sections.len(), 1);

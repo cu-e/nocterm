@@ -1,5 +1,8 @@
 use super::*;
 use gpui_kit::px;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::{ToolContent, ToolRecord, ToolStatus};
 use nocterm_ai::thread::Entry;
 
 use crate::panel::widgets::single_line_label;
@@ -47,16 +50,13 @@ fn chat_label_heights(f: &Fixture, raw: &str, cx: &mut TestAppContext) -> [gpui_
 
 #[gpui_kit::test]
 fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let prompt = "смотри в чем соль\nтут";
     let session = exchange(&f, prompt, "answer", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    f.panel.update(cx, |panel, cx| {
-        panel.history = true;
-        cx.notify();
-    });
+    f.panel.update(cx, |panel, cx| panel.set_history(true, cx));
     // Compare identical words: explicit line breaks must not increase either label's height.
     thread.update(cx, |thread, cx| {
         thread.rename(Some(single_line_label(prompt)), cx)
@@ -67,15 +67,18 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert_eq!(thread.title(), prompt);
-        assert!(matches!(&thread.state.entries[0], Entry::User(parts)
-            if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+        assert!(matches!(&thread.transcript().entries[0], Entry::User(parts)
+            if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
     });
 
     let agent_title = "Agent\r\n  title\u{2028}with\tspaces";
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().title(agent_title)),
+            SessionUpdate::SessionInfoUpdate(nocterm_ai::model::session::SessionInfo {
+                title: nocterm_ai::model::controls::Change::Set(agent_title.into()),
+                meta: None,
+            }),
         )))
         .unwrap();
     cx.run_until_parked();
@@ -90,67 +93,65 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     assert_eq!(chat_label_heights(&f, &long, cx), baseline);
     cx.update(|cx| {
         let thread = thread.read(cx);
-        assert_eq!(thread.name.as_deref(), Some(long.as_str()));
-        assert_eq!(thread.state.title.as_deref(), Some(agent_title));
+        assert_eq!(thread.document().name(), Some(long.as_str()));
+        assert_eq!(thread.transcript().title.as_deref(), Some(agent_title));
     });
     cx.run_until_parked();
-    let saved = nocterm_ai::history::load_all(&f._directory.path().join("chats"));
+    let saved = f.repository.chats();
     assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
     assert_eq!(saved[0].title.as_deref(), Some(agent_title));
     assert!(matches!(&saved[0].entries[0], Entry::User(parts)
-        if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+        if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
 
     // The existing single-line rename editor still receives the original title,
     // applying its own newline filtering. Cancelling it keeps the stored title.
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.start_rename(thread.entity_id(), window, cx);
-            assert_eq!(
-                panel
-                    .renaming
-                    .as_ref()
-                    .unwrap()
-                    .input
-                    .read(cx)
-                    .value()
-                    .as_ref(),
-                long.replace('\n', "")
-            );
-            panel.finish_rename(false, window, cx);
-            panel
-                .history_search
-                .update(cx, |search, cx| search.set_value("second line", window, cx));
         });
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(("history-rename", thread.entity_id().as_u64()))
+                .value(),
+            Some(long.replace('\n', "").as_str())
+        );
+        window.press("escape", cx);
+        window.render_frame(cx);
+        replace_textbox("agent-history-search", "second line", window, cx);
         window.render_frame(cx);
         assert!(
             window
                 .try_find(("history-thread", thread.entity_id().as_u64()))
                 .is_some()
         );
-        assert_eq!(thread.read(cx).name.as_deref(), Some(long.as_str()));
+        assert_eq!(thread.read(cx).document().name(), Some(long.as_str()));
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
 fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let script = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/probe.txt').write_text('nocterm-ui-test-artifacts')\nPY";
     // Exercise both animated glyphs and reduced-motion live rendering.
     for reduced_motion in [false, true] {
         cx.update(|cx| cx.set_reduce_motion(reduced_motion));
-        for (status, live) in [
-            (acp::ToolCallStatus::Completed, false),
-            (acp::ToolCallStatus::Failed, false),
-            (acp::ToolCallStatus::Pending, true),
-            (acp::ToolCallStatus::InProgress, true),
+        for (status, live, shown) in [
+            (ToolStatus::Succeeded, false, "Completed"),
+            (ToolStatus::Failed, false, "Failed"),
+            (ToolStatus::Pending, true, "Pending"),
+            (ToolStatus::Running, true, "InProgress"),
         ] {
             let mut heights = Vec::new();
             for title in [single_line_label(script), script.into()] {
+                if f.commands.pending.lock().unwrap().is_some() {
+                    complete_active(&f, cx);
+                }
                 thread.update(cx, |thread, cx| {
-                    let mut call = acp::ToolCall::new("script", title.clone());
+                    let mut call = ToolRecord::new("script", title.clone());
                     call.status = status;
                     call.raw_input = Some(serde_json::json!({"command": script}));
                     call.content = vec![
@@ -160,12 +161,7 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                         }))
                         .unwrap(),
                     ];
-                    thread.state.entries = vec![Entry::Tool(call)];
-                    thread.lifecycle.force_phase(if live {
-                        nocterm_ai::session::SessionPhase::Prompting
-                    } else {
-                        nocterm_ai::session::SessionPhase::Ready
-                    });
+                    restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
                     thread.mark_dirty(0);
                     cx.notify();
                 });
@@ -173,13 +169,10 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                 heights.push(
                     cx.update_window(f.handle, |_, window, cx| {
                         let header = window.find(("tool-call", 0usize));
-                        assert_eq!(
-                            header.label(),
-                            Some(format!("{title} · {status:?}").as_str())
-                        );
+                        assert_eq!(header.label(), Some(format!("{title} · {shown}").as_str()));
                         let entry = window.find(("agent-entry", 0usize)).bounds();
                         assert!(header.bounds().right() <= entry.right() + px(1.));
-                        let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+                        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                             panic!("expected tool call");
                         };
                         assert_eq!(call.title, title);
@@ -197,13 +190,13 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
             cx.update_window(f.handle, |_, window, cx| {
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_some());
-                let Entry::Tool(call) = &thread.read(cx).state.entries[0] else {
+                let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
                     panic!("expected tool call");
                 };
-                let acp::ToolCallContent::Content(output) = &call.content[0] else {
+                let ToolContent::Content(output) = &call.content[0] else {
                     panic!("expected text output");
                 };
-                assert!(matches!(&output.content, acp::ContentBlock::Text(text)
+                assert!(matches!(&output.content, Content::Text(text)
                     if text.text == script));
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_none());

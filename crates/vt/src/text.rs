@@ -7,7 +7,14 @@ use alacritty_terminal::{
     term::cell::Flags,
 };
 
-use crate::Emulator;
+use alacritty_terminal::{grid::Grid, term::cell::Cell};
+
+/// Borrowed terminal history and its exact lineage for one bounded read.
+pub(crate) struct TextReader<'a> {
+    grid: &'a Grid<Cell>,
+    alt_screen: bool,
+    next_line: u64,
+}
 
 /// How much text to return.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,16 +48,23 @@ pub struct TextTail {
     pub alt_screen: bool,
 }
 
-impl Emulator {
+impl<'a> TextReader<'a> {
+    pub(crate) fn new(grid: &'a Grid<Cell>, alt_screen: bool, next_line: u64) -> Self {
+        Self {
+            grid,
+            alt_screen,
+            next_line,
+        }
+    }
     /// The most recent text, within the limits of `query`.
     ///
     /// Normally that is the scrollback and the screen. In the alternate screen
     /// it is only what the program currently shows. Cells a program marked
     /// hidden (the way password prompts are sometimes drawn) read as blanks.
-    pub fn text(&self, query: TextQuery) -> TextTail {
-        let grid = self.search_grid();
-        let alt_screen = self.modes().alt_screen;
-        let next_line = self.output_line_number().saturating_add(1);
+    pub(crate) fn read(&self, query: TextQuery) -> TextTail {
+        let grid = self.grid;
+        let alt_screen = self.alt_screen;
+        let next_line = self.next_line;
         // A saved cursor outside this lineage needs a fresh bounded snapshot.
         let reset_cursor = query.since_line.is_some_and(|since| since > next_line);
         let since = query.since_line.filter(|_| !alt_screen && !reset_cursor);
@@ -162,7 +176,7 @@ impl Emulator {
     /// earlier rows end where the line wrapped.
     fn row_text(&self, line: Line, last_row: bool) -> String {
         let mut text = String::new();
-        for cell in &self.search_grid()[line][..] {
+        for cell in &self.grid[line][..] {
             if cell
                 .flags
                 .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
@@ -187,7 +201,7 @@ impl Emulator {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EmulatorOptions, TermSize};
+    use crate::{Emulator, EmulatorOptions, TermSize};
 
     use super::*;
 
@@ -408,6 +422,33 @@ mod tests {
         terminal.advance("日本e\u{301}".as_bytes());
 
         assert_eq!(terminal.text(query(10, 1024)).text, "日本e\u{301}");
+    }
+
+    #[test]
+    fn zero_limits_keep_current_line_and_screen_without_retaining_old_text() {
+        let mut terminal = emulator(5, 3, 10);
+        terminal.advance("日本e\u{301}\r\npartial".as_bytes());
+        let normal = terminal.text(query(100, 1024));
+        for alternate in [false, true, false] {
+            if alternate {
+                terminal.advance(b"\x1b[?1049h\x1b[Hmenu");
+            } else {
+                terminal.advance(b"\x1b[?1049l");
+            }
+            let full = terminal.text(query(100, 1024));
+            assert_eq!(full.alt_screen, alternate);
+            if !alternate {
+                assert_eq!(full.text, normal.text);
+            }
+            for limited in [query(0, 1024), query(100, 0)] {
+                let empty = terminal.text(limited);
+                assert!(empty.text.is_empty());
+                assert!(empty.truncated);
+                assert_eq!(empty.alt_screen, alternate);
+                assert_eq!(empty.next_line, full.next_line);
+                assert_eq!(empty.first_line, empty.next_line);
+            }
+        }
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Borrowed, bounded persistence view. JSON and byte budgeting use the same serializer.
 use super::{MAX_SAVED_ENTRIES, MAX_SAVED_IMAGE_BYTES, SavedChat, SavedPrompt};
-use crate::{acp, thread::Entry};
+use crate::model::content::Content;
+use crate::model::tools::ToolRecord;
+use crate::thread::Entry;
 use serde::{Serialize, Serializer, ser::SerializeSeq};
 use std::sync::Arc;
 
@@ -21,6 +23,10 @@ pub(super) struct Wire<'a, Q: Serialize + ?Sized> {
     workdir: &'a Option<std::path::PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: &'a Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    config: &'a crate::session_config::Choices,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: &'a Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pending_history: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +53,8 @@ impl<'a, Q: Serialize + ?Sized> Wire<'a, Q> {
             session_id: &chat.session_id,
             workdir: &chat.workdir,
             model: &chat.model,
+            config: &chat.config,
+            mode: &chat.mode,
             pending_history: chat.pending_history,
             draft: &chat.draft,
             updated: chat.updated,
@@ -74,7 +82,7 @@ enum BorrowedEntry<'a> {
     Agent(&'a str),
     Thought(&'a str),
     Content(Block<'a>),
-    Tool(&'a acp::ToolCall),
+    Tool(&'a ToolRecord),
 }
 fn bounded(entry: &Entry) -> BorrowedEntry<'_> {
     match entry {
@@ -85,7 +93,7 @@ fn bounded(entry: &Entry) -> BorrowedEntry<'_> {
         Entry::Tool(tool) => BorrowedEntry::Tool(tool),
     }
 }
-struct Blocks<'a>(&'a [acp::ContentBlock]);
+struct Blocks<'a>(&'a [Content]);
 impl Serialize for Blocks<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
@@ -95,13 +103,12 @@ impl Serialize for Blocks<'_> {
         seq.end()
     }
 }
-struct Block<'a>(&'a acp::ContentBlock);
+struct Block<'a>(&'a Content);
 impl Serialize for Block<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            acp::ContentBlock::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
-                acp::ContentBlock::Text(acp::TextContent::new("[Image not kept in history]"))
-                    .serialize(serializer)
+            Content::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
+                Content::text("[Image not kept in history]").serialize(serializer)
             }
             block => block.serialize(serializer),
         }
@@ -133,10 +140,10 @@ pub(super) fn clone_entries(entries: &[Entry]) -> Vec<Entry> {
         })
         .collect()
 }
-fn clone_block(block: &acp::ContentBlock) -> acp::ContentBlock {
+fn clone_block(block: &Content) -> Content {
     match block {
-        acp::ContentBlock::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
-            acp::ContentBlock::Text(acp::TextContent::new("[Image not kept in history]"))
+        Content::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
+            Content::text("[Image not kept in history]")
         }
         block => block.clone(),
     }

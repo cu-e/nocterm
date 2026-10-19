@@ -13,7 +13,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_monitor::{MonitorMetric, Snapshot, format};
-use nocterm_ui::{IconName, SettingsExt as _};
+use nocterm_ui::IconName;
 
 use crate::{
     details::DetailsView,
@@ -62,7 +62,7 @@ impl Render for MonitorStatus {
             .ghost()
             .small()
             .tooltip(tooltip)
-            .child(summary(snapshot, stale, cx));
+            .child(summary(snapshot, stale, monitor.settings(cx), cx));
         if snapshot.is_none() {
             button = button.icon(IconName::Activity);
         }
@@ -83,7 +83,12 @@ impl Render for MonitorStatus {
 }
 
 /// The configured metrics, side by side.
-fn summary(snapshot: Option<&Snapshot>, stale: bool, cx: &App) -> AnyElement {
+fn summary(
+    snapshot: Option<&Snapshot>,
+    stale: bool,
+    settings: &crate::MonitorSettings,
+    cx: &App,
+) -> AnyElement {
     let Some(snapshot) = snapshot else {
         return div().into_any_element();
     };
@@ -94,7 +99,7 @@ fn summary(snapshot: Option<&Snapshot>, stale: bool, cx: &App) -> AnyElement {
         .text_xs()
         .when(stale, |row| row.opacity(0.6))
         .children(
-            cx.setting::<crate::MonitorSettings>()
+            settings
                 .status_bar
                 .iter()
                 .map(|metric| item(*metric, snapshot, muted, cx)),

@@ -95,18 +95,26 @@ impl BridgeServer {
     }
 }
 impl ToolBridge for BridgeServer {
-    fn register(&self) -> Result<BridgeRegistration, String> {
+    fn register(
+        &self,
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         let relay = &self.inner.relay;
         if !relay.program.is_file() {
             // The agent would start without terminal tools and only say so in chat.
-            return Err(format!(
-                "Terminal tools need {}, which no longer exists. Restart nocterm.",
-                relay.program.display()
+            return Err(nocterm_ai::connection::BridgeRegistrationError::Failed(
+                format!(
+                    "Terminal tools need {}, which no longer exists. Restart nocterm.",
+                    relay.program.display()
+                ),
             ));
         }
-        let token = random_token()?;
+        let token = random_token().map_err(|error| {
+            nocterm_ai::connection::BridgeRegistrationError::Failed(error.to_string())
+        })?;
         let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-        let endpoint = start_listening(&self.inner, &mut state)?;
+        let endpoint = start_listening(&self.inner, &mut state).map_err(|error| {
+            nocterm_ai::connection::BridgeRegistrationError::Failed(error.to_string())
+        })?;
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let (cancel, cancelled) = async_channel::bounded(1);
         state.registrations.insert(
@@ -181,9 +189,18 @@ impl Drop for ConnectionCount {
     }
 }
 
-fn random_token() -> Result<String, String> {
+/// Why the private bridge listener could not be opened.
+#[derive(Debug, thiserror::Error)]
+enum ListenError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Entropy(#[from] getrandom::Error),
+}
+
+fn random_token() -> Result<String, getrandom::Error> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
+    getrandom::fill(&mut bytes)?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 fn token_eq(a: &str, b: &str) -> bool {
@@ -193,10 +210,10 @@ fn token_eq(a: &str, b: &str) -> bool {
     bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
 /// Opens the listener on first use and returns the endpoint relays connect to.
-fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, String> {
+fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, ListenError> {
     if state.listening.is_none() {
         let (listener, listening) = listen(&inner.paths)?;
-        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        listener.set_nonblocking(true)?;
         let epoch = inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let inner = inner.clone();
         std::thread::Builder::new()
@@ -240,8 +257,7 @@ fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, Stri
                         Err(_) => break,
                     }
                 }
-            })
-            .map_err(|e| e.to_string())?;
+            })?;
         state.listening = Some(listening);
     }
     Ok(state
@@ -252,18 +268,18 @@ fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, Stri
         .clone())
 }
 
-fn listen(paths: &Paths) -> Result<(Listener, Listening), String> {
+fn listen(paths: &Paths) -> Result<(Listener, Listening), ListenError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let directory = paths.ensure_runtime_dir().map_err(|e| e.to_string())?;
+        let directory = paths.ensure_runtime_dir()?;
         let suffix = random_token()?;
         let path = directory.join(format!("a-{}.sock", &suffix[..12]));
-        let listener = Listener::bind(&path).map_err(|e| e.to_string())?;
+        let listener = Listener::bind(&path)?;
         if let Err(error) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         {
             let _ = std::fs::remove_file(&path);
-            return Err(error.to_string());
+            return Err(error.into());
         }
         Ok((
             listener,
@@ -276,8 +292,8 @@ fn listen(paths: &Paths) -> Result<(Listener, Listening), String> {
     #[cfg(not(unix))]
     {
         let _ = paths;
-        let listener = Listener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-        let endpoint = format!("tcp:{}", listener.local_addr().map_err(|e| e.to_string())?);
+        let listener = Listener::bind("127.0.0.1:0")?;
+        let endpoint = format!("tcp:{}", listener.local_addr()?);
         Ok((
             listener,
             Listening {

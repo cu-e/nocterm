@@ -37,6 +37,16 @@ fn native_file_drop_inserts_literal_paths_once_without_enter(cx: &mut TestAppCon
     emit(cx, &transport, 0, Event::Output(b"\x1b[?2004h".to_vec()));
     let driver = scripted_driver(&transport, 0);
     drain(&driver);
+    let outputs = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = outputs.clone();
+    let _subscription = cx.update(|cx| {
+        let terminal = view.read(cx).terminal().clone();
+        cx.subscribe(&terminal, move |_, event, _| {
+            if *event == crate::TerminalEvent::Output {
+                count.set(count.get() + 1);
+            }
+        })
+    });
     cx.update_window(handle, |_, window, cx| {
         window.replace_root(cx, |_, _| DropHarness {
             view: view.clone(),
@@ -54,6 +64,11 @@ fn native_file_drop_inserts_literal_paths_once_without_enter(cx: &mut TestAppCon
                 .to_vec()
         ]
     );
+    assert_eq!(
+        outputs.get(),
+        1,
+        "accepted drop publishes once even on an unchanged live viewport"
+    );
 }
 
 #[gpui_kit::test]
@@ -66,7 +81,8 @@ fn remote_shell_launch_override_controls_quote_style_for_local_source(cx: &mut T
                 program: Some("/usr/bin/pwsh".into()),
                 ..Default::default()
             });
-            cx.new(|cx| TerminalView::new(spec, window, cx))
+            let installed = view.read(cx).terminal().read(cx).installed().clone();
+            cx.new(|cx| TerminalView::new(installed, spec, window, cx))
         })
         .unwrap();
     emit(cx, &transport, 1, Event::Connected);
@@ -206,15 +222,17 @@ fn program_fixture(
     std::sync::Arc<nocterm_session::SessionDriver>,
 ) {
     use nocterm_workspace::{Host, HostKey, ProgramSpec, SessionContext};
-    let (handle, _, _) = fixture(cx);
+    let (handle, source, _) = fixture(cx);
     let host = std::sync::Arc::new(ProgramHost::default());
     let target = nocterm_session::Target::new("user", "host", 22);
     let program =
         nocterm_session::ExecRequest::new(engine).args(["exec", "-it", "container", "sh"]);
     let view = cx
         .update_window(handle, |_, window, cx| {
+            let installed = source.read(cx).terminal().read(cx).installed().clone();
             let terminal = cx.new(|cx| {
                 crate::Terminal::new_program(
+                    installed,
                     ProgramSpec {
                         title: "Container shell".into(),
                         host: Host {

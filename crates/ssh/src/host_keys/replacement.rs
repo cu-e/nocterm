@@ -1,11 +1,7 @@
 //! Conservative replacement of conflicting records owned by the application.
 use super::*;
 use russh::keys::HashAlg;
-use std::{
-    fs,
-    io::{self, Write as _},
-    path::Path,
-};
+use std::{fs, io, path::Path};
 
 #[derive(Clone, Debug)]
 pub(super) struct Snapshot {
@@ -58,6 +54,30 @@ impl Snapshot {
         }
     }
 }
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum HostKeyReplaceError {
+    #[error(
+        "SSH trust records changed while awaiting confirmation. Reconnect and verify the key again."
+    )]
+    TrustChanged,
+    #[error("The host key conflict changed. Reconnect and verify the key again.")]
+    ConflictChanged,
+    #[error("SSH trust file disappeared")]
+    FileNotFound,
+    #[error("invalid host record")]
+    InvalidRecord,
+    #[error("invalid public key")]
+    InvalidKey,
+    #[error(transparent)]
+    Utf8(#[from] std::str::Utf8Error),
+    #[error(transparent)]
+    OpenSsh(#[from] russh::keys::ssh_key::Error),
+    #[error("Could not save the new host key: {0}")]
+    Io(#[from] io::Error),
+    #[error("{0}")]
+    Custom(String),
+}
+
 impl HostKeys {
     pub(crate) fn old_fingerprints(&self, host: &str, port: u16, key: &PublicKey) -> Vec<String> {
         let mut fingerprints: Vec<_> = self
@@ -139,28 +159,31 @@ impl HostKeys {
         }
         None
     }
-    pub(crate) fn revalidate(&self) -> Result<(), String> {
+    pub(crate) fn revalidate(&self) -> Result<(), HostKeyReplaceError> {
         if self.snapshots.iter().all(Snapshot::unchanged) {
             Ok(())
         } else {
-            Err("SSH trust records changed while awaiting confirmation. Reconnect and verify the key again.".into())
+            Err(HostKeyReplaceError::TrustChanged)
         }
     }
-    pub(crate) fn replace(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), String> {
+    pub(crate) fn replace(
+        &self,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+    ) -> Result<(), HostKeyReplaceError> {
         let _guard = MUTATIONS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.revalidate()?;
         if let Some(error) = self.replacement_error(host, port, key) {
-            return Err(error);
+            return Err(HostKeyReplaceError::Custom(error));
         }
         // Reparse the current stores as a second fail-closed check before writing.
         let current = Self::load(self.writable.clone(), self.read_only.clone())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| HostKeyReplaceError::Custom(error.to_string()))?;
         if !matches!(current.check(host, port, key), Verdict::Changed { .. }) {
-            return Err(
-                "The host key conflict changed. Reconnect and verify the key again.".into(),
-            );
+            return Err(HostKeyReplaceError::ConflictChanged);
         }
         let lines: Vec<_> = self
             .conflicting(host, port, key)
@@ -171,74 +194,57 @@ impl HostKeys {
             .iter()
             .find(|snapshot| snapshot.path == self.writable)
             .and_then(|snapshot| snapshot.bytes.as_ref())
-            .ok_or("SSH trust file disappeared")?;
-        let text = std::str::from_utf8(snapshot).map_err(|error| error.to_string())?;
-        let key = key.to_openssh().map_err(|error| error.to_string())?;
+            .ok_or(HostKeyReplaceError::FileNotFound)?;
+        let text = std::str::from_utf8(snapshot)?;
+        let key = key.to_openssh()?;
         let mut output = String::new();
         for (index, raw) in text.split_inclusive('\n').enumerate() {
             if lines.contains(&(index + 1)) {
-                // Retain the exact host pattern (including hashes), whitespace,
-                // comments and line ending, replacing only algorithm and key data.
                 output.push_str(&replace_fields(raw, &key)?);
             } else {
                 output.push_str(raw);
             }
         }
         self.atomic_write(output.as_bytes())
-            .map_err(|error| format!("Could not save the new host key: {error}"))
+            .map_err(HostKeyReplaceError::Io)
     }
     fn atomic_write(&self, bytes: &[u8]) -> io::Result<()> {
-        let parent = self
-            .writable
-            .parent()
-            .ok_or_else(|| io::Error::other("trust file has no parent"))?;
-        let temporary = parent.join(format!(".nocterm-host-key-{}", uuid::Uuid::new_v4()));
-        let result = (|| {
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt as _;
-                options.mode(0o600);
-            }
-            let mut file = options.open(&temporary)?;
-            file.set_permissions(fs::metadata(&self.writable)?.permissions())?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            self.revalidate().map_err(io::Error::other)?;
-            fs::rename(&temporary, &self.writable)?;
-            // Publication committed; match core persistence's best-effort
-            // directory sync rather than reporting an already-saved key as failed.
-            if let Ok(directory) = fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
-            Ok(())
-        })();
-        let _ = fs::remove_file(&temporary);
-        result
+        // Trust records preserve their original mode; private snapshots elsewhere
+        // use 0600. The caller holds MUTATIONS through staging and publication.
+        let publication = nocterm_core::fs::AtomicPublication::stage_with_permissions(
+            &self.writable,
+            bytes,
+            fs::metadata(&self.writable)?.permissions(),
+        )
+        .map_err(nocterm_core::fs::FileError::into_io_error)?;
+        self.revalidate()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        publication
+            .publish()
+            .map_err(nocterm_core::fs::FileError::into_io_error)
     }
 }
-fn replace_fields(raw: &str, key: &str) -> Result<String, String> {
+fn replace_fields(raw: &str, key: &str) -> Result<String, HostKeyReplaceError> {
     let start = raw
-        .find(|c: char| !c.is_whitespace())
-        .ok_or("invalid host record")?;
+        .find(|c: char| !c.is_whitespace() && c != '\r' && c != '\n')
+        .ok_or(HostKeyReplaceError::InvalidRecord)?;
     let host_end = raw[start..]
         .find(char::is_whitespace)
         .map(|offset| start + offset)
-        .ok_or("invalid host record")?;
+        .ok_or(HostKeyReplaceError::InvalidRecord)?;
     let algorithm_start = raw[host_end..]
         .find(|c: char| !c.is_whitespace())
         .map(|offset| host_end + offset)
-        .ok_or("invalid host record")?;
+        .ok_or(HostKeyReplaceError::InvalidRecord)?;
     let mut split = raw[algorithm_start..].split_whitespace();
-    let algorithm = split.next().ok_or("invalid host record")?;
-    let data = split.next().ok_or("invalid host record")?;
+    let algorithm = split.next().ok_or(HostKeyReplaceError::InvalidRecord)?;
+    let data = split.next().ok_or(HostKeyReplaceError::InvalidRecord)?;
     let data_start = algorithm_start
         + algorithm.len()
         + raw[algorithm_start + algorithm.len()..]
             .find(|c: char| !c.is_whitespace())
-            .ok_or("invalid host record")?;
-    let (new_algorithm, new_data) = key.split_once(' ').ok_or("invalid public key")?;
+            .ok_or(HostKeyReplaceError::InvalidRecord)?;
+    let (new_algorithm, new_data) = key.split_once(' ').ok_or(HostKeyReplaceError::InvalidKey)?;
     Ok(format!(
         "{}{}{}{}{}",
         &raw[..algorithm_start],
@@ -383,6 +389,7 @@ mod tests {
             hosts
                 .replace("example.com", 22, &key(KEY_B))
                 .unwrap_err()
+                .to_string()
                 .contains("changed while awaiting")
         );
         assert!(!fs::read_to_string(&path).unwrap().contains(KEY_B));
@@ -418,6 +425,23 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
+    fn replacement_preserves_original_trust_file_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("known_hosts");
+        fs::write(&path, format!("example.com {KEY_A}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        load(&path).replace("example.com", 22, &key(KEY_B)).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains(KEY_B));
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn save_failure_is_reported_and_keeps_existing_bytes() {
         use std::os::unix::fs::PermissionsExt as _;
         let directory = tempfile::tempdir().unwrap();
@@ -431,6 +455,7 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .to_string()
                 .contains("trust directory is not writable")
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), text);

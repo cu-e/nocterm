@@ -1,4 +1,5 @@
 //! Small pieces of the agent panel's look, shared by its parts.
+use nocterm_ai::model::tools::ToolStatus;
 use std::time::Duration;
 
 use gpui_kit::{
@@ -15,7 +16,7 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_ai::{acp, thread::Entry};
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use crate::thread::Attachment;
@@ -41,17 +42,13 @@ pub(super) fn short_hover_label(text: &str) -> String {
     label
 }
 
-pub(super) fn mode_label(state: &nocterm_ai::thread::ThreadState) -> String {
+pub(super) fn mode_label(state: &crate::thread::ChatConfig) -> String {
     state
-        .modes
-        .as_ref()
+        .modes()
         .and_then(|modes| {
-            let selected = state
-                .current_mode
-                .as_ref()
-                .unwrap_or(&modes.current_mode_id);
+            let selected = state.current_mode().unwrap_or(&modes.current);
             modes
-                .available_modes
+                .choices
                 .iter()
                 .find(|mode| &mode.id == selected)
                 .map(|mode| mode.name.clone())
@@ -141,10 +138,9 @@ pub(super) fn entry_is_live(entries: &[Entry], index: usize, generating: bool) -
     generating
         && match entries.get(index) {
             Some(Entry::Thought(_) | Entry::Agent(_)) => index + 1 == entries.len(),
-            Some(Entry::Tool(call)) => matches!(
-                call.status,
-                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
-            ),
+            Some(Entry::Tool(call)) => {
+                matches!(call.status, ToolStatus::Pending | ToolStatus::Running)
+            }
             _ => false,
         }
 }

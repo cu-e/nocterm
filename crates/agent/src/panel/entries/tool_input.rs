@@ -12,8 +12,9 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::{
-    TerminalCall, acp,
+    TerminalCall,
     tool_display::{self, ToolDisplay},
 };
 use nocterm_ui::IconName;
@@ -85,7 +86,7 @@ fn parameters_source(arguments: &Value) -> Source {
     )
 }
 
-pub(in crate::panel) fn source(call: &acp::ToolCall) -> Option<Source> {
+pub(in crate::panel) fn source(call: &ToolRecord) -> Option<Source> {
     if let Some(display) = ToolDisplay::from_call(call) {
         let mut source = if let Some(request) = display.display_request() {
             let mut source = request_source(request);

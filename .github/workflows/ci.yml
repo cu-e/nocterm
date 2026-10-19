@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
   push:
-    branches: [master]
+    branches: [master, dev]
   workflow_call:
     inputs:
       ref:
@@ -18,8 +18,8 @@ on:
         required: false
         default: 0
 
-# A new push to a pull request supersedes its running checks. Master and
-# release validation always finish, so every merged commit gets a verdict.
+# A new push to a pull request supersedes its running checks. Integration pushes
+# and release validation finish, so every actual landed commit gets a verdict.
 concurrency:
   group: ci-${{ inputs.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -29,6 +29,22 @@ permissions:
   pull-requests: read
 
 jobs:
+  vendor-patches:
+    name: Vendored source replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test archive authentication and replay failures
+        run: python3 scripts/test-vendor-patches.py
+      - name: Replay published archives and patches
+        run: python3 scripts/check-vendor-patches.py
+
   release-pipeline:
     name: Release pipeline regressions
     runs-on: ubuntu-latest
@@ -51,6 +67,8 @@ jobs:
         run: node scripts/test-release-pipeline.cjs
       - name: Check release notice preparation
         run: python3 scripts/test-prepare-release-pr.py
+      - name: Check architectural history policy fixtures
+        run: python3 scripts/test-architecture-history.py
 
   conventions:
     name: Conventional Commits
@@ -75,8 +93,9 @@ jobs:
             core.setOutput('title', pr.title);
             core.setOutput('base', pr.base.sha);
 
-      # PRs are squash-merged, so the title becomes the commit on master
-      # and is what release-please reads.
+      # Ordinary release PRs squash to their title. Correlated vendor/product
+      # PRs preserve separate Conventional Commits through rebase merge,
+      # including dev-to-master promotions; every PR title remains valid.
       - name: Lint PR title
         env:
           PR_TITLE: ${{ steps.pr.outputs.title || github.event.pull_request.title }}
@@ -95,6 +114,34 @@ jobs:
             scripts/lint-commit-msg.sh "$RUNNER_TEMP/msg" || status=1
           done
           exit $status
+
+      - name: Check architectural baseline and vendor commit separation
+        env:
+          BASE: ${{ steps.pr.outputs.base || github.event.pull_request.base.sha }}
+          HEAD: ${{ inputs.ref || github.event.pull_request.head.sha }}
+        run: python3 scripts/check-architecture-history.py --base "$BASE" --head "$HEAD"
+
+  integration-history:
+    name: Integrated architectural history
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Check actual integrated commits
+        env:
+          BASE: ${{ github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            echo "::error::Integration history needs an existing before commit; branch creation is not a validated promotion."
+            exit 1
+          fi
+          git cat-file -e "$BASE^{commit}" || git fetch --no-tags origin "$BASE"
+          python3 scripts/check-architecture-history.py --base "$BASE" --head "$HEAD"
 
   # Packaging rejects stale notices only after merge; catch the drift here,
   # while the change that caused it is still open.
@@ -201,11 +248,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Compile and link native adapters
-        run: cargo build --locked -p nocterm-device-unlock --all-targets
+        run: cargo build --locked -p nocterm-vault-store -p nocterm-device-unlock --all-targets
       - name: Lint native adapters
-        run: cargo clippy --locked -p nocterm-vault -p nocterm-device-unlock --all-targets -- -D warnings
+        run: cargo clippy --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock --all-targets -- -D warnings
       - name: Test portable envelope and native metadata without authentication prompts
-        run: cargo test --locked -p nocterm-vault -p nocterm-device-unlock
+        run: cargo test --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock
 
   # The one check to require in branch protection: it passes only when every
   # job above passed or was skipped by design, so adding a job never needs a
@@ -213,7 +260,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [release-pipeline, conventions, notices, unused-dependencies, rust, device-unlock-native]
+    needs: [release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, device-unlock-native, vendor-patches]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

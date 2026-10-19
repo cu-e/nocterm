@@ -4,14 +4,13 @@ use super::*;
 fn select(view: &Entity<TerminalView>, cx: &mut TestAppContext) {
     view.update(cx, |v, cx| {
         v.terminal.update(cx, |t, cx| {
-            t.update_emulator(cx, |e| {
-                e.start_selection(
-                    SelectionKind::Cells,
-                    CellPoint { row: 0, col: 0 },
-                    nocterm_vt::Side::Left,
-                );
-                e.update_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right);
-            });
+            t.begin_selection(
+                SelectionKind::Cells,
+                CellPoint { row: 0, col: 0 },
+                nocterm_vt::Side::Left,
+                cx,
+            );
+            t.extend_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right, 0, cx);
         });
     });
 }

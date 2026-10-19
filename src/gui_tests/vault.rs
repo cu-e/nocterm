@@ -70,7 +70,7 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         settings
             .update::<nocterm_vault_ui::VaultSettings>(|section| section.prompt_on_startup = true);
         let booted = boot(tempfile::tempdir().unwrap(), settings, transport, true, cx);
-        let (window, workspace) = open_workspace(booted.vault_ready(), cx);
+        let (window, workspace) = open_workspace(&booted, cx);
         (window, workspace, ())
     });
     cx.update_window(handle, |_, window, cx| {
@@ -84,4 +84,78 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn installed_vault_port_shares_credentials_and_pages_across_windows(cx: &mut TestAppContext) {
+    use futures::executor::block_on;
+    use gpui_kit::Focusable as _;
+    use nocterm_session::{CredentialStore as _, Secret, SecretRequest, Target};
+    cx.executor().allow_parking();
+    let (first, second, installed) = cx.update(|cx| {
+        let booted = boot(
+            tempfile::tempdir().unwrap(),
+            Default::default(),
+            Arc::new(MockTransport::default()),
+            true,
+            cx,
+        );
+        let installed = booted.vault().cloned().unwrap();
+        let first = open_workspace(&booted, cx);
+        let second = open_workspace(&booted, cx);
+        (first, second, installed)
+    });
+    let service = installed.service();
+    block_on(service.create(Secret::new("long master password"))).unwrap();
+    let credentials = nocterm_vault_ui::VaultCredentials::new(service.clone());
+    let request = SecretRequest::Password {
+        target: Target::new("user", "host", 22),
+        retry: false,
+    };
+    let id = block_on(credentials.save("profile".into(), &request, Secret::new("saved password")))
+        .unwrap();
+    assert_eq!(
+        block_on(credentials.get(id, &request)).unwrap().expose(),
+        "saved password"
+    );
+    service.lock();
+    assert!(!credentials.is_available());
+    block_on(service.unlock(Secret::new("long master password"))).unwrap();
+    assert!(credentials.is_available());
+    assert_eq!(
+        block_on(credentials.get(id, &request)).unwrap().expose(),
+        "saved password"
+    );
+    for (handle, workspace) in [first, second] {
+        cx.update_window(handle, |_, window, cx| {
+            window.focus(&workspace.read(cx).focus_handle(cx), cx);
+            window.render_frame(cx);
+            window.dispatch_action(Box::new(nocterm_workspace::OpenVault), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("vault-lock").visible());
+            window.dispatch_action(Box::new(nocterm_workspace::CloseTab), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.focus(&workspace.read(cx).focus_handle(cx), cx);
+            window.render_frame(cx);
+            window.dispatch_action(Box::new(nocterm_workspace::OpenVault), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("vault-lock").visible());
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        block_on(credentials.get(id, &request)).unwrap().expose(),
+        "saved password"
+    );
 }

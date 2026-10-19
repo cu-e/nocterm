@@ -8,18 +8,19 @@ publish = false
 [package.metadata.nocterm]
 layer = "feature"
 [dependencies]
-schemars.workspace = true
-serde.workspace = true
 nocterm-vault.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
-nocterm-settings.workspace = true
+nocterm-store.workspace = true
 gpui-kit.workspace = true
 futures.workspace = true
 [lints]
 workspace = true
 
 [dev-dependencies]
+nocterm-settings.workspace = true
+nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-vault = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

@@ -10,7 +10,8 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_ai::{acp, thread::Entry};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use super::AgentPanel;
@@ -25,7 +26,7 @@ pub(super) fn message_text(entry: &Entry) -> Option<String> {
             parts
                 .iter()
                 .filter_map(|part| match part {
-                    acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                    Content::Text(text) => Some(text.text.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -63,16 +64,37 @@ pub(super) fn escape_markdown(text: &str) -> String {
     escaped.replace('\n', "  \n")
 }
 
-impl AgentPanel {
-    pub(super) fn render_message_actions(
-        &self,
+pub(super) struct MessageRowActions {
+    thread: EntityId,
+    index: usize,
+    text: String,
+    time: Option<u64>,
+    user: bool,
+}
+impl MessageRowActions {
+    pub(super) fn new(
         thread: EntityId,
         index: usize,
         text: String,
         time: Option<u64>,
         user: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Self {
+        Self {
+            thread,
+            index,
+            text,
+            time,
+            user,
+        }
+    }
+    pub(super) fn render(self, cx: &Context<AgentPanel>) -> AnyElement {
+        let Self {
+            thread,
+            index,
+            text,
+            time,
+            user,
+        } = self;
         let muted = cx.theme().muted_foreground;
         h_flex()
             .id(("message-actions", index))

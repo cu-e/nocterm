@@ -22,12 +22,113 @@ use gpui_kit::{
 use nocterm_ui::IconName;
 
 use super::{
-    NewTabMenu, Workspace,
-    layout::{BodyWidths, Column},
+    MenuBuilder, NewTabMenu, Workspace,
+    layout::{Body, Column},
+    panels::Sidebar,
+    right_panel::RightPanelSlot,
+    tabs::Tabs,
 };
 use crate::NewTab;
+use std::rc::Rc;
 
 mod empty_state;
+mod menus;
+
+struct NewTabControl {
+    entry: Option<NewTabMenu>,
+    open: bool,
+}
+
+/// Ephemeral immutable regions; Chrome cannot mutate another state owner.
+pub(super) struct Regions<'a> {
+    tabs: &'a Tabs,
+    sidebar: &'a Sidebar,
+    right: &'a RightPanelSlot,
+    directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+}
+impl<'a> Regions<'a> {
+    pub(super) fn new(
+        tabs: &'a Tabs,
+        sidebar: &'a Sidebar,
+        right: &'a RightPanelSlot,
+        directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+    ) -> Self {
+        Self {
+            tabs,
+            sidebar,
+            right,
+            directory,
+        }
+    }
+}
+
+pub(super) struct Chrome {
+    status: Vec<(StatusSide, AnyView)>,
+    menus: menus::WindowMenus,
+    new_tab: NewTabControl,
+}
+
+impl Chrome {
+    pub(super) fn new(menu_focus: gpui_kit::FocusHandle) -> Self {
+        Self {
+            status: Vec::new(),
+            menus: menus::WindowMenus::new(menu_focus),
+            new_tab: NewTabControl {
+                entry: None,
+                open: false,
+            },
+        }
+    }
+    pub(super) fn add_status(&mut self, side: StatusSide, view: AnyView) {
+        self.status.push((side, view));
+    }
+    pub(super) fn status_views(&self, side: StatusSide) -> impl Iterator<Item = AnyView> + '_ {
+        self.status
+            .iter()
+            .filter(move |(at, _)| *at == side)
+            .map(|(_, view)| view.clone())
+    }
+    pub(super) fn install_new_tab(&mut self, view: AnyView, focus: gpui_kit::FocusHandle) {
+        self.new_tab.install(view, focus);
+    }
+    pub(super) fn new_tab_open(&self) -> bool {
+        self.new_tab.open
+    }
+    pub(super) fn show_new_tab(&mut self, open: bool) -> bool {
+        self.new_tab.show(open)
+    }
+    pub(super) fn install_menu_builder(&mut self, builder: MenuBuilder) {
+        self.menus.install(builder);
+    }
+    pub(super) fn menu_builder(&self) -> Option<MenuBuilder> {
+        self.menus.builder()
+    }
+    pub(super) fn command_target(
+        &self,
+        window: &Window,
+        last: Option<gpui_kit::EntityId>,
+        cx: &App,
+    ) -> Option<gpui_kit::EntityId> {
+        self.menus.command_target(window, last, cx)
+    }
+    pub(super) fn menu_focus(&self) -> &gpui_kit::FocusHandle {
+        self.menus.focus()
+    }
+    pub(super) fn menu_bar(&self) -> Option<Entity<gpui_kit::component::menu::AppMenuBar>> {
+        self.menus.bar()
+    }
+    pub(super) fn refresh_menus(
+        &mut self,
+        menus: Vec<gpui_kit::OwnedMenu>,
+        target: Option<gpui_kit::EntityId>,
+        cx: &mut App,
+    ) {
+        self.menus.refresh(menus, target, cx);
+    }
+    pub(super) fn prepare_closed_menu(&mut self, cx: &App) -> bool {
+        self.menus.clear_closed_target(cx)
+    }
+}
 
 /// `view`, drawn again only when it notifies or the window is refreshed.
 /// Whatever redraws the workspace (each keystroke in a terminal does) would
@@ -51,27 +152,7 @@ pub(super) enum StatusSide {
     Trailing,
 }
 
-impl Workspace {
-    /// A feature-owned compact status view, visible even while the sidebar is hidden.
-    pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.status_views.push((StatusSide::Trailing, view.into()));
-        cx.notify();
-    }
-
-    /// A feature-owned status view at the start of the footer, after the
-    /// sidebar's panel buttons: room for what describes the active host.
-    pub fn add_leading_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.status_views.push((StatusSide::Leading, view.into()));
-        cx.notify();
-    }
-
-    fn status_views(&self, side: StatusSide) -> impl Iterator<Item = gpui_kit::AnyView> + '_ {
-        self.status_views
-            .iter()
-            .filter(move |(at, _)| *at == side)
-            .map(|(_, view)| view.clone())
-    }
-
+impl Chrome {
     /// What the window is painted with behind its regions: the canvas when
     /// they float, the interface background otherwise.
     pub(super) fn window_background(cx: &App) -> Hsla {
@@ -81,59 +162,67 @@ impl Workspace {
     /// The body inside the half gap that, with each card's own margin, keeps
     /// floating cards a full gap from the window's edge.
     pub(super) fn render_body(
-        &mut self,
+        &self,
+        body: &mut Body,
+        regions: &Regions<'_>,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let cards = FloatingCards::get(cx);
         div()
             .size_full()
             .when_some(cards, |body, cards| body.p(cards.margin()))
-            .child(self.render_columns(cards, window, cx))
+            .child(self.render_columns(body, regions, cards, window, cx))
             .into_any_element()
     }
 
     /// The sidebar, the tabs and the side panel, in the user's order.
     fn render_columns(
-        &mut self,
+        &self,
+        body_state: &mut Body,
+        regions: &Regions<'_>,
         cards: Option<FloatingCards>,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if self.right_panel.maximized() {
+        if regions.right.maximized() {
             return tile(
                 cards,
-                Self::forward_commands(div(), cx)
+                Workspace::forward_commands(div(), cx)
                     .id("workspace-right-panel")
                     .test_support()
                     .size_full()
-                    .when_some(self.right_panel.handle.as_ref(), |body, panel| {
-                        body.child(cached(panel.view()))
+                    .when_some(regions.right.view(), |body, panel| {
+                        body.child(cached(panel))
                     }),
             );
         }
-        let widths = BodyWidths::new(window, cx);
-        let arrangement = self.arrangement(cx);
-        let state = self.body.state(arrangement, cx);
+        let widths = body_state.widths(window, cx);
+        let arrangement =
+            body_state.arrangement(regions.sidebar.visible(), regions.right.open(), cx);
+        let state = body_state.state(arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
             body = body.child(match column {
                 Column::Sidebar => resizable_panel()
                     .size(widths.sidebar)
                     .size_range(widths.sidebar_range.clone())
-                    .child(tile(cards, self.render_sidebar(arrangement.swapped, cx))),
-                Column::Content => resizable_panel().child(self.render_content(cards, cx)),
+                    .child(tile(
+                        cards,
+                        self.render_sidebar(regions.sidebar, arrangement.swapped, cx),
+                    )),
+                Column::Content => resizable_panel().child(self.render_content(regions, cards, cx)),
                 Column::SidePanel => resizable_panel()
                     .size(widths.right_panel)
                     .size_range(widths.right_panel_range.clone())
                     .child(tile(
                         cards,
-                        Self::forward_commands(div(), cx)
+                        Workspace::forward_commands(div(), cx)
                             .id("workspace-right-panel")
                             .test_support()
                             .size_full()
-                            .when_some(self.right_panel.handle.as_ref(), |body, panel| {
-                                body.child(cached(panel.view()))
+                            .when_some(regions.right.view(), |body, panel| {
+                                body.child(cached(panel))
                             }),
                     )),
             });
@@ -142,37 +231,41 @@ impl Workspace {
     }
 
     /// The open tabs, or an invitation to open one.
-    fn render_content(&self, cards: Option<FloatingCards>, cx: &mut Context<Self>) -> AnyElement {
-        if self
-            .items
-            .iter()
-            .any(|open| self.item_visible(open.handle.item_id(), cx))
-        {
+    fn render_content(
+        &self,
+        regions: &Regions<'_>,
+        cards: Option<FloatingCards>,
+        cx: &mut Context<Workspace>,
+    ) -> AnyElement {
+        if regions.tabs.has_visible_tabs(cx) {
             // The dock frames each of its tab groups itself.
             return div()
                 .size_full()
-                .child(self.dock.clone())
+                .child(regions.tabs.dock_view())
                 .into_any_element();
         }
-        tile(cards, self.render_empty_state(cx))
+        tile(
+            cards,
+            self.render_empty_state(regions.directory.clone(), cx),
+        )
     }
 
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_title_bar(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
         let cards = FloatingCards::get(cx);
         TitleBar::new()
             // On the canvas, the title bar is part of the backdrop.
             .when_some(cards, |bar, cards| bar.bg(cards.canvas).border_b_0())
             .child(
-                Self::forward_commands(h_flex(), cx)
+                Workspace::forward_commands(h_flex(), cx)
                     .size_full()
                     .min_w_0()
                     .gap_1()
                     .pr_2()
-                    .when_some(self.app_menu_bar.as_ref(), |bar, menu| {
+                    .when_some(self.menu_bar().as_ref(), |bar, menu| {
                         bar.child(
                             div()
                                 .id("workspace-app-menu")
-                                .track_focus(&self.menu_focus)
+                                .track_focus(self.menu_focus())
                                 .h_full()
                                 .min_w_0()
                                 .capture_any_mouse_down(cx.listener(
@@ -194,42 +287,19 @@ impl Workspace {
                         )
                     })
                     .child(div().flex_1())
-                    .child(self.render_new_tab_button(cx)),
+                    .child(self.new_tab.render(cx)),
             )
     }
 
-    fn render_new_tab_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let button = Button::new("new-tab")
-            .ghost()
-            .small()
-            .icon(IconName::Plus)
-            .tooltip("New Tab");
-
-        match &self.new_tab_menu {
-            None => button
-                .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx))
-                .into_any_element(),
-            Some(NewTabMenu { view, focus }) => {
-                let menu = view.clone();
-                let workspace = cx.entity().downgrade();
-                Popover::new("new-tab-menu")
-                    .anchor(Anchor::TopRight)
-                    .trigger(button)
-                    .track_focus(focus)
-                    .open(self.new_tab_menu_open)
-                    .on_open_change(move |open, _, cx| {
-                        let _ = workspace.update(cx, |this, cx| this.show_new_tab_menu(*open, cx));
-                    })
-                    .content(move |_, _, _| menu.clone())
-                    .into_any_element()
-            }
-        }
-    }
-
-    fn render_sidebar(&self, on_right: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar = Self::forward_commands(v_flex(), cx);
+    fn render_sidebar(
+        &self,
+        panels: &Sidebar,
+        on_right: bool,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
+        let sidebar = Workspace::forward_commands(v_flex(), cx);
         let theme = cx.theme();
-        let panel = self.panels.get(self.active_panel);
+        let panel = panels.active();
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
@@ -265,8 +335,12 @@ impl Workspace {
             .when(panel.is_none(), |sidebar| sidebar.child(div().flex_1()))
     }
 
-    pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let footer = Self::forward_commands(div(), cx);
+    pub(super) fn render_footer(
+        &self,
+        regions: &Regions<'_>,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
+        let footer = Workspace::forward_commands(div(), cx);
         let theme = cx.theme();
         let floating = FloatingCards::get(cx).is_some();
         footer
@@ -282,21 +356,17 @@ impl Workspace {
                     .when(!floating, |footer| {
                         footer.border_t_1().border_color(theme.sidebar_border)
                     })
-                    .children(self.panels.iter().enumerate().map(|(ix, panel)| {
+                    .children(regions.sidebar.entries().enumerate().map(|(ix, panel)| {
                         Button::new(("sidebar-panel", ix))
                             .ghost()
                             .small()
                             .icon(panel.icon(cx))
                             .tooltip(panel.title(cx))
                             .when_some(panel.badge(cx), Button::label)
-                            .selected(self.sidebar_open && ix == self.active_panel)
+                            .selected(regions.sidebar.showing(ix))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 // The shown panel's button hides the sidebar.
-                                if this.sidebar_open && this.active_panel == ix {
-                                    this.toggle_sidebar(window, cx);
-                                } else {
-                                    this.activate_panel(ix, window, cx);
-                                }
+                                this.toggle_sidebar_panel(ix, window, cx);
                             }))
                     }))
                     .children(self.status_views(StatusSide::Leading))
@@ -309,32 +379,70 @@ impl Workspace {
                             .small()
                             .icon(IconName::SquareTerminal)
                             .tooltip("Local Terminal")
-                            .selected(self.local_terminal_is_visible(cx))
+                            .selected(regions.tabs.local_visible(cx))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_local_terminal(window, cx)
                             })),
                     )
-                    .when(self.right_panel_is_available(), |footer| {
+                    .when(regions.right.available(), |footer| {
                         footer.child(
                             Button::new("toggle-right-panel")
                                 .ghost()
                                 .small()
-                                .icon(if self.right_panel.attention {
+                                .icon(if regions.right.attention() {
                                     IconName::ShieldCheck
                                 } else {
                                     IconName::PanelRight
                                 })
-                                .tooltip(if self.right_panel.attention {
+                                .tooltip(if regions.right.attention() {
                                     "AI Agents: permission required"
                                 } else {
                                     "AI Agents"
                                 })
-                                .selected(self.right_panel.open())
+                                .selected(regions.right.open())
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_right_panel(window, cx)
                                 })),
                         )
                     }),
             )
+    }
+}
+
+impl NewTabControl {
+    fn install(&mut self, view: AnyView, focus: gpui_kit::FocusHandle) {
+        self.entry = Some(NewTabMenu { view, focus });
+    }
+    fn show(&mut self, open: bool) -> bool {
+        let changed = self.open != open;
+        self.open = open;
+        changed
+    }
+    fn render(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
+        let button = Button::new("new-tab")
+            .ghost()
+            .small()
+            .icon(IconName::Plus)
+            .tooltip("New Tab");
+
+        match &self.entry {
+            None => button
+                .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx))
+                .into_any_element(),
+            Some(NewTabMenu { view, focus }) => {
+                let menu = view.clone();
+                let workspace = cx.entity().downgrade();
+                Popover::new("new-tab-menu")
+                    .anchor(Anchor::TopRight)
+                    .trigger(button)
+                    .track_focus(focus)
+                    .open(self.open)
+                    .on_open_change(move |open, _, cx| {
+                        let _ = workspace.update(cx, |this, cx| this.show_new_tab_menu(*open, cx));
+                    })
+                    .content(move |_, _, _| menu.clone())
+                    .into_any_element()
+            }
+        }
     }
 }

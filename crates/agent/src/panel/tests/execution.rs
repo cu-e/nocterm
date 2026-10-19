@@ -1,6 +1,7 @@
 //! Exercise command ownership through the same bridge and chat lifecycle as users.
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::auth::PermissionOutcome;
 use nocterm_ai::{CancelCommand, ExecCommand, ReadCommand, TerminalCall};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::Value;
@@ -39,7 +40,7 @@ impl Programs {
     }
 }
 
-type Reply = oneshot::Receiver<Result<Value, String>>;
+type Reply = oneshot::Receiver<Result<Value, nocterm_ai::ToolFailure>>;
 
 fn current(f: &Fixture, cx: &mut TestAppContext) -> Entity<AgentThread> {
     cx.update(|cx| f.panel.read(cx).current().unwrap())
@@ -71,9 +72,9 @@ fn submit(
     if approve {
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                if !thread.tools.is_empty() {
-                    assert_eq!(thread.tools.len(), 1);
-                    thread.approve_tool(0, true, false, cx);
+                if !thread.tool_cards().is_empty() {
+                    assert_eq!(thread.tool_cards().len(), 1);
+                    thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
                 }
             })
         });
@@ -82,7 +83,7 @@ fn submit(
     response
 }
 
-fn result(reply: Reply) -> Result<Value, String> {
+fn result(reply: Reply) -> Result<Value, nocterm_ai::ToolFailure> {
     reply
         .now_or_never()
         .expect("tool responded")
@@ -108,7 +109,7 @@ fn request(terminal_id: &str) -> ExecCommand {
 fn setup(cx: &mut TestAppContext) -> (Fixture, Entity<AgentThread>, Arc<Programs>, String) {
     let f = fixture(cx);
     let programs = Arc::new(Programs::default());
-    *f.access.executor.borrow_mut() = Some(programs.clone());
+    *f.access.executor().borrow_mut() = Some(programs.clone());
     new_chat(&f, cx);
     let thread = current(&f, cx);
     let terminal = terminal_id(&thread, cx);
@@ -142,7 +143,7 @@ fn read(
     terminal: &str,
     id: &str,
     cx: &mut TestAppContext,
-) -> Result<Value, String> {
+) -> Result<Value, nocterm_ai::ToolFailure> {
     result(submit(
         f,
         thread,
@@ -183,7 +184,7 @@ fn structured_requests_preserve_arguments_and_report_real_exit_with_redaction(
     assert!(!payload.to_string().contains("secret-value"));
     assert_eq!(payload["truncated"], false);
     assert!(
-        f.access.sent.borrow().is_empty(),
+        f.access.sent().borrow().is_empty(),
         "structured execution never types into the terminal"
     );
 }
@@ -241,14 +242,23 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         false,
         cx,
     );
-    assert_eq!(cx.update(|cx| thread.read(cx).tools.len()), 1);
-    f.access.sign_in.asks.set(true);
-    cx.update(|cx| thread.update(cx, |thread, cx| thread.approve_tool(0, true, false, cx)));
+    assert_eq!(cx.update(|cx| thread.read(cx).tool_cards().len()), 1);
+    f.access.sign_in().asks().set(true);
+    cx.update(|cx| {
+        thread.update(cx, |thread, cx| {
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
+        })
+    });
     cx.run_until_parked();
-    assert!(result(pending).unwrap_err().contains("authentication"));
+    assert!(
+        result(pending)
+            .unwrap_err()
+            .message()
+            .contains("authentication")
+    );
     assert!(programs.requests.lock().unwrap().is_empty());
-    f.access.sign_in.asks.set(false);
-    f.access.executor.borrow_mut().take();
+    f.access.sign_in().asks().set(false);
+    f.access.executor().borrow_mut().take();
     let unsupported = result(submit(
         &f,
         &thread,
@@ -256,23 +266,27 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         true,
         cx,
     ));
-    assert!(unsupported.unwrap_err().contains("unsupported"));
+    assert_eq!(
+        unsupported.unwrap_err().message(),
+        "This terminal does not support structured execution."
+    );
     assert!(programs.requests.lock().unwrap().is_empty());
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
 }
 
 #[gpui_kit::test]
 fn command_handles_are_owned_by_the_chat_that_started_them(cx: &mut TestAppContext) {
     let (f, first, programs, terminal) = setup(cx);
     let id = start(&f, &first, &terminal, cx);
-    cx.update(|cx| first.update(cx, |thread, _| thread.name = Some("first".into())));
+    cx.update(|cx| first.update(cx, |thread, cx| thread.rename(Some("first".into()), cx)));
     new_chat(&f, cx);
     let second = current(&f, cx);
     let second_terminal = terminal_id(&second, cx);
-    assert!(
+    assert_eq!(
         read(&f, &second, &second_terminal, &id, cx)
             .unwrap_err()
-            .contains("Unknown command")
+            .message(),
+        "Unknown command for this chat and terminal."
     );
     assert!(!programs.closed(0));
     assert_eq!(
@@ -295,7 +309,10 @@ fn active_command_limit_and_cancelled_slot_apply_through_bridge_calls(cx: &mut T
         true,
         cx,
     ));
-    assert!(fifth.unwrap_err().contains("four active"));
+    assert_eq!(
+        fifth.unwrap_err().message(),
+        "This chat already has four active commands. Read or cancel one first."
+    );
     assert_eq!(programs.requests.lock().unwrap().len(), 4);
     result(submit(
         &f,
@@ -320,11 +337,11 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let id = start(&f, &thread, &terminal, cx);
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            assert!(!thread.lifecycle.generating());
+            assert!(!thread.session_generating());
             thread.stop(cx);
-            assert!(thread.lifecycle.stopped());
+            assert!(thread.session_stopped());
             assert!(
-                thread.lifecycle.accepts_updates(),
+                thread.session_accepts_updates(),
                 "idle Stop preserves access to retained command results"
             );
         })
@@ -336,26 +353,33 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
         "cancelled"
     );
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| {
-            settings.approval.agent_permissions = nocterm_ai::ApprovalPolicy::Allow;
-        })
-        .detach();
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.agent_permissions = nocterm_ai::ApprovalPolicy::Allow;
+            })
+            .detach();
     });
     cx.run_until_parked();
     let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
-            let request = serde_json::from_value(serde_json::json!({
-                "sessionId": thread.session(), "toolCall":{"toolCallId":"late-provider-tool"},
-                "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
-            }))
-            .unwrap();
-            thread.permission(request, respond, cx);
+        thread.update(cx, |thread, _| {
+            let request = permission_request(
+                thread.session().clone().unwrap(),
+                "late-provider-tool",
+                None,
+                vec![allow_once_choice("once", "Allow once")],
+            );
+            f.events
+                .try_send(AgentEvent::Permission { request, respond })
+                .unwrap();
         })
     });
+    cx.run_until_parked();
     assert_eq!(
         permission.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
@@ -369,19 +393,19 @@ fn releasing_acp_while_generating_preserves_document_owned_execution(cx: &mut Te
     let _id = start(&f, &thread, &terminal, cx);
     thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
     cx.run_until_parked();
-    cx.update(|cx| assert!(thread.read(cx).lifecycle.generating()));
+    cx.update(|cx| assert!(thread.read(cx).session_generating()));
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(thread.read(cx).lease.is_none());
-        assert!(!thread.read(cx).lifecycle.generating());
+        assert!(!thread.read(cx).is_leased());
+        assert!(!thread.read(cx).session_generating());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert!(
         !programs.closed(0),
         "releasing ACP cancelled a document-owned program"
     );
-    assert!(f.access.sent.borrow().is_empty());
+    assert!(f.access.sent().borrow().is_empty());
     programs.finish(0, b"finished after ACP close", 0, "");
     cx.run_until_parked();
 }
@@ -405,7 +429,7 @@ fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mu
     let (f, thread, programs, terminal) = setup(cx);
     let old = start(&f, &thread, &terminal, cx);
     let replacement = Arc::new(Programs::default());
-    *f.access.executor.borrow_mut() = Some(replacement.clone());
+    *f.access.executor().borrow_mut() = Some(replacement.clone());
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
     assert!(programs.closed(0));
@@ -424,7 +448,10 @@ fn disabling_ai_cancels_execution_and_revokes_chat_access(cx: &mut TestAppContex
     let (f, thread, programs, terminal) = setup(cx);
     start(&f, &thread, &terminal, cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ai::AiSettings>(|settings| settings.enabled = false)
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| settings.enabled = false)
     })
     .detach();
     cx.run_until_parked();
@@ -468,3 +495,44 @@ fn an_absolute_deadline_ends_a_silent_command_with_unknown_exit(cx: &mut TestApp
     assert_eq!(payload["state"], "timed_out");
     assert!(payload["exit_status"].is_null());
 }
+
+#[gpui_kit::test]
+fn a_joined_reconnect_command_does_not_hold_input_until_its_process_exits(cx: &mut TestAppContext) {
+    let (f, thread, programs, terminal) = setup(cx);
+    f.access.link().remote().set(true);
+    f.access.link().closed().set(true);
+    let command = submit(
+        &f,
+        &thread,
+        TerminalCall::ExecCommand(request(&terminal)),
+        true,
+        cx,
+    );
+    let input = submit(
+        &f,
+        &thread,
+        TerminalCall::SendInput(nocterm_ai::SendInput {
+            terminal_id: terminal.clone(),
+            text: "following input".into(),
+            press_enter: true,
+        }),
+        true,
+        cx,
+    );
+    assert_eq!(f.access.link().reconnects().get(), 1);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    let command = result(command).unwrap();
+    assert!(matches!(
+        command["state"].as_str(),
+        Some("starting" | "running")
+    ));
+    assert!(result(input).is_ok());
+    assert_eq!(*f.access.sent().borrow(), ["following input\r"]);
+    assert_eq!(programs.requests.lock().unwrap().len(), 1);
+    assert!(!programs.closed(0), "the first command is still running");
+    programs.finish(0, b"finished", 0, "");
+    cx.run_until_parked();
+}
+
+mod screenshot_history;

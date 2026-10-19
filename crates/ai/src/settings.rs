@@ -261,3 +261,6 @@ mod tests {
         assert_eq!(ai.agents["mine"].command.as_deref(), Some("mine"));
     }
 }
+
+mod validation;
+pub use validation::{AgentValidationError, BUILTIN_AGENT_IDS, validate_agent};

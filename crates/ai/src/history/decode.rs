@@ -1,4 +1,5 @@
 //! Reject collection amplification before growing a saved document's vectors.
+use crate::model::content::Content;
 use serde::{
     Deserialize,
     de::{Error as _, SeqAccess, Visitor},
@@ -20,9 +21,7 @@ pub(super) fn attachments<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<super::SavedAttachment>, D::Error> {
     bounded::<_, _, 1024>(d)
 }
-pub(super) fn images<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<crate::acp::ContentBlock>, D::Error> {
+pub(super) fn images<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Content>, D::Error> {
     bounded::<_, _, 128>(d)
 }
 pub(super) fn times<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u64>, D::Error> {

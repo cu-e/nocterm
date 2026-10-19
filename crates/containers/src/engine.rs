@@ -1,11 +1,9 @@
 //! The engine's command line, and what running it means.
 
-use std::fmt;
-
 use futures::future::try_join;
-use nocterm_session::{ExecError, ExecOutput, ExecRequest, HostExec};
+use nocterm_session::{ExecOutput, ExecRequest, HostExec};
 
-use crate::{model::Snapshot, parse};
+use crate::{ContainersError, model::Snapshot, parse};
 
 /// The most a listing may print; hosts with more containers than this
 /// describes are not served.
@@ -62,44 +60,6 @@ impl Action {
     }
 }
 
-/// Why the containers of a host are not known.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ContainersError {
-    /// Neither engine is installed on the host.
-    NotInstalled,
-    /// The host's session is not connected.
-    Disconnected,
-    /// The host cannot run programs.
-    Unsupported,
-    /// The engine failed, in its own words: its daemon is not running, the
-    /// user may not use it, a container is gone.
-    Failed(String),
-}
-
-impl fmt::Display for ContainersError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotInstalled => formatter.write_str("Neither Docker nor Podman is installed."),
-            Self::Disconnected => formatter.write_str("The session is not connected."),
-            Self::Unsupported => formatter.write_str("This host cannot run programs."),
-            Self::Failed(error) => formatter.write_str(error),
-        }
-    }
-}
-
-impl std::error::Error for ContainersError {}
-
-impl From<ExecError> for ContainersError {
-    fn from(error: ExecError) -> Self {
-        match error {
-            ExecError::NotFound(_) => Self::NotInstalled,
-            ExecError::Disconnected => Self::Disconnected,
-            ExecError::Unsupported => Self::Unsupported,
-            ExecError::Failed(error) => Self::Failed(error),
-        }
-    }
-}
-
 /// The engine the host has, Docker first, with what it reports. When
 /// neither answers, the error of the one that is installed, if any.
 pub async fn detect(exec: &dyn HostExec) -> Result<(Engine, Snapshot), ContainersError> {
@@ -111,7 +71,7 @@ pub async fn detect(exec: &dyn HostExec) -> Result<(Engine, Snapshot), Container
             Err(error @ (ContainersError::Disconnected | ContainersError::Unsupported)) => {
                 return Err(error);
             }
-            Err(error) if failure == ContainersError::NotInstalled => failure = error,
+            Err(error) if matches!(failure, ContainersError::NotInstalled) => failure = error,
             Err(_) => {}
         }
     }
@@ -149,8 +109,8 @@ impl Engine {
         };
         let (containers, images) = try_join(list("ps", "--all"), list("images", "--all")).await?;
         Ok(Snapshot {
-            containers: parse::containers(&containers).map_err(ContainersError::Failed)?,
-            images: parse::images(&images).map_err(ContainersError::Failed)?,
+            containers: parse::containers(&containers).map_err(ContainersError::Parse)?,
+            images: parse::images(&images).map_err(ContainersError::Parse)?,
         })
     }
 
@@ -197,8 +157,22 @@ async fn run(exec: &dyn HostExec, request: ExecRequest) -> Result<String, Contai
     match collected.exit.status {
         Some(0) => Ok(collected.text()),
         Some(NOT_FOUND) => Err(ContainersError::NotInstalled),
-        _ => Err(ContainersError::Failed(collected.exit.error())),
+        _ => Err(ContainersError::Exit {
+            status: collected.exit.status,
+            stderr_tail: bounded_stderr(collected.exit.stderr),
+        }),
     }
+}
+
+/// A custom HostExec must not be able to retain unbounded stderr in an error.
+fn bounded_stderr(mut stderr: String) -> String {
+    const MAX_ERROR_TAIL: usize = 4 * 1024;
+    let mut start = stderr.len().saturating_sub(MAX_ERROR_TAIL);
+    while !stderr.is_char_boundary(start) {
+        start += 1;
+    }
+    stderr.drain(..start);
+    stderr
 }
 
 #[cfg(test)]

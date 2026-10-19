@@ -166,8 +166,9 @@ Output recording is opt-in: start/stop it from a terminal or enable automatic
 recording globally/per profile. Unique private UTF-8 logs contain received output,
 including escape sequences, and have a configurable size limit. Authentication
 answers and input are excluded; remote output can still contain sensitive text.
-Recording status/errors stay visible. See the [WindTerm study](docs/WINDTERM_STUDY.md)
-for selected behaviors and source references.
+Recording status/errors stay visible. See the
+[terminal architecture](docs/architecture/feature.md#terminal) for recording
+boundaries and persistence behavior.
 
 ## Configuration
 

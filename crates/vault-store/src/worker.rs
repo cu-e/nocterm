@@ -1,0 +1,304 @@
+//! A bounded worker keeps expensive KDF and atomic file writes off UI threads.
+use crate::Vault;
+use futures::{
+    FutureExt as _,
+    channel::{mpsc as progress, oneshot},
+    future::BoxFuture,
+};
+use nocterm_session::{CredentialId, Secret};
+use nocterm_vault::{
+    CredentialBinding, CredentialInfo, DeviceCancellation, DeviceCapability, DeviceUnlockProvider,
+    VaultError, VaultFuture, VaultStatus,
+};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender},
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+type Operation = Box<dyn FnOnce(&mut Vault) + Send>;
+struct Job {
+    epoch: u64,
+    operation: Operation,
+}
+struct State {
+    epoch: Arc<AtomicU64>,
+    unlocked: AtomicBool,
+    exists: AtomicBool,
+    published_epoch: AtomicU64,
+    auto_lock_secs: AtomicU64,
+    /// Counts changes of [`VaultStatus`]; `changed` wakes its listeners.
+    revision: AtomicU64,
+    /// The status last published, as `VaultStatus as u8`.
+    published: AtomicU8,
+    changed: event_listener::Event,
+}
+impl State {
+    /// Wakes listeners if the status changed since it was last published.
+    fn publish(&self) {
+        let status = self.status() as u8;
+        if self.published.swap(status, Ordering::SeqCst) != status {
+            self.revision.fetch_add(1, Ordering::SeqCst);
+            self.changed.notify(usize::MAX);
+        }
+    }
+    fn status(&self) -> VaultStatus {
+        if self.is_unlocked() {
+            VaultStatus::Unlocked
+        } else if self.exists.load(Ordering::SeqCst) {
+            VaultStatus::Locked
+        } else {
+            VaultStatus::Missing
+        }
+    }
+    fn is_unlocked(&self) -> bool {
+        self.unlocked.load(Ordering::SeqCst)
+            && self.published_epoch.load(Ordering::SeqCst) == self.epoch.load(Ordering::SeqCst)
+    }
+    async fn changed(&self, seen: u64) -> u64 {
+        loop {
+            // Listening before checking means no change is missed.
+            let listener = self.changed.listen();
+            let now = self.revision.load(Ordering::SeqCst);
+            if now != seen {
+                return now;
+            }
+            listener.await;
+        }
+    }
+}
+
+/// Thread-safe provider. No method waits for a KDF or file I/O on the caller.
+/// At most eight operations are queued behind a single worker. Lock invalidates
+/// queued and in-flight results; intermediate secrets are zeroized when dropped.
+#[derive(Clone)]
+pub struct VaultService {
+    jobs: SyncSender<Job>,
+    state: Arc<State>,
+}
+impl VaultService {
+    pub fn new(path: impl Into<PathBuf>, auto_lock: Duration) -> Result<Self, VaultError> {
+        Self::new_with_device_unlock(path, auto_lock, None)
+    }
+    pub fn new_with_device_unlock(
+        path: impl Into<PathBuf>,
+        auto_lock: Duration,
+        device: Option<Arc<dyn DeviceUnlockProvider>>,
+    ) -> Result<Self, VaultError> {
+        let path = path.into();
+        let state = Arc::new(State {
+            epoch: Arc::new(AtomicU64::new(0)),
+            unlocked: AtomicBool::new(false),
+            exists: AtomicBool::new(path.exists()),
+            published_epoch: AtomicU64::new(0),
+            auto_lock_secs: AtomicU64::new(auto_lock.as_secs().max(1)),
+            revision: AtomicU64::new(0),
+            published: AtomicU8::new(u8::MAX),
+            changed: event_listener::Event::new(),
+        });
+        state.publish();
+        let (sender, receiver) = mpsc::sync_channel::<Job>(8);
+        let worker_state = state.clone();
+        thread::Builder::new()
+            .name("nocterm-vault".into())
+            .spawn(move || {
+                let mut vault = Vault::with_device(path, device);
+                let mut epoch = 0;
+                let mut touched = Instant::now();
+                loop {
+                    let now_epoch = worker_state.epoch.load(Ordering::SeqCst);
+                    if epoch != now_epoch {
+                        vault.lock();
+                        epoch = now_epoch;
+                    }
+                    if vault.is_unlocked()
+                        && touched.elapsed().as_secs()
+                            >= worker_state.auto_lock_secs.load(Ordering::Relaxed)
+                    {
+                        vault.lock();
+                        epoch = worker_state.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+                        worker_state.unlocked.store(false, Ordering::SeqCst);
+                        worker_state.publish();
+                    }
+                    match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(job) => {
+                            if job.epoch != worker_state.epoch.load(Ordering::SeqCst) {
+                                drop(job);
+                                continue;
+                            }
+                            vault.set_cancellation(DeviceCancellation::for_epoch(
+                                worker_state.epoch.clone(),
+                                job.epoch,
+                            ));
+                            (job.operation)(&mut vault);
+                            vault.set_cancellation(DeviceCancellation::never());
+                            if job.epoch != worker_state.epoch.load(Ordering::SeqCst) {
+                                vault.lock();
+                            }
+                            worker_state
+                                .published_epoch
+                                .store(job.epoch, Ordering::SeqCst);
+                            worker_state
+                                .unlocked
+                                .store(vault.is_unlocked(), Ordering::SeqCst);
+                            worker_state.exists.store(vault.exists(), Ordering::SeqCst);
+                            worker_state.publish();
+                            touched = Instant::now();
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            })?;
+        Ok(Self {
+            jobs: sender,
+            state,
+        })
+    }
+    pub fn is_unlocked(&self) -> bool {
+        self.state.is_unlocked()
+    }
+    pub fn exists(&self) -> bool {
+        self.state.exists.load(Ordering::SeqCst)
+    }
+    pub fn status(&self) -> VaultStatus {
+        self.state.status()
+    }
+    /// The current change count, to pass to [`Self::changed`].
+    pub fn revision(&self) -> u64 {
+        self.state.revision.load(Ordering::SeqCst)
+    }
+    /// Completes with the new change count once it differs from `seen`.
+    pub fn changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        let state = self.state.clone();
+        async move { state.changed(seen).await }.boxed()
+    }
+    /// Completes once the vault is unlocked, by any path. Waiting does not
+    /// keep the worker alive.
+    pub fn wait_unlocked(&self) -> BoxFuture<'static, ()> {
+        let state = self.state.clone();
+        async move {
+            loop {
+                let seen = state.revision.load(Ordering::SeqCst);
+                if state.is_unlocked() {
+                    return;
+                }
+                state.changed(seen).await;
+            }
+        }
+        .boxed()
+    }
+    pub fn set_auto_lock(&self, duration: Duration) {
+        self.state
+            .auto_lock_secs
+            .store(duration.as_secs().max(1), Ordering::Relaxed);
+    }
+    pub fn lock(&self) {
+        self.state.epoch.fetch_add(1, Ordering::SeqCst);
+        self.state.unlocked.store(false, Ordering::SeqCst);
+        self.state.publish();
+        // Wake the worker. If its bounded queue is full, the next job already
+        // wakes it and will observe the changed epoch before accessing secrets.
+        let _ = self.jobs.try_send(Job {
+            epoch: self.state.epoch.load(Ordering::SeqCst),
+            operation: Box::new(|vault| vault.lock()),
+        });
+    }
+    fn request<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&mut Vault) -> Result<T, VaultError> + Send + 'static,
+    ) -> VaultFuture<T> {
+        let (sender, receiver) = oneshot::channel();
+        let state = self.state.clone();
+        let epoch = state.epoch.load(Ordering::SeqCst);
+        let job = Job {
+            epoch,
+            operation: Box::new(move |vault| {
+                let result = operation(vault);
+                let result = if epoch == state.epoch.load(Ordering::SeqCst) {
+                    result
+                } else {
+                    Err(VaultError::Cancelled)
+                };
+                state.exists.store(vault.exists(), Ordering::SeqCst);
+                state.published_epoch.store(epoch, Ordering::SeqCst);
+                state.unlocked.store(vault.is_unlocked(), Ordering::SeqCst);
+                state.publish();
+                let _ = sender.send(result);
+            }),
+        };
+        let sent = self.jobs.try_send(job).is_ok();
+        async move {
+            if !sent {
+                return Err(VaultError::Busy);
+            }
+            receiver.await.unwrap_or(Err(VaultError::Cancelled))
+        }
+        .boxed()
+    }
+    pub fn create(&self, password: Secret) -> VaultFuture<()> {
+        self.request(move |vault| vault.create(password))
+    }
+    pub fn unlock(&self, password: Secret) -> VaultFuture<()> {
+        let unlock = self.request(move |vault| vault.unlock(password));
+        // Queued behind the unlock so a slow device probe never delays it.
+        drop(self.request(|vault| {
+            if vault.is_unlocked() {
+                vault.rearm_device_unlock();
+            }
+            Ok(())
+        }));
+        unlock
+    }
+    pub fn probe_device_unlock(&self) -> VaultFuture<DeviceCapability> {
+        self.request(|vault| vault.probe_device_unlock())
+    }
+    pub fn enable_device_unlock(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.enable_device_unlock())
+    }
+    pub fn unlock_with_device(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.unlock_with_device())
+    }
+    /// The receiver closes when authentication finishes or is cancelled.
+    pub fn unlock_with_device_progress(
+        &self,
+    ) -> (VaultFuture<()>, progress::UnboundedReceiver<u8>) {
+        let (sender, receiver) = progress::unbounded();
+        let observer = Arc::new(move |remaining| {
+            let _ = sender.unbounded_send(remaining);
+        });
+        (
+            self.request(move |vault| vault.unlock_with_device_observer(Some(observer))),
+            receiver,
+        )
+    }
+    pub fn disable_device_unlock(&self) -> VaultFuture<()> {
+        self.request(|vault| vault.disable_device_unlock())
+    }
+    pub fn change_password(&self, password: Secret) -> VaultFuture<()> {
+        self.request(move |vault| vault.change_password(password))
+    }
+    pub fn list(&self) -> VaultFuture<Vec<CredentialInfo>> {
+        self.request(|vault| vault.list())
+    }
+    pub fn get(&self, id: CredentialId, binding: CredentialBinding) -> VaultFuture<Secret> {
+        self.request(move |vault| vault.get(id, &binding))
+    }
+    pub fn put(
+        &self,
+        id: Option<CredentialId>,
+        label: String,
+        binding: CredentialBinding,
+        secret: Secret,
+    ) -> VaultFuture<CredentialId> {
+        self.request(move |vault| vault.put(id, label, binding, secret))
+    }
+    pub fn delete(&self, id: CredentialId) -> VaultFuture<()> {
+        self.request(move |vault| vault.delete(id))
+    }
+}

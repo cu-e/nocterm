@@ -10,10 +10,9 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::MonitorSettings;
-use gpui_kit::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui_kit::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use nocterm_monitor::{MetricSet, Platform, Sampler, Watch, detect, local_platform};
 use nocterm_session::{ExecError, HostExec};
-use nocterm_ui::{SettingsExt as _, SettingsStore};
 use nocterm_workspace::{Host, HostKey, SessionContext, Workspace, host::follow_active_session};
 
 /// How long a failed or ended watch waits before it is tried again.
@@ -85,6 +84,7 @@ struct Record {
 }
 
 pub(crate) struct HostMonitor {
+    settings: nocterm_store::SettingsHandle,
     local: Option<Arc<dyn HostExec>>,
     session: Option<SessionContext>,
     host: Option<Host>,
@@ -107,13 +107,17 @@ impl HostMonitor {
     pub(crate) fn new(
         workspace: &Entity<Workspace>,
         session: Option<SessionContext>,
-        local: Option<Arc<dyn HostExec>>,
+        installed: &crate::Installed,
         cx: &mut Context<Self>,
     ) -> Self {
         let follow = follow_active_session(workspace, cx, Self::follow);
-        let settings = cx.observe_global::<SettingsStore>(|this, cx| this.refresh(cx));
+        let weak = cx.weak_entity();
+        let observation = installed.settings().observe(cx, move |cx| {
+            let _ = weak.update(cx, |this, cx| this.refresh(cx));
+        });
         let mut this = Self {
-            local,
+            local: installed.local(),
+            settings: installed.settings().clone(),
             session,
             host: None,
             open: false,
@@ -121,12 +125,15 @@ impl HostMonitor {
             records: Vec::new(),
             wanted: None,
             task: None,
-            _subscriptions: [follow, settings],
+            _subscriptions: [follow, observation],
         };
         this.refresh(cx);
         this
     }
 
+    pub(crate) fn settings<'a>(&self, cx: &'a App) -> &'a MonitorSettings {
+        self.settings.setting::<MonitorSettings>(cx)
+    }
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }
@@ -164,7 +171,7 @@ impl HostMonitor {
     /// Starts, restarts or stops the watch to match the session, the
     /// settings and the details.
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let settings = cx.setting::<crate::MonitorSettings>().clone();
+        let settings = self.settings(cx).clone();
         let host = watched_host(self.session.as_ref(), self.local.as_ref(), &settings);
         let plan = Plan::new(&settings, self.open);
         let history = settings.history_points as usize;

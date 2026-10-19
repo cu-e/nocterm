@@ -15,7 +15,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_session::{FileMetadata, FsError};
+use nocterm_session::{FileMetadata, local_fs::CancelFlag};
 use nocterm_ui::ActiveDesign as _;
 use std::{
     rc::Rc,
@@ -113,13 +113,13 @@ pub(super) struct FileDialog {
     pending: bool,
     error: Option<String>,
     refresh: Refresh,
-    cancel: Arc<AtomicBool>,
+    cancel: CancelFlag,
     dismissed: Arc<AtomicBool>,
     _name_subscription: Subscription,
 }
 impl Drop for FileDialog {
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Release);
+        self.cancel.cancel();
         self.dismissed.store(true, Ordering::Release);
     }
 }
@@ -204,7 +204,7 @@ fn open_modal(
             })
             .on_cancel(move |_, _, cx| dismiss.update(cx, |this, _| this.dismiss()))
             .on_close(move |_, _, _| {
-                cancel.store(true, Ordering::Release);
+                cancel.cancel();
                 dismissed.store(true, Ordering::Release);
             })
     });
@@ -213,11 +213,11 @@ fn open_modal(
 impl FileDialog {
     fn dismiss(&self) -> bool {
         if self.pending && self.kind == Kind::Delete {
-            self.cancel.store(true, Ordering::Release);
+            self.cancel.cancel();
             false
         } else {
             self.dismissed.store(true, Ordering::Release);
-            self.cancel.store(true, Ordering::Release);
+            self.cancel.cancel();
             true
         }
     }
@@ -226,9 +226,7 @@ impl FileDialog {
             return false;
         }
         match self.kind {
-            Kind::Rename => {
-                super::local_operations::valid_name(self.name.read(cx).value().as_ref())
-            }
+            Kind::Rename => self.targets[0].valid_name(self.name.read(cx).value().as_ref()),
             Kind::Delete => true,
             Kind::Properties => self.metadata.as_ref().is_some_and(|m| {
                 !m.is_symlink
@@ -260,7 +258,7 @@ impl FileDialog {
             pending: false,
             error: None,
             refresh,
-            cancel: Arc::new(AtomicBool::new(false)),
+            cancel: CancelFlag::default(),
             dismissed: Arc::new(AtomicBool::new(false)),
             _name_subscription: name_subscription,
         };
@@ -291,11 +289,10 @@ impl FileDialog {
         };
         self.run(op, window, cx);
     }
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn run(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
         self.pending = true;
         self.error = None;
-        self.cancel.store(false, Ordering::Release);
+        self.cancel = CancelFlag::default();
         let targets = self.targets.clone();
         let cancel = self.cancel.clone();
         let metadata_request = matches!(&operation, Operation::Metadata);
@@ -310,11 +307,8 @@ impl FileDialog {
                 }
                 Operation::Delete => {
                     for target in targets {
-                        if cancel.load(Ordering::Acquire) {
-                            return Err(FsError::Other(
-                                "Deletion cancelled; some entries may already have been deleted."
-                                    .into(),
-                            ));
+                        if cancel.is_cancelled() {
+                            return Err(super::operations::FileOperationError::Cancelled);
                         }
                         target.remove(cancel.clone()).await?;
                     }
@@ -350,7 +344,7 @@ impl FileDialog {
                         Kind::Delete => "files-delete",
                         Kind::Properties => "files-properties",
                     };
-                    if kind == Kind::Delete && report_cancel.load(Ordering::Acquire) {
+                    if kind == Kind::Delete && report_cancel.is_cancelled() {
                         nocterm_ui::notice::warning(window, app, key, title, error.to_string());
                     } else {
                         nocterm_ui::notice::error(window, app, key, title, error.to_string());

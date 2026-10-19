@@ -1,9 +1,9 @@
 //! The context ring under the composer and the usage card it opens: how full
 //! the context window is, the session's tokens and the plan's limits.
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 use gpui_kit::{
-    App, ClickEvent, Context, Focusable as _, MouseButton, PathBuilder, TestSupportExt as _,
-    Window, canvas,
+    App, ClickEvent, Context, MouseButton, PathBuilder, TestSupportExt as _, canvas,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -13,123 +13,33 @@ use gpui_kit::{
     prelude::*,
     px, relative,
 };
-use nocterm_ai::acp;
 use nocterm_ui::IconName;
 
-use super::{AgentPanel, MenuKind};
-use crate::runtime::Runtime;
+use super::AgentPanel;
 use nocterm_ai::usage::{Breakdown, RateLimit};
 
 /// The card's sections, gathered before anything is laid out.
-struct Report {
-    context: Option<acp::UsageUpdate>,
+pub(super) struct Report {
+    context: Option<ContextUsage>,
     breakdown: Breakdown,
-    tokens: Option<acp::Usage>,
+    tokens: Option<TokenTotals>,
     limits: Vec<RateLimit>,
     /// Shown when no limits are known yet.
     limits_hint: Option<&'static str>,
 }
 
-impl AgentPanel {
-    pub(super) fn dismiss_usage(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.menu != Some(MenuKind::Usage) {
-            return false;
-        }
-        self.menu = None;
-        cx.notify();
-        true
-    }
-
-    pub(super) fn close_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let restore = self.usage_focus.contains_focused(window, cx);
-        self.dismiss_usage(cx);
-        if restore {
-            window.focus(&self.input.read(cx).focus_handle(cx), cx);
-        }
-    }
-
-    pub(super) fn usage_button(
-        &self,
-        usage: Option<&acp::UsageUpdate>,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        // Match native popovers: toggle on mouse-down, using the rendered state.
-        // Outside dismissal may already have run in this event's capture phase.
-        let open = self.menu == Some(MenuKind::Usage);
-        context_ring(usage, cx)
-            .selected(open)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
-                    this.toggle_usage(open, window, cx);
-                }),
-            )
-            .on_click(cx.listener(move |this, event, window, cx| {
-                if !matches!(event, ClickEvent::Mouse(_)) {
-                    this.toggle_usage(open, window, cx);
-                }
-            }))
-    }
-
-    fn toggle_usage(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if open {
-            self.close_usage(window, cx);
-        } else {
-            self.refresh_usage(cx);
-            self.menu = Some(MenuKind::Usage);
-            // Read-only information must not interrupt composing.
-            if !self.input.read(cx).focus_handle(cx).is_focused(window) {
-                window.focus(&self.usage_focus, cx);
-            }
-            cx.notify();
-        }
-    }
-
-    /// Reads the plan limits again when the card opens.
-    pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.current() {
-            let agent = thread.read(cx).agent_id.clone();
-            Runtime::global(cx).update(cx, |runtime, cx| runtime.refresh_limits(&agent, cx));
-        }
-    }
-
-    fn usage_report(&self, cx: &App) -> Option<Report> {
-        let thread = self.current()?;
-        let thread = thread.read(cx);
-        let context = thread.state.usage.clone().filter(|usage| usage.size > 0);
-        let breakdown = context
-            .as_ref()
-            .map(|usage| Breakdown::estimate(&thread.state.entries, usage.used))
-            .unwrap_or_default();
-        let limits: Vec<RateLimit> = Runtime::global(cx)
-            .read(cx)
-            .limits(&thread.agent_id)
-            .map(|limits| limits.iter().cloned().collect())
-            .unwrap_or_default();
-        let limits_hint = match thread.agent_id.as_str() {
-            "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
-            "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
-            _ => None,
-        };
-        Some(Report {
-            context,
-            breakdown,
-            tokens: thread.state.tokens.clone(),
-            limits,
-            limits_hint,
-        })
-    }
-
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let Some(report) = self.usage_report(cx) else {
-            return div().into_any_element();
-        };
-        let muted = cx.theme().muted_foreground;
-        let mut card = v_flex()
+pub(super) struct UsageCard;
+impl UsageCard {
+    pub(super) fn render(
+        report: &Report,
+        focus: &gpui_kit::FocusHandle,
+        now: u64,
+        cx: &mut Context<AgentPanel>,
+    ) -> gpui_kit::AnyElement {
+        let card = v_flex()
             .id("agent-usage")
             .test_support()
-            .track_focus(&self.usage_focus)
+            .track_focus(focus)
             .tab_group()
             .key_context("Popover")
             .on_action(
@@ -167,6 +77,27 @@ impl AgentPanel {
                     ),
             );
 
+        card.child(Self::context(report, cx))
+            .children(Self::tokens(report, cx))
+            .children(
+                report
+                    .context
+                    .as_ref()
+                    .and_then(|usage| usage.cost.as_ref())
+                    .map(|cost| {
+                        legend_row(
+                            "Session cost",
+                            format!("{:.2} {}", cost.amount, cost.currency),
+                            None,
+                            cx,
+                        )
+                    }),
+            )
+            .children(Self::limits(report, now, cx))
+            .into_any_element()
+    }
+    fn context(report: &Report, cx: &App) -> gpui_kit::Div {
+        let muted = cx.theme().muted_foreground;
         let mut context = v_flex().gap_2();
         match &report.context {
             Some(usage) => {
@@ -213,18 +144,19 @@ impl AgentPanel {
                 );
             }
         }
-        card = card.child(context);
-
+        context
+    }
+    fn tokens(report: &Report, cx: &App) -> Option<gpui_kit::Div> {
         if let Some(tokens) = &report.tokens {
             let rows = [
-                ("Input", Some(tokens.input_tokens)),
-                ("Cache read", tokens.cached_read_tokens),
-                ("Cache write", tokens.cached_write_tokens),
-                ("Output", Some(tokens.output_tokens)),
-                ("Reasoning", tokens.thought_tokens),
-                ("Total", Some(tokens.total_tokens)),
+                ("Input", Some(tokens.input)),
+                ("Cache read", tokens.cache_read),
+                ("Cache write", tokens.cache_write),
+                ("Output", Some(tokens.output)),
+                ("Reasoning", tokens.thought),
+                ("Total", Some(tokens.total)),
             ];
-            card = card.child(
+            return Some(
                 section("Session tokens", cx).children(
                     rows.into_iter()
                         .filter_map(|(label, value)| Some((label, value?)))
@@ -233,31 +165,21 @@ impl AgentPanel {
                 ),
             );
         }
-        if let Some(cost) = report
-            .context
-            .as_ref()
-            .and_then(|usage| usage.cost.as_ref())
-        {
-            card = card.child(legend_row(
-                "Session cost",
-                format!("{:.2} {}", cost.amount, cost.currency),
-                None,
-                cx,
-            ));
-        }
-
+        None
+    }
+    fn limits(report: &Report, now: u64, cx: &App) -> Option<gpui_kit::Div> {
+        let muted = cx.theme().muted_foreground;
         if !report.limits.is_empty() || report.limits_hint.is_some() {
             let mut limits = section("Plan limits", cx);
-            let now = nocterm_ai::time::now();
             for limit in &report.limits {
                 limits = limits.child(limit_row(limit, now, cx));
             }
             if let Some(hint) = report.limits_hint {
                 limits = limits.child(div().text_xs().text_color(muted).child(hint));
             }
-            card = card.child(limits);
+            return Some(limits);
         }
-        card.into_any_element()
+        None
     }
 }
 
@@ -389,7 +311,7 @@ fn until(seconds: u64) -> String {
     }
 }
 
-pub(super) fn usage_fraction(usage: Option<&acp::UsageUpdate>) -> f32 {
+pub(super) fn usage_fraction(usage: Option<&ContextUsage>) -> f32 {
     usage
         .filter(|usage| usage.size > 0)
         .map(|usage| (usage.used as f64 / usage.size as f64).clamp(0., 1.) as f32)
@@ -397,7 +319,7 @@ pub(super) fn usage_fraction(usage: Option<&acp::UsageUpdate>) -> f32 {
 }
 
 /// The ring that shows how full the context window is and opens the card.
-pub(super) fn context_ring(usage: Option<&acp::UsageUpdate>, cx: &App) -> Button {
+pub(super) fn context_ring(usage: Option<&ContextUsage>, cx: &App) -> Button {
     let fraction = usage_fraction(usage);
     let background = cx.theme().muted.blend(cx.theme().foreground.opacity(0.10));
     let foreground = if fraction >= 0.85 {
@@ -455,6 +377,48 @@ pub(super) fn context_ring(usage: Option<&acp::UsageUpdate>, cx: &App) -> Button
             .w(px(16.))
             .h(px(16.)),
         )
+}
+
+impl UsageCard {
+    pub(super) fn usage_button(
+        open: bool,
+        usage: Option<&ContextUsage>,
+        cx: &mut Context<AgentPanel>,
+    ) -> Button {
+        // Match native popovers: toggle on mouse-down, using the rendered state.
+        // Outside dismissal may already have run in this event's capture phase.
+        context_ring(usage, cx)
+            .selected(open)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.toggle_usage(open, window, cx);
+                }),
+            )
+            .on_click(cx.listener(move |this, event, window, cx| {
+                if !matches!(event, ClickEvent::Mouse(_)) {
+                    this.toggle_usage(open, window, cx);
+                }
+            }))
+    }
+}
+
+impl Report {
+    pub(super) fn new(
+        context: Option<ContextUsage>,
+        breakdown: Breakdown,
+        tokens: Option<TokenTotals>,
+        limits: Vec<RateLimit>,
+        limits_hint: Option<&'static str>,
+    ) -> Self {
+        Self {
+            context,
+            breakdown,
+            tokens,
+            limits,
+            limits_hint,
+        }
+    }
 }
 
 #[cfg(test)]

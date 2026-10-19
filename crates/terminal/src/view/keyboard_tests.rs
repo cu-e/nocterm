@@ -78,15 +78,14 @@ fn repeat_and_release_preserve_selection_and_scroll_and_drop_orphans(cx: &mut Te
         down(window, "up", true, false, cx);
         view.update(cx, |view, cx| {
             view.terminal.update(cx, |terminal, cx| {
-                terminal.update_emulator(cx, |e| {
-                    e.advance(&b"line\r\n".repeat(100));
-                    e.scroll(Scroll::Top);
-                    e.start_selection(
-                        SelectionKind::Words,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                })
+                terminal.handle_event(Event::Output(b"line\r\n".repeat(100)), cx);
+                terminal.scroll(Scroll::Top, cx);
+                terminal.begin_selection(
+                    SelectionKind::Words,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
             })
         });
         let selection = view.read(cx).terminal.read(cx).emulator().selection_text();
@@ -239,10 +238,16 @@ fn xterm_negotiation_disambiguates_modified_keys_and_restores_legacy(cx: &mut Te
 fn a_rejected_text_commit_does_not_send_a_release(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
     cx.update(|cx| {
-        cx.update_setting::<nocterm_ui::TerminalSettings>(|settings| {
-            settings.charset = nocterm_session::Charset::Windows1251
-        })
-        .detach()
+        view.read(cx)
+            .terminal()
+            .read(cx)
+            .installed()
+            .settings()
+            .clone()
+            .update::<nocterm_ui::TerminalSettings>(cx, |settings| {
+                settings.charset = nocterm_session::Charset::Windows1251
+            })
+            .detach()
     });
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {

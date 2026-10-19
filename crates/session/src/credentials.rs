@@ -6,7 +6,17 @@ use crate::{CredentialId, Secret, SecretRequest};
 use futures::future::BoxFuture;
 
 /// A store failure, worded for the person at the prompt.
-pub type CredentialFuture<T> = BoxFuture<'static, Result<T, String>>;
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum CredentialStoreError {
+    #[error("Credential not found.")]
+    NotFound,
+    #[error("Store locked or unavailable.")]
+    Locked,
+    #[error("{0}")]
+    Failed(String),
+}
+
+pub type CredentialFuture<T> = BoxFuture<'static, Result<T, CredentialStoreError>>;
 
 pub trait CredentialStore: Send + Sync + 'static {
     /// Whether saved secrets can be read and written now.

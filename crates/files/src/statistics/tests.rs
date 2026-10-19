@@ -29,7 +29,7 @@ fn walk(fs: TreeFs, root: &str, policy: Policy) -> Statistics {
         Arc::new(fs),
         root.into(),
         policy,
-        Arc::new(AtomicBool::new(false)),
+        CancelFlag::default(),
         progress.clone(),
     ));
     progress.lock().clone()
@@ -76,7 +76,7 @@ fn remote_walk_stops_at_the_entry_limit() {
     policy.max_entries = 10;
     let statistics = walk(TreeFs(HashMap::from([("/", many)])), "/", policy);
     assert_eq!(statistics.files, 10);
-    assert!(statistics.errors[0].contains("10 entry limit"));
+    assert!(statistics.errors[0].contains("statistics entries"));
     assert!(statistics.complete);
 }
 
@@ -126,9 +126,9 @@ fn counter_restart_cancels_the_previous_walk() {
     assert!(counter.poll());
     assert_eq!(counter.shown.files, 4);
     let (second, _) = counter.restart();
-    assert!(first.load(Ordering::Acquire));
-    assert!(!second.load(Ordering::Acquire));
+    assert!(first.is_cancelled());
+    assert!(!second.is_cancelled());
     assert_eq!(counter.shown, Statistics::default());
     drop(counter);
-    assert!(second.load(Ordering::Acquire), "dropping cancels");
+    assert!(second.is_cancelled(), "dropping cancels");
 }

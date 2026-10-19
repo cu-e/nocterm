@@ -1,0 +1,66 @@
+# Existing architectural debt, measured from production Rust AST.
+# Entries may only shrink; reductions must lower this inventory.
+[complexity_expects]
+nocterm = 4
+nocterm-acp = 6
+nocterm-agent = 9
+nocterm-ai = 2
+nocterm-connections = 5
+nocterm-design = 1
+nocterm-files = 5
+nocterm-keymap = 1
+nocterm-keymap-ui = 1
+nocterm-local = 2
+nocterm-monitor = 3
+nocterm-monitor-ui = 2
+nocterm-settings-ui = 1
+nocterm-snippets-ui = 4
+nocterm-ssh = 4
+nocterm-terminal = 9
+nocterm-themes = 1
+nocterm-ui = 2
+nocterm-vault-broker = 1
+nocterm-vt = 5
+nocterm-workspace = 4
+
+[domain_dependencies]
+
+[domain_io]
+
+[global_reads]
+nocterm-ui = 4
+
+[globals]
+"nocterm_ui::design::Design" = 1
+"nocterm_ui::notice::Notices" = 1
+
+[impl_spread]
+
+[pub_fields]
+"nocterm_agent::panel::entries::tool_input::Section" = 3
+"nocterm_agent::panel::entries::tool_input::Source" = 5
+"nocterm_agent::panel::entries::tool_output::Output" = 2
+"nocterm_agent::thread::Restore" = 3
+"nocterm_agent::thread::queue::QueuedPrompt" = 5
+"nocterm_agent_runtime::client::ClientState" = 9
+"nocterm_agent_runtime::lease::ReleasedLease" = 5
+"nocterm_files::path_input::Navigate" = 2
+"nocterm_files::path_input::completion::Candidate" = 2
+"nocterm_files::path_input::completion::Query" = 3
+"nocterm_files::row::ExplorerRow" = 5
+"nocterm_files::statistics::Policy" = 1
+"nocterm_files::statistics::Statistics" = 8
+"nocterm_keymap_ui::rows::Row" = 7
+"nocterm_monitor_ui::model::Plan" = 2
+"nocterm_terminal::element::Geometry" = 5
+"nocterm_terminal::element::text::Colors" = 4
+"nocterm_terminal::highlighting::rules::Token" = 3
+
+[quit_handlers]
+"nocterm_ui::layout::LayoutMemory::init" = 1
+
+[string_errors]
+
+[struct_fields]
+"nocterm_ai::history::SavedChat" = 20
+"nocterm_ai::history::wire::Wire" = 18

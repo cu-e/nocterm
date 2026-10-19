@@ -6,13 +6,29 @@ use std::path::PathBuf;
 pub(crate) struct ShellIntegration {
     state: u8,
     payload: Vec<u8>,
-    pub cwd: Option<PathBuf>,
-    pub at_prompt: bool,
-    pub known: bool,
-    pub dirty_input: bool,
+    cwd: Option<PathBuf>,
+    at_prompt: bool,
+    known: bool,
+    dirty_input: bool,
 }
 
 impl ShellIntegration {
+    pub(crate) fn cwd(&self) -> Option<&std::path::Path> {
+        self.cwd.as_deref()
+    }
+    pub(crate) fn at_prompt(&self) -> bool {
+        self.at_prompt
+    }
+    pub(crate) fn known(&self) -> bool {
+        self.known
+    }
+    pub(crate) fn dirty_input(&self) -> bool {
+        self.dirty_input
+    }
+    pub(crate) fn prompt_state(&self) -> (Option<bool>, bool) {
+        (self.known.then_some(self.at_prompt), self.dirty_input)
+    }
+
     pub(crate) fn advance(&mut self, bytes: &[u8]) -> bool {
         let old = self.cwd.clone();
         for &byte in bytes {

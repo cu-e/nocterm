@@ -1,24 +1,14 @@
 //! The look shared by settings pages: titled sections of rows on the
 //! terminal's background, without cards or outlines.
 use gpui_kit::{
-    AnyElement, App, Hsla, SharedString,
+    AnyElement, App, SharedString,
     component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex},
     div,
     prelude::*,
     px, rems,
 };
 
-use crate::{ActiveDesign as _, TerminalStyle, hsla};
-
-/// The background of settings pages: the terminal's, so they read as part of
-/// the same surface.
-pub fn page_background(cx: &App) -> Hsla {
-    if cx.has_global::<crate::SettingsStore>() {
-        hsla(TerminalStyle::current(cx).background)
-    } else {
-        cx.theme().background
-    }
-}
+use crate::ActiveDesign as _;
 
 /// The width a settings form keeps to on wide windows.
 pub fn page_width(cx: &App) -> gpui_kit::Rems {

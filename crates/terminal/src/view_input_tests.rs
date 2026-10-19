@@ -37,7 +37,7 @@ fn ordinary_typing_waits_for_delayed_echo_without_redrawing(cx: &mut TestAppCont
     assert_eq!(drain(&driver).concat(), b"abc\x7f");
     assert_eq!(outputs.get(), 0);
     assert_eq!(notifications.get(), 0);
-    view.read_with(cx, |v, _| assert_eq!(v.frame.borrow().row_text(0), ""));
+    view.read_with(cx, |v, _| assert_eq!(v.painted_frame().row_text(0), ""));
     emit(
         cx,
         &transport,
@@ -48,11 +48,11 @@ fn ordinary_typing_waits_for_delayed_echo_without_redrawing(cx: &mut TestAppCont
     assert!(notifications.get() > 0);
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
-    view.read_with(cx, |v, _| {
-        let frame = v.frame.borrow();
+    view.read_with(cx, |v, cx| {
+        let frame = v.painted_frame();
         assert_eq!(frame.row_text(0), "ab界e");
         assert_eq!(frame.combining, [(4, "\u{301}".to_owned())]);
-        assert!(!v.frame_dirty.get());
+        assert!(!element(&view, cx).refresh_frame(cx));
     });
 }
 
@@ -68,15 +68,14 @@ fn typing_clears_selection_and_returns_scrollback_before_echo(cx: &mut TestAppCo
     cx.update(|cx| {
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
-                t.update_emulator(cx, |e| {
-                    e.scroll(Scroll::Top);
-                    e.start_selection(
-                        SelectionKind::Cells,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                    e.update_selection(CellPoint { row: 0, col: 2 }, nocterm_vt::Side::Right);
-                });
+                t.scroll(Scroll::Top, cx);
+                t.begin_selection(
+                    SelectionKind::Cells,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
+                t.extend_selection(CellPoint { row: 0, col: 2 }, nocterm_vt::Side::Right, 0, cx);
             });
         });
     });
@@ -97,8 +96,8 @@ fn typing_clears_selection_and_returns_scrollback_before_echo(cx: &mut TestAppCo
         let e = v.terminal.read(cx).emulator();
         assert_eq!(e.display_offset(), 0);
         assert!(e.selection_text().is_none());
-        assert_eq!(v.frame.borrow().display_offset, 0);
-        assert!(!v.frame.borrow().cells.iter().any(|cell| cell.selected));
+        assert_eq!(v.painted_frame().display_offset, 0);
+        assert!(!v.painted_frame().cells.iter().any(|cell| cell.selected));
     });
     cx.update_window(handle, |_, window, cx| window.input("y", cx))
         .unwrap();
@@ -113,20 +112,7 @@ fn advance(cx: &mut TestAppContext, millis: u64) {
 
 fn element(view: &Entity<TerminalView>, cx: &App) -> TerminalElement {
     let v = view.read(cx);
-    TerminalElement {
-        view: view.clone(),
-        terminal: v.terminal.clone(),
-        focus: v.focus_handle.clone(),
-        style: TerminalStyle::current(cx),
-        focused: v.focused,
-        cursor_lit: v.cursor_lit,
-        marked_text: v.marked_text.clone().map(SharedString::from),
-        frame: v.frame.clone(),
-        highlights: v.highlights.clone(),
-        frame_dirty: v.frame_dirty.clone(),
-        frame_version: v.frame_version.clone(),
-        geometry: v.geometry.clone(),
-    }
+    v.paint_element(view.clone(), v.terminal_style(cx), false)
 }
 
 #[gpui_kit::test]
@@ -152,36 +138,29 @@ fn snapshot_cache_tracks_same_turn_selection_scroll_search_resize_and_palette(
         );
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
-                t.update_emulator(cx, |e| {
-                    e.scroll(Scroll::Top);
-                    e.start_selection(
-                        SelectionKind::Cells,
-                        CellPoint { row: 0, col: 0 },
-                        nocterm_vt::Side::Left,
-                    );
-                    e.update_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right);
-                });
+                t.scroll(Scroll::Top, cx);
+                t.begin_selection(
+                    SelectionKind::Cells,
+                    CellPoint { row: 0, col: 0 },
+                    nocterm_vt::Side::Left,
+                    cx,
+                );
+                t.extend_selection(CellPoint { row: 0, col: 5 }, nocterm_vt::Side::Right, 0, cx);
             });
         });
         assert!(
             element.refresh_frame(cx),
             "queued event left selection snapshot stale"
         );
-        assert!(element.frame.borrow().display_offset > 0);
+        assert!(element.frame().display_offset > 0);
         assert_eq!(
-            element
-                .frame
-                .borrow()
-                .cells
-                .iter()
-                .filter(|c| c.selected)
-                .count(),
+            element.frame().cells.iter().filter(|c| c.selected).count(),
             6
         );
         view.update(cx, |v, cx| v.type_text("x", cx));
         assert!(element.refresh_frame(cx));
-        assert_eq!(element.frame.borrow().display_offset, 0);
-        assert!(!element.frame.borrow().cells.iter().any(|c| c.selected));
+        assert_eq!(element.frame().display_offset, 0);
+        assert!(!element.frame().cells.iter().any(|c| c.selected));
         view.update(cx, |v, cx| {
             v.terminal.update(cx, |t, cx| {
                 t.resize(nocterm_vt::TermSize::new(40, 10, 7, 14), cx)
@@ -189,11 +168,11 @@ fn snapshot_cache_tracks_same_turn_selection_scroll_search_resize_and_palette(
         });
         assert!(element.refresh_frame(cx));
         assert_eq!(
-            element.frame.borrow().size,
+            element.frame().size,
             nocterm_vt::TermSize::new(40, 10, 7, 14)
         );
         view.update(cx, |v, cx| {
-            let mut style = TerminalStyle::current(cx);
+            let mut style = v.terminal_style(cx);
             style.foreground.r ^= 0xff;
             v.sync_palette(&style, cx);
         });
@@ -208,10 +187,10 @@ fn snapshot_cache_tracks_same_turn_selection_scroll_search_resize_and_palette(
     complete(cx, &view);
     cx.update(|cx| {
         element.refresh_frame(cx);
-        assert!(element.frame.borrow().cells.iter().any(|c| c.search_hit));
+        assert!(element.frame().cells.iter().any(|c| c.search_hit));
         view.update(cx, |v, cx| v.terminal.update(cx, |t, cx| t.clear_find(cx)));
         assert!(element.refresh_frame(cx));
-        assert!(!element.frame.borrow().cells.iter().any(|c| c.search_hit));
+        assert!(!element.frame().cells.iter().any(|c| c.search_hit));
     });
 }
 
@@ -221,12 +200,12 @@ fn each_key_restarts_cursor_interval_without_notifying_while_lit(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     advance(cx, 530);
-    assert!(!view.read_with(cx, |v, _| v.cursor_lit));
+    assert!(!view.read_with(cx, |v, _| v.cursor_visible()));
     let (notifications, _, _subscriptions) = watch(cx, &view);
     cx.update_window(handle, |_, window, cx| window.input("a", cx))
         .unwrap();
     cx.run_until_parked();
-    assert!(view.read_with(cx, |v, _| v.cursor_lit));
+    assert!(view.read_with(cx, |v, _| v.cursor_visible()));
     assert_eq!(notifications.get(), 1);
     advance(cx, 300);
     cx.update_window(handle, |_, window, cx| window.input("b", cx))
@@ -234,11 +213,11 @@ fn each_key_restarts_cursor_interval_without_notifying_while_lit(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(notifications.get(), 1);
     advance(cx, 230);
-    assert!(view.read_with(cx, |v, _| v.cursor_lit));
+    assert!(view.read_with(cx, |v, _| v.cursor_visible()));
     advance(cx, 299);
-    assert!(view.read_with(cx, |v, _| v.cursor_lit));
+    assert!(view.read_with(cx, |v, _| v.cursor_visible()));
     advance(cx, 1);
-    assert!(!view.read_with(cx, |v, _| v.cursor_lit));
+    assert!(!view.read_with(cx, |v, _| v.cursor_visible()));
     assert_eq!(notifications.get(), 2);
 }
 
@@ -346,14 +325,13 @@ fn scrolling_notifies_and_revises_only_when_display_changes(cx: &mut TestAppCont
     }
     cx.update(|cx| {
         terminal.update(cx, |t, cx| {
-            t.update_emulator(cx, |e| {
-                e.start_selection(
-                    SelectionKind::Cells,
-                    CellPoint { row: 0, col: 0 },
-                    nocterm_vt::Side::Left,
-                );
-                e.update_selection(CellPoint { row: 0, col: 2 }, nocterm_vt::Side::Right);
-            })
+            t.begin_selection(
+                SelectionKind::Cells,
+                CellPoint { row: 0, col: 0 },
+                nocterm_vt::Side::Left,
+                cx,
+            );
+            t.extend_selection(CellPoint { row: 0, col: 2 }, nocterm_vt::Side::Right, 0, cx);
         });
     });
     cx.run_until_parked();

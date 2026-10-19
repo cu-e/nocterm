@@ -148,3 +148,39 @@ async fn cancelled_startup_closes_the_unconfirmed_exec_channel() {
     session.close();
     server.abort();
 }
+
+#[tokio::test]
+async fn invalid_launch_is_rejected_before_connecting_or_reading_trust_files() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let transport = SshTransport::new(SshConfig::default()).unwrap();
+    let session = transport.open(ConnectRequest {
+        target: Target::new("test", "127.0.0.1", listener.local_addr().unwrap().port()),
+        auth: Auth::Auto,
+        launch: nocterm_session::ShellLaunch {
+            args: vec!["bad\0argument".into()],
+            ..Default::default()
+        },
+        proxy: Default::default(),
+        term: "xterm".into(),
+        size: PtySize::default(),
+        connect_timeout: Duration::from_secs(1),
+        keepalive_interval: None,
+    });
+    let event = timeout(Duration::from_secs(1), session.next_event())
+        .await
+        .unwrap();
+    assert!(matches!(
+        event,
+        Some(Event::Closed(nocterm_session::CloseReason::Failed(
+            nocterm_session::SessionError::InvalidLaunch(
+                nocterm_session::LaunchValidationError::NulArgument { index: 0 }
+            )
+        )))
+    ));
+    assert!(session.next_event().await.is_none());
+    assert!(
+        timeout(Duration::from_millis(25), listener.accept())
+            .await
+            .is_err()
+    );
+}

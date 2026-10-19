@@ -1,6 +1,7 @@
 //! Rendering regressions use the same detector for fixtures and private saved chats.
 use crate::panel::entries::{tool_input, tool_output};
-use nocterm_ai::{acp, history::SavedChat, thread::Entry, tool_display};
+use nocterm_ai::model::tools::ToolRecord;
+use nocterm_ai::{history::SavedChat, thread::Entry, tool_display};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::Path};
 
@@ -37,7 +38,7 @@ fn wrapper_text(text: &str) -> bool {
         })
 }
 
-fn raw_parts(call: &acp::ToolCall) -> RawParts {
+fn raw_parts(call: &ToolRecord) -> RawParts {
     let header = tool_display::header(call).starts_with("mcp");
     let input = tool_input::source(call).is_some_and(|input| {
         (input.label == "Tool input" && input.language == Some("json"))
@@ -62,7 +63,7 @@ fn raw_parts(call: &acp::ToolCall) -> RawParts {
     }
 }
 
-fn nocterm_row(call: &acp::ToolCall) -> bool {
+fn nocterm_row(call: &ToolRecord) -> bool {
     [Some(call.title.as_str()), call.name.as_deref()]
         .into_iter()
         .flatten()
@@ -93,7 +94,7 @@ fn provider_tool_row_fixtures_never_show_raw_headers_inputs_or_envelopes() {
         include_str!("fixtures/claude-string.json"),
         include_str!("fixtures/rejected-request.json"),
     ] {
-        let call: acp::ToolCall = serde_json::from_str(fixture).unwrap();
+        let call: ToolRecord = serde_json::from_str(fixture).unwrap();
         assert!(nocterm_row(&call));
         let raw = raw_parts(&call);
         assert!(
@@ -220,7 +221,7 @@ fn corpus_measurement_reports_malformed_history_without_private_contents() {
 
 #[test]
 fn detector_counts_a_row_once_even_when_all_three_parts_are_raw() {
-    let call = acp::ToolCall::new("raw", "mcp_nocterm_exec_command")
+    let call = ToolRecord::new("raw", "mcp_nocterm_exec_command")
         .raw_input(serde_json::json!({"server":"nocterm-99","tool":"exec_command","arguments":{}}))
         .raw_output(serde_json::json!({"result":"x","content":[]}));
     let raw = raw_parts(&call);

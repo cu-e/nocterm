@@ -1,48 +1,37 @@
-//! Only durable chat state transfers to a replacement process.
-use super::{AgentThread, Composer, PromptMetadata, Restore};
-use nocterm_ai::thread::ThreadState;
+//! Replacement processes transfer durable meaning without allocating a new chat identity.
+use super::{Composer, Restore};
 pub(crate) struct RestartData {
-    pub agent: String,
-    chat_id: String,
-    updated: u64,
-    name: Option<String>,
-    pinned: bool,
-    history_queued: bool,
-    state: ThreadState,
-    last_prompt: Option<PromptMetadata>,
-    last_model: Option<String>,
+    document: super::document::DocumentRestart,
+    config: super::config::RestartConfig,
     composer: Composer,
-    fallback_history: bool,
     restore: Option<Restore>,
 }
-impl AgentThread {
-    pub(crate) fn restart_data(&self) -> RestartData {
-        RestartData {
-            agent: self.agent_id.clone(),
-            chat_id: self.chat_id.clone(),
-            updated: self.updated,
-            name: self.name.clone(),
-            pinned: self.pinned,
-            history_queued: self.history_queued,
-            state: self.state.clone(),
-            last_prompt: self.last_prompt.clone(),
-            last_model: self.last_model.clone(),
-            composer: self.composer.restarted(),
-            fallback_history: self.fallback_history,
-            restore: self.restore_descriptor(),
+impl RestartData {
+    pub(super) fn new(
+        document: super::document::DocumentRestart,
+        config: super::config::RestartConfig,
+        composer: Composer,
+        restore: Option<Restore>,
+    ) -> Self {
+        Self {
+            document,
+            config,
+            composer,
+            restore,
         }
     }
-    pub(crate) fn apply_restart(&mut self, data: RestartData) {
-        self.chat_id = data.chat_id;
-        self.updated = data.updated;
-        self.name = data.name;
-        self.pinned = data.pinned;
-        self.history_queued = data.history_queued;
-        self.state = data.state;
-        self.last_prompt = data.last_prompt;
-        self.last_model = data.last_model;
-        self.composer = data.composer;
-        self.fallback_history = data.fallback_history;
-        self.restore = data.restore;
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        super::document::DocumentRestart,
+        super::config::RestartConfig,
+        Composer,
+        Option<Restore>,
+    ) {
+        (self.document, self.config, self.composer, self.restore)
+    }
+
+    pub(crate) fn agent_id(&self) -> &str {
+        self.document.agent_id()
     }
 }

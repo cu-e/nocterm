@@ -1,7 +1,14 @@
+use crate::model::content::Content;
+use crate::model::plan::Plan;
+use crate::model::session::SessionUpdate;
+use crate::model::tools::ToolStatus;
+use crate::model::tools::{ToolChanges, ToolPatch};
+use crate::model::usage::ContextUsage;
+use crate::model::{controls::Change, session::SessionInfo};
 use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
 use crate::{
-    acp, approval::ApprovalGrants, context::*, env::*, favorites::*, images::*, mcp::*,
-    registry::*, thread::*, tools::*,
+    approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*, thread::*,
+    tools::*,
 };
 use serde_json::json;
 #[test]
@@ -66,8 +73,50 @@ fn environment_blocks_sensitive_and_injection_vars_even_if_requested() {
     assert!(!env.values().any(|v| v == "marker"));
     assert!(!valid_name("bad=name"));
 }
-fn update(value: serde_json::Value) -> acp::SessionUpdate {
-    serde_json::from_value(value).unwrap()
+/// Builds the neutral update from the JSON an agent would send.
+fn update(value: serde_json::Value) -> SessionUpdate {
+    fn field<T: serde::de::DeserializeOwned>(value: &serde_json::Value, name: &str) -> Option<T> {
+        value
+            .get(name)
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+    }
+    let content = || field::<Content>(&value, "content").unwrap();
+    match value["sessionUpdate"].as_str().unwrap() {
+        "agent_message_chunk" => SessionUpdate::AgentMessageChunk(content()),
+        "agent_thought_chunk" => SessionUpdate::AgentThoughtChunk(content()),
+        "user_message_chunk" => SessionUpdate::UserMessageChunk(content()),
+        "tool_call" => SessionUpdate::ToolCall(Box::new(serde_json::from_value(value).unwrap())),
+        "tool_call_update" => {
+            let changes = ToolChanges {
+                kind: field(&value, "kind"),
+                status: field(&value, "status"),
+                title: field(&value, "title"),
+                raw_input: field(&value, "rawInput"),
+                raw_output: field(&value, "rawOutput"),
+                ..ToolChanges::default()
+            };
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                field::<String>(&value, "toolCallId").unwrap(),
+                changes,
+            )))
+        }
+        "plan" => SessionUpdate::Plan(Plan {
+            entries: Vec::new(),
+        }),
+        "session_info_update" => SessionUpdate::SessionInfoUpdate(SessionInfo {
+            title: match value.get("title") {
+                None => Change::Keep,
+                Some(serde_json::Value::Null) => Change::Clear,
+                Some(title) => Change::Set(title.as_str().unwrap().into()),
+            },
+            meta: None,
+        }),
+        "usage_update" => SessionUpdate::UsageUpdate(ContextUsage::new(
+            field(&value, "used").unwrap(),
+            field(&value, "size").unwrap(),
+        )),
+        other => panic!("unsupported test update {other}"),
+    }
 }
 #[test]
 fn reducer_merges_chunks_and_keeps_message_boundaries() {
@@ -75,42 +124,40 @@ fn reducer_merges_chunks_and_keeps_message_boundaries() {
     for text in ["hello ", "world"] {
         s.apply(update(
             json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}),
-        ));
+        ), 1);
     }
     assert!(matches!(&s.entries[0],Entry::Agent(v) if v=="hello world"));
-    s.push_user(vec![acp::ContentBlock::Text(acp::TextContent::new("next"))]);
+    s.push_user(vec![Content::text("next")], 1);
     s.apply(update(
         json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}),
-    ));
+    ), 1);
     s.apply(update(
         json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"response"}}),
-    ));
+    ), 1);
     assert_eq!(s.entries.len(), 4);
 }
 #[test]
-fn reducer_handles_all_stable_control_updates_and_tool_replacement() {
+fn reducer_handles_transcript_metadata_usage_and_tool_replacement() {
     let mut s = ThreadState::default();
     for value in [
         json!({"sessionUpdate":"tool_call","toolCallId":"1","title":"read","kind":"read","status":"pending"}),
         json!({"sessionUpdate":"tool_call_update","toolCallId":"1","status":"completed","title":"done","rawOutput":{"text":"ok"}}),
         json!({"sessionUpdate":"plan","entries":[]}),
-        json!({"sessionUpdate":"available_commands_update","availableCommands":[]}),
-        json!({"sessionUpdate":"current_mode_update","currentModeId":"ask"}),
-        json!({"sessionUpdate":"config_option_update","configOptions":[]}),
         json!({"sessionUpdate":"session_info_update","title":"A title"}),
         json!({"sessionUpdate":"usage_update","used":50,"size":100}),
         json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"user"}}),
     ] {
-        assert_ne!(s.apply(update(value)), ThreadChange::Ignored);
+        assert_ne!(s.apply(update(value), 1), ThreadChange::Ignored);
     }
     assert!(
-        matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==acp::ToolCallStatus::Completed)
+        matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==ToolStatus::Succeeded)
     );
     assert_eq!(s.title.as_deref(), Some("A title"));
     assert_eq!(s.usage.as_ref().unwrap().used, 50);
-    s.apply(update(
-        json!({"sessionUpdate":"session_info_update","title":null}),
-    ));
+    s.apply(
+        update(json!({"sessionUpdate":"session_info_update","title":null})),
+        1,
+    );
     assert!(s.title.is_none());
 }
 #[test]
@@ -204,32 +251,14 @@ fn redacts_keys_tokens_assignments_and_error_payload() {
 }
 #[test]
 fn favorites_round_trip_and_stable_order() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("agents.toml");
     let mut state = AgentStateFile::default();
     assert!(state.toggle("codex", "model", "b"));
     let mut options = vec!["a", "b", "c"];
     state.sort("codex", "model", &mut options, |v| *v);
     assert_eq!(options, ["b", "a", "c"]);
-    state.save(&path).unwrap();
-    assert_eq!(AgentStateFile::load(&path).unwrap(), state);
+    let encoded = toml::to_string(&state).unwrap();
+    assert_eq!(toml::from_str::<AgentStateFile>(&encoded).unwrap(), state);
     assert!(!state.toggle("codex", "model", "b"));
-}
-#[test]
-fn images_reject_bombs_bad_headers_and_decode_valid_png() {
-    use image::ImageEncoder;
-    let mut bytes = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut bytes)
-        .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
-        .unwrap();
-    let valid = PromptImage::validate(bytes.clone()).unwrap();
-    assert_eq!(valid.mime_type(), "image/png");
-    assert!(matches!(valid.content(), acp::ContentBlock::Image(_)));
-    bytes[16..20].copy_from_slice(&100_000u32.to_be_bytes());
-    assert!(PromptImage::validate(bytes).is_err());
-    assert!(PromptImage::validate(b"\x89PNG\r\n\x1a\n".to_vec()).is_err());
-    assert!(PromptImage::validate(vec![0; MAX_IMAGE_BYTES + 1]).is_err());
-    assert!(validate_collection(&vec![valid; 9]).is_err());
 }
 #[test]
 fn command_guards_reject_multiline_and_bad_timeout() {
@@ -319,45 +348,12 @@ fn redacts_quoted_credential_assignments() {
 }
 
 #[test]
-fn all_supported_image_formats_validate_and_aggregate_bytes_are_bounded() {
-    let pixel =
-        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([31, 53, 71])));
-    for (format, mime) in [
-        (image::ImageFormat::Png, "image/png"),
-        (image::ImageFormat::Jpeg, "image/jpeg"),
-        (image::ImageFormat::Gif, "image/gif"),
-        (image::ImageFormat::WebP, "image/webp"),
-    ] {
-        let mut bytes = std::io::Cursor::new(Vec::new());
-        pixel.write_to(&mut bytes, format).unwrap();
-        let validated = PromptImage::validate(bytes.into_inner()).unwrap();
-        assert_eq!(validated.mime_type(), mime);
-        assert_eq!(validated.dimensions(), (2, 2));
-    }
-    let synthetic = PromptImage::test_only_bytes(MAX_IMAGE_BYTES);
-    assert!(validate_collection(&vec![synthetic.clone(); 4]).is_ok());
-    assert!(validate_collection(&vec![synthetic; 5]).is_err());
-}
-
-#[test]
-fn config_categories_override_legacy_modes_and_image_chunks_are_retained() {
+fn image_chunks_are_retained() {
     let mut state = ThreadState::default();
-    state.apply(update(json!({"sessionUpdate":"config_option_update","configOptions":[
-        {"id":"effort","name":"Effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"high","name":"High"}]},
-        {"id":"model","name":"Model","category":"model","type":"select","currentValue":"a","options":[{"value":"a","name":"Model A"}]},
-        {"id":"mode","name":"Mode","category":"mode","type":"select","currentValue":"ask","options":[{"value":"ask","name":"Ask"}]}
-    ]})));
-    assert!(state.config_overrides_modes());
-    assert_eq!(
-        state.config(acp::SessionConfigOptionCategory::Model)[0]
-            .id
-            .to_string(),
-        "model"
-    );
-    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})));
+    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})), 1);
     assert!(matches!(
         state.entries.last(),
-        Some(Entry::Content(acp::ContentBlock::Image(_)))
+        Some(Entry::Content(Content::Image(_)))
     ));
 }
 
@@ -421,4 +417,130 @@ fn structured_execution_bounds_program_arguments_stdin_and_lifetime() {
     ] {
         assert!(TerminalCall::ExecCommand(invalid).validate().is_err());
     }
+}
+fn assert_rejected(call: TerminalCall, expected: TerminalCallError, message: &str) {
+    let error = call.validate().unwrap_err();
+    assert_eq!(error, expected);
+    assert_eq!(error.to_string(), message);
+    assert_eq!(ToolFailure::from(error).message(), message);
+}
+fn exec_with(change: fn(&mut ExecCommand)) -> TerminalCall {
+    let mut exec = ExecCommand {
+        terminal_id: "t1".into(),
+        program: "sh".into(),
+        args: Vec::new(),
+        stdin: None,
+        timeout_ms: None,
+        yield_ms: None,
+    };
+    change(&mut exec);
+    TerminalCall::ExecCommand(exec)
+}
+fn run_with(command: &str, timeout_ms: Option<u64>) -> TerminalCall {
+    TerminalCall::RunCommand(RunCommand {
+        terminal_id: "t1".into(),
+        command: command.into(),
+        timeout_ms,
+        idle_ms: None,
+    })
+}
+#[test]
+fn rejected_terminal_input_reports_typed_errors_with_the_agent_facing_messages() {
+    assert_rejected(
+        TerminalCall::OpenTerminal(OpenTerminal {
+            server_id: String::new(),
+        }),
+        TerminalCallError::InvalidTarget,
+        "Invalid terminal or server id",
+    );
+    assert_rejected(
+        TerminalCall::ReadTerminal(ReadTerminal {
+            terminal_id: "t1".into(),
+            lines: Some(2001),
+            since: None,
+        }),
+        TerminalCallError::ReadLimit,
+        "Read limit must be 1–2000 lines",
+    );
+    assert_rejected(
+        TerminalCall::SendInput(SendInput {
+            terminal_id: "t1".into(),
+            text: "a\0".into(),
+            press_enter: false,
+        }),
+        TerminalCallError::InputRejected,
+        "Input too large or contains NUL",
+    );
+    assert_rejected(
+        run_with("a\nb", None),
+        TerminalCallError::CommandRejected,
+        "Command must be a single nonempty line, at most 16 KiB",
+    );
+    assert_rejected(
+        run_with("ls", Some(0)),
+        TerminalCallError::RunTiming,
+        "Invalid timeout or idle interval",
+    );
+}
+#[test]
+fn rejected_command_requests_report_typed_errors_with_the_agent_facing_messages() {
+    assert_rejected(
+        exec_with(|exec| exec.program = " ".into()),
+        TerminalCallError::ProgramRejected,
+        "Invalid program, arguments or stdin size",
+    );
+    assert_rejected(
+        exec_with(|exec| exec.yield_ms = Some(10_001)),
+        TerminalCallError::ExecTiming,
+        "Invalid execution timeout or yield interval",
+    );
+    assert_rejected(
+        TerminalCall::ReadCommand(ReadCommand {
+            terminal_id: "t1".into(),
+            command_id: "c1".into(),
+            yield_ms: Some(10_001),
+        }),
+        TerminalCallError::ReadCommandRejected,
+        "Invalid command id or yield interval",
+    );
+    assert_rejected(
+        TerminalCall::CancelCommand(CancelCommand {
+            terminal_id: "t1".into(),
+            command_id: String::new(),
+        }),
+        TerminalCallError::InvalidCommandId,
+        "Invalid command id",
+    );
+}
+#[test]
+fn tool_failures_carry_text_and_are_redacted_in_the_result_payload() {
+    let failure = ToolFailure::from("password=marker-secret");
+    assert_eq!(failure.message(), "password=marker-secret");
+    assert_eq!(
+        failure,
+        ToolFailure::from(String::from("password=marker-secret"))
+    );
+    let wire = tool_result(json!(1), Err(failure));
+    assert_eq!(wire["result"]["isError"], json!(true));
+    assert!(!wire.to_string().contains("marker-secret"));
+}
+
+#[test]
+fn reducer_uses_supplied_timestamps_and_preserves_the_first_chunk_time() {
+    let mut state = ThreadState::default();
+    state.apply(
+        update(
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first"}}),
+        ),
+        10,
+    );
+    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second"}})), 20);
+    state.push_user(vec![Content::text("next")], 30);
+    assert_eq!(state.time(0), Some(10));
+    assert_eq!(state.time(1), Some(30));
+    state.apply(
+        update(json!({"sessionUpdate":"session_info_update","title":"Title"})),
+        40,
+    );
+    assert_eq!(state.times, [10, 30]);
 }

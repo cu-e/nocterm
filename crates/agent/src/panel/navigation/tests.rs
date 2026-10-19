@@ -1,8 +1,9 @@
 use super::*;
-use nocterm_ai::acp;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::ToolRecord;
 
 fn message(text: &str) -> Entry {
-    Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
+    Entry::User(vec![Content::text(text)])
 }
 fn top(item_ix: usize, offset: f32) -> ListOffset {
     ListOffset {
@@ -13,13 +14,11 @@ fn top(item_ix: usize, offset: f32) -> ListOffset {
 fn mixed() -> Vec<Entry> {
     vec![
         Entry::Thought("before messages".into()),
-        Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-            "question",
-        ))]),
-        Entry::Tool(acp::ToolCall::new("tool", "Inspect")),
+        Entry::User(vec![Content::text("question")]),
+        Entry::Tool(ToolRecord::new("tool", "Inspect")),
         Entry::Thought("thinking".into()),
         Entry::Agent("answer".into()),
-        Entry::Content(acp::ContentBlock::Text(acp::TextContent::new("content"))),
+        Entry::Content(Content::text("content")),
         message("final"),
     ]
 }
@@ -72,7 +71,7 @@ fn cache_refreshes_only_appended_and_dirty_classifications() {
     entries[9998] = message("streamed text grows without changing classification");
     navigation.observe(1.into(), &entries, &[9998]);
     assert_eq!(navigation.inspections, 10_001);
-    entries.push(Entry::Tool(acp::ToolCall::new("new", "Tool")));
+    entries.push(Entry::Tool(ToolRecord::new("new", "Tool")));
     entries.push(message("new answer"));
     entries[0] = Entry::Thought("old row changes classification".into());
     navigation.observe(1.into(), &entries, &[0, 10_001, usize::MAX]);
@@ -121,7 +120,7 @@ fn truncate_chat_switch_clear_empty_and_tools_only_reset_targets() {
     assert_eq!(navigation.first(top(0, 10.)), None);
     navigation.observe(
         2.into(),
-        &[Entry::Tool(acp::ToolCall::new("only", "Tool"))],
+        &[Entry::Tool(ToolRecord::new("only", "Tool"))],
         &[],
     );
     assert!(navigation.anchors.is_empty());

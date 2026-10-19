@@ -1,6 +1,10 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
 
@@ -12,10 +16,7 @@ fn server_names(f: &Fixture) -> Vec<String> {
         .iter()
         .map(|servers| {
             assert_eq!(servers.len(), 1);
-            match &servers[0] {
-                acp::McpServer::Stdio(server) => server.name.clone(),
-                other => panic!("unexpected server {other:?}"),
-            }
+            servers[0].name.clone()
         })
         .collect()
 }
@@ -29,7 +30,7 @@ fn run(
     terminal: &str,
 ) -> (
     BridgeCall,
-    oneshot::Receiver<Result<serde_json::Value, String>>,
+    oneshot::Receiver<Result<serde_json::Value, nocterm_ai::ToolFailure>>,
 ) {
     let (respond, response) = oneshot::channel();
     (
@@ -55,7 +56,7 @@ fn each_chat_gives_its_agent_a_server_of_its_own(cx: &mut TestAppContext) {
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     // Not a draft, so the second chat does not replace it.
-    cx.update(|cx| first.update(cx, |thread, _| thread.name = Some("first".into())));
+    cx.update(|cx| first.update(cx, |thread, cx| thread.rename(Some("first".into()), cx)));
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_eq!(
@@ -82,10 +83,10 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update(|cx| {
         first.update(cx, |thread, cx| {
-            thread.name = Some("first".into());
+            thread.rename(Some("first".into()), cx);
             // The first chat has no terminals.
             thread.attach(Attachment::Terminal(f.terminal), cx);
-            assert!(thread.composer.attachments.is_empty());
+            assert!(thread.composer().attachments().is_empty());
         })
     });
     new_chat(&f, cx);
@@ -118,21 +119,17 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            second.read(cx).tools.len(),
+            second.read(cx).tool_cards().len(),
             1,
             "the approval waits in the chat that asked"
         );
-        assert!(first.read(cx).tools.is_empty());
+        assert!(first.read(cx).tool_cards().is_empty());
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("agent-approvals").visible());
         f.panel.update(cx, |panel, cx| {
-            panel.active = panel
-                .threads
-                .iter()
-                .position(|thread| thread.entity_id() == first.entity_id());
-            cx.notify();
+            panel.open_thread(first.entity_id(), cx);
         });
         window.render_frame(cx);
         assert!(
@@ -141,13 +138,17 @@ fn tool_calls_and_approvals_reach_the_chat_that_owns_the_registration(cx: &mut T
         );
     })
     .unwrap();
-    cx.update(|cx| second.update(cx, |thread, cx| thread.approve_tool(0, true, false, cx)));
+    cx.update(|cx| {
+        second.update(cx, |thread, cx| {
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx)
+        })
+    });
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
     let answer = response.now_or_never().unwrap().unwrap().unwrap();
     assert_eq!(answer["completion"], "prompt_returned");
-    assert_eq!(f.access.sent.borrow().as_slice(), ["uptime"]);
+    assert_eq!(f.access.sent().borrow().as_slice(), ["uptime"]);
 }
 
 #[gpui_kit::test]
@@ -156,7 +157,7 @@ fn prompts_tell_the_agent_to_report_unreachable_servers(cx: &mut TestAppContext)
     new_chat(&f, cx);
     exchange(&f, "check the server", "ok", cx);
     let prompt = f.commands.prompts.lock().unwrap()[0].clone();
-    let acp::ContentBlock::Text(context) = &prompt.prompt[0] else {
+    let Content::Text(context) = &prompt.content[0] else {
         panic!("the prompt starts with its context");
     };
     assert!(
@@ -175,14 +176,65 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let (call, response) = cx.update(|cx| run(registration(&thread, cx), "t99"));
+    f.calls.try_send(call).unwrap();
+    cx.run_until_parked();
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.handle_tool(call, cx);
-            thread.approve_tool(0, true, false, cx);
+            thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
         })
     });
     let error = response.now_or_never().unwrap().unwrap().unwrap_err();
-    assert!(error.starts_with("Terminal was detached"), "{error}");
-    assert!(error.contains("Tell the user right away"), "{error}");
-    assert!(f.access.sent.borrow().is_empty());
+    assert_eq!(
+        error.message(),
+        "Terminal was detached or chat is unavailable. Tell the user right away, in one short sentence, which terminal or server you could not reach and why. Do not try to connect another way: nocterm holds the credentials."
+    );
+    assert!(f.access.sent().borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    for input in [
+        "/var/log/syslog investigate",
+        "/unknown ordinary",
+        "  /$skill:review аргументы",
+    ] {
+        thread.update(cx, |thread, cx| {
+            restore_entries(
+                &f,
+                thread,
+                vec![Entry::Agent("remember this context".into())],
+                cx,
+            );
+            restore_pending_history(&f, thread, cx);
+            report_control(
+                thread,
+                SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                    "$skill:review",
+                    "Review",
+                )]),
+                cx,
+            );
+            thread.send(input.into(), cx);
+        });
+        cx.run_until_parked();
+        let prompts = f.commands.prompts.lock().unwrap();
+        let request = prompts.last().unwrap();
+        if input.contains("$skill:review") {
+            assert_eq!(request.content.len(), 1);
+            assert!(matches!(&request.content[0], Content::Text(text) if text.text == input));
+        } else {
+            assert_eq!(request.content.len(), 3);
+            assert!(
+                matches!(&request.content[0], Content::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
+            );
+            assert!(
+                matches!(&request.content[1], Content::Text(text) if text.text.contains("Assistant: remember this context"))
+            );
+        }
+        drop(prompts);
+        complete_active(&f, cx);
+    }
 }

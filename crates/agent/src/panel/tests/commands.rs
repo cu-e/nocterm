@@ -1,17 +1,20 @@
 use super::*;
 use gpui_kit::px;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::SessionUpdate;
 
-fn commands(f: &Fixture, values: Vec<acp::AvailableCommand>, text: &str, cx: &mut TestAppContext) {
+fn commands(f: &Fixture, values: Vec<AvailableCommand>, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                thread.state.commands = values;
+                report_control(thread, SessionUpdate::AvailableCommandsUpdate(values), cx);
                 cx.notify();
             });
-            panel
-                .input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
         });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
+
         window.render_frame(cx);
     })
     .unwrap();
@@ -29,26 +32,16 @@ fn clicked_unicode_command_keeps_focus_and_appends_at_end(cx: &mut TestAppContex
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "/",
         cx,
     );
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(("slash-command", 0usize), cx);
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
         window.input("код", cx);
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            "/обзор код"
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор код");
     })
     .unwrap();
     assert!(f.commands.prompts.lock().unwrap().is_empty());
@@ -56,15 +49,15 @@ fn clicked_unicode_command_keeps_focus_and_appends_at_end(cx: &mut TestAppContex
 
 #[gpui_kit::test]
 fn long_description_has_same_row_height_and_bounded_full_details(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18.);
+    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let long = "First paragraph\n\n## Instructions\n\n".to_string()
         + &"Extensive description with examples.\n".repeat(150);
     commands(
         &f,
         vec![
-            acp::AvailableCommand::new("short", "Short description"),
-            acp::AvailableCommand::new("long", long),
+            AvailableCommand::new("short", "Short description"),
+            AvailableCommand::new("long", long),
         ],
         "/",
         cx,
@@ -115,7 +108,7 @@ fn typed_command_is_highlighted_and_details_only_appear_on_token_hover(cx: &mut 
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("long", "Full command details")],
+        vec![AvailableCommand::new("long", "Full command details")],
         "/long arguments",
         cx,
     );
@@ -135,7 +128,7 @@ fn typed_command_is_highlighted_and_details_only_appear_on_token_hover(cx: &mut 
         window.render_frame(cx);
         assert!(window.try_find("command-details").is_some());
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "/long arguments"
         );
     })
@@ -149,7 +142,7 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
     commands(
         &f,
         (0..20)
-            .map(|i| acp::AvailableCommand::new(format!("command{i}"), "Description"))
+            .map(|i| AvailableCommand::new(format!("command{i}"), "Description"))
             .collect(),
         "/",
         cx,
@@ -161,11 +154,14 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let panel = f.panel.read(cx);
-        assert_eq!(panel.commands.selected, 12);
-        assert_eq!(panel.input.read(cx).value().as_ref(), "/");
-        assert!(panel.input.read(cx).focus_handle(cx).is_focused(window));
-        let bounds = panel.commands.scroll.bounds_for_item(12).unwrap();
-        let visible = panel.commands.scroll.viewport_bounds();
+        assert_eq!(
+            window.find(("command-hover", 12usize)).selected(),
+            Some(true)
+        );
+        assert_eq!(panel.composer_text(cx).as_ref(), "/");
+        assert!(panel.composer_focus(cx).is_focused(window));
+        let bounds = window.find(("command-hover", 12usize)).bounds();
+        let visible = window.find("agent-slash-commands").bounds();
         assert!(bounds.top() >= visible.top());
         assert!(bounds.bottom() <= visible.bottom());
     })
@@ -175,66 +171,55 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let panel = f.panel.read(cx);
-        assert_eq!(panel.commands.selected, 14);
-        assert_eq!(panel.input.read(cx).value().as_ref(), "/command14 ");
-        let bounds = panel.commands.scroll.bounds_for_item(14).unwrap();
-        let visible = panel.commands.scroll.viewport_bounds();
+        assert_eq!(
+            window.find(("command-hover", 14usize)).selected(),
+            Some(true)
+        );
+        assert_eq!(panel.composer_text(cx).as_ref(), "/command14 ");
+        let bounds = window.find(("command-hover", 14usize)).bounds();
+        let visible = window.find("agent-slash-commands").bounds();
         assert!(bounds.bottom() <= visible.bottom());
-        panel
-            .input
-            .clone()
-            .update(cx, |input, cx| input.set_selected_range(0..0, cx));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(f.panel.read(cx).commands.selected, 14));
-    cx.update_window(f.handle, |_, window, cx| {
-        f.panel
-            .read(cx)
-            .input
-            .clone()
-            .update(cx, |input, cx| input.set_value("/command0", window, cx));
+        window.press("home", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(f.panel.read(cx).commands.selected, 0);
         assert_eq!(
-            f.panel
-                .read(cx)
-                .commands
-                .scroll
-                .logical_scroll_top()
-                .item_ix,
-            0
+            window.find(("command-hover", 14usize)).selected(),
+            Some(true)
         );
+    })
+    .unwrap();
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/command0", window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/command0");
         assert_eq!(
-            f.panel
-                .read(cx)
-                .commands
-                .scroll
-                .logical_scroll_top()
-                .offset_in_item,
-            px(0.)
+            window.find(("command-hover", 0usize)).selected(),
+            Some(true)
+        );
+        let row = window.find(("command-hover", 0usize)).bounds();
+        let viewport = window.find("agent-slash-commands").bounds();
+        assert!(
+            (row.top() - viewport.top() - px(4.)).abs() <= px(1.),
+            "first command must align with menu padding"
         );
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    commands(
-        &f,
-        vec![acp::AvailableCommand::new("обзор", "Review")],
-        "",
-        cx,
-    );
+    commands(&f, vec![AvailableCommand::new("обзор", "Review")], "", cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.input("/обзор аргументы", cx)
     })
@@ -242,22 +227,18 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        let input = f.panel.read(cx).input.read(cx);
-        assert_eq!(input.tokens().len(), 1);
-        assert_eq!(
-            input.selected_range(),
-            "/обзор аргументы".len().."/обзор аргументы".len()
-        );
+        assert!(window.try_find("composer-command-token").is_some());
+        // Appending below proves the native caret stayed at the original UTF-8 end.
         window.input("!", cx);
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "/обзор аргументы!"
         );
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "ctrl-z ctrl-z ctrl-z");
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), ""));
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), ""));
     cx.update_window(f.handle, |_, window, cx| {
         window.input("/обзор аргументы", cx)
     })
@@ -266,38 +247,22 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("composer-command-token", cx);
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).selected_range(),
-            0.."/обзор".len()
-        );
+        // The following Backspace must remove exactly the clicked command prefix.
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "backspace");
     cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            " аргументы"
-        )
-    });
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), " аргументы"));
     cx.simulate_keystrokes(f.handle, "ctrl-z");
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
-        let input = f.panel.read(cx).input.clone();
-        input.update(cx, |input, cx| {
-            input.set_selected_range(0..0, cx);
-        });
+        window.press("home", cx);
         window.render_frame(cx);
     })
     .unwrap();
     cx.simulate_keystrokes(f.handle, "delete");
     cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
-            " аргументы"
-        )
-    });
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), " аргументы"));
     cx.simulate_keystrokes(f.handle, "ctrl-z");
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -308,7 +273,7 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
     assert!(
-        matches!(&prompts[0].prompt[0], acp::ContentBlock::Text(text) if text.text == "/обзор аргументы")
+        matches!(&prompts[0].content[0], Content::Text(text) if text.text == "/обзор аргументы")
     );
 }
 
@@ -322,23 +287,23 @@ fn model_token_hover_opens_actual_model_picker(cx: &mut TestAppContext) {
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                let mut option = acp::SessionConfigOption::select(
+                let mut option = ConfigOption::select(
                     "model",
                     "Model",
                     "one",
                     vec![
-                        acp::SessionConfigSelectOption::new("one", "First"),
-                        acp::SessionConfigSelectOption::new("two", "Second"),
+                        ConfigChoice::new("one", "First"),
+                        ConfigChoice::new("two", "Second"),
                     ],
                 );
-                option.category = Some(acp::SessionConfigOptionCategory::Model);
-                thread.state.config_options = vec![option];
+                option.category = Some(ConfigCategory::Model);
+                report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
                 cx.notify();
             });
     });
     commands(
         &f,
-        vec![acp::AvailableCommand::new("model", "Choose a model")],
+        vec![AvailableCommand::new("model", "Choose a model")],
         "/model ",
         cx,
     );
@@ -355,7 +320,6 @@ fn model_token_hover_opens_actual_model_picker(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("command-browse-models", cx);
         window.render_frame(cx);
-        assert!(f.panel.read(cx).menu == Some(crate::panel::MenuKind::Config("model".into())));
         assert!(window.try_find("agent-picker").is_some());
         assert!(window.try_find("config-model-two").is_some());
     })
@@ -369,7 +333,7 @@ fn clipboard_paste_keeps_the_command_and_arguments_editable(cx: &mut TestAppCont
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "",
         cx,
     );
@@ -383,13 +347,12 @@ fn clipboard_paste_keeps_the_command_and_arguments_editable(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        let input = f.panel.read(cx).input.read(cx);
-        assert_eq!(input.value().as_ref(), "/обзор изменения");
-        assert_eq!(input.tokens()[0].range(), 0.."/обзор".len());
         assert_eq!(
-            input.selected_range(),
-            "/обзор изменения".len().."/обзор изменения".len()
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "/обзор изменения"
         );
+        assert!(window.try_find("composer-command-token").is_some());
+        // The next insertion proves end-caret placement without an Input entity.
         assert!(window.try_find("command-details").is_none());
         window.input("!", cx);
     })
@@ -397,7 +360,7 @@ fn clipboard_paste_keeps_the_command_and_arguments_editable(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            f.panel.read(cx).input.read(cx).value().as_ref(),
+            f.panel.read(cx).composer_text(cx).as_ref(),
             "/обзор изменения!"
         )
     });
@@ -411,8 +374,8 @@ fn typing_slash_then_arrow_selects_before_tab_without_moving_the_caret(cx: &mut 
     commands(
         &f,
         vec![
-            acp::AvailableCommand::new("first", "First action"),
-            acp::AvailableCommand::new("second", "Second action"),
+            AvailableCommand::new("first", "First action"),
+            AvailableCommand::new("second", "Second action"),
         ],
         "",
         cx,
@@ -421,21 +384,34 @@ fn typing_slash_then_arrow_selects_before_tab_without_moving_the_caret(cx: &mut 
         window.input("/", cx);
         window.render_frame(cx);
         window.press("up", cx);
-        assert_eq!(f.panel.read(cx).commands.selected, 1);
-        assert_eq!(f.panel.read(cx).input.read(cx).selected_range(), 1..1);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 1usize)).selected(),
+            Some(true)
+        );
+        window.input("?", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/?");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("backspace", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("up", cx);
         window.press("down", cx);
-        assert_eq!(f.panel.read(cx).commands.selected, 0);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 0usize)).selected(),
+            Some(true)
+        );
         window.press("down", cx);
         window.press("tab", cx);
-        assert_eq!(f.panel.read(cx).input.read(cx).value().as_ref(), "/second ");
-        assert!(
-            f.panel
-                .read(cx)
-                .input
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window)
-        );
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/second ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
     })
     .unwrap();
     assert!(f.commands.prompts.lock().unwrap().is_empty());
@@ -447,7 +423,7 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
     new_chat(&f, cx);
     commands(
         &f,
-        vec![acp::AvailableCommand::new("review", "Review changes")],
+        vec![AvailableCommand::new("review", "Review changes")],
         " /",
         cx,
     );
@@ -475,11 +451,13 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
             1,
             "dismissed suggestions must not swallow Escape"
         );
-        f.panel.update(cx, |panel, cx| {
-            panel.input.update(cx, |input, cx| {
-                input.set_value("/review arguments", window, cx)
-            });
-        });
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "/review arguments",
+            window,
+            cx,
+        );
+
         window.render_frame(cx);
         assert!(window.try_find("agent-slash-commands").is_none());
         window.press("escape", cx);
@@ -490,4 +468,194 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new("обзор", "Review")]),
+            cx,
+        );
+
+        cx.notify();
+    });
+    set_input(&f, "/обзор args", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("composer-command-token").is_some());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::AvailableCommandsUpdate(Vec::new()),
+            cx,
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
+        assert!(window.try_find("composer-command-token").is_none());
+        window.input("界", cx);
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
+}
+
+#[gpui_kit::test]
+fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    f.panel.update(cx, |panel, cx| {
+        panel.current().unwrap().update(cx, |thread, cx| {
+            report_control(
+                thread,
+                SessionUpdate::AvailableCommandsUpdate(
+                    (0..1000)
+                        .map(|index| {
+                            let command = AvailableCommand::new(
+                                format!("skill{index:04}"),
+                                "description ".repeat(1000),
+                            );
+                            if index % 2 == 1 {
+                                command.hint("Provide optional arguments")
+                            } else {
+                                command
+                            }
+                        })
+                        .collect(),
+                ),
+                cx,
+            );
+
+            cx.notify();
+        })
+    });
+    set_input(&f, "", cx);
+    cx.update_window(f.handle, |_, window, cx| window.input("/", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("slash-command", 0usize)).is_some());
+        assert!(window.try_find(("slash-command", 999usize)).is_none());
+        let first = window.find(("slash-command", 0usize)).bounds();
+        let second = window.find(("slash-command", 1usize)).bounds();
+        assert!(
+            second.size.height > first.size.height,
+            "optional hint must change row height"
+        );
+        window.press("up", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
+        );
+        let row = window.find(("slash-command", 999usize)).bounds();
+        let viewport = window.find("agent-slash-commands").bounds();
+        assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
+        window.input("?", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/?");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("backspace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("up", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("command-hover", 999usize)).selected(),
+            Some(true)
+        );
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.press("tab", cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0999 ");
+        window.press("tab", cx);
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0000 ");
+        assert!(window.try_find(("slash-command", 0usize)).is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.current().unwrap().update(cx, |thread, cx| {
+                report_control(
+                    thread,
+                    SessionUpdate::AvailableCommandsUpdate(vec![
+                        AvailableCommand::new("review", "Review changes"),
+                        AvailableCommand::new("rename", "Rename chat"),
+                    ]),
+                    cx,
+                );
+                cx.notify();
+            });
+        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
+
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_some());
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "escape");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_none());
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/r", window, cx);
+
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
+    cx.simulate_keystrokes(f.handle, "shift-tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/rename ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab enter");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.input("these changes", cx);
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "/review these changes"
+        );
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
 }

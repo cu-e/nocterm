@@ -2,14 +2,18 @@
 
 The application is the composition root. `src/main.rs` loads paths, settings and
 design tokens and passes them, with the SSH/local transports and the vault, to
-`src/bootstrap.rs`, which installs every global in one order shared with the GUI
-tests and registers independent workspace features. The [dependency map](architecture/dependencies.md) is generated from
+`src/bootstrap.rs`, which installs services in one order shared with the GUI
+tests and registers independent workspace features. The vault adapter is passed
+as a `VaultAccess` port; its installed feature handle owns settings observation
+and is retained by the app. The [dependency map](architecture/dependencies.md) is generated from
 Cargo metadata; `cargo xtask architecture` enforces its declared layers and
 rejects runtime GUI dependencies below the UI layer. Service crates sit beside
 the UI layer: they own GPUI entities and background work but no views, so they
 depend on GPUI alone, never on the component library, UI or features. The
-[architecture and security audit](ARCHITECTURE_SECURITY_AUDIT.md) records findings,
+[storage and security boundaries](ARCHITECTURE_SECURITY_AUDIT.md) records protections,
 regression evidence and residual constraints.
+The [architecture guardrails](architecture/guardrails.md) also measure existing
+debt inside crates and prohibit its growth through an exact source inventory.
 
 ## Layers
 
@@ -19,7 +23,7 @@ regression evidence and residual constraints.
 | domain | domain, foundation | none | [Domain](architecture/domain.md) |
 | adapter | domain, foundation | none | [Adapters](architecture/adapter.md) |
 | service | service, domain, foundation | GPUI only | [Services](architecture/service.md) |
-| ui | ui, domain, foundation | yes | [UI](architecture/ui.md) |
+| ui | service, ui, domain, foundation | yes | [UI](architecture/ui.md) |
 | feature | service, ui, domain, foundation | yes | [Features](architecture/feature.md) |
 | app | everything but tooling | yes | [App and tooling](architecture/app.md) |
 | tooling | everything but app and tooling | — | [App and tooling](architecture/app.md) |

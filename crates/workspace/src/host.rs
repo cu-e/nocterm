@@ -2,7 +2,7 @@
 //!
 //! The active tab decides. A remote session that can run programs is reached
 //! over its own connection; anything else is this computer, through the
-//! runner the application installs with [`set_local_exec`]. Features that
+//! runner supplied explicitly by application composition. Features that
 //! follow the active host — the resource monitor, the containers panel —
 //! resolve it the same way with [`Host::resolve`] and hear of changes
 //! through [`follow_active_session`], so switching tabs means the same thing
@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::{App, Context, Entity, Global, SharedString, Subscription};
+use gpui_kit::{Context, Entity, SharedString, Subscription};
 use nocterm_session::{ExecRequest, HostExec, Target};
 
 use crate::{SessionContext, Workspace, WorkspaceEvent};
@@ -102,20 +102,6 @@ pub struct ProgramSpec {
     pub program: ExecRequest,
     /// A known inner shell's syntax. Log followers and other programs leave this unset.
     pub shell_syntax: Option<ShellSyntax>,
-}
-
-struct LocalExec(Arc<dyn HostExec>);
-
-impl Global for LocalExec {}
-
-/// Installs the program runner for this computer.
-pub fn set_local_exec(exec: Arc<dyn HostExec>, cx: &mut App) {
-    cx.set_global(LocalExec(exec));
-}
-
-/// The program runner for this computer, when the application installed one.
-pub fn local_exec(cx: &App) -> Option<Arc<dyn HostExec>> {
-    cx.try_global::<LocalExec>().map(|local| local.0.clone())
 }
 
 /// Calls `follow` with the active session of `workspace` each time it

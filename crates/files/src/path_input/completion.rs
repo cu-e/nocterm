@@ -20,18 +20,24 @@ pub(super) struct Candidate {
     pub directory: bool,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PathError {
+    #[error("Enter a directory path.")]
+    EmptyOrInvalid,
+    #[error("The home directory is unavailable.")]
+    HomeUnavailable,
+}
+
 pub(super) fn resolve(
     value: &str,
     base: &Directory,
     home: Option<&Directory>,
-) -> Result<Directory, String> {
+) -> Result<Directory, PathError> {
     if value.is_empty() || value.contains('\0') {
-        return Err("Enter a directory path.".into());
+        return Err(PathError::EmptyOrInvalid);
     }
     if value == "~" {
-        return home
-            .cloned()
-            .ok_or_else(|| "The home directory is unavailable.".into());
+        return home.cloned().ok_or(PathError::HomeUnavailable);
     }
     if let Some(relative) = value.strip_prefix("~/").or_else(|| {
         matches!(base, Directory::Local(_))
@@ -41,7 +47,7 @@ pub(super) fn resolve(
     }) {
         return home
             .map(|home| join(home, relative))
-            .ok_or_else(|| "The home directory is unavailable.".into());
+            .ok_or(PathError::HomeUnavailable);
     }
     Ok(join(base, value))
 }
@@ -61,7 +67,7 @@ pub(super) fn query(
     value: &str,
     base: &Directory,
     home: Option<&Directory>,
-) -> Result<Query, String> {
+) -> Result<Query, PathError> {
     let value = if value == "~" { "~/" } else { value };
     let separator = value
         .rfind(|c| c == '/' || (c == '\\' && cfg!(windows) && matches!(base, Directory::Local(_))));
@@ -82,11 +88,21 @@ pub(super) fn query(
 
 #[derive(Default)]
 pub(super) struct Cycle {
-    pub candidates: Vec<Candidate>,
-    pub selected: Option<usize>,
-    pub head: String,
+    candidates: Vec<Candidate>,
+    selected: Option<usize>,
+    head: String,
 }
 impl Cycle {
+    pub(super) fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+    pub(super) fn candidate(&self, index: usize) -> &Candidate {
+        &self.candidates[index]
+    }
+    pub(super) fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
     pub(super) fn new(query: Query, entries: &[Candidate]) -> Self {
         Self {
             candidates: entries

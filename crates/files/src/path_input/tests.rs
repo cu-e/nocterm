@@ -1,33 +1,16 @@
 //! Native Input keyboard routing and async completion races.
 use super::*;
-use futures::{FutureExt as _, channel::oneshot};
 use gpui_kit::{AnyWindowHandle, TestAppContext, WindowOptions, px, test::TestWindowExt as _};
-use nocterm_session::{DirEntry, FsError, FsFuture};
+use nocterm_session::{
+    DirEntry, FsError,
+    testing::{InMemoryFs, PendingListing},
+};
 use std::sync::Mutex;
 
-type Reply = oneshot::Sender<Result<Vec<DirEntry>, FsError>>;
-#[derive(Default)]
-pub(super) struct PendingFs(Mutex<Vec<(String, Reply)>>);
-impl RemoteFs for PendingFs {
-    fn home(&self) -> FsFuture<String> {
-        async { Ok("/home/test".into()) }.boxed()
-    }
-    fn read_dir(&self, path: &str) -> FsFuture<Vec<DirEntry>> {
-        let (send, receive) = oneshot::channel();
-        self.0.lock().unwrap().push((path.into(), send));
-        async { receive.await.unwrap_or(Err(FsError::NotConnected)) }.boxed()
-    }
-}
-impl PendingFs {
-    pub(super) fn has_requests(&self) -> bool {
-        !self.0.lock().unwrap().is_empty()
-    }
-
-    pub(super) fn take(&self, expected: &str) -> Reply {
-        let (path, reply) = self.0.lock().unwrap().remove(0);
-        assert_eq!(path, expected);
-        reply
-    }
+pub(super) fn take(fs: &InMemoryFs, expected: &str) -> PendingListing {
+    let reply = fs.take_pending_listing().expect("a pending listing");
+    assert_eq!(reply.path(), expected);
+    reply
 }
 pub(super) fn entry(name: &str, directory: bool) -> DirEntry {
     DirEntry {
@@ -41,19 +24,34 @@ pub(super) fn entry(name: &str, directory: bool) -> DirEntry {
         size: None,
     }
 }
+pub(super) fn native_test_path(name: &str) -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::path::PathBuf::from("C:\\").join(name)
+    } else {
+        std::path::PathBuf::from("/").join(name)
+    }
+}
 pub(super) fn fixture(
     cx: &mut TestAppContext,
-) -> (AnyWindowHandle, Entity<PathInput>, Arc<PendingFs>) {
-    let fs = Arc::new(PendingFs::default());
+) -> (AnyWindowHandle, Entity<PathInput>, Arc<InMemoryFs>) {
+    fixture_with_local(cx, Arc::new(InMemoryFs::default()))
+}
+pub(super) fn fixture_with_local(
+    cx: &mut TestAppContext,
+    local: Arc<dyn LocalFs>,
+) -> (AnyWindowHandle, Entity<PathInput>, Arc<InMemoryFs>) {
+    let fs = Arc::new(InMemoryFs::default());
+    fs.script_listings();
     let (window, input) = cx.update(|cx| {
         gpui_kit::init(cx);
+        install_bindings(cx);
         nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            nocterm_ui::SettingsStore::in_memory(Default::default()),
+            (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| PathInput::new(window, cx))
+            cx.new(|cx| PathInput::new(local, window, cx))
         })
         .unwrap()
     });
@@ -70,12 +68,16 @@ pub(super) fn fixture(
 pub(super) fn start(
     value: &str,
     handle: AnyWindowHandle,
-    input: &Entity<PathInput>,
+    _input: &Entity<PathInput>,
     cx: &mut TestAppContext,
 ) {
     cx.update_window(handle, |_, window, cx| {
-        input.update(cx, |this, cx| this.edit(window, cx));
         window.render_frame(cx);
+        if window.try_find("explorer-path-display").is_some() {
+            window.click("explorer-path-display", cx);
+        } else {
+            window.press("ctrl-a", cx);
+        }
         if value.is_empty() {
             window.press("backspace", cx);
         } else {
@@ -86,8 +88,43 @@ pub(super) fn start(
     .unwrap();
     cx.run_until_parked();
 }
-pub(super) fn value(input: &Entity<PathInput>, cx: &mut TestAppContext) -> String {
-    input.read_with(cx, |input, cx| input.input.read(cx).value().to_string())
+pub(super) fn value(_input: &Entity<PathInput>, cx: &mut TestAppContext) -> String {
+    observed(cx, |window| {
+        window
+            .find("explorer-path-editor")
+            .value()
+            .unwrap()
+            .to_owned()
+    })
+}
+pub(super) fn observed<T>(cx: &mut TestAppContext, observe: impl FnOnce(&Window) -> T) -> T {
+    let handle = cx.update(|cx| cx.windows()[0]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        observe(window)
+    })
+    .unwrap()
+}
+pub(super) fn visible(cx: &mut TestAppContext, id: &'static str) -> bool {
+    observed(cx, |window| {
+        if id == "path-completion-popup" {
+            gpui_kit::base::test_support::snapshots(window)
+                .iter()
+                .any(|element| {
+                    element.label() == Some("Directory suggestions") && element.visible()
+                })
+        } else {
+            window.try_find(id).is_some_and(|element| element.visible())
+        }
+    })
+}
+pub(super) fn suggestions(cx: &mut TestAppContext) -> Vec<String> {
+    observed(cx, |window| {
+        (0usize..100)
+            .map_while(|index| window.try_find(("path-suggestion", index)))
+            .map(|element| element.label().unwrap().to_owned())
+            .collect()
+    })
 }
 
 #[gpui_kit::test]
@@ -103,7 +140,7 @@ fn native_tab_excludes_files_cycles_folders_and_enter_emits_only_navigation(
         })
     });
     start("/etc/s", window, &input, cx);
-    fs.take("/etc/")
+    take(&fs, "/etc/")
         .send(Ok(vec![
             entry("ssh", true),
             entry("settings", true),
@@ -128,7 +165,7 @@ fn native_tab_excludes_files_cycles_folders_and_enter_emits_only_navigation(
         [Directory::Remote("/etc/settings/".into())]
     );
     assert!(
-        fs.0.lock().unwrap().is_empty(),
+        !fs.has_pending_listings(),
         "cycling uses the same cached directory"
     );
 }
@@ -137,7 +174,7 @@ fn native_tab_excludes_files_cycles_folders_and_enter_emits_only_navigation(
 fn pending_tabs_are_applied_and_editing_discards_stale_remote_response(cx: &mut TestAppContext) {
     let (window, input, fs) = fixture(cx);
     start("/etc/", window, &input, cx);
-    let stale = fs.take("/etc/");
+    let stale = take(&fs, "/etc/");
     cx.update_window(window, |_, window, cx| {
         window.press("tab", cx);
         window.input("new", cx);
@@ -147,9 +184,9 @@ fn pending_tabs_are_applied_and_editing_discards_stale_remote_response(cx: &mut 
     let _ = stale.send(Ok(vec![entry("stale", true)]));
     cx.run_until_parked();
     assert_eq!(value(&input, cx), "/etc/new");
-    assert!(input.read_with(cx, |input, _| input.cycle.is_none()));
+    assert!(!visible(cx, "path-completion-popup"));
     start("~/", window, &input, cx);
-    let reply = fs.take("/home/test/");
+    let reply = take(&fs, "/home/test/");
     cx.update_window(window, |_, window, cx| {
         window.press("tab", cx);
         window.press("tab", cx);
@@ -172,57 +209,55 @@ fn error_preserves_draft_escape_cancels_and_session_reset_releases_completion(
 ) {
     let (window, input, fs) = fixture(cx);
     start("missing", window, &input, cx);
-    fs.take("/work")
+    take(&fs, "/work")
         .send(Err(FsError::PermissionDenied {
             path: "/work".into(),
         }))
         .unwrap();
     cx.run_until_parked();
     assert_eq!(value(&input, cx), "missing");
-    assert!(input.read_with(cx, |input, _| {
-        input
-            .error
-            .as_ref()
-            .is_some_and(|error| error.contains("permission denied"))
-    }));
+    assert!(observed(cx, |window| window
+        .find("explorer-path-error")
+        .label()
+        .unwrap()
+        .contains("permission denied")));
     cx.update_window(window, |_, window, cx| {
         window.press("escape", cx);
     })
     .unwrap();
-    assert!(!input.read_with(cx, |input, _| input.editing));
+    assert!(visible(cx, "explorer-path-display"));
     start("~/", window, &input, cx);
-    let stale = fs.take("/home/test/");
+    let stale = take(&fs, "/home/test/");
     input.update(cx, |input, cx| input.reset_remote(None, cx));
     let _ = stale.send(Ok(vec![entry("old-host", true)]));
     cx.run_until_parked();
-    assert!(input.read_with(cx, |input, _| input.directory.is_none()
-        && input.cycle.is_none()));
+    assert!(!visible(cx, "explorer-path-display") && !visible(cx, "explorer-path-editor"));
 }
 
 #[gpui_kit::test]
 fn native_local_completion_includes_hidden_unicode_directories_and_excludes_files(
     cx: &mut TestAppContext,
 ) {
-    let (window, input, _) = fixture(cx);
-    let directory = tempfile::tempdir().unwrap();
-    std::fs::create_dir(directory.path().join("資料")).unwrap();
-    std::fs::create_dir(directory.path().join(".hidden folder")).unwrap();
-    std::fs::write(directory.path().join(".hidden file"), b"a").unwrap();
+    let directory = native_test_path("completion-test");
+    let local = InMemoryFs::default();
+    local.seed_native_directory(&directory).unwrap();
+    local
+        .seed_native_directory(&directory.join("資料"))
+        .unwrap();
+    local
+        .seed_native_directory(&directory.join(".hidden folder"))
+        .unwrap();
+    local
+        .seed_native_file(&directory.join(".hidden file"), b"a".to_vec())
+        .unwrap();
+    let (window, input, _) = fixture_with_local(cx, Arc::new(local));
     input.update(cx, |input, cx| {
-        input.accept(Directory::Local(directory.path().into()), None, cx)
+        input.accept(Directory::Local(directory.clone()), None, cx)
     });
     start("", window, &input, cx);
     cx.run_until_parked();
     assert_eq!(value(&input, cx), ".hidden folder/");
-    assert_eq!(
-        input.read_with(cx, |input, _| input
-            .cycle
-            .as_ref()
-            .unwrap()
-            .candidates
-            .len()),
-        2
-    );
+    assert_eq!(suggestions(cx).len(), 2);
     cx.update_window(window, |_, window, cx| {
         window.press("tab", cx);
     })
@@ -242,14 +277,16 @@ fn path_and_suggestion_are_clickable_and_single_folder_tab_descends(cx: &mut Tes
     })
     .unwrap();
     cx.run_until_parked();
-    fs.take("/etc/").send(Ok(vec![entry("ssh", true)])).unwrap();
+    take(&fs, "/etc/")
+        .send(Ok(vec![entry("ssh", true)]))
+        .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.press("tab", cx);
     })
     .unwrap();
     cx.run_until_parked();
-    fs.take("/etc/ssh/")
+    take(&fs, "/etc/ssh/")
         .send(Ok(vec![
             entry("config", false),
             entry("keys", true),
@@ -268,7 +305,7 @@ fn path_and_suggestion_are_clickable_and_single_folder_tab_descends(cx: &mut Tes
     })
     .unwrap();
     assert!(
-        input.read_with(cx, |input, _| input.cycle.is_none()),
+        !visible(cx, "path-completion-popup"),
         "Undo is a native edit that restarts completion"
     );
 }
@@ -289,7 +326,8 @@ fn completion_ignores_unrepresentable_or_protocol_invalid_names() {
 fn navigation_failure_keeps_draft_and_success_restores_display_focus(cx: &mut TestAppContext) {
     let (handle, input, _) = fixture(cx);
     cx.update_window(handle, |_, window, cx| {
-        input.update(cx, |input, cx| input.edit(window, cx));
+        window.render_frame(cx);
+        window.click("explorer-path-display", cx);
         window.input("/missing file", cx);
         window.press("enter", cx);
     })
@@ -298,7 +336,7 @@ fn navigation_failure_keeps_draft_and_success_restores_display_focus(cx: &mut Te
         input.navigation_failed("Not a directory".into(), cx)
     });
     assert_eq!(value(&input, cx), "/missing file");
-    assert!(input.read_with(cx, |input, _| input.editing && !input.navigating));
+    assert!(visible(cx, "explorer-path-editor"));
     cx.update_window(handle, |_, window, cx| {
         window.press("ctrl-a", cx);
         window.input("/valid folder", cx);
@@ -310,10 +348,12 @@ fn navigation_failure_keeps_draft_and_success_restores_display_focus(cx: &mut Te
     });
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(input.read(cx).focus.is_focused(window));
+        assert_eq!(window.find("explorer-path-display").focused(), Some(true));
         window.press("enter", cx);
         assert!(
-            input.read(cx).editing,
+            window
+                .try_find("explorer-path-editor")
+                .is_some_and(|editor| editor.visible()),
             "Display remains keyboard-operable after navigation"
         );
     })
@@ -324,7 +364,9 @@ fn navigation_failure_keeps_draft_and_success_restores_display_focus(cx: &mut Te
 fn directory_refresh_invalidates_cache_and_cancels_pending_completion(cx: &mut TestAppContext) {
     let (handle, input, fs) = fixture(cx);
     start("/etc/", handle, &input, cx);
-    fs.take("/etc/").send(Ok(vec![entry("old", true)])).unwrap();
+    take(&fs, "/etc/")
+        .send(Ok(vec![entry("old", true)]))
+        .unwrap();
     cx.run_until_parked();
     assert_eq!(value(&input, cx), "/etc/old/");
     input.update(cx, |input, cx| {
@@ -332,17 +374,16 @@ fn directory_refresh_invalidates_cache_and_cancels_pending_completion(cx: &mut T
         input.accept(Directory::Remote("/work".into()), None, cx);
     });
     start("/etc/", handle, &input, cx);
-    let pending = fs.take("/etc/");
+    let pending = take(&fs, "/etc/");
     input.update(cx, |input, cx| {
         input.begin_navigation_with_mode(NavigationMode::CloseEditor, cx);
         input.accept(Directory::Remote("/new".into()), None, cx);
     });
     let _ = pending.send(Ok(vec![entry("late", true)]));
     cx.run_until_parked();
-    assert!(input.read_with(cx, |input, _| input.cycle.is_none()
-        && input.cache.is_none()));
+    assert!(!visible(cx, "path-completion-popup"));
     start("/etc/", handle, &input, cx);
-    fs.take("/etc/")
+    take(&fs, "/etc/")
         .send(Ok(vec![entry("fresh", true)]))
         .unwrap();
     cx.run_until_parked();
@@ -361,7 +402,7 @@ fn narrow_light_and_dark_location_keeps_selected_suggestion_visible(cx: &mut Tes
             input.accept(Directory::Remote("/work".into()), None, cx)
         });
         start("/etc/", handle, &input, cx);
-        fs.take("/etc/")
+        take(&fs, "/etc/")
             .send(Ok((0..30)
                 .map(|index| entry(&format!("folder-{index:02}"), true))
                 .collect()))
@@ -383,7 +424,7 @@ fn narrow_light_and_dark_location_keeps_selected_suggestion_visible(cx: &mut Tes
             assert!(bounds.bottom() <= window.viewport_size().height);
             window.click(("path-suggestion", 24usize), cx);
             window.press("escape", cx);
-            assert!(input.read(cx).focus.is_focused(window));
+            assert_eq!(window.find("explorer-path-display").focused(), Some(true));
         })
         .unwrap();
     }
@@ -412,18 +453,14 @@ fn clicking_non_utf8_directory_shows_readonly_diagnostic_without_lossy_draft(
             "An uneditable directory must explain why clicking failed"
         );
         assert!(
-            !input.read(cx).editing,
+            window.try_find("explorer-path-editor").is_none(),
             "Do not expose a lossy editable filename"
         );
-        assert_eq!(input.read(cx).directory, Some(Directory::Local(directory)));
-        assert!(
-            input
-                .read(cx)
-                .encoding_error
-                .as_ref()
-                .unwrap()
-                .contains("cannot be represented")
+        assert_eq!(
+            window.find("explorer-path-display").value(),
+            Some(directory.to_string_lossy().as_ref())
         );
+        assert!(error.label().unwrap().contains("cannot be represented"));
     })
     .unwrap();
     input.update(cx, |input, cx| {
@@ -437,7 +474,9 @@ fn clicking_non_utf8_directory_shows_readonly_diagnostic_without_lossy_draft(
         );
         window.click("explorer-path-display", cx);
         assert!(
-            input.read(cx).editing,
+            window
+                .try_find("explorer-path-editor")
+                .is_some_and(|editor| editor.visible()),
             "Representable paths remain editable"
         );
     })

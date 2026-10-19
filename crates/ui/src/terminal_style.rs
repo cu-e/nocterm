@@ -3,7 +3,7 @@
 use gpui_kit::{App, Hsla, Pixels, Rems, Rgba, SharedString, component::ActiveTheme, px, rems};
 use nocterm_design::Color;
 
-use crate::{ActiveDesign, SettingsExt};
+use crate::ActiveDesign;
 
 /// Everything a terminal view needs to paint, already resolved: a setting
 /// wins over a design token, which wins over the component theme.
@@ -27,9 +27,8 @@ pub struct TerminalStyle {
 }
 
 impl TerminalStyle {
-    pub fn current(cx: &App) -> Self {
+    pub fn with_settings(settings: &crate::TerminalSettings, cx: &App) -> Self {
         let tokens = cx.design();
-        let settings = cx.setting::<crate::TerminalSettings>();
         let theme = cx.theme();
         let colors = &tokens.palette(theme.is_dark()).terminal;
 
@@ -85,6 +84,32 @@ pub(crate) fn color(hsla: Hsla) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui_kit::test]
+    fn explicit_terminal_style_uses_the_supplied_settings_section(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(
+                crate::DesignTokens::builtin(),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
+                cx,
+            );
+            let supplied = crate::TerminalSettings {
+                font_size: Some(21.),
+                show_line_numbers: true,
+                ..Default::default()
+            };
+            let explicit = TerminalStyle::with_settings(&supplied, cx);
+            assert_eq!(explicit.font_size, px(21.));
+            assert!(explicit.show_line_numbers);
+            assert_ne!(
+                explicit.font_size,
+                TerminalStyle::with_settings(&crate::TerminalSettings::default(), cx).font_size
+            );
+        });
+    }
 
     #[test]
     fn colours_survive_the_round_trip_through_gpui() {

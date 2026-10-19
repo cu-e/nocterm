@@ -29,7 +29,10 @@ pub(super) fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
         gpui_kit::init(cx);
         crate::init(
             crate::DesignTokens::builtin(),
-            crate::SettingsStore::in_memory(nocterm_settings::SettingsDocument::default()),
+            (nocterm_store::SettingsConfig::in_memory(
+                nocterm_settings::SettingsDocument::default(),
+            ))
+            .install(cx),
             cx,
         );
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Probe))

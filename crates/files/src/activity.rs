@@ -29,7 +29,9 @@ impl Activity {
         }
         let finished = snapshot
             .iter()
-            .filter(|job| job.state.finished() && job.completed_files > 0)
+            .filter(|job| {
+                job.state.finished() && (job.completed_files > 0 || job.prepared_directories > 0)
+            })
             .filter(|job| {
                 !self
                     .jobs
@@ -40,22 +42,6 @@ impl Activity {
             .collect();
         self.jobs = snapshot;
         (true, finished)
-    }
-
-    /// Unfinished uploads to `target`.
-    pub(crate) fn uploads<'a>(&'a self, target: &'a Target) -> impl Iterator<Item = &'a Progress> {
-        self.jobs.iter().filter(move |job| {
-            !job.state.finished()
-                && job.direction == TransferDirection::Upload
-                && job.target == *target
-        })
-    }
-
-    /// Unfinished downloads.
-    pub(crate) fn downloads(&self) -> impl Iterator<Item = &Progress> {
-        self.jobs
-            .iter()
-            .filter(|job| !job.state.finished() && job.direction == TransferDirection::Download)
     }
 }
 
@@ -164,13 +150,14 @@ mod tests {
 
     fn job(direction: TransferDirection, destination: &str, state: TransferState) -> Progress {
         Progress {
-            id: uuid::Uuid::new_v4(),
+            id: nocterm_transfers::TransferId::from_bytes([1; 16]).unwrap(),
             target: Target::parse("u@h", None).unwrap(),
             destination: destination.into(),
             direction,
             state,
             discovered_files: 1,
             completed_files: 1,
+            prepared_directories: 0,
             skipped_files: 0,
             failed_files: 0,
             total_bytes: 1,

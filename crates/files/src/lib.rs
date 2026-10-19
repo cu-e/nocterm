@@ -1,8 +1,16 @@
-//! A split Explorer with independent local navigation and pinned remote uploads.
+//! Explorer navigation, file dialogs and transfer presentation.
+//! Browser generations, scan results and completion cursors remain private transition owners.
+//!
+//! Owns: independent pane views, path editors, selection and pinned operation dialogs.
+//! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.
+//! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `TransferService`, `ProgramOpener`,
+//! workspace `LocalTerminal` and the retained settings service handle.
+//! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
+//! Invariants: native paths keep their original names; each pane rejects stale navigation;
+//! accepted operations retain their original capability while later navigation proceeds.
 mod activity;
 mod dialogs;
 mod local;
-mod local_operations;
 mod local_pane;
 mod open;
 mod operations;
@@ -36,7 +44,7 @@ use gpui_kit::{
 use nocterm_session::{DirEntry, FsError};
 use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
-use nocterm_ui::{ActiveDesign as _, IconName, SettingsExt as _};
+use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{
     FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
 };
@@ -44,187 +52,176 @@ use operations::FileTarget;
 use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
-pub use registration::{OpenExplorerSettings, ShowTransfers, ToggleExplorer, register};
+pub use registration::{
+    Installed, OpenExplorerSettings, ShowTransfers, ToggleExplorer, install, register,
+};
 pub use settings::{
     ExplorerSettings, FILE_PLACEHOLDER, INDEXING_ENTRIES_RANGE, IndexingSettings, OpenRule,
     OpenSettings, Opener,
 };
 pub use settings_page::ExplorerPage;
 
+/// Collaborators supplied by application composition.
+#[derive(Clone)]
+pub struct Deps {
+    local: Arc<dyn nocterm_session::local_fs::LocalFs>,
+    mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
+    transfers: Arc<dyn nocterm_transfers::TransferService>,
+    opener: Arc<dyn nocterm_session::ProgramOpener>,
+}
+impl Deps {
+    pub fn new(
+        local: Arc<dyn nocterm_session::local_fs::LocalFs>,
+        mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
+        transfers: Arc<dyn nocterm_transfers::TransferService>,
+        opener: Arc<dyn nocterm_session::ProgramOpener>,
+    ) -> Self {
+        Self {
+            local,
+            mutations,
+            transfers,
+            opener,
+        }
+    }
+}
 /// Supplies the lazy Explorer page to the application Settings host.
-pub fn settings_page() -> nocterm_workspace::SettingsPageSpec {
-    nocterm_workspace::SettingsPageSpec::new("explorer", "Explorer", |window, cx| {
-        cx.new(|cx| ExplorerPage::new(window, cx))
+pub fn settings_page(installed: &Installed) -> nocterm_ui::SettingsPageSpec {
+    let settings = installed.settings().clone();
+    nocterm_ui::SettingsPageSpec::new("explorer", "Explorer", move |window, cx| {
+        cx.new(|cx| ExplorerPage::new(settings.clone(), window, cx))
     })
     .with_icon(IconName::FolderTree)
 }
 
-#[derive(Default)]
-struct LocalBrowser {
-    generation: u64,
-    path: Option<PathBuf>,
-    requested: Option<PathBuf>,
-    entries: Vec<local::LocalEntry>,
-    selected: BTreeSet<usize>,
-    anchor: Option<usize>,
-    loading: bool,
-    error: Option<String>,
-    counter: statistics::Counter,
+use gpui_kit::EventEmitter;
+use local_pane::LocalPane;
+use remote_pane::RemotePane;
+#[derive(Clone)]
+struct PaneHost {
+    installed: Installed,
+    workspace: WeakEntity<Workspace>,
+    window: AnyWindowHandle,
+}
+enum PaneIntent {
+    Upload {
+        sources: Vec<PathBuf>,
+        destination: Option<String>,
+    },
+    Download {
+        files: RemotePaths,
+        destination: Option<PathBuf>,
+    },
+    Collision(CollisionPolicy),
+    Changed,
+}
+struct PanelObservers {
+    _subscriptions: Vec<Subscription>,
+    _tick: Task<()>,
 }
 pub struct FilesPanel {
     focus: FocusHandle,
-    session: Option<SessionContext>,
-    browser: Browser,
-    requested_directory: Option<String>,
-    remote_selected: BTreeSet<usize>,
-    remote_anchor: Option<usize>,
-    local: LocalBrowser,
-    local_path: Entity<path_input::PathInput>,
-    remote_path: Entity<path_input::PathInput>,
-    _path_subscriptions: Vec<Subscription>,
-    remote_counter: statistics::Counter,
+    local: Entity<LocalPane>,
+    remote: Entity<RemotePane>,
     activity: activity::Activity,
-    /// A finished transfer changed the shown folder: (remote, local).
-    stale: (bool, bool),
-    workspace: WeakEntity<Workspace>,
     divider: Entity<ResizableState>,
     collisions: CollisionPolicy,
-    statistics_reported: bool,
     window: AnyWindowHandle,
-    _subscription: Subscription,
-    _tick: Task<()>,
-    remote_task: Option<Task<()>>,
-    local_task: Option<Task<()>>,
+    _observers: PanelObservers,
+    installed: Installed,
+}
+/// A directory listing as presented by Explorer; paths retain native identity.
+#[derive(Clone, Debug)]
+pub struct ListingState<P> {
+    path: Option<P>,
+    requested: Option<P>,
+    names: Vec<String>,
+    selected: Vec<usize>,
+    loading: bool,
+    error: Option<String>,
+    statistics: String,
+}
+impl<P: Clone> ListingState<P> {
+    pub fn path(&self) -> Option<P> {
+        self.path.clone()
+    }
+    pub fn requested(&self) -> Option<P> {
+        self.requested.clone()
+    }
+}
+impl<P> ListingState<P> {
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+    pub fn selected(&self) -> &[usize] {
+        &self.selected
+    }
+    pub fn loading(&self) -> bool {
+        self.loading
+    }
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+    pub fn statistics(&self) -> &str {
+        &self.statistics
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteAccess {
+    NoSession,
+    Disconnected,
+    Unsupported,
+    Available,
 }
 impl FilesPanel {
-    fn refresh_after_mutation(&self, local: bool, cx: &Context<Self>) -> dialogs::Refresh {
-        let panel = cx.entity().downgrade();
-        let generation = if local {
-            self.local.generation
-        } else {
-            self.browser.generation
-        };
-        let filesystem = self.session.as_ref().and_then(|s| s.fs.clone());
-        Rc::new(move |cx| {
-            let _ = panel.update(cx, |this, cx| {
-                if local {
-                    if this.local.generation == generation
-                        && let Some(path) = this.local.path.clone()
-                    {
-                        this.load_local(path, cx);
-                    }
-                } else if this.browser.generation == generation
-                    && filesystem
-                        .as_ref()
-                        .zip(this.filesystem().as_ref())
-                        .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
-                {
-                    this.load(this.browser.path.clone(), cx);
-                }
-            });
-        })
+    /// Starts local navigation without changing the remote session.
+    pub fn navigate_local(&mut self, directory: PathBuf, cx: &mut Context<Self>) {
+        self.local
+            .update(cx, |local, cx| local.load_local(directory, cx));
     }
-    /// Follows the transfer queue and lists again a shown folder that a
-    /// finished transfer changed.
-    fn poll_transfers(&mut self, cx: &mut Context<Self>) {
-        let snapshot = transfers::service(cx)
-            .map(|service| service.snapshot())
-            .unwrap_or_default();
-        let (changed, finished) = self.activity.update(snapshot);
-        if changed {
-            cx.notify();
-        }
-        let remote = self
-            .session
-            .as_ref()
-            .map(|s| s.target.clone())
-            .zip(self.browser.path.clone());
-        if let Some((target, shown)) = &remote
-            && finished
-                .iter()
-                .any(|job| activity::changes_remote(job, target, shown))
-        {
-            self.stale.0 = true;
-        }
-        if let Some(shown) = &self.local.path
-            && finished
-                .iter()
-                .any(|job| activity::changes_local(job, shown))
-        {
-            self.stale.1 = true;
-        }
-        // A folder still loading is listed again once that load is over.
-        if self.stale.0 && !self.browser.loading {
-            self.stale.0 = false;
-            self.load(self.requested_directory.clone(), cx);
-        }
-        if self.stale.1
-            && !self.local.loading
-            && let Some(shown) = self.local.path.clone()
-        {
-            self.stale.1 = false;
-            self.load_local(shown, cx);
-        }
+    /// Starts remote navigation; `None` resolves the connected host's home.
+    pub fn navigate_remote(&mut self, directory: Option<String>, cx: &mut Context<Self>) {
+        self.remote
+            .update(cx, |remote, cx| remote.load(directory, cx));
     }
-    /// Shows the walks' latest counts and reports a partial local count once.
-    fn poll_statistics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.remote_counter.poll() {
-            cx.notify();
-        }
-        if !self.local.counter.poll() {
-            return;
-        }
-        cx.notify();
-        let statistics = &self.local.counter.shown;
-        if !statistics.complete || statistics.inaccessible == 0 || self.statistics_reported {
-            return;
-        }
-        self.statistics_reported = true;
-        let Some(path) = self.local.path.clone() else {
-            return;
-        };
-        let message = statistics.errors.first().cloned().unwrap_or_else(|| {
-            format!(
-                "{} paths could not be scanned; folder size is partial.",
-                statistics.inaccessible
-            )
-        });
-        let generation = self.local.generation;
-        let panel = cx.entity().downgrade();
-        nocterm_ui::notice::warning_action(
-            window,
-            cx,
-            "files-partial-statistics",
-            "Folder size is partial",
-            message,
-            "Recalculate",
-            move |_, cx| {
-                let _ = panel.update(cx, |this, cx| {
-                    if this.local.generation == generation
-                        && this.local.path.as_ref() == Some(&path)
-                    {
-                        this.load_local(path.clone(), cx);
-                    }
-                });
-            },
-        );
+    pub fn local_listing(&self, cx: &App) -> ListingState<PathBuf> {
+        self.local.read(cx).listing()
+    }
+    pub fn remote_listing(&self, cx: &App) -> ListingState<String> {
+        self.remote.read(cx).listing()
+    }
+    pub fn remote_access(&self, cx: &App) -> RemoteAccess {
+        self.remote.read(cx).access()
     }
     fn new(
+        installed: Installed,
         workspace: Entity<Workspace>,
         session: Option<SessionContext>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscription = cx.subscribe(&workspace, |_, workspace, event, cx| {
+        let host = PaneHost {
+            installed: installed.clone(),
+            workspace: workspace.downgrade(),
+            window: window.window_handle(),
+        };
+        let local = cx.new(|cx| LocalPane::new(&installed, host.clone(), window, cx));
+        let remote =
+            cx.new(|cx| RemotePane::new(installed.local().clone(), host, session, window, cx));
+        let local_events = cx.subscribe(&local, |this, _, event, cx| this.intent(event, cx));
+        let remote_events = cx.subscribe(&remote, |this, _, event, cx| this.intent(event, cx));
+        let workspace_events = cx.subscribe(&workspace, |this, workspace, event, cx| {
             if *event == WorkspaceEvent::ActiveSessionChanged {
                 let workspace = workspace.clone();
                 let panel = cx.entity().downgrade();
                 cx.defer(move |cx| {
                     let session = workspace.read(cx).active_session(cx);
-                    let _ = panel.update(cx, |this, cx| this.follow(session, cx));
+                    let _ = panel.update(cx, |this, cx| {
+                        this.remote
+                            .update(cx, |remote, cx| remote.follow(session, cx))
+                    });
                 });
             } else if *event == WorkspaceEvent::LocalDirectoryChanged {
-                cx.notify();
+                this.local.update(cx, |_, cx| cx.notify());
             }
         });
         let tick = cx.spawn_in(window, async move |this, cx| {
@@ -233,157 +230,100 @@ impl FilesPanel {
                     .timer(Duration::from_millis(150))
                     .await;
                 if this
-                    .update_in(cx, |this, window, cx| {
-                        this.poll_transfers(cx);
-                        this.poll_statistics(window, cx);
-                    })
+                    .update_in(cx, |this, window, cx| this.poll(window, cx))
                     .is_err()
                 {
                     break;
                 }
             }
         });
-        let local_path = cx.new(|cx| path_input::PathInput::new(window, cx));
-        let remote_path = cx.new(|cx| path_input::PathInput::new(window, cx));
-        let path_subscriptions = [&local_path, &remote_path]
-            .into_iter()
-            .map(|input| {
-                cx.subscribe(
-                    input,
-                    |this, _, event: &path_input::Navigate, cx| match &event.directory {
-                        path_input::Directory::Local(path) => {
-                            this.load_local_with_navigation(path.clone(), event.mode, cx)
-                        }
-                        path_input::Directory::Remote(path) => {
-                            this.load_with_navigation(Some(path.clone()), event.mode, cx)
-                        }
-                    },
-                )
-            })
-            .collect();
-        let mut panel = Self {
+        Self {
             focus: cx.focus_handle(),
-            session: None,
-            browser: Browser::default(),
-            requested_directory: None,
-            remote_selected: BTreeSet::new(),
-            remote_anchor: None,
-            local: LocalBrowser::default(),
-            local_path,
-            remote_path,
-            _path_subscriptions: path_subscriptions,
-            remote_counter: statistics::Counter::default(),
+            local,
+            remote,
             activity: activity::Activity::default(),
-            stale: (false, false),
-            workspace: workspace.downgrade(),
             divider: cx.new(|_| ResizableState::default()),
             collisions: CollisionPolicy::Skip,
-            statistics_reported: false,
             window: window.window_handle(),
-            _subscription: subscription,
-            _tick: tick,
-            remote_task: None,
-            local_task: None,
-        };
-        panel.follow(session, cx);
-        panel
-    }
-    fn follow(&mut self, session: Option<SessionContext>, cx: &mut Context<Self>) {
-        if matches!((&self.session, &session), (Some(before), Some(after)) if before.same_as(after))
-        {
-            return;
+            _observers: PanelObservers {
+                _subscriptions: vec![local_events, remote_events, workspace_events],
+                _tick: tick,
+            },
+            installed,
         }
-        self.session = session;
-        let filesystem = self.filesystem();
-        self.remote_path
-            .update(cx, |input, cx| input.reset_remote(filesystem, cx));
-        self.requested_directory = None;
-        self.browser.clear();
-        self.remote_selected.clear();
-        self.remote_anchor = None;
-        self.remote_task = None;
-        self.remote_counter.set(Default::default());
-        if self.filesystem().is_some() {
-            self.load(None, cx);
-        }
-        cx.notify();
     }
-    fn filesystem(&self) -> Option<Arc<dyn RemoteFs>> {
-        self.session
-            .as_ref()
-            .filter(|s| s.connected)
-            .and_then(|s| s.fs.clone())
-    }
-    fn enqueue(
-        &mut self,
-        sources: Vec<PathBuf>,
-        destination: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let result = match (
-            self.filesystem(),
-            self.session.as_ref(),
-            destination.or_else(|| self.browser.path.clone()),
-        ) {
-            (Some(fs), Some(session), Some(destination)) => {
-                transfers::service(cx).and_then(|service| {
-                    service
-                        .enqueue(UploadRequest {
-                            sources,
-                            target: session.target.clone(),
+    fn intent(&mut self, event: &PaneIntent, cx: &mut Context<Self>) {
+        match event {
+            PaneIntent::Changed => self.synchronize(&[], cx),
+            PaneIntent::Collision(policy) => {
+                self.collisions = *policy;
+                self.synchronize(&[], cx);
+            }
+            PaneIntent::Upload {
+                sources,
+                destination,
+            } => {
+                let result = self
+                    .remote
+                    .read(cx)
+                    .transfer_target(destination.clone())
+                    .map(|(fs, target, destination)| {
+                        self.installed.transfers().enqueue(UploadRequest {
+                            sources: sources.clone(),
+                            target,
                             destination,
                             fs,
                             collisions: self.collisions,
                         })
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                })
+                    })
+                    .transpose();
+                self.report_queue(
+                    result.map(|v| v.is_some()),
+                    "Connect to a server and open a remote directory before uploading.",
+                    cx,
+                );
             }
-            _ => Err("Connect to a server and open a remote directory before uploading.".into()),
-        };
-        if let Err(error) = result {
-            nocterm_ui::notice::error_action(
-                window,
-                cx,
-                "files-enqueue",
-                "Could not queue transfer",
-                error,
-                "Open Transfers",
-                |window, cx| {
-                    window.defer(cx, |window, cx| {
-                        window.dispatch_action(Box::new(ShowTransfers), cx)
-                    });
-                },
-            );
+            PaneIntent::Download { files, destination } => {
+                let destination = destination.clone().or_else(|| {
+                    let local = self.local.read(cx);
+                    local
+                        .ready()
+                        .then(|| local.directory().map(ToOwned::to_owned))
+                        .flatten()
+                });
+                let result = destination
+                    .map(|local_destination| {
+                        self.installed
+                            .transfers()
+                            .enqueue_download(DownloadRequest {
+                                sources: files.sources.clone(),
+                                target: files.target.clone(),
+                                local_destination,
+                                fs: files.fs.clone(),
+                                collisions: self.collisions,
+                            })
+                    })
+                    .transpose();
+                self.report_queue(
+                    result.map(|v| v.is_some()),
+                    "Open a local directory before downloading.",
+                    cx,
+                );
+            }
         }
-        cx.notify();
     }
-    fn enqueue_download(
-        &mut self,
-        files: RemotePaths,
-        destination: Option<PathBuf>,
-        window: &mut Window,
+    fn report_queue(
+        &self,
+        result: Result<bool, nocterm_transfers::TransferError>,
+        unavailable: &'static str,
         cx: &mut Context<Self>,
     ) {
-        let result = destination
-            .or_else(|| self.local.path.clone())
-            .ok_or_else(|| "Open a local directory before downloading.".to_owned())
-            .and_then(|local_destination| {
-                transfers::service(cx).and_then(|service| {
-                    service
-                        .enqueue_download(DownloadRequest {
-                            sources: files.sources,
-                            target: files.target,
-                            local_destination,
-                            fs: files.fs,
-                            collisions: self.collisions,
-                        })
-                        .map(|_| ())
-                        .map_err(|error| error.to_string())
-                })
-            });
-        if let Err(error) = result {
+        let error = match result {
+            Ok(true) => return,
+            Ok(false) => unavailable.to_owned(),
+            Err(error) => error.to_string(),
+        };
+        let _ = self.window.update(cx, |_, window, cx| {
             nocterm_ui::notice::error_action(
                 window,
                 cx,
@@ -394,20 +334,47 @@ impl FilesPanel {
                 |window, cx| {
                     window.defer(cx, |window, cx| {
                         window.dispatch_action(Box::new(ShowTransfers), cx)
-                    });
+                    })
                 },
             );
-        }
-        cx.notify();
+        });
+    }
+    fn synchronize(&mut self, finished: &[nocterm_transfers::Progress], cx: &mut Context<Self>) {
+        let jobs = self.installed.transfers().snapshot();
+        self.local.update(cx, |local, cx| {
+            local.transfers(
+                jobs.iter()
+                    .filter(|job| {
+                        job.direction == nocterm_transfers::TransferDirection::Download
+                            && !job.state.finished()
+                    })
+                    .cloned()
+                    .collect(),
+                finished,
+                cx,
+            )
+        });
+        let ready = self.local.read(cx).ready();
+        self.remote.update(cx, |remote, cx| {
+            remote.transfers(jobs, finished, ready, self.collisions, cx)
+        });
+    }
+    fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (_, finished) = self.activity.update(self.installed.transfers().snapshot());
+        self.synchronize(&finished, cx);
+        self.local
+            .update(cx, |local, cx| local.poll_statistics(window, cx));
+        self.remote
+            .update(cx, |remote, cx| remote.poll_statistics(cx));
     }
 }
-/// The user's indexing settings; the defaults where none are installed.
-fn indexing(cx: &App) -> crate::IndexingSettings {
-    if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<crate::ExplorerSettings>().indexing.clone()
-    } else {
-        Default::default()
-    }
+/// Current published indexing policy from this installation.
+fn indexing(installed: &Installed, cx: &App) -> crate::IndexingSettings {
+    installed
+        .settings()
+        .setting::<crate::ExplorerSettings>(cx)
+        .indexing
+        .clone()
 }
 impl Focusable for FilesPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -423,34 +390,19 @@ impl Panel for FilesPanel {
     }
 }
 impl Render for FilesPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.local.requested.is_none() {
-            let initial = cx
-                .has_global::<nocterm_ui::SettingsStore>()
-                .then(|| {
-                    cx.setting::<nocterm_session::LocalShellSettings>()
-                        .cwd
-                        .clone()
-                })
-                .flatten()
-                .map(PathBuf::from)
-                .or_else(local::home);
-            if let Some(path) = initial {
-                self.load_local(path, cx);
-            }
-        }
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().track_focus(&self.focus).min_h_0().child(
             v_resizable("explorer-divider")
                 .with_state(&self.divider)
                 .child(
                     resizable_panel()
                         .size_range(px(120.)..px(4000.))
-                        .child(self.render_remote(cx)),
+                        .child(self.remote.clone()),
                 )
                 .child(
                     resizable_panel()
                         .size_range(px(140.)..px(4000.))
-                        .child(self.render_local(cx)),
+                        .child(self.local.clone()),
                 ),
         )
     }

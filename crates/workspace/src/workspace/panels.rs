@@ -1,79 +1,114 @@
 //! The sidebar's panels and the strip that switches between them.
 
-use gpui_kit::{Context, Entity, Window};
+use gpui_kit::{AnyView, App, EntityId, FocusHandle, SharedString, Subscription};
 
-use super::Workspace;
-use crate::Panel;
+use crate::{Panel, PanelHandle};
+use nocterm_ui::IconName;
 
-impl Workspace {
-    /// Adds a sidebar panel, after the ones already there.
-    pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        // A panel's title, icon and badge sit in the workspace's chrome; the
-        // rest of the panel redraws itself, so only a change to them counts.
-        let chrome = |panel: &Entity<T>, cx: &gpui_kit::App| {
-            let panel = panel.read(cx);
-            (panel.title(cx), panel.icon(cx), panel.badge(cx))
-        };
-        let mut shown = chrome(&panel, cx);
-        cx.observe(&panel, move |_, panel, cx| {
-            let now = chrome(&panel, cx);
-            if now != shown {
-                shown = now;
-                cx.notify();
-            }
-        })
-        .detach();
-        self.panels.push(Box::new(panel));
-        cx.notify();
+// A sidebar owns both its cached presentation metadata and each observer's lifetime.
+pub(super) struct SidebarEntry {
+    handle: Box<dyn PanelHandle>,
+    metadata: (SharedString, IconName, Option<SharedString>),
+    _subscription: Subscription,
+}
+
+impl SidebarEntry {
+    pub(super) fn title(&self, _: &App) -> SharedString {
+        self.metadata.0.clone()
     }
-
-    /// Shows the panel at `ix`, opening the sidebar if it is closed.
-    pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        let Some(panel) = self.panels.get(ix) else {
-            return;
-        };
-        self.active_panel = ix;
-        self.sidebar_open = true;
-        window.focus(&panel.focus_handle(cx), cx);
-        cx.notify();
+    pub(super) fn icon(&self, _: &App) -> IconName {
+        self.metadata.1
     }
+    pub(super) fn badge(&self, _: &App) -> Option<SharedString> {
+        self.metadata.2.clone()
+    }
+    pub(super) fn view(&self) -> AnyView {
+        self.handle.view()
+    }
+}
 
-    /// Shows the panel showing a `T`, if there is one.
-    pub fn activate_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.panel_index_of::<T>() {
-            self.activate_panel(ix, window, cx);
+pub(super) struct Sidebar {
+    entries: Vec<SidebarEntry>,
+    selected: usize,
+    visible: bool,
+}
+
+impl Default for Sidebar {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            selected: 0,
+            visible: true,
         }
     }
+}
 
-    /// Shows the panel showing a `T`, or hides the sidebar when it already
-    /// shows it.
-    pub fn toggle_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.panel_index_of::<T>() {
-            Some(ix) if self.sidebar_open && self.active_panel == ix => {
-                self.toggle_sidebar(window, cx)
-            }
-            Some(ix) => self.activate_panel(ix, window, cx),
-            None => {}
-        }
+impl Sidebar {
+    pub(super) fn register(
+        &mut self,
+        handle: Box<dyn PanelHandle>,
+        metadata: (SharedString, IconName, Option<SharedString>),
+        subscription: Subscription,
+    ) {
+        self.entries.push(SidebarEntry {
+            handle,
+            metadata,
+            _subscription: subscription,
+        });
     }
-
-    fn panel_index_of<T: Panel>(&self) -> Option<usize> {
-        self.panels
+    pub(super) fn metadata_changed(
+        &mut self,
+        id: EntityId,
+        metadata: (SharedString, IconName, Option<SharedString>),
+    ) -> bool {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.handle.panel_id() == id)
+        else {
+            return false;
+        };
+        if entry.metadata == metadata {
+            return false;
+        }
+        entry.metadata = metadata;
+        true
+    }
+    pub(super) fn activate(&mut self, ix: usize, cx: &App) -> Option<FocusHandle> {
+        let focus = self.entries.get(ix)?.handle.focus_handle(cx);
+        self.selected = ix;
+        self.visible = true;
+        Some(focus)
+    }
+    pub(super) fn toggle(&mut self) -> bool {
+        self.visible = !self.visible;
+        self.visible
+    }
+    pub(super) fn visible(&self) -> bool {
+        self.visible
+    }
+    pub(super) fn showing(&self, ix: usize) -> bool {
+        self.visible && self.selected == ix
+    }
+    pub(super) fn active(&self) -> Option<&SidebarEntry> {
+        self.entries.get(self.selected)
+    }
+    pub(super) fn entries(&self) -> impl Iterator<Item = &SidebarEntry> {
+        self.entries.iter()
+    }
+    pub(super) fn index_of<T: Panel>(&self) -> Option<usize> {
+        self.entries
             .iter()
-            .position(|panel| panel.view().downcast::<T>().is_ok())
+            .position(|entry| entry.handle.view().downcast::<T>().is_ok())
     }
-
-    pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        self.sidebar_open = !self.sidebar_open;
-        if !self.sidebar_open
-            && let Some(item) = self.active_item()
-        {
-            let focus = item.focus_handle(cx);
-            window.focus(&focus, cx);
+    pub(super) fn next(&self) -> Option<usize> {
+        if self.entries.is_empty() {
+            None
+        } else if self.visible {
+            Some((self.selected + 1) % self.entries.len())
+        } else {
+            Some(self.selected)
         }
-        cx.notify();
     }
 }
 

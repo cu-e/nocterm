@@ -23,12 +23,29 @@ scripts/setup.sh   # enables the commit-msg hook
 
 ## Branching
 
-Trunk-based. `master` is always releasable and is only changed through pull requests.
+`master` is the release branch and is only changed through pull requests.
+`dev` is the integration branch for work being validated before release.
 
-- Branch from `master`, name it `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
+- Choose and record the PR target before branching: `master` for release-ready
+  changes, `dev` for integration work. Branch from that target and name the branch
+  `<type>/<short-kebab-description>`: `feat/tab-completion`, `fix/resize-crash`.
 - Keep branches short-lived and PRs small — one logical change each.
-- PRs are **squash-merged**. The PR title becomes the commit on `master`, so it must be a valid commit message.
+- Changes integrated into `dev` reach `master` through a release-ready PR from
+  `dev`. Ordinary PRs into `master` are **squash-merged**: the title becomes the
+  commit on `master`, so it must be a valid commit message. Ordinary integration
+  PRs into `dev` may use merge commits. If a PR contains both `vendor/` and
+  `crates/` or `src/` changes, keep them in separate commits and **rebase-merge**
+  the PR to preserve that separation. This also applies when promoting such
+  history from `dev` to `master`: neither squash nor a merge commit may combine
+  the changes. Correlated commits may need each other to pass checks; the final
+  reviewed PR head must pass all required checks. Titles and non-merge commits
+  follow Conventional Commits. CI checks the actual before/head history on pushes
+  to `dev` and `master`, including commits created by GitHub; this detects invalid
+  landings after they occur. Require `CI passed` in branch protection and choose
+  the prescribed merge method before landing.
 - No force-pushes to `master`, no merge commits on `master`.
+- Review against the recorded PR target, using its merge base with the feature
+  branch; reviewing integration work against `master` includes unrelated changes.
 
 ## Commit messages
 
@@ -60,6 +77,10 @@ Rules:
 
 - **Header** ≤ 72 chars. Subject in imperative mood, lower-case first letter, no trailing period: `fix(pty): handle zero-size resize`.
 - **Scope** is optional, lower-case kebab, and names the affected module (`pty`, `renderer`, `config`). Use `deps` for dependency bumps. Keep the scope list in [AGENTS.md](AGENTS.md) up to date as modules appear.
+
+| Scope | Covers |
+| ----- | ------ |
+| `connections-store` | profile/recent publication, committed authority and bounded raw facts |
 - **Body** explains *why*, not *what*; wrap at ~100 chars. Blank line after the header.
 - **Breaking changes**: add `!` after the type/scope *and* a `BREAKING CHANGE: <what breaks and how to migrate>` footer.
 - **Footers**: `Refs: #123`, `Closes: #123`, `Co-Authored-By: ...`.
@@ -72,6 +93,8 @@ Pick the type by what the *user of the software* sees, not by which files change
 A Rust source file may have at most 800 lines, tests included. `cargo xtask architecture`
 (run in CI) enforces it. When a file approaches the limit, split it by responsibility into
 child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
+For production code, an extracted module owns a responsibility and its own type;
+moving more methods of the same growing type into another file is not an extraction.
 Files that were already longer are listed in `xtask/oversized-files.toml`; they may only
 shrink, and their entry is lowered or removed as they do. Never raise an entry to make a
 check pass.
@@ -80,8 +103,21 @@ A function may have at most 80 lines and a cognitive complexity of 20 (`clippy.t
 Functions that were already over carry `#[expect(clippy::too_many_lines, reason = "...")]`;
 once one is split, the unfulfilled expectation fails clippy, so remove the attribute.
 `#[allow]` for these lints is rejected by `cargo xtask architecture`.
+Do not add new complexity expectations; extract smaller functions instead.
+Architecture checks reject overrides and conditional bypasses for those lints.
+Existing expectations require `reason = "predates the limit"`, and their count
+per package may only decrease. The exact inventory in `xtask/baseline.toml` also
+constrains large structs, implementation spread, public state, globals, shutdown
+hooks, string errors and domain I/O. Lower or remove entries when code improves;
+never regenerate or raise the inventory. See [architecture guardrails](docs/architecture/guardrails.md).
 
 ## Pull requests
+
+Vendored forks have reproducible binary patches against checksum-pinned published
+archives. Run `python3 scripts/test-vendor-patches.py` and
+`python3 scripts/check-vendor-patches.py` for vendor changes; see
+[vendor patch maintenance](vendor/patches/README.md). Keep vendor updates in
+separate commits from application changes under `crates/` or `src/`.
 
 - Title: Conventional Commit, as above.
 - Description: what, why, how it was verified.

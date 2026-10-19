@@ -131,9 +131,21 @@ pub(super) async fn dispatch(
                 Err(e) => Err(e),
             });
         }
+        FsRequest::PoisonUpload(id, reply) => {
+            let _ = reply.send(match result {
+                Ok(_) => poison_upload(&uploads, id).await,
+                Err(error) => Err(error),
+            });
+        }
         FsRequest::Finish(id, reply) => {
             let _ = reply.send(match result {
                 Ok(s) => finish(&s, &uploads, id).await,
+                Err(e) => Err(e),
+            });
+        }
+        FsRequest::PublishAs(id, name, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => publish_as(&s, &uploads, id, name).await,
                 Err(e) => Err(e),
             });
         }

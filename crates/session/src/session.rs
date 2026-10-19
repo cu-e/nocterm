@@ -113,6 +113,10 @@ pub enum CloseReason {
 /// What went wrong with a session, in terms a user can act on.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SessionError {
+    #[error(transparent)]
+    InvalidLaunch(#[from] crate::LaunchValidationError),
+    #[error(transparent)]
+    InvalidOptions(#[from] crate::SessionOptionsError),
     #[error("could not reach {host}: {reason}")]
     Unreachable { host: String, reason: String },
     #[error("{host} did not answer within {seconds} seconds")]

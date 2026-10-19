@@ -3,7 +3,7 @@ use crate::{Terminal, credentials::fake::FakeStore};
 use futures::FutureExt as _;
 use gpui_kit::{AppContext as _, Entity, Task, TestAppContext};
 use nocterm_session::{Auth, CloseReason, Event, Prompt, Reply, Secret, SecretRequest, Target};
-use nocterm_ui::SettingsStore;
+use nocterm_store::SettingsConfig;
 use nocterm_workspace::SessionSpec;
 use std::{sync::Arc, time::Duration};
 
@@ -11,6 +11,7 @@ struct Setup {
     store: Arc<FakeStore>,
     terminal: Entity<Terminal>,
     target: Target,
+    _driver: nocterm_session::SessionDriver,
 }
 
 /// A terminal for a saved server whose password is in a locked vault.
@@ -24,16 +25,28 @@ fn setup(cx: &mut TestAppContext) -> Setup {
         },
         "stored account password",
     );
+    let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+    let driver = transport.queue(None, None);
     let terminal = cx.update(|cx| {
         gpui_kit::init(cx);
-        nocterm_ui::init(
+        let ui = nocterm_ui::init(
             nocterm_ui::DesignTokens::builtin(),
-            SettingsStore::in_memory(Default::default()),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
             cx,
         );
-        crate::init_credentials(store.clone(), |_, _, _| Task::ready(Ok(())), cx);
+        let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            )
+            .with_credentials(provider),
+            &ui,
+            cx,
+        );
         cx.new(|cx| {
             Terminal::new(
+                installed.clone(),
                 SessionSpec {
                     profile: None,
                     options: Default::default(),
@@ -51,6 +64,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
         store,
         terminal,
         target,
+        _driver: driver,
     }
 }
 

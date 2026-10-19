@@ -2,106 +2,106 @@
 //!
 //! Every control saves as soon as it changes; text saves when typing pauses,
 //! on Enter and when the field loses focus. There is no draft and no Apply.
+//! Owns: checked ordered page catalogs, Item navigation, shared diagnostics and eager/lazy lifetimes.
+//! Does not own: page controls, schema policy, native probing or settings persistence.
+//! Ports used: Installed supplies SettingsHandle; SettingsCatalog supplies owner factories.
+//! Ports provided: workspace settings Item. Settings section: none. Globals: none.
+//! Invariants: catalogs validate before factories run; eager construction/flush preserve order; lazy pages are reused.
 
-mod ai;
-mod appearance;
-pub use appearance::init_theme_registry;
-mod field;
-mod pages;
+mod installation;
+pub use installation::Installed;
 
-use std::collections::BTreeMap;
-
-use field::Field;
 use gpui_kit::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
     TestSupportExt as _, Window,
-    component::{StyledExt as _, h_flex, input::InputEvent, v_flex},
+    component::{StyledExt as _, h_flex, v_flex},
     div,
     prelude::*,
     px, rems,
 };
-use nocterm_settings::{SettingsDocument, SettingsSection};
-use nocterm_ui::{IconName, SettingsExt as _, SettingsStore, edit_settings, form};
-use nocterm_workspace::{
-    Item, ItemEvent, OpenSettings, SettingsPageHandle, SettingsPageSpec, Workspace,
-};
+use nocterm_ui::{IconName, form};
+use nocterm_ui::{SettingsPageContext, SettingsPageFeedback, SettingsPageHandle, SettingsPageSpec};
+use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
 
-/// The pages every build has, in navigation order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Page {
-    Appearance,
-    Terminal,
-    LocalShell,
-    Ssh,
-    Ai,
+mod catalog;
+use catalog::Lifecycle;
+pub use catalog::{SettingsCatalog, SettingsCatalogError, SettingsPageRegistration};
+
+struct PageSlot {
+    spec: SettingsPageSpec,
+    lifecycle: Lifecycle,
+    page: Option<Box<dyn SettingsPageHandle>>,
 }
-
-impl Page {
-    const ALL: [Page; 5] = [
-        Page::Appearance,
-        Page::Terminal,
-        Page::LocalShell,
-        Page::Ssh,
-        Page::Ai,
-    ];
-    fn id(self) -> &'static str {
-        match self {
-            Page::Appearance => "appearance",
-            Page::Terminal => "terminal",
-            Page::LocalShell => "local-shell",
-            Page::Ssh => "ssh",
-            Page::Ai => "ai",
+struct PageBook {
+    slots: Vec<PageSlot>,
+}
+impl PageBook {
+    fn new(
+        catalog: &SettingsCatalog,
+        context: SettingsPageContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let slots = catalog
+            .pages()
+            .iter()
+            .map(|registration| {
+                let spec = registration.spec().clone();
+                let lifecycle = registration.lifecycle();
+                let page = (lifecycle == Lifecycle::Eager)
+                    .then(|| spec.create(context.clone(), window, cx));
+                PageSlot {
+                    spec,
+                    lifecycle,
+                    page,
+                }
+            })
+            .collect();
+        let mut book = Self { slots };
+        book.activate(catalog.default_index(), context, window, cx);
+        book
+    }
+    fn selected(&self, index: usize) -> Option<&dyn SettingsPageHandle> {
+        self.slots.get(index)?.page.as_deref()
+    }
+    fn activate(
+        &mut self,
+        index: usize,
+        context: SettingsPageContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let slot = &mut self.slots[index];
+        if slot.page.is_none() {
+            slot.page = Some(slot.spec.create(context, window, cx));
         }
     }
-    fn title(self) -> &'static str {
-        match self {
-            Page::Appearance => "Appearance",
-            Page::Terminal => "Terminal",
-            Page::LocalShell => "Local shell",
-            Page::Ssh => "SSH",
-            Page::Ai => "AI agents",
-        }
-    }
-    fn icon(self) -> IconName {
-        match self {
-            Page::Appearance => IconName::Palette,
-            Page::Terminal => IconName::Terminal,
-            Page::LocalShell => IconName::SquareTerminal,
-            Page::Ssh => IconName::Server,
-            Page::Ai => IconName::Bot,
-        }
-    }
 }
-
-/// Installs Settings with its built-in pages.
-pub fn register(workspace: &mut Workspace) {
-    register_with_pages(workspace, Vec::new());
-}
-/// Installs Settings and feature-owned pages supplied by the application.
-pub fn register_with_pages(workspace: &mut Workspace, pages: Vec<SettingsPageSpec>) {
-    appearance::commands::register(workspace);
+/// Installs the settings Item with factories supplied by the actual feature owners.
+pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: Installed) {
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
-        // Popup dismissal restores its old action context first. Opening the
-        // Item afterwards lets its own field keep keyboard focus.
+        let installed = installed.clone();
+        // Popup dismissal restores its old action context before the Item takes focus.
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                open_page(workspace, "", &pages, window, cx);
+                open_page(workspace, "", &pages, installed, window, cx)
             });
         });
     });
 }
-/// Opens the singleton Settings Item and selects a page. Empty preserves its selection.
+/// Opens the singleton Settings Item; empty ID preserves its current selection.
 pub fn open_page(
     workspace: &mut Workspace,
     id: &str,
-    pages: &[SettingsPageSpec],
+    pages: &SettingsCatalog,
+    installed: Installed,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
-        let item = cx.new(|cx| SettingsView::with_pages(pages.to_vec(), window, cx));
+        let item = cx.new(|cx| SettingsView::with_pages(pages.clone(), installed, window, cx));
         workspace.add_item(item.clone(), window, cx);
         item
     });
@@ -114,253 +114,81 @@ pub fn open_page(
     }
     workspace.activate_item_by_id(item.entity_id(), window, cx);
 }
-
 pub struct SettingsView {
+    installed: Installed,
     selected_page: usize,
-    /// Pages supplied by other features, created when first shown.
-    pages: Vec<(SettingsPageSpec, Option<Box<dyn SettingsPageHandle>>)>,
+    pages: PageBook,
     focus: FocusHandle,
-    /// Text settings by key, such as `terminal.font_size`.
-    fields: BTreeMap<SharedString, Field>,
-    ai: ai::AiPage,
-    appearance: appearance::AppearancePage,
-    session_options: gpui_kit::Entity<nocterm_ui::SessionOptionsEditor>,
-    session_options_error: Option<SharedString>,
-    session_options_save: Option<gpui_kit::Task<()>>,
-    /// The last save failure, shown until the next successful save.
-    error: Option<SharedString>,
+    feedback: SettingsPageFeedback,
     _subscriptions: Vec<Subscription>,
 }
-
 impl SettingsView {
-    #[cfg(test)]
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_pages(Vec::new(), window, cx)
-    }
-    fn with_pages(
-        pages: Vec<SettingsPageSpec>,
+    pub fn with_pages(
+        pages: SettingsCatalog,
+        installed: Installed,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let session_options = pages::new_session_options(window, cx);
-        let sync = cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-            this.sync(window, cx);
+        let feedback = SettingsPageFeedback::new(cx);
+        let context = SettingsPageContext::new(installed.settings().clone(), feedback.clone());
+        let weak = cx.weak_entity();
+        let original_window = window.window_handle();
+        let changed = feedback.observe(cx, move |cx| {
+            let _ = original_window.update(cx, |_, _, cx| {
+                let _ = weak.update(cx, |_, cx| cx.notify());
+            });
         });
-        let options = cx.observe_in(&session_options, window, |this, _, window, cx| {
-            this.schedule_session_options(window, cx);
+        let weak = cx.weak_entity();
+        let original_window = window.window_handle();
+        let settings = installed.settings().observe(cx, move |cx| {
+            let _ = original_window.update(cx, |_, _, cx| {
+                let _ = weak.update(cx, |_, cx| cx.notify());
+            });
         });
-        let appearance = appearance::AppearancePage::new(window, cx);
-        let mut this = Self {
-            selected_page: 0,
-            pages: pages.into_iter().map(|spec| (spec, None)).collect(),
+        let selected_page = pages.default_index();
+        let pages = PageBook::new(&pages, context, window, cx);
+        Self {
+            installed,
+            selected_page,
+            pages,
             focus: cx.focus_handle(),
-            fields: BTreeMap::new(),
-            ai: ai::AiPage::default(),
-            appearance,
-            session_options,
-            session_options_error: None,
-            session_options_save: None,
-            error: None,
-            _subscriptions: vec![sync, options],
-        };
-        pages::add_fields(&mut this, window, cx);
-        ai::add_fields(&mut this, window, cx);
-        this
-    }
-
-    pub fn selected_page_id(&self) -> &str {
-        match Page::ALL.get(self.selected_page) {
-            Some(page) => page.id(),
-            None => self.pages[self.selected_page - Page::ALL.len()].0.id,
+            feedback,
+            _subscriptions: vec![changed, settings],
         }
     }
-    fn builtin(&self) -> Option<Page> {
-        Page::ALL.get(self.selected_page).copied()
+    pub fn selected_page_id(&self) -> &str {
+        self.pages.slots[self.selected_page].spec.id
     }
     fn page_index(&self, id: &str) -> Option<usize> {
-        Page::ALL
-            .iter()
-            .position(|page| page.id() == id)
-            .or_else(|| {
-                self.pages
-                    .iter()
-                    .position(|(spec, _)| spec.id == id)
-                    .map(|index| index + Page::ALL.len())
-            })
-    }
-    fn guest(&self) -> Option<&dyn SettingsPageHandle> {
-        self.selected_page
-            .checked_sub(Page::ALL.len())
-            .and_then(|index| self.pages.get(index))
-            .and_then(|(_, page)| page.as_deref())
+        self.pages.slots.iter().position(|slot| slot.spec.id == id)
     }
     fn select_page(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= Page::ALL.len() + self.pages.len() || index == self.selected_page {
+        if index >= self.pages.slots.len() || index == self.selected_page {
             return;
         }
-        // Leaving a page saves what is being typed there.
-        self.commit_all(cx);
-        if let Some(page) = self.guest() {
+        self.commit_all(window, cx);
+        if self.pages.slots[self.selected_page].lifecycle == Lifecycle::Lazy
+            && let Some(page) = self.pages.selected(self.selected_page)
+        {
             page.deactivate(window, cx);
         }
         self.selected_page = index;
-        if let Some((spec, page)) = index
-            .checked_sub(Page::ALL.len())
-            .and_then(|index| self.pages.get_mut(index))
-            && page.is_none()
-        {
-            *page = Some(spec.create(window, cx));
-        }
+        let context =
+            SettingsPageContext::new(self.installed.settings().clone(), self.feedback.clone());
+        self.pages.activate(index, context, window, cx);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
-
-    /// Adds a text setting of section `S` saved under `key`.
-    pub(crate) fn add_field<S: SettingsSection>(
-        &mut self,
-        key: impl Into<SharedString>,
-        read: impl Fn(&S) -> String + 'static,
-        write: impl Fn(&mut S, &str) -> Result<(), String> + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let key = key.into();
-        let event_key = key.clone();
-        let field = Field::new(read, write, window, cx, move |this, event, window, cx| {
-            this.field_event(&event_key, event, window, cx)
-        });
-        self.fields.insert(key, field);
-    }
-    pub(crate) fn remove_fields(&mut self, prefix: &str) {
-        self.fields.retain(|key, _| !key.starts_with(prefix));
-    }
-    fn field_event(
-        &mut self,
-        key: &SharedString,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            InputEvent::Change => {
-                let pending = key.clone();
-                let task = cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor().timer(field::DEBOUNCE).await;
-                    let _ = this.update(cx, |this, cx| {
-                        if let Some(field) = this.fields.get_mut(&pending) {
-                            field.commit(cx);
-                        }
-                        cx.notify();
-                    });
-                });
-                if let Some(field) = self.fields.get_mut(key) {
-                    field.debounce = Some(task);
-                }
-            }
-            InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                if let Some(field) = self.fields.get_mut(key) {
-                    field.commit(cx);
-                }
-                cx.notify();
-            }
-            InputEvent::Focus => {}
-        }
-    }
-    /// Saves every field with unsaved text now.
-    fn commit_all(&mut self, cx: &mut Context<Self>) {
-        for field in self.fields.values_mut() {
-            if field.debounce.is_some() {
-                field.commit(cx);
-            }
-        }
-        if self.session_options_save.take().is_some() {
-            self.save_session_options(cx);
-        }
-    }
-    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for field in self.fields.values_mut() {
-            field.sync(window, cx);
-        }
-        ai::sync(self, window, cx);
-        self.appearance.sync(window, cx);
-        cx.notify();
-    }
-
-    /// Saves a change to section `S` that needs no validation, such as a
-    /// switch.
-    pub(crate) fn save<S: SettingsSection>(
-        &mut self,
-        edit: impl FnOnce(&mut S) + 'static,
-        cx: &mut Context<Self>,
-    ) {
-        let task = cx.update_setting::<S>(edit);
-        self.report(task, cx);
-    }
-
-    /// Saves a change spanning several sections.
-    fn save_document(
-        &mut self,
-        edit: impl FnOnce(&mut SettingsDocument) + 'static,
-        cx: &mut Context<Self>,
-    ) {
-        let task = edit_settings(cx, edit);
-        self.report(task, cx);
-    }
-
-    /// Shows the outcome of `task` until the next save.
-    fn report(&mut self, task: gpui_kit::Task<Result<u64, String>>, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.error = result
-                    .err()
-                    .map(|error| format!("Could not save settings: {error}").into());
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn schedule_session_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.session_options_save = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(field::DEBOUNCE).await;
-            let _ = this.update(cx, |this, cx| {
-                this.session_options_save = None;
-                this.save_session_options(cx);
-            });
-        }));
-    }
-    fn save_session_options(&mut self, cx: &mut Context<Self>) {
-        match self.session_options.read(cx).options(cx) {
-            Ok(options) => {
-                self.session_options_error = None;
-                self.save_document(
-                    move |document| pages::apply_session_options(document, options),
-                    cx,
-                );
-            }
-            Err(error) => {
-                self.session_options_error = Some(error.into());
-                cx.notify();
+    fn commit_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for slot in &self.pages.slots {
+            if slot.lifecycle == Lifecycle::Eager
+                && let Some(page) = &slot.page
+            {
+                page.flush(window, cx);
             }
         }
     }
-
-    pub(crate) fn field(&self, key: &str) -> &Field {
-        &self.fields[key]
-    }
-
     fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let builtin = Page::ALL
-            .iter()
-            .enumerate()
-            .map(|(index, page)| (index, SharedString::from(page.title()), page.icon()));
-        let guests = self
-            .pages
-            .iter()
-            .enumerate()
-            .map(|(index, (spec, _))| (Page::ALL.len() + index, spec.title.clone(), spec.icon));
         v_flex()
             .id("settings-pages")
             .test_support()
@@ -377,11 +205,9 @@ impl SettingsView {
                     .font_semibold()
                     .child("Settings"),
             )
-            .children(
-                builtin
-                    .chain(guests)
-                    .map(|(index, title, icon)| self.nav_item(index, title, icon, cx)),
-            )
+            .children(self.pages.slots.iter().enumerate().map(|(index, slot)| {
+                self.nav_item(index, slot.spec.title.clone(), slot.spec.icon, cx)
+            }))
     }
     fn nav_item(
         &self,
@@ -400,12 +226,13 @@ impl SettingsView {
 impl EventEmitter<ItemEvent> for SettingsView {}
 impl Focusable for SettingsView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.builtin() {
-            Some(_) => self.focus.clone(),
-            None => self
-                .guest()
+        if self.pages.slots[self.selected_page].lifecycle == Lifecycle::Eager {
+            self.focus.clone()
+        } else {
+            self.pages
+                .selected(self.selected_page)
                 .map(|page| page.focus_handle(cx))
-                .unwrap_or_else(|| self.focus.clone()),
+                .unwrap_or_else(|| self.focus.clone())
         }
     }
 }
@@ -417,9 +244,9 @@ impl Item for SettingsView {
         IconName::Settings
     }
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_all(cx);
-        for (_, page) in &self.pages {
-            if let Some(page) = page {
+        self.commit_all(window, cx);
+        for slot in &self.pages.slots {
+            if let Some(page) = &slot.page {
                 page.close(window, cx);
             }
         }
@@ -427,17 +254,12 @@ impl Item for SettingsView {
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match self.builtin() {
-            Some(Page::Ai) => ai::render(self, cx),
-            Some(page) => pages::render(self, page, cx),
-            None => self
-                .guest()
-                .map(|page| page.view().into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
-        };
-        let section_errors: Vec<_> = cx
-            .global::<SettingsStore>()
-            .section_errors()
+        let content = self
+            .pages
+            .selected(self.selected_page)
+            .map(|page| page.view().into_any_element())
+            .unwrap_or_else(|| div().into_any_element());
+        let section_errors: Vec<_> = self.installed.settings().section_errors(cx)
             .iter()
             .map(|error| {
                 format!(
@@ -456,14 +278,30 @@ impl Render for SettingsView {
                     .into_iter()
                     .map(|error| form::error_text(error, cx)),
             )
-            .when_some(self.error.clone(), |content, error| {
-                content.child(form::error_text(error, cx))
+            .when_some(self.feedback.error(cx), |content, error| {
+                content.child(
+                    div()
+                        .id("settings-save-error")
+                        .aria_label(error.clone())
+                        .test_support()
+                        .child(form::error_text(error, cx)),
+                )
             })
             .child(content);
         h_flex()
+            .id("settings-view")
+            .test_support()
             .size_full()
             .min_h_0()
-            .bg(form::page_background(cx))
+            .bg(nocterm_ui::hsla(
+                nocterm_ui::TerminalStyle::with_settings(
+                    self.installed
+                        .settings()
+                        .setting::<nocterm_ui::TerminalSettings>(cx),
+                    cx,
+                )
+                .background,
+            ))
             .track_focus(&self.focus)
             .child(self.render_nav(cx))
             .child(

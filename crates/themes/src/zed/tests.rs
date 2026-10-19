@@ -1,11 +1,14 @@
 use super::*;
 use nocterm_design::DesignTokens;
 fn fixture(name: &str) -> Vec<u8> {
-    std::fs::read(format!(
-        "{}/tests/fixtures/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap()
+    match name {
+        "dracula.json" => include_bytes!("../../tests/fixtures/dracula.json").to_vec(),
+        "v0_1_minimal.json" => include_bytes!("../../tests/fixtures/v0_1_minimal.json").to_vec(),
+        "v0_2_comments_trailing_commas.json" => {
+            include_bytes!("../../tests/fixtures/v0_2_comments_trailing_commas.json").to_vec()
+        }
+        _ => panic!("unknown fixture"),
+    }
 }
 #[test]
 fn accepts_hex_only() {
@@ -50,14 +53,7 @@ fn tolerant_values_aliases_and_invalid_families() {
     }
     assert!(parse_family(&vec![b' '; FILE_LIMIT + 1]).is_err());
 }
-#[test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
-fn mapping_sources_fallbacks_contrast_and_translucency() {
-    let source = br##"{"themes":[{"name":"Synthetic","appearance":"dark","style":{"editor.background":"#000","background":"#111","text":"#fff","border":"#222","border.variant":"#333","border.focused":"#444","element.background":"#555","surface.background":"#666","text.muted":"#777","text.accent":"#eee","element.hover":"#888","element.active":"#999","ghost_element.hover":"#aaa","ghost_element.selected":"#bbb","elevated_surface.background":"#ccc","panel.background":"#ddd","title_bar.background":"#123","status_bar.background":"#234","tab_bar.background":"#345","tab.inactive_background":"#456","tab.active_background":"#567","scrollbar.track.background":"#678","scrollbar.thumb.background":"#789","scrollbar.thumb.hover_background":"#89a","link_text.hover":"#9ab","drop_target.background":"#abc","error":"#bcd","success":"#cde","warning":"#def","info":"#ef0","terminal.ansi.red":"#f00","players":[{"cursor":"#0f0","selection":"#00f8"}],"terminal.foreground":"#ffffff80","terminal.ansi.blue":"#ffffff80"}}]}"##;
-    let theme = parse_family(source).unwrap().themes.remove(0);
-    let base = DesignTokens::builtin();
-    let palette = theme.palette(&base.dark);
-    let ui: BTreeMap<_, _> = palette.ui.iter().collect();
+fn assert_mapping_entries(ui: &BTreeMap<&str, Color>) {
     for (keys, value) in [
         (vec!["background"], "#000"),
         (
@@ -132,15 +128,25 @@ fn mapping_sources_fallbacks_contrast_and_translucency() {
             assert_eq!(ui[key], parse_color(value).unwrap(), "{key}");
         }
     }
+}
+
+#[test]
+fn mapping_sources_fallbacks_contrast_and_translucency() {
+    let source = br##"{"themes":[{"name":"Synthetic","appearance":"dark","style":{"editor.background":"#000","background":"#111","text":"#fff","border":"#222","border.variant":"#333","border.focused":"#444","element.background":"#555","surface.background":"#666","text.muted":"#777","text.accent":"#eee","element.hover":"#888","element.active":"#999","ghost_element.hover":"#aaa","ghost_element.selected":"#bbb","elevated_surface.background":"#ccc","panel.background":"#ddd","title_bar.background":"#123","status_bar.background":"#234","tab_bar.background":"#345","tab.inactive_background":"#456","tab.active_background":"#567","scrollbar.track.background":"#678","scrollbar.thumb.background":"#789","scrollbar.thumb.hover_background":"#89a","link_text.hover":"#9ab","drop_target.background":"#abc","error":"#bcd","success":"#cde","warning":"#def","info":"#ef0","terminal.ansi.red":"#f00","players":[{"cursor":"#0f0","selection":"#00f8"}],"terminal.foreground":"#ffffff80","terminal.ansi.blue":"#ffffff80"}}]}"##;
+    let theme = parse_family(source).unwrap().themes.remove(0);
+    let base = DesignTokens::builtin();
+    let palette = theme.palette(&base.dark);
+    let ui: BTreeMap<_, _> = palette.ui.iter().collect();
+    assert_mapping_entries(&ui);
     assert_eq!(palette.canvas, parse_color("#111"));
     assert_eq!(palette.terminal.background, None);
     assert_eq!(palette.terminal.foreground, Some(Color::rgb(128, 128, 128)));
-    assert_eq!(palette.terminal.blue, Color::rgb(128, 128, 128));
+    assert_eq!(palette.terminal.normal.blue, Color::rgb(128, 128, 128));
     assert_eq!(palette.terminal.cursor, parse_color("#0f0"));
     assert_eq!(palette.terminal.selection, parse_color("#00f8"));
     assert_eq!(
-        palette.terminal.bright_white,
-        base.dark.terminal.bright_white
+        palette.terminal.bright.white,
+        base.dark.terminal.bright.white
     );
 }
 #[test]
@@ -154,7 +160,7 @@ fn dracula_imports_valid_ansi_and_refines_its_invalid_bright_white() {
         palette.terminal.background,
         Some(theme.colors["terminal.background"])
     );
-    assert_eq!(palette.terminal.red, parse_color("#ff5555").unwrap());
+    assert_eq!(palette.terminal.normal.red, parse_color("#ff5555").unwrap());
     assert_eq!(palette.terminal.ansi().len(), 16);
     for (name, color) in [
         "black",
@@ -179,7 +185,7 @@ fn dracula_imports_valid_ansi_and_refines_its_invalid_bright_white() {
     {
         if name == "bright_white" {
             // Original Dracula 1.1.2 spells this value "ffffffff" without #.
-            assert_eq!(color, DesignTokens::builtin().dark.terminal.bright_white);
+            assert_eq!(color, DesignTokens::builtin().dark.terminal.bright.white);
         } else {
             assert_eq!(color, theme.colors[&format!("terminal.ansi.{name}")]);
         }
@@ -199,7 +205,7 @@ fn inherited_translucent_terminal_background_and_explicit_alpha_are_opaque() {
     let palette = parse_family(source).unwrap().themes[0].palette(&base.light);
     assert_eq!(palette.terminal.background, Some(Color::rgb(127, 127, 127)));
     assert_eq!(palette.terminal.foreground, Some(Color::rgb(191, 63, 63)));
-    assert_eq!(palette.terminal.black, Color::rgb(63, 63, 63));
+    assert_eq!(palette.terminal.normal.black, Color::rgb(63, 63, 63));
 }
 
 #[test]

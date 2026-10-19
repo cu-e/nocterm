@@ -1,121 +1,134 @@
-//! Uploads, downloads and drags between the panes queue the right transfers.
+//! Transfer UI emits pinned requests; streaming belongs to adapter integration tests.
 use super::*;
 
+fn show_local(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    workspace: &Entity<Workspace>,
+    panel: &Entity<FilesPanel>,
+    directory: &std::path::Path,
+) {
+    cx.update_window(handle, |_, _, cx| {
+        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.navigate_local(directory.to_owned(), cx)
+        });
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
+    cx.run_until_parked();
+}
+fn drag_row(window: &mut Window, source: &str, destination: &str, offset: f32, cx: &mut App) {
+    use gpui_kit::test::TestWindowExt as _;
+    let source = window.find(SharedString::from(source.to_owned())).bounds();
+    let destination = window
+        .find(SharedString::from(destination.to_owned()))
+        .bounds();
+    window.drag(
+        gpui_kit::point(source.center().x, source.bottom() + px(offset)),
+        gpui_kit::point(destination.center().x, destination.bottom() + px(36.)),
+        cx,
+    );
+}
+fn drop_external_on_remote(window: &mut Window, file: &std::path::Path, cx: &mut App) {
+    use gpui_kit::{FileDropEvent, InputEvent as _, test::TestWindowExt as _};
+    window.render_frame(cx);
+    window.render_frame(cx);
+    let toolbar = window.find("files-home").bounds();
+    let position = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
+    window.dispatch_event(
+        FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths([file.to_owned()].into_iter().collect()),
+        }
+        .to_platform_input(),
+        cx,
+    );
+    window.render_frame(cx);
+    window.dispatch_event(FileDropEvent::Submit { position }.to_platform_input(), cx);
+    window.render_frame(cx);
+}
+
+fn select_nonadjacent_remote_rows(window: &mut Window, cx: &mut App) {
+    use gpui_kit::test::TestWindowExt as _;
+    let toolbar = window.find("files-home").bounds();
+    let first = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
+    pointer_click(window, first, Default::default(), cx);
+    pointer_click(
+        window,
+        first + gpui_kit::point(px(0.), px(64.)),
+        gpui_kit::Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+        cx,
+    );
+    pointer_click(
+        window,
+        first + gpui_kit::point(px(0.), px(32.)),
+        gpui_kit::Modifiers {
+            control: true,
+            ..Default::default()
+        },
+        cx,
+    );
+}
+
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works(
     cx: &mut TestAppContext,
 ) {
-    use gpui_kit::{FileDropEvent, InputEvent as _, test::TestWindowExt as _};
+    use gpui_kit::test::TestWindowExt as _;
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("file.bin");
     std::fs::write(&file, b"queued-data").unwrap();
-    let original = Arc::new(StalledUploads::default());
-    let replacement = Arc::new(StalledUploads::default());
-    let (handle, workspace, item, panel) = panel_fixture(cx, original.clone());
-    let service = cx
-        .update_window(handle, |_, _, cx| {
-            transfers::init(cx);
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
-            panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
-            });
-            transfers::service(cx).unwrap()
-        })
-        .unwrap();
-    cx.simulate_window_resize(handle, gpui_kit::size(px(1200.), px(900.)));
-    cx.run_until_parked();
+    let original = transfer_remote(true);
+    let replacement = transfer_remote(true);
+    let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
+    let service = deps.transfers.clone();
+    let (handle, workspace, item, panel) = panel_fixture_with(cx, original.clone(), deps);
+    show_local(cx, handle, &workspace, &panel, directory.path());
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.render_frame(cx);
-        assert!(!panel.read(cx).browser.loading);
-        assert_eq!(panel.read(cx).browser.entries.len(), 1);
-        // Native virtual-list rows have no toolkit observation snapshots.
-        // Derive the first-row center from the observed toolbar bounds.
-        let toolbar = window.find("files-home").bounds();
-        let position = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
-        window.dispatch_event(
-            FileDropEvent::Entered {
-                position,
-                paths: ExternalPaths([file.clone()].into_iter().collect()),
-            }
-            .to_platform_input(),
-            cx,
-        );
-        window.render_frame(cx);
-        window.dispatch_event(FileDropEvent::Submit { position }.to_platform_input(), cx);
-        window.render_frame(cx);
+        drop_external_on_remote(window, &file, cx);
     })
     .unwrap();
     assert_eq!(
         service.snapshot().len(),
         1,
-        "folder drop must stop bubbling before the browser's second handler"
+        "Folder drop stops parent bubbling"
     );
+    let first = service.snapshot()[0].id;
+    let request = recorded_upload(&recording, first);
+    assert_eq!(request.sources, [file]);
+    assert_eq!(request.destination, "/home/test/incoming");
+    let pinned: Arc<dyn RemoteFs> = original;
+    assert!(Arc::ptr_eq(&request.fs, &pinned));
     item.update(cx, |item, cx| {
         item.session.target.host = "second-host".into();
-        item.session.fs = Some(replacement.clone());
+        item.session.fs = Some(replacement);
         cx.emit(ItemEvent::Changed);
     });
     cx.run_until_parked();
-    wait_upload_started(&service, 1);
-    assert_eq!(service.snapshot()[0].target.host, "host");
-    assert_eq!(service.snapshot()[0].destination, "/home/test/incoming");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while original.paths.lock().unwrap().is_empty() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(replacement.paths.lock().unwrap().is_empty());
-    assert_eq!(
-        original.paths.lock().unwrap()[0],
-        "/home/test/incoming/file.bin"
-    );
-    let first = service.snapshot()[0].id;
-    service.cancel(first);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !service.snapshot()[0].state.finished() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    service.cancel(first).unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let local = window.find("local-home").bounds();
-        let remote = window.find("files-home").bounds();
-        window.drag(
-            gpui_kit::point(local.center().x, local.bottom() + px(36.)),
-            gpui_kit::point(remote.center().x, remote.bottom() + px(36.)),
-            cx,
-        );
+        drag_row(window, "local-home", "files-home", 36., cx);
     })
     .unwrap();
+    assert_eq!(service.snapshot().len(), 2);
+    let current = service.snapshot()[0].id;
     assert_eq!(
-        service.snapshot().len(),
-        2,
-        "internal row drag should enqueue one batch"
+        recorded_upload(&recording, current).target.host,
+        "second-host"
     );
-    wait_upload_started(&service, 1);
-    let current = service
-        .snapshot()
-        .into_iter()
-        .find(|job| !job.state.finished())
-        .unwrap();
-    assert_eq!(current.target.host, "second-host");
     cx.update_window(handle, |_, window, cx| {
-        let queue = cx.new(|cx| transfers::TransfersView::new(workspace.downgrade(), cx));
+        let queue =
+            cx.new(|cx| transfers::TransfersView::new(service.clone(), workspace.downgrade(), cx));
         workspace.update(cx, |workspace, cx| workspace.add_item(queue, window, cx));
         window.render_frame(cx);
-        window.click(
-            SharedString::from(format!("cancel-upload-{}", current.id)),
-            cx,
-        );
+        window.click(SharedString::from(format!("cancel-upload-{current}")), cx);
     })
     .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while service.snapshot().iter().any(|job| !job.state.finished()) {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
     assert!(
         service
             .snapshot()
@@ -126,24 +139,16 @@ fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(
-            SharedString::from(format!("retry-upload-{}", current.id)),
-            cx,
-        );
+        window.click(SharedString::from(format!("retry-upload-{current}")), cx);
     })
     .unwrap();
     assert_eq!(
         service.snapshot().len(),
         3,
-        "Opening Uploads must allow explicit Retry against the still-connected matching SSH tab"
+        "Explicit Retry uses a matching connected session"
     );
-    for job in service.snapshot() {
-        service.cancel(job.id);
-    }
 }
-
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remote_selection_download_button_pins_context_and_disconnected_access_is_disabled(
     cx: &mut TestAppContext,
 ) {
@@ -151,144 +156,74 @@ fn remote_selection_download_button_pins_context_and_disconnected_access_is_disa
     let directory = tempfile::tempdir().unwrap();
     let other = directory.path().join("other");
     std::fs::create_dir(&other).unwrap();
-    let original = Arc::new(RecordedDownloads::new(true));
-    let replacement = Arc::new(RecordedDownloads::new(true));
-    let (handle, workspace, item, panel) = panel_fixture(cx, original.clone());
-    let service = cx
-        .update_window(handle, |_, _, cx| {
-            transfers::init(cx);
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
-            panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
-            });
-            transfers::service(cx).unwrap()
-        })
-        .unwrap();
-    cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
-    cx.run_until_parked();
+    let original = transfer_remote(false);
+    let replacement = transfer_remote(false);
+    let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
+    let service = deps.transfers.clone();
+    let (handle, workspace, item, panel) = panel_fixture_with(cx, original.clone(), deps);
+    show_local(cx, handle, &workspace, &panel, directory.path());
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("files-download", cx);
+        assert!(service.snapshot().is_empty());
+        select_nonadjacent_remote_rows(window, cx);
+        assert_eq!(panel.read(cx).remote_listing(cx).selected(), [0, 2]);
+        window.click("collision-policy-rename", cx);
+        panel.update(cx, |panel, cx| {
+            panel.navigate_local(directory.path().to_owned(), cx)
+        });
         window.render_frame(cx);
         window.click("files-download", cx);
         assert!(
             service.snapshot().is_empty(),
-            "Download without selection must be disabled"
+            "Pending navigation is not an implicit destination"
         );
-        let toolbar = window.find("files-home").bounds();
-        let first = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
-        pointer_click(window, first, Default::default(), cx);
-        pointer_click(
-            window,
-            first + gpui_kit::point(px(0.), px(64.)),
-            gpui_kit::Modifiers {
-                shift: true,
-                ..Default::default()
-            },
-            cx,
-        );
-        assert_eq!(
-            panel
-                .read(cx)
-                .remote_selected
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-            [0, 1, 2]
-        );
-        pointer_click(
-            window,
-            first + gpui_kit::point(px(0.), px(32.)),
-            gpui_kit::Modifiers {
-                control: true,
-                ..Default::default()
-            },
-            cx,
-        );
-        assert_eq!(
-            panel
-                .read(cx)
-                .remote_selected
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-            [0, 2]
-        );
-        window.click("collision-policy-rename", cx);
-        assert_eq!(panel.read(cx).collisions, CollisionPolicy::Rename);
-        panel.update(cx, |panel, cx| {
-            panel.local.path = None;
-            cx.notify();
-        });
-        window.click("files-download", cx);
-        assert!(
-            service.snapshot().is_empty(),
-            "Download without a local destination must be disabled"
-        );
-        panel.update(cx, |panel, cx| {
-            panel.local.path = Some(directory.path().into());
-            cx.notify();
-        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.click("files-download", cx);
     })
     .unwrap();
-    assert_eq!(service.snapshot().len(), 1);
+    let request = recorded_download(&recording, service.snapshot()[0].id);
+    assert_eq!(request.sources, ["/home/test/a.txt", "/home/test/c.txt"]);
+    assert_eq!(request.local_destination, directory.path());
+    assert_eq!(
+        request.collisions,
+        nocterm_transfers::CollisionPolicy::Rename
+    );
+    let pinned: Arc<dyn RemoteFs> = original;
+    assert!(Arc::ptr_eq(&request.fs, &pinned));
     item.update(cx, |item, cx| {
         item.session.target.host = "replacement".into();
-        item.session.fs = Some(replacement.clone());
+        item.session.fs = Some(replacement);
         cx.emit(ItemEvent::Changed);
     });
-    panel.update(cx, |panel, cx| panel.load_local(other.clone(), cx));
+    panel.update(cx, |panel, cx| panel.navigate_local(other.clone(), cx));
     cx.run_until_parked();
-    wait_transfer(&service, |jobs| {
-        jobs[0].discovered_files == 2 && original.paths.lock().unwrap().len() == 2
-    });
-    let job = service.snapshot().remove(0);
-    assert_eq!(job.target.host, "host");
     assert_eq!(
-        job.direction,
-        nocterm_transfers::TransferDirection::Download
+        recorded_download(&recording, service.snapshot()[0].id).local_destination,
+        directory.path()
     );
-    assert_eq!(job.destination, directory.path().display().to_string());
-    assert!(replacement.paths.lock().unwrap().is_empty());
-    let mut paths = original.paths.lock().unwrap().clone();
-    paths.sort();
-    assert_eq!(paths, ["/home/test/a.txt", "/home/test/c.txt"]);
-    item.update(cx, |item, cx| {
-        item.session.connected = false;
-        cx.emit(ItemEvent::Changed);
-    });
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("files-download", cx);
-        assert_eq!(
-            service.snapshot().len(),
-            1,
-            "disconnected Download must not enqueue"
-        );
-    })
-    .unwrap();
-    item.update(cx, |item, cx| {
-        item.session.connected = true;
-        item.session.fs = None;
-        cx.emit(ItemEvent::Changed);
-    });
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("files-download", cx);
-        assert_eq!(
-            service.snapshot().len(),
-            1,
-            "Download without SFTP must not enqueue"
-        );
-    })
-    .unwrap();
-    service.cancel(job.id);
-    wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
+    for unsupported in [false, true] {
+        item.update(cx, |item, cx| {
+            item.session.connected = unsupported;
+            if unsupported {
+                item.session.fs = None;
+            }
+            cx.emit(ItemEvent::Changed);
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("files-download", cx);
+            assert_eq!(service.snapshot().len(), 1);
+        })
+        .unwrap();
+    }
 }
-
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn remote_drag_to_local_folder_and_area_queues_once_and_collision_buttons_apply(
     cx: &mut TestAppContext,
 ) {
@@ -296,118 +231,60 @@ fn remote_drag_to_local_folder_and_area_queues_once_and_collision_buttons_apply(
     let directory = tempfile::tempdir().unwrap();
     let folder = directory.path().join("incoming");
     std::fs::create_dir(&folder).unwrap();
-    std::fs::write(folder.join("a.txt"), b"keep").unwrap();
-    let fs = Arc::new(RecordedDownloads::new(false));
-    let (handle, workspace, _, panel) = panel_fixture(cx, fs.clone());
-    let service = cx
-        .update_window(handle, |_, _, cx| {
-            transfers::init(cx);
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
-            panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
-            });
-            transfers::service(cx).unwrap()
-        })
-        .unwrap();
-    cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
-    cx.run_until_parked();
-    for (index, policy) in [(0, "skip"), (1, "rename"), (2, "replace")] {
+    let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
+    let service = deps.transfers.clone();
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, transfer_remote(false), deps);
+    show_local(cx, handle, &workspace, &panel, directory.path());
+    for (index, label, policy) in [
+        (0, "skip", nocterm_transfers::CollisionPolicy::Skip),
+        (1, "rename", nocterm_transfers::CollisionPolicy::Rename),
+        (2, "replace", nocterm_transfers::CollisionPolicy::Replace),
+    ] {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            window.click(SharedString::from(format!("collision-policy-{policy}")), cx);
-            let remote = window.find("files-home").bounds();
-            let local = window.find("local-home").bounds();
-            window.drag(
-                gpui_kit::point(remote.center().x, remote.bottom() + px(36.)),
-                gpui_kit::point(local.center().x, local.bottom() + px(36.)),
-                cx,
-            );
+            window.click(SharedString::from(format!("collision-policy-{label}")), cx);
+            drag_row(window, "files-home", "local-home", 36., cx);
         })
         .unwrap();
         assert_eq!(
             service.snapshot().len(),
             index + 1,
-            "folder handler must stop parent drop bubbling"
+            "Folder drop stops parent bubbling"
         );
-        wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
-        assert_eq!(
-            service.snapshot().last().unwrap().destination,
-            folder.display().to_string()
-        );
-        match policy {
-            "skip" => {
-                assert_eq!(std::fs::read(folder.join("a.txt")).unwrap(), b"keep");
-                assert_eq!(service.snapshot()[0].skipped_files, 1);
-            }
-            "rename" => {
-                assert_eq!(std::fs::read(folder.join("a.txt")).unwrap(), b"keep");
-                assert_eq!(std::fs::read(folder.join("a (1).txt")).unwrap(), b"payload");
-            }
-            "replace" => assert_eq!(std::fs::read(folder.join("a.txt")).unwrap(), b"payload"),
-            _ => unreachable!(),
-        }
+        let id = service.snapshot()[0].id;
+        let request = recorded_download(&recording, id);
+        assert_eq!(request.local_destination, folder);
+        assert_eq!(request.collisions, policy);
+        complete_recorded(&recording, id);
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
     }
-    let existing_ids: std::collections::HashSet<_> =
-        service.snapshot().iter().map(|job| job.id).collect();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let remote = window.find("files-home").bounds();
         let local = window.find("local-home").bounds();
-        // The Local toolbar exercises the browser handler outside folder rows.
         window.drag(
             gpui_kit::point(remote.center().x, remote.bottom() + px(68.)),
-            gpui_kit::point(local.center().x, local.center().y),
+            local.center(),
             cx,
         );
     })
     .unwrap();
     assert_eq!(service.snapshot().len(), 4);
-    wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
     assert_eq!(
-        service
-            .snapshot()
-            .into_iter()
-            .find(|job| !existing_ids.contains(&job.id))
-            .unwrap()
-            .destination,
-        directory.path().display().to_string()
-    );
-    assert_eq!(
-        std::fs::read(directory.path().join("b.txt")).unwrap(),
-        b"payload"
+        recorded_download(&recording, service.snapshot()[0].id).local_destination,
+        directory.path()
     );
 }
-
-#[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
-fn remote_drag_captures_source_before_switching_tabs_and_destination_when_dropped(
-    cx: &mut TestAppContext,
-) {
+fn begin_remote_drag(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     use gpui_kit::{InputEvent as _, test::TestWindowExt as _};
-    let directory = tempfile::tempdir().unwrap();
-    let other = tempfile::tempdir().unwrap();
-    let original = Arc::new(RecordedDownloads::new(true));
-    let replacement = Arc::new(RecordedDownloads::new(true));
-    let (handle, workspace, item, panel) = panel_fixture(cx, original.clone());
-    let service = cx
-        .update_window(handle, |_, _, cx| {
-            transfers::init(cx);
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
-            panel.update(cx, |panel, cx| {
-                panel.load_local(directory.path().into(), cx)
-            });
-            transfers::service(cx).unwrap()
-        })
-        .unwrap();
-    cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
-    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let toolbar = window.find("files-home").bounds();
-        let origin = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
+        let position = gpui_kit::point(toolbar.center().x, toolbar.bottom() + px(36.));
         window.dispatch_event(
             gpui_kit::MouseMoveEvent {
-                position: origin,
+                position,
                 pressed_button: None,
                 modifiers: Default::default(),
             }
@@ -417,7 +294,7 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
         window.render_frame(cx);
         window.dispatch_event(
             gpui_kit::MouseDownEvent {
-                position: origin,
+                position,
                 button: MouseButton::Left,
                 modifiers: Default::default(),
                 click_count: 1,
@@ -429,7 +306,7 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
         window.render_frame(cx);
         window.dispatch_event(
             gpui_kit::MouseMoveEvent {
-                position: origin + gpui_kit::point(px(14.), px(0.)),
+                position: position + gpui_kit::point(px(14.), px(0.)),
                 pressed_button: Some(MouseButton::Left),
                 modifiers: Default::default(),
             }
@@ -439,19 +316,34 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
         window.render_frame(cx);
     })
     .unwrap();
-    // An existing drag owns its payload even while the active session changes.
+}
+
+#[gpui_kit::test]
+fn remote_drag_captures_source_before_switching_tabs_and_destination_when_dropped(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::{InputEvent as _, test::TestWindowExt as _};
+    let directory = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let original = transfer_remote(false);
+    let replacement = transfer_remote(false);
+    let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
+    let service = deps.transfers.clone();
+    let (handle, workspace, item, panel) = panel_fixture_with(cx, original.clone(), deps);
+    show_local(cx, handle, &workspace, &panel, directory.path());
+    begin_remote_drag(cx, handle);
     item.update(cx, |item, cx| {
         item.session.target.host = "replacement".into();
-        item.session.fs = Some(replacement.clone());
+        item.session.fs = Some(replacement);
         cx.emit(ItemEvent::Changed);
     });
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let destination = window.find("local-home").bounds().center();
+        let position = window.find("local-home").bounds().center();
         window.dispatch_event(
             gpui_kit::MouseMoveEvent {
-                position: destination,
+                position,
                 pressed_button: Some(MouseButton::Left),
                 modifiers: Default::default(),
             }
@@ -461,7 +353,7 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
         window.render_frame(cx);
         window.dispatch_event(
             gpui_kit::MouseUpEvent {
-                position: destination,
+                position,
                 button: MouseButton::Left,
                 modifiers: Default::default(),
                 click_count: 1,
@@ -473,14 +365,14 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
     })
     .unwrap();
     assert_eq!(service.snapshot().len(), 1);
-    panel.update(cx, |panel, cx| panel.load_local(other.path().into(), cx));
+    let request = recorded_download(&recording, service.snapshot()[0].id);
+    let pinned: Arc<dyn RemoteFs> = original;
+    assert!(Arc::ptr_eq(&request.fs, &pinned));
+    assert_eq!(request.target.host, "host");
+    assert_eq!(request.sources, ["/home/test/a.txt"]);
+    panel.update(cx, |panel, cx| {
+        panel.navigate_local(other.path().to_owned(), cx)
+    });
     cx.run_until_parked();
-    wait_transfer(&service, |_| original.paths.lock().unwrap().len() == 1);
-    let job = service.snapshot().remove(0);
-    assert_eq!(job.target.host, "host");
-    assert_eq!(job.destination, directory.path().display().to_string());
-    assert_eq!(original.paths.lock().unwrap()[0], "/home/test/a.txt");
-    assert!(replacement.paths.lock().unwrap().is_empty());
-    service.cancel(job.id);
-    wait_transfer(&service, |jobs| jobs.iter().all(|job| job.state.finished()));
+    assert_eq!(request.local_destination, directory.path());
 }

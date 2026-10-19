@@ -1,5 +1,6 @@
 //! The sidebar list of saved connections.
 
+use nocterm_connections_model::profiles::{Profile, ProfileId};
 use std::{collections::HashSet, sync::Arc};
 
 use gpui_kit::{
@@ -21,14 +22,14 @@ use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace};
 
 use crate::{
-    Connections, ServerFacts,
-    model::{connect, spec_for_profile},
-    open_editor,
+    Connections, Installed, connect, open_editor,
     os::{self, Os},
-    store::{Profile, ProfileId},
+    spec_for_profile,
 };
 
+mod group_actions;
 mod row;
+use group_actions::{GroupAction, run_group_action};
 
 /// A server's icon: `os` in `color` (its brand colour when none), or the
 /// generic server icon in `color` (`fallback` when none).
@@ -64,50 +65,8 @@ struct GroupRename {
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Clone, Copy)]
-enum GroupAction {
-    Ungroup,
-    Delete,
-}
-
 #[derive(Clone)]
 struct DraggedProfile(ProfileId);
-
-fn run_group_action(
-    action: GroupAction,
-    group: String,
-    expected: Vec<ProfileId>,
-    panel: WeakEntity<ConnectionsPanel>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let (done, key, title) = Connections::global(cx).update(cx, |connections, cx| match action {
-        GroupAction::Ungroup => (
-            connections.ungroup(group.clone(), cx),
-            "connections-ungroup",
-            "Could not ungroup connections",
-        ),
-        GroupAction::Delete => (
-            connections.delete_group(group.clone(), expected, cx),
-            "connections-delete-group",
-            "Could not delete group",
-        ),
-    });
-    window
-        .spawn(cx, async move |cx| match done.await {
-            Ok(()) => {
-                let _ = panel.update(cx, |panel, cx| {
-                    panel.collapsed.remove(&group);
-                    cx.notify();
-                });
-            }
-            Err(error) => {
-                let _ = cx
-                    .update(|window, cx| nocterm_ui::notice::error(window, cx, key, title, error));
-            }
-        })
-        .detach();
-}
 
 fn description_preview(description: &str) -> String {
     description
@@ -130,7 +89,7 @@ fn description_tooltip(description: &str) -> String {
 }
 
 pub struct ConnectionsPanel {
-    connections: Entity<Connections>,
+    installed: Installed,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     filter: Entity<InputState>,
@@ -142,30 +101,32 @@ pub struct ConnectionsPanel {
 
 impl ConnectionsPanel {
     pub fn new(
-        connections: Entity<Connections>,
+        installed: Installed,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
         let subscriptions = vec![
-            cx.observe_in(&connections, window, |this, connections, window, cx| {
-                // The group may have been deleted or ungrouped while being renamed.
-                if let Some(rename) = &this.renaming
-                    && !connections.read(cx).profiles().has_group(&rename.group)
-                {
-                    let focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
-                    this.renaming = None;
-                    if focused {
-                        window.focus(&this.focus_handle, cx);
+            cx.observe_in(
+                installed.connections(),
+                window,
+                |this, connections, window, cx| {
+                    // The group may have been deleted or ungrouped while being renamed.
+                    if let Some(rename) = &this.renaming
+                        && !connections.read(cx).profiles(cx).has_group(&rename.group)
+                    {
+                        let focused = rename.input.read(cx).focus_handle(cx).is_focused(window);
+                        this.renaming = None;
+                        if focused {
+                            window.focus(&this.focus_handle, cx);
+                        }
                     }
-                }
-                cx.notify();
-            }),
+                    cx.notify();
+                },
+            ),
             // Detected systems and countries, and flags as they load.
-            cx.observe(&ServerFacts::global(cx), |_, _, cx| cx.notify()),
-            // Turning country detection on or off shows or hides detected flags.
-            cx.observe_global::<nocterm_ui::SettingsStore>(|_, cx| cx.notify()),
+            cx.observe(installed.facts(), |_, _, cx| cx.notify()),
             cx.subscribe_in(&filter, window, |this, _, event, window, cx| match event {
                 InputEvent::Change => cx.notify(),
                 // Enter opens the only match.
@@ -174,7 +135,7 @@ impl ConnectionsPanel {
             }),
         ];
         Self {
-            connections,
+            installed,
             workspace,
             focus_handle: cx.focus_handle(),
             filter,
@@ -189,10 +150,18 @@ impl ConnectionsPanel {
     }
 
     fn open(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(profile) = self.connections.read(cx).profiles().get(id).cloned() else {
+        let Some(profile) = self
+            .installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .get(id)
+            .cloned()
+        else {
             return;
         };
         connect(
+            &self.installed,
             &self.workspace,
             spec_for_profile(&profile),
             Some(id),
@@ -204,9 +173,10 @@ impl ConnectionsPanel {
     fn open_single_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let filter = self.filter_text(cx);
         let matches: Vec<ProfileId> = self
-            .connections
+            .installed
+            .connections()
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .iter()
             .filter(|profile| profile.matches(&filter))
             .map(|profile| profile.id)
@@ -217,30 +187,45 @@ impl ConnectionsPanel {
     }
 
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        let profile = self.connections.read(cx).profiles().get(id).cloned();
+        let profile = self
+            .installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .get(id)
+            .cloned();
         if profile.is_some() {
-            open_editor(profile, self.workspace.clone(), window, cx);
+            open_editor(
+                self.installed.clone(),
+                profile,
+                self.workspace.clone(),
+                window,
+                cx,
+            );
         }
     }
 
     fn confirm_delete(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(name) = self
-            .connections
+            .installed
+            .connections()
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .get(id)
             .map(|profile| profile.name.clone())
         else {
             return;
         };
+        let connections = self.installed.connections().clone();
         window.open_alert_dialog(cx, move |alert, _, _| {
+            let connections = connections.clone();
             alert
                 .title(format!("Delete “{name}”?"))
                 .description("The saved connection is removed. Open sessions stay open.")
                 .ok_text("Delete")
                 .show_cancel(true)
                 .on_ok(move |_, window, cx| {
-                    let deleted = Connections::global(cx)
+                    let deleted = connections
                         .update(cx, |connections, cx| connections.delete_profile(id, cx));
                     window
                         .spawn(cx, async move |cx| {
@@ -251,7 +236,7 @@ impl ConnectionsPanel {
                                         cx,
                                         "connections-delete",
                                         "Could not delete connection",
-                                        error,
+                                        error.to_string(),
                                     )
                                 });
                             }
@@ -265,15 +250,17 @@ impl ConnectionsPanel {
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
         // The delete only applies while the group still holds these connections.
         let members: Vec<ProfileId> = self
-            .connections
+            .installed
+            .connections()
             .read(cx)
-            .profiles()
+            .profiles(cx)
             .in_group(Some(&group), "")
             .iter()
             .map(|profile| profile.id)
             .collect();
         let count = members.len();
         let panel = cx.weak_entity();
+        let connections = self.installed.connections().clone();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let description = match count {
                 0 => "This group is empty.".to_owned(),
@@ -281,12 +268,13 @@ impl ConnectionsPanel {
                 n => format!("{n} connections in this group. Delete them, or ungroup to move them to Ungrouped. Open sessions stay open. Saved vault credentials are kept."),
             };
             let action = |id: &'static str, label: &'static str, action: GroupAction| {
-                let (group, panel, members) = (group.clone(), panel.clone(), members.clone());
+                let (group, panel, members, connections) = (group.clone(), panel.clone(), members.clone(), connections.clone());
                 Button::new(id)
                     .label(label)
                     .when(matches!(action, GroupAction::Delete), |button| button.danger())
                     .on_click(move |_: &ClickEvent, window, cx| {
                         run_group_action(
+                            &connections,
                             action,
                             group.clone(),
                             members.clone(),
@@ -383,7 +371,7 @@ impl ConnectionsPanel {
         } else {
             self.collapsed.remove(&to);
         }
-        let renamed = self.connections.update(cx, |connections, cx| {
+        let renamed = self.installed.connections().update(cx, |connections, cx| {
             connections.rename_group(group.clone(), to.clone(), cx)
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -408,7 +396,7 @@ impl ConnectionsPanel {
                         cx,
                         "connections-rename-group",
                         "Could not rename group",
-                        error,
+                        error.to_string(),
                     )
                 });
             }
@@ -435,7 +423,7 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        let moved = self.connections.update(cx, |connections, cx| {
+        let moved = self.installed.connections().update(cx, |connections, cx| {
             connections.place_profile(dragged.0, group, before, cx)
         });
         cx.spawn_in(window, async move |_, cx| {
@@ -446,7 +434,7 @@ impl ConnectionsPanel {
                         cx,
                         "connections-move",
                         "Could not move connection",
-                        error,
+                        error.to_string(),
                     )
                 });
             }
@@ -589,8 +577,8 @@ impl ConnectionsPanel {
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter_text(cx);
         let filtering = !filter.trim().is_empty();
-        let connections = self.connections.read(cx);
-        let profiles = connections.profiles();
+        let connections = self.installed.connections().read(cx);
+        let profiles = connections.profiles(cx);
 
         let (top, groups) = profiles.grouped(&filter);
         let top: Vec<_> = top.into_iter().cloned().collect();
@@ -680,7 +668,13 @@ impl ConnectionsPanel {
                     .icon(IconName::ServerPlus)
                     .label("New Connection")
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        open_editor(None, this.workspace.clone(), window, cx);
+                        open_editor(
+                            this.installed.clone(),
+                            None,
+                            this.workspace.clone(),
+                            window,
+                            cx,
+                        );
                     })),
             )
     }
@@ -705,11 +699,18 @@ impl Focusable for ConnectionsPanel {
 impl Render for ConnectionsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let load_error = self
-            .connections
+            .installed
+            .connections()
             .read(cx)
             .load_error()
-            .or_else(|| self.connections.read(cx).persistence_error())
-            .map(str::to_owned);
+            .map(ToString::to_string)
+            .or_else(|| {
+                self.installed
+                    .connections()
+                    .read(cx)
+                    .persistence_error(cx)
+                    .map(|error| error.to_string())
+            });
         let theme = cx.theme();
         let danger = theme.danger;
 
@@ -736,7 +737,13 @@ impl Render for ConnectionsPanel {
                             .icon(IconName::ServerPlus)
                             .tooltip("New Connection")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                open_editor(None, this.workspace.clone(), window, cx);
+                                open_editor(
+                                    this.installed.clone(),
+                                    None,
+                                    this.workspace.clone(),
+                                    window,
+                                    cx,
+                                );
                             })),
                     ),
             )

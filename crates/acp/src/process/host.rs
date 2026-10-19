@@ -18,9 +18,17 @@ pub(super) fn start_time(pid: u32) -> io::Result<u64> {
         .ok_or_else(|| io::Error::other("Invalid owner process identity"))
 }
 
+/// Why the `agent-host` service leader ended without a clean agent exit.
+///
+/// It has no `source`: the process stderr belongs to the agent and reaches the
+/// UI, so the report must stay a single line.
+#[derive(Debug, thiserror::Error)]
+#[error("Agent process container: {0}")]
+pub struct AgentHostError(io::Error);
+
 /// Internal CLI; stdin/stdout/stderr belong exclusively to the ACP agent.
-pub fn run_agent_host(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
-    run(args).map_err(|error| format!("Agent process container: {error}"))
+pub fn run_agent_host(args: impl IntoIterator<Item = OsString>) -> Result<(), AgentHostError> {
+    run(args).map_err(AgentHostError)
 }
 
 fn run(args: impl IntoIterator<Item = OsString>) -> io::Result<()> {
@@ -121,7 +129,10 @@ mod tests {
             marker.to_string_lossy().into_owned(),
         ]
         .map(OsString::from);
-        assert!(run_agent_host(args).is_err());
+        assert_eq!(
+            run_agent_host(args).unwrap_err().to_string(),
+            "Agent process container: Agent owner is no longer available"
+        );
         assert!(!marker.exists());
     }
 }

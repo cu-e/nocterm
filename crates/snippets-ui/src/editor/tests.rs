@@ -2,46 +2,68 @@ use super::*;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::{AnyWindowHandle, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_ui::{Design, DesignTokens};
-fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>) {
+fn workspace(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Workspace>, Installed) {
     cx.update(|cx| {
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
-        crate::init(None, cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| Workspace::new(window, cx))
-        })
-        .unwrap()
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        let installed = crate::test_support::install(
+            settings,
+            &nocterm_store::ShutdownCoordinator::default(),
+            cx,
+        )
+        .unwrap();
+        let (handle, workspace) =
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let deps =
+                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    Workspace::new(deps, window, cx)
+                })
+            })
+            .unwrap();
+        (handle, workspace, installed)
     })
+}
+fn replace(window: &mut Window, id: &'static str, value: &str, cx: &mut App) {
+    window.render_frame(cx);
+    window.click(id, cx);
+    window.press("ctrl-a", cx);
+    window.press("backspace", cx);
+    window.input(value, cx);
+}
+fn assert_input(window: &mut Window, id: &'static str, expected: &str, cx: &mut App) {
+    window.click(id, cx);
+    assert_eq!(
+        window.focused_input(cx).unwrap().value(cx).as_ref(),
+        expected
+    );
+}
+fn begin(installed: &Installed, workspace: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
+    open(installed.clone(), None, workspace.downgrade(), window, cx);
+    window.render_frame(cx);
 }
 #[gpui_kit::test]
 fn multiline_enter_does_not_save_then_explicit_save_preserves_code(cx: &mut TestAppContext) {
-    let (handle, workspace) = workspace(cx);
-    let editor = cx
-        .update_window(handle, |_, window, cx| {
-            let editor = open(None, workspace.downgrade(), window, cx);
-            window.render_frame(cx);
-            window.input("Disk usage", cx);
-            let focus = editor.read(cx).code.read(cx).focus_handle(cx);
-            window.focus(&focus, cx);
-            window.render_frame(cx);
-            window.input("echo first", cx);
-            window.press("enter", cx);
-            window.input("echo second", cx);
-            editor
-        })
-        .unwrap();
+    let (handle, workspace, installed) = workspace(cx);
+    cx.update_window(handle, |_, window, cx| {
+        begin(&installed, &workspace, window, cx);
+        window.input("Disk usage", cx);
+        window.click("snippet-code", cx);
+        window.input("echo first", cx);
+        window.press("enter", cx);
+        window.input("echo second", cx);
+    })
+    .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_some());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
-        assert!(editor.read(cx).code.read(cx).value().contains('\n'));
-        editor.update(cx, |editor, cx| {
-            editor.select_language(Language::Python, cx);
-            editor.select_language(Language::Bash, cx);
-        });
-        window.render_frame(cx);
+        assert!(installed.library(cx).snippets.is_empty());
+        assert!(window.focused_input(cx).unwrap().value(cx).contains('\n'));
+        window.click("python", cx);
+        window.click("bash", cx);
         window.click("snippet-save", cx);
     })
     .unwrap();
@@ -49,8 +71,7 @@ fn multiline_enter_does_not_save_then_explicit_save_preserves_code(cx: &mut Test
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        let model = Snippets::global(cx);
-        let snippets = &model.read(cx).library.snippets;
+        let snippets = &installed.library(cx).snippets;
         assert_eq!(snippets.len(), 1);
         assert_eq!(snippets[0].name, "Disk usage");
         assert_eq!(snippets[0].content, "echo first\necho second");
@@ -60,20 +81,17 @@ fn multiline_enter_does_not_save_then_explicit_save_preserves_code(cx: &mut Test
 }
 #[gpui_kit::test]
 fn validation_and_cancel_keep_library_unchanged(cx: &mut TestAppContext) {
-    let (handle, workspace) = workspace(cx);
-    let editor = cx
-        .update_window(handle, |_, window, cx| {
-            let editor = open(None, workspace.downgrade(), window, cx);
-            window.render_frame(cx);
-            window.click("snippet-save", cx);
-            editor
-        })
-        .unwrap();
+    let (handle, workspace, installed) = workspace(cx);
+    cx.update_window(handle, |_, window, cx| {
+        begin(&installed, &workspace, window, cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_some());
-        assert!(editor.read(cx).error.is_some());
+        assert!(window.try_find("snippet-error").is_some());
         window.click("snippet-cancel", cx);
     })
     .unwrap();
@@ -81,7 +99,7 @@ fn validation_and_cancel_keep_library_unchanged(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("dialog").is_none());
-        assert!(Snippets::global(cx).read(cx).library.snippets.is_empty());
+        assert!(installed.library(cx).snippets.is_empty());
     })
     .unwrap();
 }
@@ -101,86 +119,53 @@ fn selected_languages_have_real_bundled_parsers() {
         assert!(highlighter.tree().is_some(), "{} must parse", language.id());
     }
 }
-
 #[gpui_kit::test]
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) {
-    let (handle, workspace) = workspace(cx);
-    let editor = cx
-        .update_window(handle, |_, window, cx| {
-            let editor = open(None, workspace.downgrade(), window, cx);
-            window.render_frame(cx);
-            editor.update(cx, |editor, cx| {
-                editor
-                    .name
-                    .update(cx, |name, cx| name.set_value("Inspect", window, cx));
-                editor
-                    .code
-                    .update(cx, |code, cx| code.set_value("echo first", window, cx));
-                editor.save(window, cx);
-            });
-            // Application menus can stack an About dialog while the save is in flight.
-            // Open it before the ready in-memory completion is delivered to the editor.
-            window.open_dialog(cx, |dialog, _, _| {
-                dialog.title("About").child(
-                    gpui_kit::div()
-                        .id("about-content")
-                        .test_support()
-                        .child("Nocterm"),
-                )
-            });
-            assert!(
-                !editor
-                    .read(cx)
-                    .dialog_focus
-                    .as_ref()
-                    .unwrap()
-                    .contains_focused(window, cx),
-                "About initially owns focus"
-            );
-            window.render_frame(cx);
-            assert!(
-                !editor
-                    .read(cx)
-                    .dialog_focus
-                    .as_ref()
-                    .unwrap()
-                    .contains_focused(window, cx),
-                "About owns focus after render"
-            );
-            editor
-        })
-        .unwrap();
-    cx.run_until_parked();
+    let (handle, workspace, installed) = workspace(cx);
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(
-            window.try_find("about-content").is_some(),
-            "Saving must preserve the newer dialog."
-        );
-        assert!(!editor.read(cx).dismissed.load(Ordering::Acquire));
-        assert!(editor.read(cx).saved);
-        assert!(!editor.read(cx).pending);
-        assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets[0].content,
-            "echo first"
-        );
-        window.close_dialog(cx);
-        window.render_frame(cx);
-        editor.update(cx, |editor, cx| {
-            editor.code.update(cx, |code, cx| {
-                code.focus(window, cx);
-                code.set_selected_range(0..code.value().len(), cx);
-            });
+        begin(&installed, &workspace, window, cx);
+        window.input("Inspect", cx);
+        replace(window, "snippet-code", "echo first", cx);
+        window.click("snippet-save", cx);
+        let editor_focus = window.focused(cx);
+        window.open_dialog(cx, |dialog, _, _| {
+            dialog.title("About").child(
+                gpui_kit::div()
+                    .id("about-content")
+                    .test_support()
+                    .child("Nocterm"),
+            )
         });
+        let about = window.focused(cx);
+        assert!(
+            about.is_some() && about != editor_focus,
+            "About initially owns focus"
+        );
         window.render_frame(cx);
-        window.input("echo second", cx);
+        assert!(window.focused(cx) == about, "About owns focus after render");
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!editor.read(cx).saved, "Editing clears the saved status.");
+        assert!(
+            window.try_find("about-content").is_some(),
+            "Saving must preserve the newer dialog"
+        );
+        assert_eq!(installed.library(cx).snippets[0].content, "echo first");
+        window.close_dialog(cx);
+        window.render_frame(cx);
+        assert!(window.try_find("snippet-saved").is_some());
+        replace(window, "snippet-code", "echo second", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("snippet-saved").is_none(),
+            "Editing clears saved status"
+        );
         window.click("snippet-save", cx);
     })
     .unwrap();
@@ -189,81 +174,88 @@ fn save_under_stacked_dialog_keeps_both_dialogs_usable(cx: &mut TestAppContext) 
         window.render_frame(cx);
         assert!(
             window.try_find("dialog").is_none(),
-            "The resurfaced editor can save and close normally."
+            "Resurfaced editor saves and closes"
         );
-        assert_eq!(
-            Snippets::global(cx).read(cx).library.snippets[0].content,
-            "echo second"
-        );
+        assert_eq!(installed.library(cx).snippets[0].content, "echo second");
     })
     .unwrap();
 }
-
 #[gpui_kit::test]
 fn attachment_navigation_preserves_draft_and_validation_returns_to_snippet(
     cx: &mut TestAppContext,
 ) {
-    let (handle, workspace) = workspace(cx);
-    let editor = cx
-        .update_window(handle, |_, window, cx| {
-            let editor = open(None, workspace.downgrade(), window, cx);
-            editor.update(cx, |editor, cx| {
-                editor.description.update(cx, |description, cx| {
-                    description.set_value("First\nSecond", window, cx)
-                });
-                editor
-                    .code
-                    .update(cx, |code, cx| code.set_value("echo preserved", window, cx));
-            });
-            window.render_frame(cx);
-            window.click("snippet-section-attachments", cx);
-            editor
-        })
-        .unwrap();
+    let (handle, workspace, installed) = workspace(cx);
+    let original = Snippet {
+        name: "Original".into(),
+        description: "First\nSecond".into(),
+        content: "echo preserved".into(),
+        profiles: vec!["specific-server".into()],
+        groups: vec!["Work".into()],
+        ..Snippet::new(uuid::Uuid::from_u128(11))
+    };
+    cx.update(|cx| installed.save(original.clone(), None, cx).detach());
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        open(
+            installed.clone(),
+            Some(original.clone()),
+            workspace.downgrade(),
+            window,
+            cx,
+        );
+        replace(window, "snippet-name", "", cx);
+        assert_input(window, "snippet-name", "", cx);
+        window.click("snippet-section-attachments", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("group-Work").is_some());
+        window.click("group-Work", cx);
+        replace(window, "snippet-attachment-search", "unmatched", cx);
+    })
+    .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(matches!(
-            editor.read(cx).section,
-            EditorSection::Attachments
-        ));
-        editor.update(cx, |editor, cx| {
-            editor.set_binding(true, "Work".into(), true, cx);
-            assert!(
-                editor.draft.profiles.is_empty(),
-                "A group binding never expands into direct profile IDs."
-            );
-            editor.set_binding(false, "specific-server".into(), true, cx);
-            editor.set_binding(true, "Work".into(), false, cx);
-            assert_eq!(editor.draft.profiles, ["specific-server"]);
-            editor
-                .attachment_search
-                .update(cx, |search, cx| search.set_value("unmatched", window, cx));
-        });
         window.click("snippet-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let draft = editor.read(cx);
-        assert!(matches!(draft.section, EditorSection::Snippet));
-        assert!(draft.name.read(cx).focus_handle(cx).is_focused(window));
-        assert!(draft.error.is_some());
-        assert_eq!(draft.description.read(cx).value().as_ref(), "First\nSecond");
-        assert_eq!(draft.code.read(cx).value().as_ref(), "echo preserved");
-        assert_eq!(draft.draft.profiles, ["specific-server"]);
-        window.click("snippet-cancel", cx);
+        assert!(window.try_find("snippet-error").is_some());
+        assert_eq!(window.focused_input(cx).unwrap().value(cx).as_ref(), "");
+        replace(window, "snippet-name", "Accepted", cx);
+        window.click("snippet-description", cx);
+        assert_eq!(
+            window.focused_input(cx).unwrap().value(cx).as_ref(),
+            "First\nSecond"
+        );
+        window.click("snippet-code", cx);
+        assert_eq!(
+            window.focused_input(cx).unwrap().value(cx).as_ref(),
+            "echo preserved"
+        );
+        window.click("snippet-save", cx);
     })
     .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let saved = &installed.library(cx).snippets[0];
+        assert_eq!(
+            saved.profiles,
+            ["specific-server"],
+            "Group choice never expands into direct profiles"
+        );
+        assert!(saved.groups.is_empty());
+        assert_eq!(saved.description, "First\nSecond");
+        assert_eq!(saved.content, "echo preserved");
+    });
 }
-
 #[gpui_kit::test]
 fn minimum_window_keeps_footer_visible_on_both_pages(cx: &mut TestAppContext) {
-    let (handle, workspace) = workspace(cx);
+    let (handle, workspace, installed) = workspace(cx);
     cx.simulate_window_resize(handle, gpui_kit::size(px(640.), px(400.)));
     cx.update_window(handle, |_, window, cx| {
-        open(None, workspace.downgrade(), window, cx);
+        begin(&installed, &workspace, window, cx)
     })
     .unwrap();
     for section in ["snippet-section-snippet", "snippet-section-attachments"] {
@@ -276,13 +268,185 @@ fn minimum_window_keeps_footer_visible_on_both_pages(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             for button in ["snippet-save", "snippet-cancel"] {
-                let bounds = window.find(button).bounds();
                 assert!(
-                    bounds.bottom() <= window.viewport_size().height,
+                    window.find(button).bounds().bottom() <= window.viewport_size().height,
                     "{section}: {button} must stay visible"
                 );
             }
         })
         .unwrap();
     }
+}
+#[gpui_kit::test]
+fn an_existing_editor_saves_only_its_original_installation_without_settings_global(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, first) = workspace(cx);
+    cx.update_window(handle, |_, window, cx| {
+        begin(&first, &workspace, window, cx);
+        window.input("Original owner", cx);
+        replace(window, "snippet-code", "echo original", cx);
+    })
+    .unwrap();
+    let second = cx.update(|cx| {
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        crate::test_support::install(settings, &nocterm_store::ShutdownCoordinator::default(), cx)
+            .unwrap()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(first.library(cx).snippets[0].name, "Original owner");
+        assert_eq!(first.library(cx).snippets[0].content, "echo original");
+        assert!(second.library(cx).snippets.is_empty());
+    });
+}
+
+#[gpui_kit::test]
+fn shutdown_registration_failure_returns_no_editable_installation(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        let shutdown = nocterm_store::ShutdownCoordinator::default();
+        drop(shutdown.capture_all(cx));
+        assert!(matches!(
+            crate::test_support::install(settings, &shutdown, cx),
+            Err(nocterm_store::StoreError::Closing)
+        ));
+    });
+}
+
+#[gpui_kit::test]
+fn conflicting_save_keeps_literal_controls_and_original_expected_record_for_retry(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, installed) = workspace(cx);
+    let original = Snippet {
+        name: "Original".into(),
+        content: "echo original".into(),
+        ..Snippet::new(uuid::Uuid::from_u128(12))
+    };
+    cx.update(|cx| installed.save(original.clone(), None, cx).detach());
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        open(
+            installed.clone(),
+            Some(original.clone()),
+            workspace.downgrade(),
+            window,
+            cx,
+        );
+        replace(window, "snippet-name", "Literal edit", cx);
+        replace(window, "snippet-description", "First\nSecond 日本語", cx);
+        replace(window, "snippet-code", "print('kept')\n", cx);
+        window.click("python", cx);
+    })
+    .unwrap();
+    let mut external = original.clone();
+    external.name = "External".into();
+    cx.update(|cx| {
+        installed
+            .save(external.clone(), Some(original.clone()), cx)
+            .detach()
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("snippet-error").is_some());
+        assert_eq!(installed.library(cx).snippets[0], external);
+        assert_input(window, "snippet-name", "Literal edit", cx);
+        assert_input(window, "snippet-description", "First\nSecond 日本語", cx);
+        assert_input(window, "snippet-code", "print('kept')\n", cx);
+    })
+    .unwrap();
+    cx.update(|cx| {
+        installed
+            .save(original.clone(), Some(external), cx)
+            .detach()
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let saved = &installed.library(cx).snippets[0];
+        assert_eq!(saved.name, "Literal edit");
+        assert_eq!(saved.description, "First\nSecond 日本語");
+        assert_eq!(saved.content, "print('kept')\n");
+        assert_eq!(saved.language, Language::Python);
+    });
+}
+
+#[gpui_kit::test]
+fn draft_identity_is_created_once_and_editing_an_existing_record_never_requests_an_id(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, original) = workspace(cx);
+    let ids = Arc::new(nocterm_snippets::test_support::SequenceIds::new(50_000));
+    let installed = cx.update(|cx| {
+        crate::test_support::install_with_ids(
+            original.settings().clone(),
+            ids.clone(),
+            &nocterm_store::ShutdownCoordinator::default(),
+            cx,
+        )
+        .unwrap()
+    });
+    assert_eq!(ids.calls(), 0, "installation does not generate a draft");
+    cx.update_window(handle, |_, window, cx| {
+        begin(&installed, &workspace, window, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(ids.calls(), 1);
+        window.click("snippet-save", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("snippet-error").is_some());
+        replace(window, "snippet-name", "Created once", cx);
+        replace(window, "snippet-code", "echo original", cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let saved = cx.update(|cx| installed.library(cx).snippets[0].clone());
+    assert_eq!(saved.id, uuid::Uuid::from_u128(50_000));
+    assert_eq!(
+        ids.calls(),
+        1,
+        "validation retry and successful save reuse the draft"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        open(
+            installed.clone(),
+            Some(saved.clone()),
+            workspace.downgrade(),
+            window,
+            cx,
+        );
+        window.render_frame(cx);
+        replace(window, "snippet-code", "echo edited", cx);
+        window.click("snippet-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(installed.library(cx).snippets[0].id, saved.id);
+        assert_eq!(installed.library(cx).snippets[0].content, "echo edited");
+    });
+    assert_eq!(
+        ids.calls(),
+        1,
+        "existing editor does not acquire an identity"
+    );
 }

@@ -2,34 +2,27 @@
 //! Explorer, or the system's default application, and local entries in the
 //! system file manager.
 
-use crate::{OpenSettings, Opener};
+use crate::Opener;
 use gpui_kit::{
     App, SharedString, WeakEntity, Window,
     component::menu::{PopupMenu, PopupMenuItem},
 };
 use nocterm_session::fs::path;
-use nocterm_ui::SettingsExt as _;
+use nocterm_session::{ProgramOpenError, ProgramOpenRequest, ProgramOpener};
 use nocterm_workspace::Workspace;
-use std::{
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::sync::Arc;
 
 use crate::operations::FileTarget;
 
-/// The user's opener settings; the defaults where none are installed.
-fn settings(cx: &App) -> OpenSettings {
-    if cx.has_global::<nocterm_ui::SettingsStore>() {
-        cx.setting::<crate::ExplorerSettings>().open.clone()
-    } else {
-        OpenSettings::default()
-    }
-}
-
 /// The program that opens `target`; `None` means the system default.
-fn opener(target: &FileTarget, cx: &App) -> Option<Opener> {
+fn opener(target: &FileTarget, installed: &crate::Installed, cx: &App) -> Option<Opener> {
     let remote = matches!(target, FileTarget::Remote { .. });
-    settings(cx).opener_for(&target.name(), remote).cloned()
+    installed
+        .settings()
+        .setting::<crate::ExplorerSettings>(cx)
+        .open
+        .opener_for(&target.name(), remote)
+        .cloned()
 }
 
 /// Adds the ways to open `target` to the end of its context menu.
@@ -38,25 +31,32 @@ pub(crate) fn menu_items(
     target: &FileTarget,
     directory: bool,
     workspace: WeakEntity<Workspace>,
+    installed: crate::Installed,
     cx: &App,
 ) -> PopupMenu {
     let mut menu = menu.separator();
     let local = match target {
-        FileTarget::Local(path) => Some(path.clone()),
+        FileTarget::Local { path, .. } => Some(path.clone()),
         FileTarget::Remote { .. } => None,
     };
     if !directory {
-        let label: SharedString = match opener(target, cx) {
+        let label: SharedString = match opener(target, &installed, cx) {
             Some(opener) => format!("Open with {}", opener.program).into(),
             None if local.is_some() => "Open".into(),
             None => "Open (choose a program in Settings → Explorer)".into(),
         };
         let open = target.clone();
+        let captured = installed.clone();
         menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-            let (open, workspace) = (open.clone(), workspace.clone());
-            window.defer(cx, move |window, cx| run(&open, &workspace, window, cx));
+            let (open, workspace, installed) = (open.clone(), workspace.clone(), captured.clone());
+            window.defer(cx, move |window, cx| {
+                run(&open, &workspace, &installed, window, cx)
+            });
         }));
-        if let Some(path) = local.clone().filter(|_| opener(target, cx).is_some()) {
+        if let Some(path) = local
+            .clone()
+            .filter(|_| opener(target, &installed, cx).is_some())
+        {
             menu = menu.item(
                 PopupMenuItem::new("Open with default application")
                     .on_click(move |_, _, cx| cx.open_with_system(&path)),
@@ -84,115 +84,155 @@ pub(crate) fn menu_items(
 pub(crate) fn later(
     target: FileTarget,
     workspace: WeakEntity<Workspace>,
+    installed: crate::Installed,
     window: gpui_kit::AnyWindowHandle,
     cx: &mut App,
 ) {
     cx.defer(move |cx| {
-        let _ = window.update(cx, |_, window, cx| run(&target, &workspace, window, cx));
+        let _ = window.update(cx, |_, window, cx| {
+            run(&target, &workspace, &installed, window, cx)
+        });
     });
 }
 
-/// Opens a file, reporting failure as a notice.
-pub(crate) fn run(
+/// Dispatches presentation intent through the supplied native or remote port.
+fn run(
     target: &FileTarget,
     workspace: &WeakEntity<Workspace>,
+    installed: &crate::Installed,
     window: &mut Window,
     cx: &mut App,
 ) {
-    if let Err(error) = open(target, workspace, window, cx) {
-        nocterm_ui::notice::error(
-            window,
-            cx,
-            "files-open",
-            "Could not open file",
-            format!("{}: {error}", target.name()),
-        );
-    }
-}
-
-fn open(
-    target: &FileTarget,
-    workspace: &WeakEntity<Workspace>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Result<(), String> {
-    let opener = opener(target, cx);
     match target {
-        FileTarget::Local(file) => match opener {
-            Some(opener) => {
-                let text = file
-                    .to_str()
-                    .ok_or("This file name cannot be passed to a program.")?;
-                spawn(&opener.program, opener.arguments(text), file.parent())
+        FileTarget::Local { path: file, .. } => {
+            match local_request(file, opener(target, installed, cx).as_ref()) {
+                Ok(Some(request)) => launch(
+                    installed.opener().clone(),
+                    request,
+                    target.name(),
+                    window,
+                    cx,
+                ),
+                Ok(None) => cx.open_with_system(file),
+                Err(error) => report(target.name(), error, window, cx),
             }
-            None => {
-                cx.open_with_system(file);
-                Ok(())
-            }
-        },
+        }
         FileTarget::Remote {
             path: file, host, ..
         } => {
-            let opener = opener
-                .ok_or("Choose the program that opens files on servers in Settings → Explorer.")?;
-            let title = format!("{} {}", opener.program, path::file_name(file));
-            let workspace = workspace.upgrade().ok_or("The window was closed.")?;
-            workspace.update(cx, |workspace, cx| {
-                workspace.open_on_host(
-                    host,
-                    opener.program.clone(),
-                    opener.arguments(file),
-                    Some(path::parent(file).to_owned()),
-                    title.into(),
-                    window,
-                    cx,
-                )
-            })
+            open_remote(target, file, host, workspace, installed, window, cx);
         }
     }
 }
 
-/// Starts a program detached from Nocterm's terminal; a thread reaps it.
-fn spawn(program: &str, args: Vec<String>, directory: Option<&Path>) -> Result<(), String> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(directory) = directory {
-        command.current_dir(directory);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Could not start {program}: {error}"))?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+#[derive(Debug, thiserror::Error)]
+enum OpenError {
+    #[error("This file name cannot be passed to a program.")]
+    NativeFileName,
+    #[error("Choose the program that opens files on servers in Settings → Explorer.")]
+    MissingRemoteProgram,
+    #[error("The window was closed.")]
+    ClosedWindow,
+    #[error(transparent)]
+    Program(#[from] ProgramOpenError),
 }
 
-#[cfg(all(test, unix))]
+fn local_request(
+    file: &std::path::Path,
+    opener: Option<&Opener>,
+) -> Result<Option<ProgramOpenRequest>, OpenError> {
+    let Some(opener) = opener else {
+        return Ok(None);
+    };
+    let text = file.to_str().ok_or(OpenError::NativeFileName)?;
+    Ok(Some(ProgramOpenRequest::new(
+        opener.program.clone(),
+        opener.arguments(text),
+        file.parent().map(ToOwned::to_owned),
+    )?))
+}
+
+fn launch(
+    native: Arc<dyn ProgramOpener>,
+    request: ProgramOpenRequest,
+    name: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let window = window.window_handle();
+    cx.spawn(async move |cx| {
+        if let Err(error) = native.open(request).await {
+            let _ = window.update(cx, |_, window, cx| report(name, error, window, cx));
+        }
+    })
+    .detach();
+}
+
+fn open_remote(
+    target: &FileTarget,
+    file: &str,
+    host: &nocterm_session::Target,
+    workspace: &WeakEntity<Workspace>,
+    installed: &crate::Installed,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(opener) = opener(target, installed, cx) else {
+        report(target.name(), OpenError::MissingRemoteProgram, window, cx);
+        return;
+    };
+    let Some(workspace) = workspace.upgrade() else {
+        report(target.name(), OpenError::ClosedWindow, window, cx);
+        return;
+    };
+    let title = format!("{} {}", opener.program, path::file_name(file));
+    // Format the typed workspace refusal only at the display surface.
+    let result = workspace.update(cx, |workspace, cx| {
+        workspace.open_on_host(
+            host,
+            opener.program.clone(),
+            opener.arguments(file),
+            Some(path::parent(file).to_owned()),
+            title.into(),
+            window,
+            cx,
+        )
+    });
+    if let Err(error) = result {
+        report(target.name(), error, window, cx);
+    }
+}
+
+fn report(name: String, error: impl std::fmt::Display, window: &mut Window, cx: &mut App) {
+    nocterm_ui::notice::error(
+        window,
+        cx,
+        "files-open",
+        "Could not open file",
+        format!("{name}: {error}"),
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn local_programs_get_the_file_and_run_in_its_folder() {
-        let directory = tempfile::tempdir().unwrap();
-        let marker = directory.path().join("opened");
-        let script = format!("printf '%s' \"$1\" > {}", marker.display());
-        spawn(
-            "/bin/sh",
-            vec!["-c".into(), script, "sh".into(), "a b.txt".into()],
-            Some(directory.path()),
-        )
-        .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::fs::read_to_string(&marker).unwrap_or_default() != "a b.txt" {
-            assert!(std::time::Instant::now() < deadline, "program did not run");
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let error = spawn("/nonexistent/editor", Vec::new(), None).unwrap_err();
-        assert!(error.contains("/nonexistent/editor"), "{error}");
+    fn system_default_does_not_construct_an_external_program_request() {
+        assert!(
+            local_request(std::path::Path::new("note.txt"), None)
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn system_default_preserves_a_native_file_name_unsupported_by_configured_programs() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let file = std::path::Path::new(std::ffi::OsStr::from_bytes(b"note-\xff.txt"));
+        assert!(local_request(file, None).unwrap().is_none());
+        assert!(matches!(
+            local_request(file, Some(&Opener::new("editor", &[]))),
+            Err(OpenError::NativeFileName)
+        ));
     }
 }

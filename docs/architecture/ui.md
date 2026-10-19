@@ -3,15 +3,24 @@
 Part of the [architecture overview](../ARCHITECTURE.md).
 
 UI crates are shared by every feature and depend only on each other, the
-domain and the foundation: `nocterm-ui`, `nocterm-workspace` and
+domain, service and the foundation: `nocterm-ui`, `nocterm-workspace` and
 `nocterm-keymap`. The workspace's seams are how features meet without depending
 on each other ([ADR 0006](../adr/0006-workspace-ports.md)).
+
+The shared `SessionOptionsEditor` returns `SessionOptionsInputError`, retaining
+numeric parse sources and domain override validation. Callers format it when
+presenting a form error; malformed numeric text never becomes a saved override.
 
 ## Theme, icons and notices
 
 `nocterm-ui` projects tokens/settings into the standard GPUI Kit theme and
-provides shared icons, terminal styling, standalone drag previews and operational
-notices. Optional toolkit button metrics are projected from design tokens once;
+accepts an explicitly installed SettingsHandle and returns its retained UiReady witness; it provides shared icons, terminal styling, standalone drag previews and operational
+notices. One retained ThemeUi owns catalog, settings and Design paint subscriptions.
+Catalog changes resolve effective tokens; published settings resolve and paint directly
+when tokens remain unchanged. Design observation paints only, preserving the one-way
+projection. Appearance callbacks apply the same supplied settings owner. UI initialization
+paints initial supplied policy; live changes require retaining ThemeUi. Terminal styling
+and form surfaces use supplied TerminalSettings plus the current paint tokens/theme. Optional toolkit button metrics are projected from design tokens once;
 views retain standard component variants. Notices use the toolkit's window-local
 notification list with stable operation keys and recovery actions, published by
 operation events rather than rendering. Drag previews capture painted source
@@ -27,6 +36,29 @@ revision before event subscribers run. Input at an unchanged live screen waits
 for shell echo; cursor timing and IME overlays redraw only when their presentation
 changes. VT scroll boundaries preserve selection and avoid unnecessary output
 notifications, including selection recomputation in vi mode.
+
+## Settings controls
+
+`SettingsTextField` owns native input, a 600 ms debounce, checked admission and
+the latest original receipt. Feature-provided typed bindings read and validate
+actual settings candidates; UI keeps no feature validators or document cache.
+Each distinct flush immediately enters the existing bounded settings queue,
+including while an older write is pending. Same waiting literal is deduplicated
+only at an unchanged published semantic revision; a later publication admits a
+fresh intention before delayed UI completion. Settled dedup uses the current
+confirmed value. The field retains one latest waiter; dropping an older waiter
+never revokes accepted service work. Matching completion reconciles canonical
+text and diagnostics; a newer literal remains intact. Publication failures
+remain visible and the same literal can be retried with Enter. Returning to a
+prior value is admitted behind a different pending candidate.
+
+Published settings observations retain the original weak field/window. Forms own
+narrow redraw subscriptions with each field's membership, so an asynchronous failure
+updates the surrounding error even without a settings publication. Removing a field
+retires its handle and form observation together. Hosts flush before close/deactivation;
+shutdown captures already accepted edits through the existing service. A draft never
+flushed before native quit is not an accepted snapshot. No coordinator phase or quit
+handler is added ([ADR 0054](../adr/0054-checked-settings-text-receipts.md)).
 
 ## Rendering
 
@@ -61,6 +93,14 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
+`Workspace` coordinates nine private owners: focus, `Tabs`, `Chrome`, background
+sessions, sidebar, independent side panel, body, installed ports and registered
+actions. `Chrome` owns window menus, the new-tab popover and status views; the
+sidebar and side-panel owners control their own visibility and subscriptions.
+Immutable observations expose tab identities and native pane order without giving
+callers mutable native entities. Transitions commit membership and subscriptions
+before the shell emits events or changes focus (ADR 0026).
+
 `nocterm-workspace` owns window
 layout, tabs and sidebar switches through a native DockArea/DockSkin. The
 toolkit owns the single pane tree and drag previews; an adapter exposes Items as
@@ -74,6 +114,10 @@ uses native dock visibility, preserving its pane tree, sizes, tab order,
 selections, groups and running processes. Every user tab shares one Item registry
 and the same close, split, grouping, rename and keyboard operations. Close scopes
 resolve the clicked tab's current native pane; Close All affects its dock placement.
+`LocalTerminal` directory synchronization returns `LocalDirectoryError`, distinguishing
+missing or disconnected shells, unsafe paths, unsupported integration, busy prompts,
+charset encoding causes and input queue rejection. Consumers format errors at notice
+presentation; the workspace retains the selected target on refusal.
 Local shell capability is an optional Item contract, so mixed panes and moved local
 tabs retain identical ownership. Local focus preserves the last central remote
 context for Explorer; native group selection owns the local cwd target. Header
@@ -81,8 +125,10 @@ add controls pass an explicit `LocalTerminalTarget::Beside(EntityId)` to the ope
 resolving the live anchor pane when the new shell registers, including moves to
 Center. A stale anchor closes only the new shell; registered Items are never
 closed by a rejected registration. Native pane queries and empty-region cleanup
-belong to the shared workspace docking module. DockItem adapts presentation;
-the workspace owns focus subscriptions and active session selection.
+belong to the `Tabs` owner and its `DockTopology` capability. DockItem adapts
+presentation; each tab entry owns its feature handle, cached session and focus/event
+subscriptions. `LocalDockState` owns selection and remembered height, not a second
+placement tree.
 Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
 accepted topology changes clear it to reveal their result. Hiding Bottom leaves
 local tabs moved to Center visible. A region's last tab can be dragged to another
@@ -94,6 +140,18 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
+The narrow terminal ports return `TerminalError`, retaining charset sources and
+concrete capability, prompt, ownership and queue refusals. `open_on_host` returns
+`OpenOnHostError`, retaining launch validation and identifying a missing connected
+session. Consumers format these causes at notices or agent transcript boundaries.
+
+The Item supplies an immutable `TerminalCapabilities` record with a required state
+port and independent optional operations. `ExpectedSession` binds calls to the
+workspace Item and connection epoch. `UserPromptToken` also binds the exact secret
+prompt. Unsupported operations refuse explicitly; replacement sessions cannot
+inherit queued approvals, grants or prompt answers. Reconnect returns its accepted
+epoch so every waiter can reject an unrelated subsequent replacement.
+
 ## Tab groups
 
 Tabs can be grouped. Groups are workspace state the dock knows nothing of:
@@ -101,7 +159,7 @@ Tabs can be grouped. Groups are workspace state the dock knows nothing of:
 `TabGroups::gather` finds the member the user moved and brings the rest of its
 group beside it in their previous order, so dragging any member drags the
 group, and a tab dropped among a group is moved out of it. Each tab's group
-color reaches the tab bar through the vendored `Panel::tab_accent`. A program
+color reaches the tab bar through the vendored `gpui_kit::component::dock::Panel::tab_accent`. A program
 opened from a session on the same host joins that session's group; splitting a
 tab off takes it out of its group, and a group left with one tab ends.
 
@@ -136,12 +194,25 @@ in the palette by declaring and handling an action, nothing more.
 ## Layout memory
 
 Widths the user drags resizable columns to, and layout choices, are kept by
-`nocterm_ui::LayoutMemory`, a global keyed by name and saved to `layout.json` in
-the state directory. One background writer coalesces pending changes into the
-latest arrangement and publishes through atomic persistence. Layout and settings
-writers freeze admission on quit and capture final snapshots before waiting for
-ordered background writes; accepted settings edits are included even when an
-earlier write is still in progress. The workspace body lays out only its visible columns —
+an explicitly injected `nocterm_ui::LayoutHandle`, keyed by name and saved to
+`layout.json` in the state directory. Its private `nocterm_store::Persisted` entity
+keeps changes immediately visible and coalesces pending snapshots into the latest
+arrangement. Bootstrap retains that same handle in the workspace dependencies for
+every new window. Agent presentation receives the same handle through its supplied `Installed`.
+`observe_size` projects only changes to one normalized visible scalar; caller-owned
+subscriptions exclude unrelated keys, flags and persistence-only notifications.
+Shared history split updates are applied at the next native group rebuild, preserving
+its existing entity and subscriptions without another persistence write.
+`LayoutMemory` is an initialization namespace returning the explicit handle. It
+keeps the existing application quit hook in its initializer and has no global state
+or fallback arrangement. Clones share the original persistence participant.
+The explicitly injected `ShutdownCoordinator` captures layout before background
+drain and shares one deadline across its registered participants (ADR 0013).
+Settings also uses `nocterm-store`, with durable publication rather than optimistic
+layout projection. Bootstrap registers both settings and layout with the same
+coordinator alongside snippets, connection state, agent documents and output
+recording.
+The workspace body lays out only its visible columns —
 sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
 the left — with one resize state per arrangement, and remembers widths per
 column rather than per position: a hidden column kept in the resizable group
@@ -161,8 +232,37 @@ merge of the application's defaults (`assets/keymap.toml`) with the user's
 `keymap.toml`, which lists only differences (`"none"` unbinds), and installs the
 merge in GPUI. Its bindings carry a metadata mark, so a change replaces exactly
 them without a restart and leaves the component library's own bindings alone.
+Edit APIs return `KeymapError`, preserving native keystroke and persistence causes.
+A failed save leaves the desired binding installed and reports the failure;
+a later successful edit persists the current desired keymap.
+The composition root retains a cloneable KeymapHandle around the private owner and
+passes it to each page and window. Named edits install owned marked bindings after
+releasing the entity borrow, then notify observers, including persistence failure.
+The typed shared PersistError is the same original cause returned to the caller;
+invalid keystrokes leave the previous state and diagnostic intact. Native loading
+and synchronous keymap persistence remain existing UI-layer migration debt.
+See [ADR0051](../adr/0051-retained-keymap-installation.md).
 It also names actions for people (`humanize`) and decides which are user
 commands (`offered`), for the command palette and the keymap page alike.
 `nocterm-keymap-ui` is the Keymap settings page, a guest page like the vault's:
 a searchable table that records new shortcuts through a keystroke interceptor
 (so even bound keys are captured) and edits only through `nocterm-keymap`.
+
+`TerminalStyle::with_settings` projects an explicitly supplied terminal section
+through the current design and theme rules. Terminal views use their installed
+SettingsHandle; dialogs and settings surfaces capture their original supplied
+owner. Their backgrounds retain the same terminal colour and alpha conversion.
+
+Shared UI does not register or read the AI policy schema. Agent runtime registers
+its own supplied settings section; standalone settings-page compositions register
+that section explicitly before constructing AI controls.
+
+## Shared settings presentation
+
+`SettingsTextField` owns native text, checked immutable admissions and the original
+store receipt. `FieldPresentation` retains that field and its weak redraw observation
+with the page membership. The small shared syntax helpers parse numbers and JSON;
+AI registry and credential policy remain in the AI domain and Agent page.
+`SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
+factories. The latter receive only their original SettingsHandle and per-Item save
+feedback. The additive flush operation leaves existing guest lifecycle contracts intact.
