@@ -44,6 +44,13 @@ impl Paths {
             error,
         ))
     }
+    /// Ancestor list of the private directory's cold `create_dir_all`; its
+    /// per-ancestor path conversions are shorter than the `std_scratch` path.
+    fn ancestor_scratch(&self, path: &Path) -> Result<NativeScratch, Cause> {
+        let bytes = nocterm_core::paths::private_directory_ancestor_bytes(path)
+            .ok_or(NativeAllocationError::Arithmetic)?;
+        Ok(NativeScratch::reserve_native(self.budget.ledger(), bytes)?)
+    }
     /// Pinned std1.98 run_path_with_cstr uses stack384, else one len+1 CString.
     fn std_scratch(&self, path: &Path) -> Result<NativeScratch, Cause> {
         let len = path.as_os_str().as_encoded_bytes().len();
@@ -58,8 +65,9 @@ impl Paths {
     pub(super) fn private(&self, path: &Path) -> Result<(), Cause> {
         let diagnostic = self.diagnostic_credit(path)?;
         let scratch = self.std_scratch(path)?;
+        let ancestors = self.ancestor_scratch(path)?;
         let result = nocterm_core::paths::ensure_private_dir_checked(path);
-        drop(scratch);
+        drop((ancestors, scratch));
         match result {
             Ok(()) => Ok(()),
             Err(PrivateDirectoryCheckError::Native(error)) => {

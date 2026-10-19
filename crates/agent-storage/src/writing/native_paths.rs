@@ -155,6 +155,12 @@ pub(super) fn private_directory(
         };
         reserve(ledger, bytes)
     })?;
+    // Cold `create_dir_all` ancestor list; per-ancestor conversions are shorter.
+    let _ancestor_scratch = prepared(ledger, || {
+        let bytes = nocterm_core::paths::private_directory_ancestor_bytes(dir)
+            .ok_or_else(|| path_error(nocterm_core::fs::PathAdmissionError::Arithmetic))?;
+        reserve(ledger, bytes)
+    })?;
     match nocterm_core::paths::ensure_private_dir_checked(path.as_path()) {
         Ok(()) => Ok(()),
         Err(nocterm_core::fs::PrivateDirectoryCheckError::Native(source)) => {
