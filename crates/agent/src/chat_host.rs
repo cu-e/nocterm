@@ -1,5 +1,6 @@
 //! Explicit immutable host collaborators retained by each panel and its chats.
 use gpui_kit::{App, WeakEntity};
+use nocterm_ai::history::SavedChat;
 use nocterm_workspace::Workspace;
 #[derive(Clone)]
 pub(crate) struct ChatHost {
@@ -18,12 +19,6 @@ impl ChatHost {
     }
     pub(crate) fn runtime(&self) -> &crate::runtime::RuntimeHandle {
         self.installed.runtime()
-    }
-    pub(crate) fn retention<'a>(
-        &'a self,
-        cx: &App,
-    ) -> &'a nocterm_ai::model::retention::RetentionAuthority {
-        self.runtime().retention(cx)
     }
     pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
         self.installed.settings()
@@ -46,7 +41,7 @@ impl ChatHost {
     pub(crate) fn timestamp(&self) -> u64 {
         self.installed.timestamp()
     }
-    pub(crate) fn new_identity(&self) -> nocterm_ai::metadata::ChatIdentity {
-        self.installed.new_identity()
+    pub(crate) fn new_chat(&self, agent: String) -> SavedChat {
+        self.installed.new_chat(agent)
     }
 }

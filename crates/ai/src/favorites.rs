@@ -1,7 +1,5 @@
-use crate::{
-    model::controls::ConfigOption,
-    session_config::{self, Choices, ConfigValue, StoredOption},
-};
+use crate::model::controls::ConfigOption;
+use crate::session_config::{self, Choices, ConfigValue, StoredOption};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq)]

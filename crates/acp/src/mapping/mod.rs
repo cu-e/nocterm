@@ -1,21 +1,20 @@
-//! Typed SDK mappings. Only claim projection is used at
-//! runtime; the remaining mappings are original oracles for managed tests.
-#[cfg(test)]
-pub(crate) mod auth;
-#[cfg(test)]
+//! The only place agent-protocol SDK records and neutral `nocterm-ai` records meet.
 mod content;
-#[cfg(test)]
-pub(crate) mod controls;
-pub(crate) mod identity;
-#[cfg(test)]
-pub(crate) mod notice;
-#[cfg(test)]
-pub(crate) mod outbound;
-#[cfg(test)]
-pub(crate) mod session;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
+mod controls;
+mod info;
+mod requests;
+mod session;
 mod tools;
+
+pub(crate) use controls::options;
+pub(crate) use info::{auth_methods, capabilities, remote_error};
+pub(crate) use requests::{
+    new_session, opened, permission, prompt, prompt_outcome, servers, set_config, set_mode,
+    wire_outcome, wire_session,
+};
+pub(crate) use session::notice;
+
 #[cfg(test)]
-mod usage;
+mod equivalence_tests;
+#[cfg(test)]
+mod session_tests;

@@ -1,17 +1,13 @@
 use agent_client_protocol_schema::v1 as wire;
-use nocterm_ai::model::retention::RetentionAuthority;
 use nocterm_ai::model::{content::*, diagnostic::ModelError, extensions::Extensions};
-pub(super) fn extensions(
-    authority: &RetentionAuthority,
-    meta: Option<wire::Meta>,
-) -> Result<Option<Extensions>, ModelError> {
-    meta.map(|meta| Extensions::checked(authority, meta))
-        .transpose()
+
+pub(super) fn extensions(meta: Option<wire::Meta>) -> Option<Extensions> {
+    meta.map(Extensions::from)
 }
-fn annotations(
-    authority: &RetentionAuthority,
-    value: Option<wire::Annotations>,
-) -> Result<Option<Annotations>, ModelError> {
+fn meta(value: Option<Extensions>) -> Option<wire::Meta> {
+    value.map(Extensions::into_map)
+}
+fn annotations(value: Option<wire::Annotations>) -> Result<Option<Annotations>, ModelError> {
     value
         .map(|value| {
             Ok(Annotations {
@@ -20,7 +16,7 @@ fn annotations(
                     .map(|values| {
                         values
                             .into_iter()
-                            .map(|value| match value {
+                            .map(|role| match role {
                                 wire::Role::User => Ok(Audience::User),
                                 wire::Role::Assistant => Ok(Audience::Assistant),
                                 _ => Err(ModelError::Unsupported("content audience")),
@@ -28,81 +24,67 @@ fn annotations(
                             .collect::<Result<_, _>>()
                     })
                     .transpose()?,
-                modified: value.last_modified,
+                last_modified: value.last_modified,
                 priority: value.priority,
-                extensions: extensions(authority, value.meta)?,
+                meta: extensions(value.meta),
             })
         })
         .transpose()
 }
-pub(super) fn inbound(
-    authority: &RetentionAuthority,
-    value: wire::ContentBlock,
-) -> Result<Content, ModelError> {
+pub(super) fn content(value: wire::ContentBlock) -> Result<Content, ModelError> {
     Ok(match value {
         wire::ContentBlock::Text(value) => Content::Text(Text {
+            annotations: annotations(value.annotations)?,
             text: value.text,
-            annotations: annotations(authority, value.annotations)?,
-            extensions: extensions(authority, value.meta)?,
+            meta: extensions(value.meta),
         }),
-        wire::ContentBlock::Image(value) => Content::Media(Media {
-            kind: MediaKind::Image,
-            encoded: value.data,
-            mime: value.mime_type,
+        wire::ContentBlock::Image(value) => Content::Image(Image {
+            annotations: annotations(value.annotations)?,
+            data: value.data,
+            mime_type: value.mime_type,
             uri: value.uri,
-            annotations: annotations(authority, value.annotations)?,
-            extensions: extensions(authority, value.meta)?,
+            meta: extensions(value.meta),
         }),
-        wire::ContentBlock::Audio(value) => Content::Media(Media {
-            kind: MediaKind::Audio,
-            encoded: value.data,
-            mime: value.mime_type,
-            uri: None,
-            annotations: annotations(authority, value.annotations)?,
-            extensions: extensions(authority, value.meta)?,
+        wire::ContentBlock::Audio(value) => Content::Audio(Audio {
+            annotations: annotations(value.annotations)?,
+            data: value.data,
+            mime_type: value.mime_type,
+            meta: extensions(value.meta),
         }),
         wire::ContentBlock::ResourceLink(value) => Content::ResourceReference(ResourceReference {
-            uri: value.uri,
-            name: value.name,
-            title: value.title,
+            annotations: annotations(value.annotations)?,
             description: value.description,
-            mime: value.mime_type,
-            reported_size: value.size,
-            annotations: annotations(authority, value.annotations)?,
-            extensions: extensions(authority, value.meta)?,
+            mime_type: value.mime_type,
+            name: value.name,
+            size: value.size,
+            title: value.title,
+            uri: value.uri,
+            meta: extensions(value.meta),
         }),
         wire::ContentBlock::Resource(value) => Content::EmbeddedResource(EmbeddedResource {
-            body: match value.resource {
+            annotations: annotations(value.annotations)?,
+            resource: match value.resource {
                 wire::EmbeddedResourceResource::TextResourceContents(value) => {
                     ResourceBody::Text(ResourceText {
-                        uri: value.uri,
+                        mime_type: value.mime_type,
                         text: value.text,
-                        mime: value.mime_type,
-                        extensions: extensions(authority, value.meta)?,
+                        uri: value.uri,
+                        meta: extensions(value.meta),
                     })
                 }
                 wire::EmbeddedResourceResource::BlobResourceContents(value) => {
-                    ResourceBody::Encoded(ResourceBlob {
+                    ResourceBody::Blob(ResourceBlob {
+                        blob: value.blob,
+                        mime_type: value.mime_type,
                         uri: value.uri,
-                        encoded: value.blob,
-                        mime: value.mime_type,
-                        extensions: extensions(authority, value.meta)?,
+                        meta: extensions(value.meta),
                     })
                 }
                 _ => return Err(ModelError::Unsupported("embedded resource")),
             },
-            annotations: annotations(authority, value.annotations)?,
-            extensions: extensions(authority, value.meta)?,
+            meta: extensions(value.meta),
         }),
         _ => return Err(ModelError::Unsupported("content")),
-    })
-}
-fn metadata(value: Option<Extensions>) -> Option<wire::Meta> {
-    value.map(|value| {
-        value
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect()
     })
 }
 fn wire_annotations(value: Option<Annotations>) -> Option<wire::Annotations> {
@@ -117,65 +99,56 @@ fn wire_annotations(value: Option<Annotations>) -> Option<wire::Annotations> {
                     })
                     .collect::<Vec<_>>()
             }))
-            .last_modified(value.modified)
+            .last_modified(value.last_modified)
             .priority(value.priority)
-            .meta(metadata(value.extensions))
+            .meta(meta(value.meta))
     })
 }
-pub(super) fn outbound(value: Content) -> Result<wire::ContentBlock, ModelError> {
-    Ok(match value {
+pub(super) fn wire_content(value: Content) -> wire::ContentBlock {
+    match value {
         Content::Text(value) => wire::ContentBlock::Text(
             wire::TextContent::new(value.text)
                 .annotations(wire_annotations(value.annotations))
-                .meta(metadata(value.extensions)),
+                .meta(meta(value.meta)),
         ),
-        Content::Media(value) => match value.kind {
-            MediaKind::Image => wire::ContentBlock::Image(
-                wire::ImageContent::new(value.encoded, value.mime)
-                    .uri(value.uri)
-                    .annotations(wire_annotations(value.annotations))
-                    .meta(metadata(value.extensions)),
-            ),
-            MediaKind::Audio => {
-                if value.uri.is_some() {
-                    return Err(ModelError::Unsupported("audio source URI"));
-                }
-                wire::ContentBlock::Audio(
-                    wire::AudioContent::new(value.encoded, value.mime)
-                        .annotations(wire_annotations(value.annotations))
-                        .meta(metadata(value.extensions)),
-                )
-            }
-        },
+        Content::Image(value) => wire::ContentBlock::Image(
+            wire::ImageContent::new(value.data, value.mime_type)
+                .uri(value.uri)
+                .annotations(wire_annotations(value.annotations))
+                .meta(meta(value.meta)),
+        ),
+        Content::Audio(value) => wire::ContentBlock::Audio(
+            wire::AudioContent::new(value.data, value.mime_type)
+                .annotations(wire_annotations(value.annotations))
+                .meta(meta(value.meta)),
+        ),
         Content::ResourceReference(value) => wire::ContentBlock::ResourceLink(
             wire::ResourceLink::new(value.name, value.uri)
                 .title(value.title)
                 .description(value.description)
-                .mime_type(value.mime)
-                .size(value.reported_size)
+                .mime_type(value.mime_type)
+                .size(value.size)
                 .annotations(wire_annotations(value.annotations))
-                .meta(metadata(value.extensions)),
+                .meta(meta(value.meta)),
         ),
         Content::EmbeddedResource(value) => {
-            let body = match value.body {
+            let resource = match value.resource {
                 ResourceBody::Text(body) => wire::EmbeddedResourceResource::TextResourceContents(
                     wire::TextResourceContents::new(body.text, body.uri)
-                        .mime_type(body.mime)
-                        .meta(metadata(body.extensions)),
+                        .mime_type(body.mime_type)
+                        .meta(meta(body.meta)),
                 ),
-                ResourceBody::Encoded(body) => {
-                    wire::EmbeddedResourceResource::BlobResourceContents(
-                        wire::BlobResourceContents::new(body.encoded, body.uri)
-                            .mime_type(body.mime)
-                            .meta(metadata(body.extensions)),
-                    )
-                }
+                ResourceBody::Blob(body) => wire::EmbeddedResourceResource::BlobResourceContents(
+                    wire::BlobResourceContents::new(body.blob, body.uri)
+                        .mime_type(body.mime_type)
+                        .meta(meta(body.meta)),
+                ),
             };
             wire::ContentBlock::Resource(
-                wire::EmbeddedResource::new(body)
+                wire::EmbeddedResource::new(resource)
                     .annotations(wire_annotations(value.annotations))
-                    .meta(metadata(value.extensions)),
+                    .meta(meta(value.meta)),
             )
         }
-    })
+    }
 }

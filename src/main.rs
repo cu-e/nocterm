@@ -102,6 +102,3 @@ fn report_settings_errors(settings: &nocterm_store::SettingsHandle, cx: &App) {
         tracing::error!(%error, "a settings section is invalid; using its defaults");
     }
 }
-
-#[cfg(test)]
-mod tool_protocol_fixtures;

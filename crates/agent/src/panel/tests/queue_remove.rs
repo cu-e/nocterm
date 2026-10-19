@@ -1,5 +1,6 @@
 //! A queued message can be removed without sending it.
 use super::*;
+use nocterm_ai::model::content::Content;
 
 fn queued(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) -> Vec<String> {
     cx.update(|cx| {
@@ -8,7 +9,7 @@ fn queued(thread: &Entity<crate::thread::AgentThread>, cx: &mut TestAppContext) 
             .composer()
             .queue()
             .iter()
-            .map(|prompt| prompt.text().to_string())
+            .map(|prompt| prompt.saved.text.clone())
             .collect()
     })
 }
@@ -34,7 +35,7 @@ fn the_queue_removes_a_message_and_keeps_the_rest_in_order(cx: &mut TestAppConte
     });
     cx.run_until_parked();
     assert_eq!(queued(&thread, cx), ["first", "second", "third"]);
-    let second = cx.update(|cx| thread.read(cx).composer().queue()[1].id());
+    let second = cx.update(|cx| thread.read(cx).composer().queue()[1].saved.id);
 
     // The bar removes the next message.
     render(&f, cx);
@@ -57,7 +58,6 @@ fn the_queue_removes_a_message_and_keeps_the_rest_in_order(cx: &mut TestAppConte
     cx.update(|cx| {
         let saved = thread.read(cx).snapshot(cx).unwrap();
         let texts: Vec<_> = saved
-            .composer()
             .queue
             .iter()
             .map(|prompt| prompt.text.as_str())
@@ -103,28 +103,18 @@ fn a_message_being_edited_cannot_be_removed(cx: &mut TestAppContext) {
 fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
     lazy_start(&f, cx);
-    let saved = nocterm_ai::history::SavedChat::for_identity(
-        &f.installation.retention,
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006e".into(),
         1,
     );
-    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
-    composer.queue.push(nocterm_ai::history::SavedPrompt {
+    saved.queue.push(nocterm_ai::history::SavedPrompt {
         id: 4,
         text: "never sent".into(),
         images: Vec::new(),
         attachments: Vec::new(),
     });
-    let saved = nocterm_ai::history::SavedChat::from_parts(
-        &f.installation.retention,
-        id.clone(),
-        metadata,
-        resume,
-        transcript,
-        composer,
-    )
-    .unwrap();
+    let id = saved.id.clone();
     f.repository.seed_chat(&saved).unwrap();
     reinstall_history(&mut f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {
@@ -134,17 +124,7 @@ fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
-    f.panel
-        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
-    cx.run_until_parked();
     thread.update(cx, |thread, cx| thread.remove_queued(4, None, cx));
     cx.run_until_parked();
-    assert!(
-        f.repository
-            .transcript(&id)
-            .unwrap()
-            .composer()
-            .queue
-            .is_empty()
-    );
+    assert!(f.repository.transcript(&id).unwrap().queue.is_empty());
 }

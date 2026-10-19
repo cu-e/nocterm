@@ -1,10 +1,16 @@
 //! A chat goes on after its session fails: forks, resumes and transport
 //! errors recover through the next message instead of a reload.
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::SessionUpdate;
 use std::time::Duration;
 
-fn overloaded() -> RestoreFailure {
-    RestoreFailure::Rpc(-32603, "Internal error: Service temporarily overloaded")
+fn overloaded() -> AgentError {
+    AgentError::Rpc(nocterm_ai::model::session::RemoteError {
+        code: -32603,
+        message: "Service temporarily overloaded".into(),
+    })
 }
 
 fn last_prompt_text(f: &Fixture) -> Vec<String> {
@@ -184,20 +190,21 @@ fn release_changes_notice_text_and_activation_clears_its_error_emphasis(cx: &mut
         assert!(!thread.is_leased());
     });
 }
+
 #[gpui_kit::test]
 fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     old.update(cx, |thread, cx| {
-        let mut option = super::composer::select(
+        let option = ConfigOption::select(
             "model",
             "Model",
             "saved",
-            vec![("saved", "remembered model")],
-        );
-        option.category = Some(nocterm_ai::model::controls::ConfigCategory::Model);
-        report_control(&f, thread, SessionUpdate::Configuration(vec![option]), cx);
+            vec![ConfigChoice::new("saved", "remembered model")],
+        )
+        .category(ConfigCategory::Model);
+        report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
         thread.send("active".into(), cx);
         thread.replace_composer_context(vec![Attachment::Group("queued".into())], cx);
         thread.send("queued prompt".into(), cx);
@@ -228,7 +235,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
                 .any(|thread| thread.entity_id() == old.entity_id())
         );
         assert_eq!(
-            current.read(cx).composer().attachments().to_vec(),
+            current.read(cx).composer().attachments(),
             vec![Attachment::Group("default".into())]
         );
         assert_eq!(
@@ -236,11 +243,12 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
             Some("remembered model")
         );
         assert_eq!(
-            current.read(cx).composer().queued_rows()[0].text(),
+            current.read(cx).composer().queue()[0].saved.text,
             "queued prompt"
         );
     });
 }
+
 #[gpui_kit::test]
 fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -266,7 +274,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             .unwrap()
             .update(cx, |thread, cx| {
                 assert_eq!(thread.composer().queue().len(), 2);
-                let retained = thread.composer().queue()[0].id();
+                let retained = thread.composer().queue()[0].saved.id;
                 thread.send_now(retained, cx);
                 thread.send("new first".into(), cx);
                 thread.send("new second".into(), cx);
@@ -275,7 +283,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
                     .composer()
                     .queue()
                     .iter()
-                    .map(|prompt| prompt.id())
+                    .map(|prompt| prompt.saved.id)
                     .collect::<Vec<_>>();
                 let unique = ids
                     .iter()
@@ -289,6 +297,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             });
     });
 }
+
 #[gpui_kit::test]
 fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -305,17 +314,17 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     thread.update(cx, |thread, _| {
         assert!(thread.ended());
         assert!(thread.composer().paused());
-        assert_eq!(thread.composer().queued_rows()[0].text(), "retained");
+        assert_eq!(thread.composer().queue()[0].saved.text, "retained");
     });
     // Nothing reconnects by itself.
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     let saved = f.repository.chats();
-    assert_eq!(saved[0].composer().queue[0].text, "retained");
+    assert_eq!(saved[0].queue[0].text, "retained");
 
     // Sending reconnects the chat and goes on with its queue.
     thread.update(cx, |thread, cx| {
-        thread.send_now(thread.composer().queue()[0].id(), cx);
+        thread.send_now(thread.composer().queue()[0].saved.id, cx);
         assert!(thread.submit("another".into(), None, cx).unwrap());
     });
     cx.run_until_parked();
@@ -323,7 +332,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
         assert!(!thread.ended());
         assert!(thread.session_generating());
         assert_eq!(thread.composer().queue().len(), 1);
-        assert_eq!(thread.composer().queued_rows()[0].text(), "another");
+        assert_eq!(thread.composer().queue()[0].saved.text, "another");
     });
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);

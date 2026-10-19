@@ -1,52 +1,8 @@
 use super::*;
-use nocterm_ai::model::{
-    controls::{ConfigChoice, ConfigKind, ModeChoice, SelectChoices},
-    ids::{ConfigChoiceId, ConfigId, ModeId},
-    literal::{LiteralIdentity, TextRange},
-    tools::{ToolKind, ToolOutput, ToolStatus},
-};
-pub(super) fn select(
-    id: &str,
-    name: &str,
-    current: &str,
-    choices: Vec<(&str, &str)>,
-) -> ConfigOption {
-    ConfigOption {
-        id: ConfigId::new(id),
-        name: name.into(),
-        description: None,
-        category: None,
-        kind: ConfigKind::Select {
-            current: ConfigChoiceId::new(current),
-            choices: SelectChoices::Flat(
-                choices
-                    .into_iter()
-                    .map(|(id, name)| ConfigChoice {
-                        id: ConfigChoiceId::new(id),
-                        name: name.into(),
-                        description: None,
-                        extensions: None,
-                    })
-                    .collect(),
-            ),
-        },
-        extensions: None,
-    }
-}
-
-fn finished_with_tokens() -> PromptOutcome {
-    PromptOutcome {
-        ending: EndOfTurn::Finished,
-        tokens: Some(nocterm_ai::model::usage::TokenTotals {
-            total: 30_000,
-            input: 25_000,
-            output: 5_000,
-            thought: None,
-            cache_read: Some(20_000),
-            cache_write: None,
-        }),
-    }
-}
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 #[gpui_kit::test]
 fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
@@ -74,21 +30,22 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     f.events
-        .try_send(AgentEvent::Session(SessionNotice {
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            update: SessionUpdate::Usage(nocterm_ai::model::notice::UsageNotice {
-                context: nocterm_ai::model::usage::ContextUsage {
-                    used: 25_900,
-                    size: 256_000,
-                    cost: None,
-                },
-                rate_limits: vec![],
-            }),
-        }))
+            SessionUpdate::UsageUpdate(ContextUsage::new(25_900, 256_000)),
+        )))
         .unwrap();
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
-    finish.send(finished_with_tokens()).unwrap();
+    finish
+        .send(PromptOutcome {
+            usage: Some(TokenTotals {
+                cache_read: Some(20_000),
+                ..TokenTotals::new(30_000, 25_000, 5_000)
+            }),
+            ..PromptOutcome::new(StopReason::EndTurn)
+        })
+        .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         let runtime = f.installation.installed.runtime();
@@ -102,13 +59,7 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
         assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
         let thread = f.panel.read(cx).current().unwrap();
         assert_eq!(
-            thread
-                .read(cx)
-                .transcript()
-                .unwrap()
-                .tokens()
-                .unwrap()
-                .total,
+            thread.read(cx).transcript().tokens.as_ref().unwrap().total,
             30_000
         );
     });
@@ -187,7 +138,12 @@ fn implicit_markdown_images_are_disabled_and_config_labels_show_selection() {
         crate::panel::widgets::safe_markdown("![secret](file:///hidden)<img src='x'>"),
         "[secret](file:///hidden)&lt;img src='x'>"
     );
-    let option = select("model", "Model", "one", vec![("one", "First")]);
+    let option = ConfigOption::select(
+        "model",
+        "Model",
+        "one",
+        vec![ConfigChoice::new("one", "First")],
+    );
     assert_eq!(crate::thread::config_label(&option), "First");
 }
 #[gpui_kit::test]
@@ -210,7 +166,9 @@ fn image_preparation_runs_once_and_renders_a_cached_small_static_preview(cx: &mu
     cx.update(|cx| assert!(!expected.is_asset_cached(cx)));
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        attach_image(thread, image_bytes(), codec.clone(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
     });
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
@@ -267,35 +225,22 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-fn mode_choice(id: &str, name: &str) -> ModeChoice {
-    ModeChoice {
-        id: ModeId::new(id),
-        name: name.into(),
-        description: None,
-        extensions: None,
-    }
-}
-
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
-    f.commands.config.set_options(vec![select(
+    f.commands.config.set_options(vec![ConfigOption::select(
         "model",
         "Model",
         "one",
         vec![
-            (
+            ConfigChoice::new(
                 "one",
                 "Very long selected model name that must fit the narrow panel",
             ),
-            ("two", "Second"),
+            ConfigChoice::new("two", "Second"),
         ],
     )]);
-    f.commands.config.set_modes(Modes {
-        current: ModeId::new("ask"),
-        choices: vec![mode_choice("ask", "Ask"), mode_choice("code", "Code")],
-        extensions: None,
-    });
+    f.commands.config.set_modes(ask_and_code());
     new_chat(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -352,19 +297,23 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-#[gpui_kit::test]
-fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    cx.update(|cx| assert_eq!(thread.read(cx).title(), "New Agent"));
-    thread.update(cx, |thread, cx| thread.send("Привет 🌍".into(), cx));
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(thread.read(cx).title(), "Привет 🌍"));
-    thread.update(cx, |thread, cx| thread.rename(Some("Mine".into()), cx));
-    cx.update(|cx| assert_eq!(thread.read(cx).title(), "Mine"));
-    thread.update(cx, |thread, cx| thread.rename(Some("  ".into()), cx));
-    cx.update(|cx| assert_eq!(thread.read(cx).title(), "Привет 🌍"));
+#[test]
+fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow() {
+    use nocterm_ai::thread::{Entry, ThreadState};
+    let mut state = ThreadState {
+        title: Some("Provider title".into()),
+        ..Default::default()
+    };
+    let title = crate::thread::chat_title;
+    assert_eq!(title(None, &state), "New Agent");
+    assert_eq!(title(Some("Mine"), &state), "Mine");
+    state.entries.push(Entry::User(vec![Content::Text(
+        nocterm_ai::model::content::Text::new("Привет 🌍"),
+    )]));
+    assert_eq!(title(None, &state), "Provider title");
+    assert_eq!(title(Some("  "), &state), "Provider title");
+    state.title = None;
+    assert_eq!(title(None, &state), "Привет 🌍");
     assert_eq!(crate::panel::usage::usage_fraction(None), 0.);
     for (used, size, expected) in [
         (50, 100, 0.5),
@@ -372,47 +321,46 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow(cx: &mut TestA
         (100, 0, 0.),
         (85, 100, 0.85),
     ] {
-        let usage = nocterm_ai::model::usage::ContextUsage {
-            used,
-            size,
-            cost: None,
-        };
+        let usage = ContextUsage::new(used, size);
         assert_eq!(crate::panel::usage::usage_fraction(Some(&usage)), expected);
     }
+}
+
+fn ask_and_code() -> nocterm_ai::model::controls::Modes {
+    use nocterm_ai::model::controls::{ModeChoice, Modes};
+    Modes::new(
+        "ask",
+        vec![
+            ModeChoice::new("ask", "Ask"),
+            ModeChoice::new("code", "Code"),
+        ],
+    )
 }
 
 #[test]
 fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
     use nocterm_ai::thread::Entry;
-    let tool = |status: ToolStatus| {
-        let mut call = super::provider_fixtures::provider_tool("call", "Read terminal", status);
-        call.kind = ToolKind::Read;
-        Entry::Tool(call)
-    };
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(usize::MAX).unwrap();
-    let live = |entries: &[Entry], index, generating| {
-        let rows =
-            nocterm_ai::testing::ManagedRows::with_authority(&authority, entries.to_vec()).unwrap();
-        crate::panel::widgets::entry_is_live(rows.rows(), index, generating)
+    let tool = |status| {
+        Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"call","title":"Read terminal","status":status,"kind":"read"})).unwrap())
     };
     let mut entries = vec![
         Entry::Thought("Earlier thought".into()),
         Entry::Agent("Answer".into()),
         Entry::Thought("Live thought".into()),
     ];
-    assert!(!live(&entries, 0, true));
-    assert!(live(&entries, 2, true));
-    assert!(!live(&entries, 2, false));
-    entries.push(tool(ToolStatus::Running));
-    assert!(!live(&entries, 2, true));
-    assert!(live(&entries, 3, true));
-    for status in [ToolStatus::Succeeded, ToolStatus::Failed] {
+    assert!(!crate::panel::widgets::entry_is_live(&entries, 0, true));
+    assert!(crate::panel::widgets::entry_is_live(&entries, 2, true));
+    assert!(!crate::panel::widgets::entry_is_live(&entries, 2, false));
+    entries.push(tool("in_progress"));
+    assert!(!crate::panel::widgets::entry_is_live(&entries, 2, true));
+    assert!(crate::panel::widgets::entry_is_live(&entries, 3, true));
+    for status in ["completed", "failed"] {
         entries[3] = tool(status);
-        assert!(!live(&entries, 3, true));
+        assert!(!crate::panel::widgets::entry_is_live(&entries, 3, true));
     }
-    entries[3] = tool(ToolStatus::Pending);
-    assert!(live(&entries, 3, true));
-    assert!(!live(&entries, 3, false));
+    entries[3] = tool("pending");
+    assert!(crate::panel::widgets::entry_is_live(&entries, 3, true));
+    assert!(!crate::panel::widgets::entry_is_live(&entries, 3, false));
 }
 
 #[gpui_kit::test]
@@ -426,13 +374,10 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
         report_control(
-            &f,
             thread,
-            SessionUpdate::ThoughtChunk(Content::Text(Text {
-                text: "Inspecting the current terminal carefully before running commands".into(),
-                annotations: None,
-                extensions: None,
-            })),
+            SessionUpdate::AgentThoughtChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "Inspecting the current terminal carefully before running commands",
+            ))),
             cx,
         )
     });
@@ -498,43 +443,16 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     .unwrap();
 }
 
-/// An executed MCP command whose title and output are one long unbroken word.
-fn long_mcp_call(long: &str) -> nocterm_ai::model::tools::ToolRecord {
-    let mut call = super::provider_fixtures::provider_tool(
-        "mcp",
-        format!("terminal.run_command {long}"),
-        ToolStatus::Succeeded,
-    );
-    call.kind = ToolKind::Execute;
-    call.literal.title = LiteralIdentity::Historical {
-        tool: TextRange::supplied(&call.title, &call.title[9..20]).unwrap(),
-    };
-    call.output = vec![ToolOutput::Content {
-        content: Box::new(Content::Text(Text {
-            text: long.to_owned(),
-            annotations: None,
-            extensions: None,
-        })),
-        extensions: None,
-    }];
-    call
-}
-
 #[gpui_kit::test]
 fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mut TestAppContext) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {
-        f.panel
-            .read(cx)
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| {
-                let call = long_mcp_call(&long);
-                restore_entries(&f, thread, vec![nocterm_ai::thread::Entry::Tool(call)], cx);
-                cx.notify();
-            });
+        f.panel.read(cx).current().unwrap().update(cx, |thread, cx| {
+            restore_entries(&f,thread,vec![nocterm_ai::thread::Entry::Tool(serde_json::from_value(serde_json::json!({"toolCallId":"mcp","title":format!("terminal.run_command {long}"),"status":"completed","kind":"execute","content":[{"type":"content","content":{"type":"text","text":long}}]})).unwrap())],cx);
+            cx.notify();
+        });
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -582,10 +500,10 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(("thought", 1usize), cx);
+        window.click(("thought", 0usize), cx);
         let panel = window.find("agent-panel").bounds();
         for id in ["agent-entry", "thought", "thought-output"] {
-            let bounds = window.find((id, 1usize)).bounds();
+            let bounds = window.find((id, 0usize)).bounds();
             assert!(
                 bounds.right() <= panel.right(),
                 "{id}: {bounds:?}, panel {panel:?}"
@@ -621,10 +539,7 @@ fn prompt_completion_refreshes_its_original_usage_source_after_another_installat
         image_deps(),
     );
     finish
-        .send(PromptOutcome {
-            ending: EndOfTurn::Finished,
-            tokens: None,
-        })
+        .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
     assert_eq!(source.requests().len(), 1);

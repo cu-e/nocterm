@@ -53,14 +53,6 @@ const AGENT_STATE_IN_HOME: &[&str] = &[
     ".config/claude",
 ];
 
-/// Borrowed names from the same canonical credential policy used by legacy preparation.
-pub fn credential_home_entries() -> impl ExactSizeIterator<Item = &'static Path> {
-    HIDDEN_IN_HOME.iter().map(Path::new)
-}
-pub fn agent_state_home_entries() -> impl ExactSizeIterator<Item = &'static Path> {
-    AGENT_STATE_IN_HOME.iter().map(Path::new)
-}
-
 /// What the sandbox shows of the file system.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SandboxPolicy {
@@ -124,21 +116,53 @@ impl SandboxPolicy {
         &self,
         paths: &ResolvedSandboxPaths,
     ) -> Result<SandboxMountPlan, ProtectedWorkdirError> {
-        let mounts = self
-            .planned_mounts(paths)?
-            .map(|(path, access)| Mount::new(path.to_owned(), access))
-            .collect();
+        self.validate_workdir(paths)?;
+        let workdir = &paths.workdir.resolved;
+        let mut mounts = Vec::new();
+        for path in &paths.writable {
+            if &path.resolved != workdir
+                && path.kind != PathKind::Absent
+                && !paths
+                    .hidden
+                    .iter()
+                    .any(|root| path.resolved.starts_with(&root.resolved))
+            {
+                mounts.push(Mount::new(path.resolved.clone(), MountAccess::Writable));
+            }
+        }
+        for path in paths
+            .hidden
+            .iter()
+            .filter(|path| !path.resolved.starts_with(workdir))
+        {
+            mask(&mut mounts, path);
+        }
+        if paths.workdir.kind != PathKind::Absent {
+            mounts.push(Mount::new(workdir.clone(), MountAccess::Writable));
+        }
+        for path in paths
+            .hidden
+            .iter()
+            .filter(|path| path.resolved.starts_with(workdir))
+        {
+            mask(&mut mounts, path);
+        }
+        for path in &paths.readable {
+            if path.kind != PathKind::Absent {
+                mounts.push(Mount::new(path.resolved.clone(), MountAccess::ReadOnly));
+            }
+        }
         Ok(SandboxMountPlan(mounts))
     }
-    pub fn planned_mounts<'a>(
-        &self,
-        paths: &'a ResolvedSandboxPaths,
-    ) -> Result<PlannedMounts<'a>, ProtectedWorkdirError> {
-        PlannedMounts::new(self, paths)
-    }
 }
-mod mounts;
-pub use mounts::PlannedMounts;
+fn mask(mounts: &mut Vec<Mount>, path: &ResolvedPath) {
+    let access = match path.kind {
+        PathKind::Directory => MountAccess::MaskDirectory,
+        PathKind::NonDirectory => MountAccess::MaskFile,
+        PathKind::Absent => return,
+    };
+    mounts.push(Mount::new(path.resolved.clone(), access));
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PathKind {

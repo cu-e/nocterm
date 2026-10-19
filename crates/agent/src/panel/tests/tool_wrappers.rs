@@ -2,25 +2,8 @@ use super::tool_output::{call, exec_result};
 use crate::panel::entries::tool_output::source;
 use serde_json::json;
 
-fn text_output(text: String) -> nocterm_ai::model::tools::ToolOutput {
-    nocterm_ai::model::tools::ToolOutput::Content {
-        content: Box::new(nocterm_ai::model::content::Content::Text(
-            nocterm_ai::model::content::Text {
-                text,
-                annotations: None,
-                extensions: None,
-            },
-        )),
-        extensions: None,
-    }
-}
-
 #[test]
 fn provider_wrappers_accept_metadata_json_strings_and_multiple_text_blocks() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let payload = exec_result("exited");
     let args = json!({"terminal_id":"t1","program":"sh"});
     for wrapper in [
@@ -29,41 +12,25 @@ fn provider_wrappers_accept_metadata_json_strings_and_multiple_text_blocks() {
         json!([{ "type":"text","text":payload.to_string() }]),
         json!(payload.to_string()),
     ] {
-        let output = source(
-            &call(&authority, "exec_command", args.clone(), wrapper, false),
-            false,
-        )
-        .unwrap();
+        let output = source(&call("exec_command", args.clone(), wrapper, false), false).unwrap();
         assert_eq!(output.sections[0].label, "Standard output");
         assert_eq!(output.sections[0].text, payload["stdout"].as_str().unwrap());
     }
     let wrapper = json!({"content":[{"type":"text","text":payload.to_string()},{"type":"text","text":"second block"}]});
-    let output = source(
-        &call(&authority, "exec_command", args, wrapper, false),
-        false,
-    )
-    .unwrap();
+    let output = source(&call("exec_command", args, wrapper, false), false).unwrap();
     assert_eq!(output.sections.len(), 3);
     assert_eq!(output.sections[2].text, "second block");
 }
 
 #[test]
 fn provider_errors_take_precedence_over_null_results_and_allow_metadata() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let args = json!({"terminal_id":"t1","program":"sh"});
     for wrapper in [
         json!({"error":"message","_meta":{}}),
         json!({"error":{"message":"message","code":-32602},"result":null,"jsonrpc":"2.0","id":42}),
         json!({"isError":true,"content":[{"type":"text","text":"message"}],"structuredContent":{},"_meta":{}}),
     ] {
-        let output = source(
-            &call(&authority, "exec_command", args.clone(), wrapper, false),
-            false,
-        )
-        .unwrap();
+        let output = source(&call("exec_command", args.clone(), wrapper, false), false).unwrap();
         assert_eq!(output.sections.len(), 1);
         assert_eq!(output.sections[0].label, "Error");
         assert_eq!(output.sections[0].text, "message");
@@ -72,39 +39,23 @@ fn provider_errors_take_precedence_over_null_results_and_allow_metadata() {
 
 #[test]
 fn future_payloads_are_readable_and_recursive_wrappers_stay_bounded() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let args = json!({"terminal_id":"t1","program":"sh"});
     let payload = json!({"result":{"future":{"lines":["one","two"]}}, "_meta":{}});
-    let output = source(
-        &call(&authority, "exec_command", args.clone(), payload, false),
-        false,
-    )
-    .unwrap();
+    let output = source(&call("exec_command", args.clone(), payload, false), false).unwrap();
     assert_eq!(output.sections[0].text, "future: lines: one\n\ntwo");
     let mut nested = exec_result("exited");
     for _ in 0..32 {
         nested = json!({"result":nested});
     }
-    let output = source(
-        &call(&authority, "exec_command", args.clone(), nested, false),
-        false,
-    )
-    .unwrap();
+    let output = source(&call("exec_command", args.clone(), nested, false), false).unwrap();
     assert!(output.sections[0].text.contains("exceeds display limits"));
     let large = json!({"result":"x".repeat(512*1024)});
-    let output = source(&call(&authority, "exec_command", args, large, false), false).unwrap();
+    let output = source(&call("exec_command", args, large, false), false).unwrap();
     assert!(output.sections[0].text.contains("exceeds display limits"));
 }
 
 #[test]
 fn familiar_but_malformed_neighbor_keys_do_not_block_unwrapping() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let payload = exec_result("exited");
     for extra in [
         json!({"accepted":null}),
@@ -120,7 +71,6 @@ fn familiar_but_malformed_neighbor_keys_do_not_block_unwrapping() {
             .extend(extra.as_object().unwrap().clone());
         let output = source(
             &call(
-                &authority,
                 "exec_command",
                 json!({"terminal_id":"t1","program":"sh"}),
                 wrapper,
@@ -135,13 +85,8 @@ fn familiar_but_malformed_neighbor_keys_do_not_block_unwrapping() {
 
 #[test]
 fn is_error_applies_to_recursive_result_wrappers() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let output = source(
         &call(
-            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh"}),
             json!({"isError":true,"result":{"result":"denied"},"_meta":{}}),
@@ -156,10 +101,6 @@ fn is_error_applies_to_recursive_result_wrappers() {
 
 #[test]
 fn malformed_neighbors_do_not_impersonate_other_tools_payloads() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     for (tool, args, payload, neighbor, expected) in [
         (
             "list_terminals",
@@ -189,7 +130,7 @@ fn malformed_neighbors_do_not_impersonate_other_tools_payloads() {
             .unwrap()
             .extend(neighbor.as_object().unwrap().clone());
         assert_eq!(
-            source(&call(&authority, tool, args, wrapper, false), false)
+            source(&call(tool, args, wrapper, false), false)
                 .unwrap()
                 .sections[0]
                 .label,
@@ -215,20 +156,17 @@ fn truncated_fence(full: &str, count: usize) -> String {
 
 #[test]
 fn matching_truncated_fence_previews_use_only_the_complete_raw_result() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let full = full_fence();
     for raw in [json!(full), json!({"result":full,"_meta":{}})] {
         let mut call = call(
-            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh"}),
             raw,
             false,
         );
-        call.output = vec![text_output(truncated_fence(&full, 120))];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(
+            truncated_fence(&full, 120),
+        )];
         let output = source(&call, false).unwrap();
         assert_eq!(output.sections.len(), 2);
         assert_eq!(output.sections[0].label, "Standard output");
@@ -247,10 +185,6 @@ fn matching_truncated_fence_previews_use_only_the_complete_raw_result() {
 
 #[test]
 fn incomplete_fences_and_extra_text_need_exact_matching_raw_proof() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let full = full_fence();
     for (content, raw) in [
         (truncated_fence(&full, 120), serde_json::Value::Null),
@@ -283,13 +217,12 @@ fn incomplete_fences_and_extra_text_need_exact_matching_raw_proof() {
         ),
     ] {
         let mut call = call(
-            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh"}),
             raw,
             false,
         );
-        call.output = vec![text_output(content.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(content.clone())];
         assert!(
             source(&call, false)
                 .unwrap()
@@ -302,10 +235,6 @@ fn incomplete_fences_and_extra_text_need_exact_matching_raw_proof() {
 
 #[test]
 fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
     let full = full_fence();
     let preview = truncated_fence(&full, 120);
     let block = json!({"type":"text","text":full});
@@ -314,13 +243,12 @@ fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text(
         json!(json!({"result":{"content":[block]}}).to_string()),
     ] {
         let mut call = call(
-            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh"}),
             raw,
             false,
         );
-        call.output = vec![text_output(preview.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(preview.clone())];
         assert_eq!(source(&call, false).unwrap().sections.len(), 2);
     }
     for (preview, raw) in [
@@ -338,13 +266,12 @@ fn truncated_preview_proof_requires_the_exact_count_and_one_successful_raw_text(
         ),
     ] {
         let mut call = call(
-            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh"}),
             raw,
             false,
         );
-        call.output = vec![text_output(preview.clone())];
+        call.content = vec![nocterm_ai::model::tools::ToolContent::from(preview.clone())];
         assert!(
             source(&call, false)
                 .unwrap()

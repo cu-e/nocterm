@@ -13,7 +13,8 @@ checked snippet publication over the shared persistence driver.
 ## Agents
 
 The ACP AI panel uses four layers: `nocterm-ai` declares runtime-neutral agent
-contracts and bounded context/tool rules; `nocterm-acp` supplies subprocess and
+contracts, neutral protocol records and bounded context/tool rules; `nocterm-acp` maps the
+protocol SDK to them and supplies subprocess and
 authenticated local bridge adapters; the `nocterm-agent-runtime` service admits
 connections, closes idle ones and coordinates document writes; `nocterm-agent` supplies threads
 and chat UI. App injects the adapter. The runtime knows no thread type: a thread
@@ -33,14 +34,6 @@ bounds hydration and archive search, including payloads awaiting GUI delivery;
 inactive, clean documents can be evicted under a conservative 64 MiB resident
 budget. Collection limits and a structural preflight also bound allocation from
 small JSON elements, independently of the 32 MiB file limit.
-
-Connections are managed native values: the runtime connects through the
-injected managed connector (the ACP adapter's `try_managed`), owns each connection's command handle, event pump and
-process cleanup, and closes in a fixed order. It cancels the session, closes it,
-joins the cleanup acknowledgement, stops the event pump so the receiver releases
-the connection's source, and only then reports `SessionClosed`. A connection
-rejected at startup is shut down by the detached startup task, whose typed
-`CleanupError` reaches the shutdown caller.
 
 The client supplies a saved session's directory before connection startup.
 Background startup schedules the injected `WorkdirResolver`; its adapter prepares
@@ -101,9 +94,8 @@ while App still exists. Normal session close and final capture share one lazy pr
 command handle. Final capture bypasses a blocked close acknowledgement and joins
 cleanup already running; a previously failed normal attempt gets one final retry.
 Late normal close joins the same attempt rather than invoking cleanup again.
-Cleanup receipts retain the original typed cause: a refused shutdown arrives as
-`ManagedCommandError::CleanupUnconfirmed`, whose `ManagedNativeFailure` keeps the
-adapter's native source, and the runtime reports it through its typed cleanup error.
+Cleanup receipts retain the original typed AgentError through foundation SharedError,
+including any native source already retained by its variant.
 Favorites, chats and process cleanup start independently
 under the host's one `ShutdownCoordinator` budget. Runtime installs no quit hook
 or persistence deadline. See [ADR0022](../adr/0022-agent-storage-owners.md).
@@ -184,11 +176,9 @@ Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings
 its supplied settings handle before its first registry read. Settings observation
 uses a weak runtime; the feature installation owns that subscription. Shutdown
 capture retains only the runtime handle and returns the existing App-free work.
-No runtime global selects the recipient of a deferred operation. Runtime signatures
-use neutral AI records; saved history is written as version two, with a bounded
-version-one fallback for oversized imported chats. See
-[ADR0052](../adr/0052-retained-agent-installation.md) and
-[ADR0058](../adr/0058-neutral-agent-protocol-boundary.md).
+No runtime global selects the recipient of a deferred operation. Service signatures use only neutral
+records, and physical history stays version one. See
+[ADR0052](../adr/0052-retained-agent-installation.md).
 
 SettingsHandle supplies additive edit_checked and update_checked operations over the
 same Persisted worker. Checked callbacks run at the actual ordered document base;

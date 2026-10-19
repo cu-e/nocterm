@@ -1,10 +1,7 @@
-//! Neutral agent contracts, bounded context rules and version-two history formats.
+//! Agent contracts, neutral protocol records, bounded context rules and version-one history formats.
 //!
-//! Owns: configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
+//! Owns: neutral `model` records (the only agent vocabulary other crates see), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
 //! bounded history codecs and capability/storage ports.
-//! Authentic retention graphs deduplicate real allocation identities. DocumentRetention
-//! admits fixed producer roles and pending construction credit under a short scope lock.
-//! Native reader/writer envelopes retain original capabilities through physical retirement.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,
@@ -16,15 +13,14 @@
 //! ImageCodecCause reuses core shared causes without exposing a native codec type.
 //! Account usage diagnostics retain typed native I/O causes through foundation SharedError;
 //! narrow domain constructors preserve operation category and path.
-//! HistoryCodecError::Json and AgentStorageError StateDecode/Read/Publish/Directory/
-//! StatePublication/Delete retain their original concrete errors through SharedError.
 //! Workspace preparation and sandbox spawn diagnostics retain typed shared native I/O;
 //! adapter constructors preserve classification without changing policy or mount authority.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
 //! Snapshot framing and transcript timestamps accept supplied identity/time.
 //! Native chat allocation and wall-clock facts are provided by ChatMetadataSource.
-//! Tool and history ports use neutral records; protocol SDK decoding belongs to adapters.
+//! No agent protocol SDK type appears in this crate; persisted records serialize as the
+//! version-one transcript JSON and `nocterm-acp` maps the SDK to them (ADR 0058).
 //! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
 pub mod approval;
 pub mod commands;

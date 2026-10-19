@@ -13,6 +13,7 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_ai::model::auth::AuthFlow;
+use nocterm_ai::model::usage::ContextUsage;
 use nocterm_ui::IconName;
 
 use super::{
@@ -81,14 +82,7 @@ impl ComposerRenderer {
             .gap_1()
             .flex_wrap()
             .items_start();
-        let attachments = thread
-            .read(cx)
-            .composer()
-            .attachments()
-            .iter()
-            .map(|attachment| attachment.to_attachment())
-            .collect::<Vec<_>>();
-        for attachment in &attachments {
+        for attachment in thread.read(cx).composer().attachments() {
             let value = attachment.clone();
             let label = labels.label(attachment);
             let running = labels.connected(attachment);
@@ -217,7 +211,7 @@ impl ComposerRenderer {
                     .ghost()
                     .small()
                     .max_w_full()
-                    .label(mode_label(&thread.read(cx).configuration()))
+                    .label(mode_label(thread.read(cx).configuration()))
                     .dropdown_caret(true)
                     .disabled(generating),
                 Anchor::BottomLeft,
@@ -231,7 +225,7 @@ impl ComposerRenderer {
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
         thread: &Entity<AgentThread>,
-        usage: Option<&nocterm_ai::model::usage::ContextUsage>,
+        usage: Option<&ContextUsage>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let context_tooltip = format!(
@@ -243,7 +237,7 @@ impl ComposerRenderer {
         let images_supported = thread
             .read(cx)
             .agent_info()
-            .is_some_and(|info| info.capabilities.content.image);
+            .is_some_and(|info| info.capabilities.image_prompts);
         let controls = Self::render_config_controls(composer, menus, thread, cx);
         h_flex()
             .gap_1()

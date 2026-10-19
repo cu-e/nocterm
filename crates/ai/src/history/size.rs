@@ -1,51 +1,22 @@
 //! Exact compact JSON byte count without allocating the encoded payload.
-mod key;
-mod primitive;
-mod text;
 use serde::{
     Serialize,
     ser::{self, SerializeMap, SerializeSeq, SerializeStruct},
 };
+use std::io;
 
-/// Exact destination-format costs; structural bytes follow the JSON preflight metric.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FormatSize {
-    pub encoded_bytes: usize,
-    pub structural_bytes: usize,
-}
-#[derive(Debug, thiserror::Error)]
-pub enum MeasurementError {
-    #[error("retained allocation measurement failed: {0}")]
-    Retention(#[from] crate::model::retention::RetentionError),
-    #[error("JSON measurement failed: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("JSON measurement formatting failed: {0}")]
-    Formatting(#[from] std::fmt::Error),
-    #[error("JSON measurement arithmetic overflow")]
-    ArithmeticOverflow,
-}
-impl ser::Error for MeasurementError {
-    fn custom<T: std::fmt::Display>(message: T) -> Self {
-        Self::Json(<serde_json::Error as ser::Error>::custom(message))
-    }
-}
-/// Counts a borrowed serializer directly; no encoded document or Value tree is built.
-pub fn measure(value: &impl Serialize) -> Result<FormatSize, MeasurementError> {
-    let mut counter = Counter(0, 0, Policy::Format);
+pub(super) fn encoded_len(value: &impl Serialize) -> Result<usize, serde_json::Error> {
+    let mut counter = Counter(0, 0);
     value.serialize(&mut counter)?;
-    Ok(FormatSize {
-        encoded_bytes: counter.0,
-        structural_bytes: counter.1,
-    })
+    Ok(counter.0)
 }
-pub(super) fn encoded_len(value: &impl Serialize) -> Result<usize, MeasurementError> {
-    measure(value).map(|size| size.encoded_bytes)
-}
-pub(super) fn structural_size(value: &impl Serialize) -> Result<usize, MeasurementError> {
-    measure(value).map(|size| size.structural_bytes)
+pub(super) fn structural_size(value: &impl Serialize) -> Result<usize, serde_json::Error> {
+    let mut counter = Counter(0, 0);
+    value.serialize(&mut counter)?;
+    Ok(counter.1)
 }
 /// Examine sixteen bytes at once; ordinary UTF-8 and base64 need no escaping.
-fn string_len(text: &str) -> Result<usize, MeasurementError> {
+fn string_len(text: &str) -> usize {
     const HIGH: u128 = u128::from_ne_bytes([0x80; 16]);
     const LOW: u128 = u128::from_ne_bytes([0x7f; 16]);
     const SIXTY: u128 = u128::from_ne_bytes([0x60; 16]);
@@ -56,10 +27,7 @@ fn string_len(text: &str) -> Result<usize, MeasurementError> {
         0..=31 => 5,
         _ => 0,
     };
-    let mut length = text
-        .len()
-        .checked_add(2)
-        .ok_or(MeasurementError::ArithmeticOverflow)?;
+    let mut length = text.len() + 2;
     let (chunks, remainder) = text.as_bytes().as_chunks::<16>();
     for chunk in chunks {
         let word = u128::from_ne_bytes(*chunk);
@@ -68,115 +36,42 @@ fn string_len(text: &str) -> Result<usize, MeasurementError> {
             || zero(word ^ u128::from_ne_bytes([b'"'; 16]))
             || zero(word ^ u128::from_ne_bytes([b'\\'; 16]))
         {
-            length = length
-                .checked_add(chunk.iter().copied().map(extra).sum::<usize>())
-                .ok_or(MeasurementError::ArithmeticOverflow)?;
+            length += chunk.iter().copied().map(extra).sum::<usize>();
         }
     }
-    length
-        .checked_add(remainder.iter().copied().map(extra).sum::<usize>())
-        .ok_or(MeasurementError::ArithmeticOverflow)
+    length + remainder.iter().copied().map(extra).sum::<usize>()
 }
-/// Conservative retained-allocation budget, independent of destination envelope/key spelling.
-/// Scalars cover vector growth, compound enums cover the largest inline variant,
-/// and strings include their source/decode lifetime. It is not serialized structural cost.
-pub fn retained(value: &impl Serialize) -> Result<usize, MeasurementError> {
-    let mut counter = Counter(0, 0, Policy::Retained);
-    value.serialize(&mut counter)?;
-    Ok(counter.1)
-}
-#[derive(Clone, Copy)]
-enum Policy {
-    Format,
-    Retained,
-}
-impl Policy {
-    fn scalar(self) -> usize {
-        match self {
-            Self::Format => 512,
-            Self::Retained => 64,
-        }
-    }
-    fn container(self) -> usize {
-        match self {
-            Self::Format => 512,
-            Self::Retained => 128,
-        }
-    }
-    fn map(self, len: Option<usize>) -> usize {
-        match self {
-            Self::Format => 512,
-            // Empty maps allocate no B-tree node. Non-empty JSON maps need an
-            // initial node reserve distinct from the inline struct allowance;
-            // amortized per-key costs account for subsequent nodes.
-            Self::Retained if len == Some(0) => 128,
-            Self::Retained => 1024,
-        }
-    }
-    fn key(self) -> usize {
-        match self {
-            Self::Format => 512,
-            Self::Retained => 128,
-        }
-    }
-}
-struct Counter(usize, usize, Policy);
-
-impl Counter {
-    fn add(&mut self, encoded: usize, structural: usize) -> Result<(), MeasurementError> {
-        self.0 = self
-            .0
-            .checked_add(encoded)
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        self.1 = self
-            .1
-            .checked_add(structural)
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        Ok(())
-    }
-    fn wrapper(&mut self, variant: &str, structural_prefix: usize) -> Result<(), MeasurementError> {
-        let encoded = string_len(variant)?
-            .checked_add(3)
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        let text = match self.2 {
-            Policy::Format => variant
-                .len()
-                .checked_mul(2)
-                .and_then(|n| n.checked_add(structural_prefix))
-                .ok_or(MeasurementError::ArithmeticOverflow)?,
-            Policy::Retained => 2048,
-        };
-        self.add(encoded, text)
-    }
-}
+struct Counter(usize, usize);
 struct Compound<'a> {
     counter: &'a mut Counter,
     first: bool,
     close: usize,
 }
 impl Compound<'_> {
-    fn comma(&mut self) -> Result<(), MeasurementError> {
+    fn comma(&mut self) {
         if self.first {
             self.first = false;
         } else {
-            self.counter.add(1, 0)?;
+            self.counter.0 += 1;
         }
-        Ok(())
     }
-    fn finish(self) -> Result<(), MeasurementError> {
-        self.counter.add(self.close, 0)
+    fn finish(self) -> Result<(), serde_json::Error> {
+        self.counter.0 += self.close;
+        Ok(())
     }
 }
 macro_rules! number {
     ($name:ident, $ty:ty) => {
         fn $name(self, value: $ty) -> Result<(), Self::Error> {
-            self.add(primitive::encoded(&value)?, self.2.scalar())
+            self.1 += 512;
+            self.0 += serde_json::to_string(&value)?.len();
+            Ok(())
         }
     };
 }
 impl<'a> ser::Serializer for &'a mut Counter {
     type Ok = ();
-    type Error = MeasurementError;
+    type Error = serde_json::Error;
     type SerializeSeq = Compound<'a>;
     type SerializeTuple = Compound<'a>;
     type SerializeTupleStruct = Compound<'a>;
@@ -185,7 +80,9 @@ impl<'a> ser::Serializer for &'a mut Counter {
     type SerializeStruct = Compound<'a>;
     type SerializeStructVariant = Compound<'a>;
     fn serialize_bool(self, value: bool) -> Result<(), Self::Error> {
-        self.add(if value { 4 } else { 5 }, self.2.scalar())
+        self.1 += 512;
+        self.0 += if value { 4 } else { 5 };
+        Ok(())
     }
     number!(serialize_i8, i8);
     number!(serialize_i16, i16);
@@ -203,12 +100,9 @@ impl<'a> ser::Serializer for &'a mut Counter {
         self.serialize_str(value.encode_utf8(&mut [0; 4]))
     }
     fn serialize_str(self, value: &str) -> Result<(), Self::Error> {
-        let structural = value
-            .len()
-            .checked_mul(2)
-            .and_then(|n| n.checked_add(self.2.scalar()))
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        self.add(string_len(value)?, structural)
+        self.1 += 512 + value.len() * 2;
+        self.0 += string_len(value);
+        Ok(())
     }
     fn serialize_bytes(self, value: &[u8]) -> Result<(), Self::Error> {
         let mut seq = self.serialize_seq(Some(value.len()))?;
@@ -224,7 +118,9 @@ impl<'a> ser::Serializer for &'a mut Counter {
         value.serialize(self)
     }
     fn serialize_unit(self) -> Result<(), Self::Error> {
-        self.add(4, self.2.scalar())
+        self.1 += 512;
+        self.0 += 4;
+        Ok(())
     }
     fn serialize_unit_struct(self, _: &'static str) -> Result<(), Self::Error> {
         self.serialize_unit()
@@ -251,11 +147,13 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        self.wrapper(variant, 1024)?;
-        value.serialize(&mut *self)
+        self.1 += 1536 + variant.len() * 2;
+        self.0 += string_len(variant) + 3;
+        value.serialize(self)
     }
     fn serialize_seq(self, _: Option<usize>) -> Result<Compound<'a>, Self::Error> {
-        self.add(1, self.2.container())?;
+        self.1 += 512;
+        self.0 += 1;
         Ok(Compound {
             counter: self,
             first: true,
@@ -279,15 +177,17 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         _: usize,
     ) -> Result<Compound<'a>, Self::Error> {
-        self.wrapper(variant, 1536)?;
+        self.1 += 1536 + variant.len() * 2;
+        self.0 += string_len(variant) + 3;
         Ok(Compound {
             counter: self,
             first: true,
             close: 2,
         })
     }
-    fn serialize_map(self, len: Option<usize>) -> Result<Compound<'a>, Self::Error> {
-        self.add(1, self.2.map(len))?;
+    fn serialize_map(self, _: Option<usize>) -> Result<Compound<'a>, Self::Error> {
+        self.1 += 512;
+        self.0 += 1;
         Ok(Compound {
             counter: self,
             first: true,
@@ -295,12 +195,7 @@ impl<'a> ser::Serializer for &'a mut Counter {
         })
     }
     fn serialize_struct(self, _: &'static str, _: usize) -> Result<Compound<'a>, Self::Error> {
-        self.add(1, self.2.container())?;
-        Ok(Compound {
-            counter: self,
-            first: true,
-            close: 1,
-        })
+        self.serialize_map(None)
     }
     fn serialize_struct_variant(
         self,
@@ -309,7 +204,8 @@ impl<'a> ser::Serializer for &'a mut Counter {
         variant: &'static str,
         _: usize,
     ) -> Result<Compound<'a>, Self::Error> {
-        self.wrapper(variant, 1536)?;
+        self.1 += 1536 + variant.len() * 2;
+        self.0 += string_len(variant) + 3;
         Ok(Compound {
             counter: self,
             first: true,
@@ -317,22 +213,16 @@ impl<'a> ser::Serializer for &'a mut Counter {
         })
     }
     fn collect_str<T: ?Sized + std::fmt::Display>(self, value: &T) -> Result<(), Self::Error> {
-        let size = text::measure(value)?;
-        let structural = size
-            .decoded_utf8
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(self.2.scalar()))
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        self.add(size.encoded, structural)
+        self.serialize_str(&value.to_string())
     }
 }
 macro_rules! sequence {
     ($trait:ident, $method:ident) => {
         impl ser::$trait for Compound<'_> {
             type Ok = ();
-            type Error = MeasurementError;
+            type Error = serde_json::Error;
             fn $method<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
-                self.comma()?;
+                self.comma();
                 value.serialize(&mut *self.counter)
             }
             fn end(self) -> Result<(), Self::Error> {
@@ -347,17 +237,27 @@ sequence!(SerializeTupleStruct, serialize_field);
 sequence!(SerializeTupleVariant, serialize_field);
 impl SerializeMap for Compound<'_> {
     type Ok = ();
-    type Error = MeasurementError;
+    type Error = serde_json::Error;
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
-        self.comma()?;
-        let key = key::measure(key)?;
-        let encoded = key.encoded_with_colon;
-        let structural = key
-            .decoded_utf8
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(self.counter.2.key()))
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        self.counter.add(encoded, structural)?;
+        self.comma();
+        let old = self.counter.0;
+        self.counter.0 += match serde_json::to_value(key)? {
+            serde_json::Value::String(text) => string_len(&text),
+            serde_json::Value::Number(number) => number.to_string().len() + 2,
+            serde_json::Value::Bool(value) => {
+                if value {
+                    6
+                } else {
+                    7
+                }
+            }
+            _ => {
+                return Err(serde_json::Error::io(io::Error::other(
+                    "invalid JSON map key",
+                )));
+            }
+        } + 1;
+        self.counter.1 += 512 + self.counter.0.saturating_sub(old + 3) * 2;
         Ok(())
     }
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
@@ -369,25 +269,15 @@ impl SerializeMap for Compound<'_> {
 }
 impl SerializeStruct for Compound<'_> {
     type Ok = ();
-    type Error = MeasurementError;
+    type Error = serde_json::Error;
     fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        self.comma()?;
-        let structural = match self.counter.2 {
-            Policy::Format => key
-                .len()
-                .checked_mul(2)
-                .and_then(|n| n.checked_add(512))
-                .ok_or(MeasurementError::ArithmeticOverflow)?,
-            Policy::Retained => 0,
-        };
-        let encoded = string_len(key)?
-            .checked_add(1)
-            .ok_or(MeasurementError::ArithmeticOverflow)?;
-        self.counter.add(encoded, structural)?;
+        self.comma();
+        self.counter.1 += 512 + key.len() * 2;
+        self.counter.0 += string_len(key) + 1;
         value.serialize(&mut *self.counter)
     }
     fn end(self) -> Result<(), Self::Error> {
@@ -396,7 +286,7 @@ impl SerializeStruct for Compound<'_> {
 }
 impl ser::SerializeStructVariant for Compound<'_> {
     type Ok = ();
-    type Error = MeasurementError;
+    type Error = serde_json::Error;
     fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         key: &'static str,
@@ -412,31 +302,12 @@ impl ser::SerializeStructVariant for Compound<'_> {
 mod tests {
     use super::*;
     #[test]
-    fn retained_dynamic_maps_reserve_nodes_without_counting_static_struct_keys() {
-        #[derive(Serialize)]
-        struct Inline {
-            present: bool,
-        }
-        let dynamic = serde_json::json!({"present": true});
-        let inline = Inline { present: true };
-        assert_eq!(measure(&dynamic).unwrap(), measure(&inline).unwrap());
-        assert_eq!(retained(&inline).unwrap(), 128 + 64);
-        assert_eq!(
-            retained(&dynamic).unwrap(),
-            1024 + 128 + 2 * "present".len() + 64
-        );
-        assert_eq!(retained(&serde_json::json!({})).unwrap(), 128);
-        // This covers metric policy. Complete allocation/capacity domination
-        // and imported legacy boundary behavior remain separate requirements.
-    }
-
-    #[test]
     fn unicode_control_bytes_and_every_chunk_boundary_match_json() {
         for length in 0..80 {
             for byte in 0..=127u8 {
                 let text = format!("{}{}界👨‍👩‍👧‍👦", "A".repeat(length), char::from(byte));
                 assert_eq!(
-                    string_len(&text).unwrap(),
+                    string_len(&text),
                     serde_json::to_string(&text).unwrap().len()
                 );
             }
@@ -465,172 +336,14 @@ mod tests {
         ];
         for sample in samples {
             assert_eq!(
-                structural_size(&sample).unwrap(),
-                super::super::structural_bytes(&serde_json::to_vec(&sample).unwrap()).unwrap()
-            );
-            assert_eq!(
                 encoded_len(&sample).unwrap(),
                 serde_json::to_vec(&sample).unwrap().len()
             );
         }
         let value = serde_json::json!({"raw": [null, true, 1, -3.4, {"\nkey": "\u{0001}value"}]});
         assert_eq!(
-            structural_size(&value).unwrap(),
-            super::super::structural_bytes(&serde_json::to_vec(&value).unwrap()).unwrap()
-        );
-        assert_eq!(
             encoded_len(&value).unwrap(),
             serde_json::to_vec(&value).unwrap().len()
         );
-    }
-    #[test]
-    fn external_newtype_and_escaped_map_keys_count_actual_decoded_nodes() {
-        #[derive(Serialize)]
-        enum Row {
-            Record(std::collections::BTreeMap<String, String>),
-        }
-        let key = "\n\"\\界\u{0000}";
-        let value = Row::Record([(key.to_owned(), "\tvalue".to_owned())].into());
-        let bytes = serde_json::to_vec(&value).unwrap();
-        let measured = measure(&value).unwrap();
-        assert_eq!(measured.encoded_bytes, bytes.len());
-        assert_eq!(
-            measured.structural_bytes,
-            super::super::structural_bytes(&bytes).unwrap()
-        );
-        // Root object + variant key + nested map + its key + value string.
-        assert_eq!(
-            measured.structural_bytes,
-            5 * 512 + 2 * ("Record".len() + key.len() + "\tvalue".len())
-        );
-    }
-    #[test]
-    fn overflow_is_typed_and_never_a_format_limit_fallback() {
-        let mut encoded = Counter(usize::MAX, 0, Policy::Format);
-        assert!(matches!(
-            encoded.add(1, 0),
-            Err(MeasurementError::ArithmeticOverflow)
-        ));
-        let mut structural = Counter(0, usize::MAX, Policy::Format);
-        assert!(matches!(
-            structural.add(0, 1),
-            Err(MeasurementError::ArithmeticOverflow)
-        ));
-        assert!(matches!(
-            super::super::HistoryCodecError::from(MeasurementError::ArithmeticOverflow),
-            super::super::HistoryCodecError::ArithmeticOverflow
-        ));
-    }
-    #[test]
-    fn real_json_key_rules_preserve_scalar_variants_and_reject_composites_before_payload() {
-        #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
-        enum Key {
-            Unit,
-        }
-        let map = std::collections::BTreeMap::from([(Key::Unit, "kept")]);
-        let bytes = serde_json::to_vec(&map).unwrap();
-        assert_eq!(measure(&map).unwrap().encoded_bytes, bytes.len());
-        assert_eq!(
-            measure(&map).unwrap().structural_bytes,
-            super::super::structural_bytes(&bytes).unwrap()
-        );
-        struct Composite;
-        impl Serialize for Composite {
-            fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                let _sequence = serializer.serialize_seq(Some(usize::MAX))?;
-                panic!("invalid map key payload must never be traversed");
-            }
-        }
-        struct InvalidMap;
-        impl Serialize for InvalidMap {
-            fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry(&Composite, &())?;
-                map.end()
-            }
-        }
-        assert!(serde_json::to_vec(&InvalidMap).is_err());
-        assert!(matches!(
-            measure(&InvalidMap),
-            Err(MeasurementError::Json(_))
-        ));
-    }
-    #[test]
-    fn streamed_dynamic_key_and_display_metrics_match_actual_json() {
-        #[derive(PartialEq, Eq, PartialOrd, Ord)]
-        struct Formatted<'a>(&'a str);
-        impl std::fmt::Display for Formatted<'_> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                use std::fmt::Write;
-                f.write_str("prefix\"\n")?;
-                f.write_char('😀')?;
-                f.write_str(self.0)?;
-                f.write_str("\0suffix")
-            }
-        }
-        impl Serialize for Formatted<'_> {
-            fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.collect_str(self)
-            }
-        }
-        let key = "quoted\"/slash\\/NUL\0/é😀\n".repeat(32768);
-        let map = std::collections::BTreeMap::from([(Formatted(&key), Formatted("value\n"))]);
-        let bytes = serde_json::to_vec(&map).unwrap();
-        let measured = measure(&map).unwrap();
-        assert_eq!(measured.encoded_bytes, bytes.len());
-        assert_eq!(
-            measured.structural_bytes,
-            super::super::structural_bytes(&bytes).unwrap()
-        );
-        let value = Formatted(&key);
-        let actual = value.to_string();
-        assert_eq!(retained(&value).unwrap(), retained(&actual).unwrap());
-    }
-    #[test]
-    fn primitive_measurements_preserve_full_integer_and_float_formatting() {
-        #[derive(Serialize)]
-        struct Values {
-            minimum: i128,
-            maximum: u128,
-            numbers: [f64; 5],
-            smallest: f32,
-        }
-        let values = Values {
-            minimum: i128::MIN,
-            maximum: u128::MAX,
-            numbers: [
-                f64::NAN,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                -0.0,
-                f64::MIN_POSITIVE,
-            ],
-            smallest: f32::from_bits(1),
-        };
-        let bytes = serde_json::to_vec(&values).unwrap();
-        let measured = measure(&values).unwrap();
-        assert_eq!(measured.encoded_bytes, bytes.len());
-        assert_eq!(
-            measured.structural_bytes,
-            super::super::structural_bytes(&bytes).unwrap()
-        );
-    }
-    #[test]
-    fn invalid_display_returns_its_typed_formatting_cause() {
-        struct Broken;
-        impl std::fmt::Display for Broken {
-            fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                Err(std::fmt::Error)
-            }
-        }
-        impl Serialize for Broken {
-            fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serializer.collect_str(self)
-            }
-        }
-        assert!(matches!(
-            measure(&Broken),
-            Err(MeasurementError::Formatting(_))
-        ));
     }
 }

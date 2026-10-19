@@ -1,6 +1,9 @@
-//! Unsent drafts are saved through view teardown, AI disable, shutdown and reopen.
-use super::super::restoration::{disk_chat, reopen};
+//! Unsent text and edits are saved on shutdown and survive reopening.
 use super::*;
+use crate::panel::tests::restoration::{disk_chat, reopen};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 
 #[gpui_kit::test]
 fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestAppContext) {
@@ -11,7 +14,10 @@ fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestA
     type_draft(&f, "window's final text\n界", cx);
     let (id, thread) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        (thread.read(cx).chat_id_string(), thread.downgrade())
+        (
+            thread.read(cx).document().chat_id().to_owned(),
+            thread.downgrade(),
+        )
     });
     let panel = f.panel.downgrade();
     cx.update_window(f.handle, |_, window, _| window.remove_window())
@@ -37,7 +43,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     new_chat(&f, cx);
     type_draft(&f, "draft before disabling AI", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = thread.read_with(cx, |thread, _| thread.chat_id_string());
+    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
     cx.update(|cx| {
         f.installation
             .ready
@@ -57,7 +63,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     // A retained entity must not replace the saved text with its cleared UI state at quit.
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
-        thread.read_with(cx, |thread, _| thread.chat_id_string()),
+        thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned()),
         id
     );
     assert_eq!(disk_value(&f.repository, &id), value);
@@ -76,23 +82,13 @@ fn adopt(f: &mut Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAp
 #[gpui_kit::test]
 fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let saved = nocterm_ai::history::SavedChat::for_identity(
-        &f.installation.retention,
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006b".into(),
         1,
     );
-    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
-    composer.draft = Some("saved text".into());
-    let saved = nocterm_ai::history::SavedChat::from_parts(
-        &f.installation.retention,
-        id.clone(),
-        metadata,
-        resume,
-        transcript,
-        composer,
-    )
-    .unwrap();
+    let id = saved.id.clone();
+    saved.draft = Some("saved text".into());
     adopt(&mut f, saved, cx);
     let shutdown = cx.update(|cx| {
         let thread = f.panel.read(cx).chat_documents().next().unwrap().clone();
@@ -108,29 +104,19 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
         disk_value(&f.repository, &id)["draft"],
         "latest dormant text"
     );
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
 fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let saved = nocterm_ai::history::SavedChat::for_identity(
-        &f.installation.retention,
+    let mut saved = nocterm_ai::history::SavedChat::for_identity(
         "removed-provider".into(),
         "00000000-0000-4000-8000-00000000006c".into(),
         1,
     );
-    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
-    composer.draft = Some("previous text".into());
-    let saved = nocterm_ai::history::SavedChat::from_parts(
-        &f.installation.retention,
-        id.clone(),
-        metadata,
-        resume,
-        transcript,
-        composer,
-    )
-    .unwrap();
+    let id = saved.id.clone();
+    saved.draft = Some("previous text".into());
     adopt(&mut f, saved, cx);
     let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     cx.update(|cx| assert!(!thread.read(cx).has_status_error()));
@@ -149,8 +135,9 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
         disk_value(&f.repository, &id)["draft"],
         "latest text after provider failure"
     );
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
+
 #[gpui_kit::test]
 fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -160,16 +147,18 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         let thread = f.panel.read(cx).current().unwrap();
         thread.read(cx).snapshot(cx).unwrap()
     });
-    let id = saved.id().to_owned();
+    let id = saved.id.clone();
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(RestoreFailure::Unavailable("Original session is gone"));
+        .push_back(AgentError::RestoreUnavailable(
+            "Original session is gone".into(),
+        ));
     let first = reopen(&f, saved, cx);
     let fresh = disk_chat(&f, &id);
-    assert!(fresh.resume().pending_history);
-    assert_ne!(fresh.resume().session_id.as_deref(), Some("s0"));
+    assert!(fresh.pending_history);
+    assert_ne!(fresh.session_id.as_deref(), Some("s0"));
     drop(first);
     cx.run_until_parked();
 
@@ -178,9 +167,8 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.update(|cx| assert!(second.read(cx).document().pending_history()));
     second.update(cx, |thread, cx| {
         report_control(
-            &f,
             thread,
-            SessionUpdate::Commands(vec![nocterm_ai::model::notice::AdvertisedCommand::new(
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
                 "help",
                 "Show help",
             )]),
@@ -191,7 +179,7 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.run_until_parked();
     complete_active(&f, cx);
     let after_slash = disk_chat(&f, &id);
-    assert!(after_slash.resume().pending_history);
+    assert!(after_slash.pending_history);
     drop(second);
     cx.run_until_parked();
 
@@ -214,12 +202,12 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         assert!(history[0].contains("Assistant: the first disk is full"));
     }
     assert!(
-        disk_chat(&f, &id).resume().pending_history,
+        disk_chat(&f, &id).pending_history,
         "delivery has not finished"
     );
     complete_active(&f, cx);
     let delivered = disk_chat(&f, &id);
-    assert!(!delivered.resume().pending_history);
+    assert!(!delivered.pending_history);
     drop(third);
     cx.run_until_parked();
 

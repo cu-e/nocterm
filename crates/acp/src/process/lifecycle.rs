@@ -3,6 +3,7 @@ use futures::{
     channel::oneshot,
     future::{BoxFuture, Shared},
 };
+use nocterm_ai::AgentError;
 use std::sync::Mutex;
 #[cfg(unix)]
 use std::time::Duration;
@@ -33,17 +34,14 @@ pub(crate) enum CleanupError {
 }
 
 type Completion = Shared<BoxFuture<'static, Result<(), CleanupError>>>;
-mod attempts;
-use attempts::Attempts;
 pub(crate) struct ProcessGroup {
     pid: u32,
     #[cfg(target_os = "linux")]
     container: Option<std::sync::Arc<super::systemd::Container>>,
-    completion: Mutex<Attempts>,
+    completion: Mutex<Option<Completion>>,
 }
 impl ProcessGroup {
-    #[cfg(unix)]
-    pub(crate) fn new(
+    pub(super) fn new(
         pid: u32,
         #[cfg(target_os = "linux")] container: Option<super::systemd::Container>,
     ) -> Self {
@@ -51,7 +49,7 @@ impl ProcessGroup {
             pid,
             #[cfg(target_os = "linux")]
             container: container.map(std::sync::Arc::new),
-            completion: Mutex::new(Attempts::default()),
+            completion: Mutex::new(None),
         }
     }
     fn cleanup(&self, force: bool) -> Completion {
@@ -59,8 +57,8 @@ impl ProcessGroup {
             .completion
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(completion) = completion.existing(force) {
-            return completion;
+        if let Some(completion) = completion.as_ref() {
+            return completion.clone();
         }
         let pid = self.pid;
         #[cfg(target_os = "linux")]
@@ -75,7 +73,7 @@ impl ProcessGroup {
         let future = async move { rx.await.unwrap_or(Err(CleanupError::WorkerLost)) }
             .boxed()
             .shared();
-        completion.record(future.clone());
+        *completion = Some(future.clone());
         let _worker = std::thread::Builder::new()
             .name("nocterm-agent-cleanup".into())
             .spawn(move || {
@@ -91,18 +89,26 @@ impl ProcessGroup {
             });
         future
     }
-    pub(crate) fn shutdown_native(
-        &self,
-    ) -> impl std::future::Future<Output = Result<(), CleanupError>> + Send + 'static {
-        self.cleanup(false)
+    /// Stops the process tree gracefully, resolving only once it is confirmed gone.
+    pub(crate) fn shutdown_confirmed(&self) -> BoxFuture<'static, Result<(), CleanupError>> {
+        let completion = self.cleanup(false);
+        completion.boxed()
     }
-    pub(crate) fn shutdown_final_native(
-        &self,
-    ) -> impl std::future::Future<Output = Result<(), CleanupError>> + Send + 'static {
-        self.cleanup(true)
+    pub(crate) fn shutdown(&self) -> BoxFuture<'static, Result<(), AgentError>> {
+        let confirmed = self.shutdown_confirmed();
+        async move {
+            confirmed
+                .await
+                .map_err(|error| AgentError::Io(error.to_string()))
+        }
+        .boxed()
     }
     pub(crate) fn kill(&self) {
         drop(self.cleanup(true));
+    }
+    #[cfg(all(test, unix))]
+    pub(crate) fn finish(&self) {
+        let _ = futures::executor::block_on(self.shutdown());
     }
 }
 impl Drop for ProcessGroup {

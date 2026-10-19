@@ -42,15 +42,12 @@ impl TranscriptView {
             })
             .into_any_element()
     }
-    pub(super) fn plan(
-        plan: &[nocterm_ai::model::notice::PlanStep],
-        cx: &gpui_kit::App,
-    ) -> AnyElement {
+    pub(super) fn plan(plan: &nocterm_ai::model::plan::Plan, cx: &gpui_kit::App) -> AnyElement {
         v_flex()
             .p_2()
             .border_t_1()
             .border_color(cx.theme().border)
-            .children(plan.iter().map(|entry| {
+            .children(plan.entries.iter().map(|entry| {
                 div()
                     .text_sm()
                     .child(format!("{:?} · {}", entry.status, entry.content))

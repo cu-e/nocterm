@@ -1,4 +1,7 @@
 use super::*;
+use nocterm_ai::model::auth::PermissionOutcome;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 
 #[gpui_kit::test]
 fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chunks(
@@ -7,7 +10,7 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
     let f = fixture(cx);
     new_chat(&f, cx);
     new_chat(&f, cx);
-    assert_eq!(f.connector.connect_count(), 2);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
     let (rx, session) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let (tx, rx) = oneshot::channel();
@@ -61,21 +64,19 @@ fn independent_connection_approvals_recheck_detachment_and_stop_blocks_late_chun
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     f.events
-        .try_send(AgentEvent::Session(SessionNotice {
+        .try_send(AgentEvent::Session(SessionNotice::new(
             session,
-            update: SessionUpdate::AgentChunk(Content::Text(Text {
-                text: "late".into(),
-                annotations: None,
-                extensions: None,
-            })),
-        }))
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "late",
+            ))),
+        )))
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         assert!(
-            !thread.read(cx).row_facts().iter().any(
-                |row| matches!(row, crate::thread::test_views::RowFacts::Agent(value) if value == "late")
+            !thread.read(cx).transcript().entries.iter().any(
+                |entry| matches!(entry,nocterm_ai::thread::Entry::Agent(value)if value=="late")
             )
         );
     });
@@ -264,17 +265,13 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
         (0..2)
             .map(|_| {
                 let (send, receive) = nocterm_ai::PermissionResponder::channel();
-                let request = super::provider_permissions::permission(
+                let request = permission_request(
                     session.clone(),
                     "call",
-                    "Long permission title",
+                    Some("Long permission title"),
                     vec![
-                        super::provider_permissions::choice(
-                            "allow",
-                            "Allow once",
-                            nocterm_ai::model::auth::PermissionEffect::AllowOnce,
-                        ),
-                        super::provider_permissions::choice(
+                        allow_once_choice("allow", "Allow once"),
+                        nocterm_ai::model::auth::PermissionChoice::new(
                             "deny",
                             "Reject",
                             nocterm_ai::model::auth::PermissionEffect::DenyOnce,
@@ -313,11 +310,11 @@ fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
     let mut responses = responses.into_iter();
     assert!(matches!(
         futures::executor::block_on(responses.next().unwrap()).unwrap(),
-        nocterm_ai::model::auth::PermissionOutcome::Selected(_)
+        PermissionOutcome::Selected(_)
     ));
     assert!(matches!(
         futures::executor::block_on(responses.next().unwrap()).unwrap(),
-        nocterm_ai::model::auth::PermissionOutcome::Cancelled
+        PermissionOutcome::Cancelled
     ));
 }
 
@@ -332,10 +329,11 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     show_history(&f, cx);
     cx.update(|cx| {
         let session = owner.read(cx).session().clone().unwrap();
-        let request = super::provider_permissions::allow_once(
-            session.clone(),
+        let request = permission_request(
+            session,
             "call",
-            "Review pending request",
+            Some("Review pending request"),
+            vec![allow_once_choice("allow", "Allow")],
         );
         f.events
             .try_send(AgentEvent::Permission {
@@ -360,29 +358,8 @@ fn review_notice_selects_pending_thread_and_leaves_history(cx: &mut TestAppConte
     .unwrap();
     assert!(matches!(
         futures::executor::block_on(receive).unwrap(),
-        nocterm_ai::model::auth::PermissionOutcome::Selected(_)
+        PermissionOutcome::Selected(_)
     ));
-}
-
-/// The current chat receives one single-choice permission request.
-fn send_hidden_permission(
-    f: &Fixture,
-    send: nocterm_ai::PermissionResponder,
-    cx: &mut TestAppContext,
-) -> gpui_kit::Entity<crate::thread::AgentThread> {
-    cx.update(|cx| {
-        let owner = f.panel.read(cx).current().unwrap();
-        let session = owner.read(cx).session().clone().unwrap();
-        let request =
-            super::provider_permissions::allow_once(session.clone(), "call", "Hidden permission");
-        f.events
-            .try_send(AgentEvent::Permission {
-                request,
-                respond: send,
-            })
-            .unwrap();
-        owner
-    })
 }
 
 #[gpui_kit::test]
@@ -393,7 +370,23 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
     for disposition in ["stop", "resolve", "delete"] {
         new_chat(&f, cx);
         let (send, receive) = nocterm_ai::PermissionResponder::channel();
-        let owner = send_hidden_permission(&f, send, cx);
+        let owner = cx.update(|cx| {
+            let owner = f.panel.read(cx).current().unwrap();
+            let session = owner.read(cx).session().clone().unwrap();
+            let request = permission_request(
+                session,
+                "call",
+                Some("Hidden permission"),
+                vec![allow_once_choice("allow", "Allow")],
+            );
+            f.events
+                .try_send(AgentEvent::Permission {
+                    request,
+                    respond: send,
+                })
+                .unwrap();
+            owner
+        });
         // Deliver the provider event before switching away from its draft chat.
         cx.run_until_parked();
         // Another chat in front hides the request.
@@ -416,7 +409,7 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
                 "resolve" => owner.update(cx, |thread, cx| {
                     thread.choose_permission_request(
                         thread.permission_cards()[0].token(),
-                        Some(nocterm_ai::model::ids::PermissionOptionId::new("allow")),
+                        Some("allow".into()),
                         cx,
                     )
                 }),
@@ -447,10 +440,7 @@ fn obsolete_approval_notice_is_removed_on_stop_resolve_and_delete_without_cleari
             .unwrap_or_else(|| panic!("{disposition} response was not released"))
             .unwrap();
         assert_eq!(
-            matches!(
-                result,
-                nocterm_ai::model::auth::PermissionOutcome::Selected(_)
-            ),
+            matches!(result, PermissionOutcome::Selected(_)),
             disposition == "resolve"
         );
     }

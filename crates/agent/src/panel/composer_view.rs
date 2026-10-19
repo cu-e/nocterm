@@ -3,7 +3,7 @@ mod commands;
 use super::{AgentPanel, commands::CommandState};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _, Pixels,
-    SharedString, Subscription, Window,
+    SharedString, Subscription, Task, Window,
     component::input::{InputEvent, Textarea, TextareaState},
     px,
 };
@@ -31,6 +31,7 @@ struct QueueEdit {
     id: u64,
     draft: String,
     ready: bool,
+    preparation: Option<Task<()>>,
 }
 #[derive(Default)]
 struct QueueView {
@@ -218,8 +219,36 @@ impl ComposerView {
             id,
             draft,
             ready,
+            preparation: None,
         });
         binding
+    }
+    pub(super) fn install_edit_preparation(
+        &mut self,
+        binding: &ComposerBinding,
+        id: u64,
+        task: Task<()>,
+    ) {
+        if self.current(binding)
+            && let Some(edit) = self.state.edit.as_mut().filter(|edit| edit.id == id)
+        {
+            edit.preparation = Some(task);
+        }
+    }
+    pub(super) fn edit_preparation_current(&self, binding: &ComposerBinding, id: u64) -> bool {
+        self.current(binding)
+            && self
+                .state
+                .edit
+                .as_ref()
+                .is_some_and(|edit| edit.id == id && !edit.ready)
+    }
+    pub(super) fn edit_images_accepted(&mut self, binding: &ComposerBinding, id: u64) {
+        if self.current(binding)
+            && let Some(edit) = self.state.edit.as_mut().filter(|edit| edit.id == id)
+        {
+            edit.ready = true;
+        }
     }
     pub(super) fn prepare_images(&mut self, chat: EntityId) -> ComposerBinding {
         let binding = match self.binding.as_ref().filter(|binding| binding.chat == chat) {
@@ -284,7 +313,7 @@ impl ComposerView {
         }
         let commands = thread
             .as_ref()
-            .map(|thread| self.command_matches(&thread.read(cx).configuration().commands(), cx))
+            .map(|thread| self.command_matches(thread.read(cx).configuration().commands(), cx))
             .unwrap_or_default();
         if commands.is_empty() {
             return None;

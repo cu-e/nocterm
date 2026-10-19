@@ -7,7 +7,9 @@ pub fn valid_name(name: &str) -> bool {
         && b.all(|v| v.is_ascii_alphanumeric() || v == b'_')
 }
 pub fn blocked(name: &str) -> bool {
-    ascii_starts_with(name, "NOCTERM_")
+    let upper = name.to_ascii_uppercase();
+    let name = upper.as_str();
+    name.starts_with("NOCTERM_")
         || [
             "SSH_AUTH_SOCK",
             "SSH_AGENT_PID",
@@ -23,40 +25,21 @@ pub fn blocked(name: &str) -> bool {
             "PYTHONPATH",
             "PYTHONSTARTUP",
         ]
-        .iter()
-        .any(|blocked| name.eq_ignore_ascii_case(blocked))
+        .contains(&name)
 }
 /// Recognized authentication/credential names must use explicit inheritance,
 /// never plaintext settings overrides. Arbitrarily named secrets remain unknowable.
 pub fn credential_override(name: &str) -> bool {
-    ascii_ends_with(name, "_KEY")
-        || name.eq_ignore_ascii_case("TOKEN")
-        || ascii_ends_with(name, "_TOKEN")
-        || ascii_contains(name, "PASSWORD")
-        || ascii_contains(name, "PASSWD")
-        || ascii_contains(name, "SECRET")
-        || name.eq_ignore_ascii_case("AUTHORIZATION")
+    let name = name.to_ascii_uppercase();
+    name.ends_with("_KEY")
+        || name == "TOKEN"
+        || name.ends_with("_TOKEN")
+        || name.contains("PASSWORD")
+        || name.contains("PASSWD")
+        || name.contains("SECRET")
+        || name == "AUTHORIZATION"
 }
-fn ascii_starts_with(value: &str, prefix: &str) -> bool {
-    value
-        .as_bytes()
-        .get(..prefix.len())
-        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
-}
-fn ascii_ends_with(value: &str, suffix: &str) -> bool {
-    value
-        .len()
-        .checked_sub(suffix.len())
-        .and_then(|start| value.as_bytes().get(start..))
-        .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix.as_bytes()))
-}
-fn ascii_contains(value: &str, needle: &str) -> bool {
-    value
-        .as_bytes()
-        .windows(needle.len())
-        .any(|part| part.eq_ignore_ascii_case(needle.as_bytes()))
-}
-pub fn allowed(name: &str) -> bool {
+fn allowed(name: &str) -> bool {
     [
         "PATH",
         "HOME",
@@ -97,36 +80,23 @@ pub fn sanitized_environment(
     launch: &AgentLaunch,
     parent: impl IntoIterator<Item = (String, String)>,
 ) -> BTreeMap<String, String> {
-    sanitized_environment_fields(
-        &launch.inherit_env,
-        launch
-            .env
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str())),
-        parent,
-    )
-}
-pub fn sanitized_environment_fields<'a>(
-    inherit_env: &[String],
-    explicit: impl IntoIterator<Item = (&'a str, &'a str)>,
-    parent: impl IntoIterator<Item = (String, String)>,
-) -> BTreeMap<String, String> {
     let mut result: BTreeMap<_, _> = parent
         .into_iter()
         .filter(|(k, v)| {
             valid_name(k)
                 && !blocked(k)
                 && !v.contains('\0')
-                && (allowed(k) || inherit_env.contains(k))
+                && (allowed(k) || launch.inherit_env.contains(k))
         })
         .collect();
     result.extend(
-        explicit
-            .into_iter()
+        launch
+            .env
+            .iter()
             .filter(|(k, v)| {
                 valid_name(k) && !blocked(k) && !credential_override(k) && !v.contains('\0')
             })
-            .map(|(k, v)| (k.to_owned(), v.to_owned())),
+            .map(|(k, v)| (k.clone(), v.clone())),
     );
     result
 }

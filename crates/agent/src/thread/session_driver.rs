@@ -1,17 +1,12 @@
 //! Session and lease transitions retain their original connection and operation identity.
 use super::Restore;
 use crate::runtime::SessionLease;
+use nocterm_ai::model::ids::SessionId;
 use nocterm_ai::{
-    BridgeRegistration,
-    connection::ManagedCommandsHandle,
-    history::{
-        live::LiveEpoch,
-        source::{ManagedCommandError, ManagedSourceFuture},
-    },
-    model::{ids::SessionId, json::deferred::NativeAllocationError},
+    AgentCommands, AgentInfo, BridgeRegistration,
     session::{SessionPhase, SessionState, Ticket},
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 pub(in crate::thread) mod authentication_operation;
 pub(in crate::thread) mod cancel_operation;
 pub(in crate::thread) mod open_operation;
@@ -20,16 +15,6 @@ pub(in crate::thread) mod prompt_operation;
 use operation_counter::OperationCounter;
 pub(crate) use operation_counter::OperationGuard;
 
-/// Awaits one admitted native command, mapping a refused admission to its typed error.
-pub(super) async fn settle<T>(
-    operation: Result<ManagedSourceFuture<Result<T, ManagedCommandError>>, NativeAllocationError>,
-) -> Result<T, ManagedCommandError> {
-    match operation {
-        Ok(work) => work.await,
-        Err(error) => Err(ManagedCommandError::Admission(error)),
-    }
-}
-
 #[derive(Default)]
 pub(super) struct SessionDriver {
     lease: Option<SessionLease>,
@@ -37,7 +22,7 @@ pub(super) struct SessionDriver {
     shown: bool,
     operations: OperationCounter,
     restore: Option<Restore>,
-    epoch: Option<LiveEpoch>,
+    info: Option<AgentInfo>,
 }
 #[derive(Clone)]
 pub(super) struct SessionAuthority {
@@ -78,7 +63,7 @@ impl SessionDriver {
     pub(super) fn session(&self) -> &Option<SessionId> {
         self.lease.as_ref().map_or(&None, SessionLease::session)
     }
-    pub(super) fn commands(&self) -> &Option<ManagedCommandsHandle> {
+    pub(super) fn commands(&self) -> &Option<Arc<dyn AgentCommands>> {
         self.lease.as_ref().map_or(&None, SessionLease::commands)
     }
     pub(super) fn registration(&self) -> &Option<BridgeRegistration> {
@@ -112,7 +97,6 @@ impl SessionDriver {
         self.phase.leased();
     }
     pub(super) fn release_lease(&mut self) -> bool {
-        self.epoch = None;
         self.lease.take().is_some()
     }
     pub(super) fn restore(&self) -> &Option<Restore> {
@@ -138,10 +122,15 @@ impl SessionDriver {
             self.restore = None;
         }
     }
-    pub(super) fn epoch(&self) -> Option<&LiveEpoch> {
-        self.epoch.as_ref()
+    pub(super) fn info(&self) -> Option<&AgentInfo> {
+        self.info.as_ref()
     }
-    pub(super) fn begin_open(&mut self, commands: ManagedCommandsHandle, workdir: PathBuf) -> bool {
+    pub(super) fn begin_open(
+        &mut self,
+        commands: Arc<dyn AgentCommands>,
+        info: AgentInfo,
+        workdir: PathBuf,
+    ) -> bool {
         if !self.phase.opening() {
             return false;
         }
@@ -149,7 +138,7 @@ impl SessionDriver {
             return false;
         };
         lease.begin_open(commands, workdir);
-        self.epoch = None;
+        self.info = Some(info);
         true
     }
     pub(super) fn retain_failed_restore(
@@ -175,11 +164,6 @@ impl SessionDriver {
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        self.epoch = Some(LiveEpoch::new(
-            ticket,
-            lease.connection_key(),
-            session.clone(),
-        ));
         lease.accept_session(session, fresh_workdir);
         self.restore = None;
         true

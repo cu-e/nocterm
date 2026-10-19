@@ -1,10 +1,41 @@
-//! Deterministic ports retain original explicitly supplied test fixtures.
-mod commands;
-pub use commands::{
-    CommandsWitness, ScriptedCommands, ScriptedFailure, ScriptedOperation, SessionScript,
+//! Deterministic connector for application tests. Each connection is supplied by the test.
+use crate::{AgentConnection, AgentConnector, ConnectError, ConnectRequest};
+use futures::future::BoxFuture;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
 };
-mod connection;
-pub use connection::{ManagedConnectFuture, ScriptedConnector};
+#[derive(Default, Clone)]
+pub struct ScriptedConnector {
+    connections: Arc<Mutex<VecDeque<Result<AgentConnection, ConnectError>>>>,
+    requests: Arc<Mutex<Vec<ConnectRequest>>>,
+}
+impl ScriptedConnector {
+    pub fn push(&self, connection: Result<AgentConnection, ConnectError>) {
+        self.connections
+            .lock()
+            .expect("test queue")
+            .push_back(connection);
+    }
+    pub fn requests(&self) -> Vec<ConnectRequest> {
+        self.requests.lock().expect("test requests").clone()
+    }
+}
+impl AgentConnector for ScriptedConnector {
+    fn connect(
+        &self,
+        request: ConnectRequest,
+    ) -> BoxFuture<'static, Result<AgentConnection, ConnectError>> {
+        self.requests.lock().expect("test requests").push(request);
+        let result = self
+            .connections
+            .lock()
+            .expect("test queue")
+            .pop_front()
+            .unwrap_or_else(|| Err(ConnectError::Io("No scripted connection".into())));
+        Box::pin(async move { result })
+    }
+}
 
 mod storage;
 pub use storage::{InMemoryAgentRepository, StorageOperation};
@@ -21,12 +52,3 @@ pub use images::{ImageRequest, ScriptedImageCodec};
 
 mod metadata;
 pub use metadata::{MetadataRequests, ScriptedChatMetadata};
-
-mod rows;
-pub use rows::{ManagedRows, ManagedRowsError};
-
-mod ledger_lifetimes;
-pub use ledger_lifetimes::{unique_ledger_metadata, writer_ledger};
-
-mod events;
-pub use events::{managed_event, managed_events};

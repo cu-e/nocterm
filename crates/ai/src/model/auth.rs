@@ -1,47 +1,92 @@
-use super::{
-    extensions::Extensions,
-    ids::{AuthMethodId, PermissionOptionId, SessionId},
-    tools::ToolPatch,
-};
-use serde::{Deserialize, Serialize};
-mod environment;
-mod reply;
-pub use environment::{EnvironmentPair, TerminalEnvironment};
-pub use reply::{PermissionAnswer, PermissionAnswerClosed};
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+use super::ids::{AuthMethodId, PermissionOptionId, SessionId};
+use super::tools::ToolPatch;
+use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct AuthMethod {
     pub id: AuthMethodId,
     pub label: String,
     pub description: Option<String>,
     pub flow: AuthFlow,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+impl AuthMethod {
+    pub fn agent(id: impl Into<AuthMethodId>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: None,
+            flow: AuthFlow::AgentManaged,
+        }
+    }
+    pub fn terminal(
+        id: impl Into<AuthMethodId>,
+        label: impl Into<String>,
+        setup: TerminalSetup,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            description: None,
+            flow: AuthFlow::TerminalSetup(setup),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum AuthFlow {
     AgentManaged,
     TerminalSetup(TerminalSetup),
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerminalSetup {
     pub args: Vec<String>,
-    pub env: TerminalEnvironment,
+    pub env: BTreeMap<String, String>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+
+/// A tool call the agent asks the user to authorize.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProviderPermission {
     pub session: SessionId,
     pub tool: ToolPatch,
     pub choices: Vec<PermissionChoice>,
-    pub extensions: Option<Extensions>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+
+impl ProviderPermission {
+    pub fn new(
+        session: impl Into<SessionId>,
+        tool: ToolPatch,
+        choices: Vec<PermissionChoice>,
+    ) -> Self {
+        Self {
+            session: session.into(),
+            tool,
+            choices,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct PermissionChoice {
     pub id: PermissionOptionId,
     pub label: String,
     pub effect: PermissionEffect,
-    pub extensions: Option<Extensions>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+impl PermissionChoice {
+    pub fn new(
+        id: impl Into<PermissionOptionId>,
+        label: impl Into<String>,
+        effect: PermissionEffect,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            effect,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PermissionEffect {
     AllowOnce,
     AllowRemembered,
@@ -54,66 +99,4 @@ pub enum PermissionEffect {
 pub enum PermissionOutcome {
     Selected(PermissionOptionId),
     Cancelled,
-}
-/// Exactly one neutral reply; abandonment cancels, including a closed UI owner.
-#[derive(Debug)]
-pub struct PermissionResponder(Option<ReplySender>);
-#[derive(Debug)]
-enum ReplySender {
-    Legacy(futures::channel::oneshot::Sender<PermissionOutcome>),
-    Managed(reply::Sender),
-}
-impl ReplySender {
-    fn send(self, outcome: PermissionOutcome) {
-        match self {
-            Self::Legacy(sender) => {
-                let _ = sender.send(outcome);
-            }
-            Self::Managed(sender) => sender.send(outcome),
-        }
-    }
-}
-impl PermissionResponder {
-    pub fn channel() -> (Self, futures::channel::oneshot::Receiver<PermissionOutcome>) {
-        let (sender, receiver) = futures::channel::oneshot::channel();
-        (Self(Some(ReplySender::Legacy(sender))), receiver)
-    }
-    /// Reserve the real shared channel block before allocating, retaining the
-    /// original source account through both endpoints' physical destruction.
-    pub fn managed_channel(
-        context: &crate::history::source::SourceContext,
-    ) -> Result<(Self, PermissionAnswer), super::json::deferred::JsonDecodeError> {
-        let (sender, receiver) = reply::channel(context)?;
-        Ok((Self(Some(ReplySender::Managed(sender))), receiver))
-    }
-    pub fn respond(mut self, outcome: PermissionOutcome) {
-        if let Some(sender) = self.0.take() {
-            sender.send(outcome);
-        }
-    }
-}
-impl Drop for PermissionResponder {
-    fn drop(&mut self) {
-        if let Some(sender) = self.0.take() {
-            sender.send(PermissionOutcome::Cancelled);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn abandonment_cancels_and_selection_is_delivered_once() {
-        let (responder, answer) = PermissionResponder::channel();
-        drop(responder);
-        assert_eq!(
-            futures::executor::block_on(answer).unwrap(),
-            PermissionOutcome::Cancelled
-        );
-        let (responder, answer) = PermissionResponder::channel();
-        let selected = PermissionOutcome::Selected(PermissionOptionId::new("001"));
-        responder.respond(selected.clone());
-        assert_eq!(futures::executor::block_on(answer).unwrap(), selected);
-    }
 }

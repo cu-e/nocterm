@@ -18,22 +18,18 @@ async-process.workspace = true
 async-io.workspace = true
 async-channel.workspace = true
 futures.workspace = true
-regex-automata.workspace = true
 serde_json.workspace = true
-serde.workspace = true
 getrandom.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 subtle = "2"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["signal", "process", "fs"] }
+nix = { version = "0.28", features = ["signal", "process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["process", "event"] }
 
 [dev-dependencies]
-nocterm-ai = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 nocterm-settings.workspace = true
 

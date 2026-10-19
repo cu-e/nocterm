@@ -1,8 +1,7 @@
 //! Pure prompt admission and injected image inspection/preview contracts.
+use crate::model::content::{Content, Image};
 mod codec;
 mod header;
-pub mod managed;
-use crate::model::content::{Content, Media, MediaKind};
 use base64::{Engine, engine::general_purpose::STANDARD};
 pub use codec::*;
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
@@ -36,7 +35,7 @@ pub struct PromptImage {
     width: u32,
     height: u32,
     content: std::sync::Arc<Content>,
-    size: crate::history::FormatSize,
+    encoded_len: usize,
 }
 impl PromptImage {
     pub fn validate(
@@ -52,23 +51,15 @@ impl PromptImage {
             return Err(PromptImageError::Decode(ImageCodecError::InvalidEvidence));
         }
         let mime = facts.format().mime();
-        let content = Content::Media(Media {
-            kind: MediaKind::Image,
-            encoded: STANDARD.encode(&data),
-            mime: mime.into(),
-            uri: None,
-            annotations: None,
-            extensions: None,
-        });
-        let size = crate::history::measure_json(&content)
-            .map_err(crate::history::HistoryCodecError::from)?;
+        let content = Content::Image(Image::new(STANDARD.encode(&data), mime));
+        let encoded_len = crate::history::content_size(&content)?;
         Ok(Self {
             mime_type: mime.into(),
             data,
             width: facts.width(),
             height: facts.height(),
             content: std::sync::Arc::new(content),
-            size,
+            encoded_len,
         })
     }
     pub fn content(&self) -> Content {
@@ -84,7 +75,7 @@ impl PromptImage {
         (self.width, self.height)
     }
     pub fn encoded_len(&self) -> usize {
-        self.size.encoded_bytes
+        self.encoded_len
     }
 }
 pub fn validate_collection(images: &[PromptImage]) -> Result<(), ImageCollectionError> {
@@ -102,8 +93,7 @@ impl From<ImageCodecError> for PromptImageError {
             ImageCodecError::SourceSize => Self::TooLarge,
             ImageCodecError::UnsupportedFormat => Self::Unsupported,
             ImageCodecError::PixelLimit => Self::Dimensions,
-            ImageCodecError::InvalidHeader { .. }
-            | ImageCodecError::ManagedInvalidHeader { .. } => Self::Header(error),
+            ImageCodecError::InvalidHeader { .. } => Self::Header(error),
             _ => Self::Decode(error),
         }
     }

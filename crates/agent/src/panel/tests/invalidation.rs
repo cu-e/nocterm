@@ -1,4 +1,6 @@
 use super::*;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
 use nocterm_workspace::WorkspaceEvent;
 use std::cell::Cell;
 
@@ -38,7 +40,12 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
-        let request = super::provider_permissions::allow_once(session, "call", "Permission");
+        let request = permission_request(
+            session,
+            "call",
+            Some("Permission"),
+            vec![allow_once_choice("allow", "Allow")],
+        );
         f.events
             .try_send(AgentEvent::Permission {
                 request,
@@ -106,15 +113,11 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         let (send, _receive) = nocterm_ai::PermissionResponder::channel();
         cx.update(|cx| {
             let session = owner.read(cx).session().clone().unwrap();
-            let request = super::provider_permissions::permission(
+            let request = permission_request(
                 session,
                 id,
-                "Permission",
-                vec![super::provider_permissions::choice(
-                    "allow",
-                    "Allow",
-                    nocterm_ai::model::auth::PermissionEffect::AllowOnce,
-                )],
+                Some("Permission"),
+                vec![allow_once_choice("allow", "Allow")],
             );
             f.events
                 .try_send(AgentEvent::Permission {
@@ -136,13 +139,10 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         cx.update(|cx| {
             owner.update(cx, |t, cx| {
                 report_control(
-                    &f,
                     t,
-                    SessionUpdate::AgentChunk(Content::Text(Text {
-                        text: "unchanged approval, more output".into(),
-                        annotations: None,
-                        extensions: None,
-                    })),
+                    SessionUpdate::AgentMessageChunk(Content::text(
+                        "unchanged approval, more output",
+                    )),
                     cx,
                 );
             })
@@ -200,8 +200,8 @@ fn separate_installations_keep_original_runtime_and_policy_after_later_compositi
         );
     });
     new_chat(&first, cx);
-    assert_eq!(first.connector.connect_count(), 1);
-    assert_eq!(second.connector.connect_count(), 0);
+    assert_eq!(first.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(second.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
@@ -237,6 +237,7 @@ fn refused_shutdown_registration_returns_a_usable_original_installation(cx: &mut
         );
     });
 }
+
 #[gpui_kit::test]
 fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -250,7 +251,7 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
         panel.prepare_images(
             async move {
                 receive.await.unwrap();
-                Ok(vec![image_bytes()])
+                Ok(vec![prompt_image()])
             },
             cx,
         )
@@ -286,24 +287,26 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
         )
     });
 }
+
 #[gpui_kit::test]
-fn deleting_owner_ends_a_queue_image_edit_without_leaking_it_into_the_next_chat(
+fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    owner.update(cx, |thread, cx| thread.send("active".into(), cx));
-    cx.run_until_parked();
     owner.update(cx, |thread, cx| {
-        attach_image(thread, image_bytes(), image_codec(), cx);
+        thread.send("active".into(), cx);
+        thread
+            .accept_composer_images(vec![prompt_image()], cx)
+            .unwrap();
         thread.send("queued image".into(), cx);
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("queue-edit-first", cx);
-        assert!(owner.read(cx).composer().editing_queue());
+        assert!(f.panel.read(cx).preparing_queue_edit());
         f.panel.update(cx, |panel, cx| {
             panel.delete_thread(owner.entity_id(), window, cx);
             panel.new_thread("codex".into(), window, cx);
@@ -332,6 +335,7 @@ fn deleting_owner_ends_a_queue_image_edit_without_leaking_it_into_the_next_chat(
         assert!(!owner.read(cx).composer().editing_queue());
     });
 }
+
 #[gpui_kit::test]
 async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAppContext) {
     let f = fixture(cx);

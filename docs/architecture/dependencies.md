@@ -8,7 +8,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | --- | --- | --- | --- |
 | `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-agent-runtime`, `nocterm-agent-storage`, `nocterm-ai`, `nocterm-connections`, `nocterm-connections-io`, `nocterm-connections-model`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-image-codec`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets`, `nocterm-snippets-io`, `nocterm-snippets-store`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-themes-registry`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
-| `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
+| `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
 | `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-core`, `nocterm-store` | ACP agent connections, their admission and the chats' durable documents. |
 | `nocterm-agent-storage` | adapter | `nocterm-ai`, `nocterm-core` | Bounded agent history and favorites filesystem repositories. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
@@ -101,7 +101,6 @@ graph TD
     nocterm_acp --> nocterm_settings
     nocterm_agent --> nocterm_agent_runtime
     nocterm_agent --> nocterm_ai
-    nocterm_agent --> nocterm_core
     nocterm_agent --> nocterm_session
     nocterm_agent --> nocterm_settings
     nocterm_agent --> nocterm_store

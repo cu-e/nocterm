@@ -1,8 +1,11 @@
 //! Semantic revisions are independent from serialization, delivery and physical publication.
 use crate::runtime::AgentPersistenceError;
+use nocterm_ai::history::SharedChat;
+use std::sync::Arc;
 
 #[derive(Clone, Default)]
 pub(super) struct PersistenceState {
+    inputs: super::metadata::SemanticInputs,
     desired: u64,
     published: u64,
     failure: Option<FailureRecord>,
@@ -17,6 +20,7 @@ struct FailureRecord {
 }
 #[derive(Clone)]
 pub(super) struct Candidate {
+    snapshot: Arc<SharedChat>,
     revision: u64,
     policy: CandidatePolicy,
 }
@@ -28,12 +32,26 @@ enum CandidatePolicy {
     Retry,
 }
 impl PersistenceState {
-    pub(super) fn restarted(&mut self) {
-        if let Some(candidate) = &mut self.candidate
-            && candidate.revision > self.published
+    pub(super) fn inputs_match(&self, input: &super::metadata::Inputs<'_>) -> bool {
+        self.inputs.matches(input)
+    }
+    pub(super) fn remember_inputs(&mut self, input: &super::metadata::Inputs<'_>) {
+        self.inputs.remember(input);
+    }
+    pub(super) fn restart_snapshot(&self) -> Self {
+        let mut copy = self.clone();
+        if let Some(candidate) = &mut copy.candidate
+            && candidate.revision > copy.published
         {
             candidate.policy = CandidatePolicy::Prepared;
         }
+        copy
+    }
+    pub(super) fn inputs_ready(&self) -> bool {
+        self.inputs.initialized()
+    }
+    pub(super) fn begin_hydration(&mut self) {
+        self.inputs.begin_hydration();
     }
     pub(super) fn fork_created(&mut self) {
         self.desired = 0;
@@ -75,12 +93,23 @@ impl PersistenceState {
     pub(super) fn clean(&self) -> bool {
         self.desired <= self.published && self.failure.is_none()
     }
+    pub(super) fn current_snapshot(&self) -> Option<Arc<SharedChat>> {
+        self.candidate
+            .as_ref()
+            .filter(|candidate| candidate.revision == self.desired)
+            .map(|candidate| candidate.snapshot.clone())
+    }
     pub(super) fn has_current_candidate(&self) -> bool {
         self.candidate
             .as_ref()
             .is_some_and(|candidate| candidate.revision == self.desired)
     }
-    pub(super) fn prepare(&mut self) {
+    pub(super) fn writer_owns_current(&self) -> bool {
+        self.candidate.as_ref().is_some_and(|candidate| {
+            candidate.revision == self.desired && candidate.policy == CandidatePolicy::Admitted
+        })
+    }
+    pub(super) fn prepare(&mut self, snapshot: Arc<SharedChat>) {
         if self
             .candidate
             .as_ref()
@@ -89,14 +118,15 @@ impl PersistenceState {
             return;
         }
         self.candidate = Some(Candidate {
+            snapshot,
             revision: self.desired,
             policy: CandidatePolicy::Prepared,
         });
     }
-    pub(super) fn capture_pending(&self) -> Option<u64> {
+    pub(super) fn capture_pending(&self) -> Option<(Arc<SharedChat>, u64)> {
         let candidate = self.candidate.as_ref()?;
         (candidate.revision == self.desired && candidate.policy != CandidatePolicy::Admitted)
-            .then_some(candidate.revision)
+            .then(|| (candidate.snapshot.clone(), candidate.revision))
     }
     pub(super) fn mark_normal_offer(&mut self, revision: u64) -> bool {
         let Some(candidate) = &mut self.candidate else {

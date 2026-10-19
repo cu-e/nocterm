@@ -1,6 +1,7 @@
 //! Exercise command ownership through the same bridge and chat lifecycle as users.
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::auth::PermissionOutcome;
 use nocterm_ai::{CancelCommand, ExecCommand, ReadCommand, TerminalCall};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::Value;
@@ -364,22 +365,12 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            let request = nocterm_ai::model::auth::ProviderPermission {
-                session: thread.session().clone().unwrap(),
-                tool: nocterm_ai::model::tools::ToolPatch {
-                    id: nocterm_ai::model::ids::ToolId::new("late-provider-tool"),
-                    changes: Default::default(),
-                    extensions: None,
-                    claims: Default::default(),
-                    literal: Default::default(),
-                },
-                choices: vec![super::provider_permissions::choice(
-                    "once",
-                    "Allow once",
-                    nocterm_ai::model::auth::PermissionEffect::AllowOnce,
-                )],
-                extensions: None,
-            };
+            let request = permission_request(
+                thread.session().clone().unwrap(),
+                "late-provider-tool",
+                None,
+                vec![allow_once_choice("once", "Allow once")],
+            );
             f.events
                 .try_send(AgentEvent::Permission { request, respond })
                 .unwrap();
@@ -388,7 +379,7 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(
         permission.try_recv().unwrap(),
-        Some(nocterm_ai::model::auth::PermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
@@ -543,4 +534,5 @@ fn a_joined_reconnect_command_does_not_hold_input_until_its_process_exits(cx: &m
     programs.finish(0, b"finished", 0, "");
     cx.run_until_parked();
 }
+
 mod screenshot_history;

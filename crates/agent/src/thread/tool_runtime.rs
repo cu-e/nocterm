@@ -6,9 +6,10 @@ use super::{
     permissions::{PermissionCard, PermissionGate},
 };
 use gpui_kit::{EntityId, Task};
-use nocterm_ai::model::{auth::ProviderPermission, ids::PermissionOptionId};
+use nocterm_ai::model::auth::ProviderPermission;
+use nocterm_ai::model::ids::PermissionOptionId;
 use nocterm_ai::{
-    ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, ToolFailure,
+    ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, ToolFailure, thread::Entry,
     tool_display::ToolDisplay,
 };
 use nocterm_workspace::{ExpectedSession, LiveCommandLease};
@@ -22,16 +23,12 @@ pub(in crate::thread) mod reconnect_operation;
 pub(in crate::thread) mod resolution;
 mod terminal_sessions;
 mod turn_context;
-mod turn_scope;
-use super::composer::AttachmentSelection;
 use command_jobs::CommandJobs;
 pub(super) use command_jobs::{CommandSnapshot, CommandStart};
 use live_observations::LiveObservations;
-use nocterm_ai::history::dispatch::ActivePromptScope;
 use reconnect_dispatch::{DispatchEffect, DispatchScope, DispatchTicket, ReconnectDispatch};
 use terminal_sessions::TerminalSessions;
 use turn_context::TurnContext;
-pub(in crate::thread) use turn_scope::TurnAttachments;
 #[derive(Default)]
 pub(super) struct ToolRuntime {
     approvals: ApprovalInbox,
@@ -94,7 +91,7 @@ impl ToolRuntime {
         &mut self,
         server: &str,
         input: &resolution::Resolution,
-        defaults: AttachmentSelection<'_>,
+        defaults: &[Attachment],
         cx: &gpui_kit::App,
     ) -> resolution::OpenSelection {
         use resolution::OpenSelection;
@@ -168,7 +165,7 @@ impl ToolRuntime {
     pub(super) fn resolved(
         &mut self,
         input: &resolution::Resolution,
-        defaults: AttachmentSelection<'_>,
+        defaults: &[Attachment],
         cx: &gpui_kit::App,
     ) -> Vec<(
         String,
@@ -181,7 +178,7 @@ impl ToolRuntime {
     pub(super) fn offline_servers(
         &mut self,
         input: &resolution::Resolution,
-        defaults: AttachmentSelection<'_>,
+        defaults: &[Attachment],
         cx: &gpui_kit::App,
     ) -> Vec<(
         nocterm_ai::context::ServerDescriptor,
@@ -193,7 +190,7 @@ impl ToolRuntime {
     pub(super) fn context(
         &mut self,
         input: &resolution::Resolution,
-        defaults: AttachmentSelection<'_>,
+        defaults: &[Attachment],
         cx: &gpui_kit::App,
     ) -> String {
         self.turn.context(input, defaults, cx)
@@ -202,7 +199,7 @@ impl ToolRuntime {
         &mut self,
         call: &TerminalCall,
         input: &resolution::Resolution,
-        defaults: AttachmentSelection<'_>,
+        defaults: &[Attachment],
         cx: &gpui_kit::App,
     ) -> String {
         self.turn.describe_target(call, input, defaults, cx)
@@ -211,17 +208,18 @@ impl ToolRuntime {
     pub(super) fn busy(&self) -> bool {
         self.approvals.pending() || self.commands.active().next().is_some() || self.live.active()
     }
-    pub(super) fn capture_scope(&mut self, scope: ActivePromptScope) {
+    pub(super) fn capture_scope(&mut self, scope: Vec<Attachment>) {
         self.turn.capture_scope(scope);
     }
     pub(super) fn clear_scope(&mut self) {
         self.turn.clear_scope();
     }
-    pub(super) fn attachment_scope<'a>(
-        &'a self,
-        defaults: AttachmentSelection<'a>,
-    ) -> TurnAttachments<'a> {
-        self.turn.attachments(defaults)
+    #[cfg(test)]
+    pub(super) fn prompt_scope(&self) -> Option<&[Attachment]> {
+        self.turn.prompt_scope()
+    }
+    pub(super) fn attachment_scope<'a>(&'a self, defaults: &'a [Attachment]) -> &'a [Attachment] {
+        self.turn.prompt_scope().unwrap_or(defaults)
     }
     pub(super) fn detach_attachment(&mut self, attachment: &Attachment) {
         self.turn.detach_attachment(attachment);
@@ -341,9 +339,9 @@ impl ToolRuntime {
     }
     pub(super) fn normalize_displays(
         &mut self,
-        rows: &[nocterm_ai::history::physical::RowSlot],
-    ) -> Vec<super::tool_display::DisplayPatch> {
-        self.displays.normalize(rows)
+        entries: &[Entry],
+    ) -> Vec<super::document::ToolMetadataPatch> {
+        self.displays.normalize(entries)
     }
     pub(super) fn record_display(
         &mut self,
@@ -442,12 +440,29 @@ impl ToolRuntime {
 mod tests {
     use super::*;
     #[test]
+    fn running_scope_does_not_follow_future_defaults_and_detachment_revokes_only_that_scope() {
+        let mut tools = ToolRuntime::default();
+        let fixed = Attachment::Group("accepted turn".into());
+        let future = vec![Attachment::Group("next turn".into())];
+        tools.capture_scope(vec![fixed.clone()]);
+        assert_eq!(
+            tools.attachment_scope(&future),
+            std::slice::from_ref(&fixed)
+        );
+        tools.detach_attachment(&fixed);
+        assert!(tools.attachment_scope(&future).is_empty());
+        assert_eq!(future, vec![Attachment::Group("next turn".into())]);
+        tools.clear_scope();
+        assert_eq!(tools.attachment_scope(&future), future);
+    }
+    #[test]
     fn clearing_a_turn_preserves_opaque_terminal_identity_and_usage_accounting() {
         let mut tools = ToolRuntime::default();
         let id = tools.terminal_id("original item");
         let server = tools.server_id("profile");
         tools.account_context(40);
         tools.account_outcome(9);
+        tools.capture_scope(vec![Attachment::Group("turn".into())]);
         tools.clear_scope();
         assert_eq!(tools.terminal_id("original item"), id);
         assert_eq!(tools.resolve_server(&server), Some("profile"));

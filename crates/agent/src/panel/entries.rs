@@ -1,4 +1,6 @@
 //! The chat transcript: messages, reasoning, tool calls and images.
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::ToolRecord;
 
 use gpui_kit::{
     Context, SharedString, TestSupportExt as _,
@@ -7,10 +9,7 @@ use gpui_kit::{
     prelude::*,
     px, relative, rems,
 };
-use nocterm_ai::{
-    history::physical::{ContentSlot, MediaContent, RowBody, RowSlot, ToolSlot, UserSlot},
-    model::content::MediaKind,
-};
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use super::{
@@ -56,7 +55,7 @@ impl EntryRenderer {
     }
     pub(super) fn render(
         frame: RowPresentation,
-        entry: &RowSlot,
+        entry: &Entry,
         messages: &super::message_list::MessageList,
         cx: &Context<AgentPanel>,
     ) -> (
@@ -72,8 +71,8 @@ impl EntryRenderer {
             .py_2()
             .text_sm();
         let mut pending = Vec::new();
-        let row = match entry.view() {
-            RowBody::User(parts) => Self::user(
+        let row = match entry {
+            Entry::User(parts) => Self::user(
                 row,
                 &frame,
                 parts,
@@ -82,33 +81,32 @@ impl EntryRenderer {
                 message_text(entry).unwrap_or_default(),
                 cx,
             ),
-            RowBody::Agent(text) => Self::agent(row, &frame, &text.read(), messages, cx),
-            RowBody::Thought(text) => Self::thought(row, &frame, &text.read(), cx),
-            RowBody::Tool(call) => Self::tool(row, &frame, call, cx),
-            RowBody::Content(ContentSlot::Media(image)) if image.kind() == MediaKind::Image => {
+            Entry::Agent(text) => Self::agent(row, &frame, text, messages, cx),
+            Entry::Thought(text) => Self::thought(row, &frame, text, cx),
+            Entry::Tool(call) => Self::tool(row, &frame, call, cx),
+            Entry::Content(Content::Image(image)) => {
                 let key = Self::pending_image(image, messages, &mut pending);
                 row.child(Self::image(messages.preview_state(&key)))
             }
-            RowBody::Content(_) => row.child("Agent supplied additional content."),
+            Entry::Content(_) => row.child("Agent supplied additional content."),
         };
         (row.test_support().into_any_element(), pending)
     }
     fn pending_image(
-        image: &MediaContent,
+        image: &nocterm_ai::model::content::Image,
         messages: &super::message_list::MessageList,
         pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
     ) -> super::image_pipeline::ImageKey {
-        let encoded = image.encoded();
-        let key = (encoded.as_ptr() as usize, encoded.len(), true);
+        let key = (image.data.as_ptr() as usize, image.data.len(), true);
         if !messages.has_preview(&key) {
-            pending.push((key, encoded.as_bytes().to_vec()));
+            pending.push((key, image.data.as_bytes().to_vec()));
         }
         key
     }
     fn user(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
-        parts: &UserSlot,
+        parts: &[Content],
         messages: &super::message_list::MessageList,
         pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
         text: String,
@@ -127,18 +125,18 @@ impl EntryRenderer {
             .bg(cx.theme().muted);
         let mut images = h_flex().flex_wrap().gap_2();
         let mut has_images = false;
-        for (part_index, part) in parts.contents().enumerate() {
+        for (part_index, part) in parts.iter().enumerate() {
             match part {
-                ContentSlot::Text(content) => {
+                Content::Text(content) => {
                     bubble = bubble.child(chat_markdown(
                         (
                             SharedString::from(format!("user-text-{}", frame.index)),
                             part_index,
                         ),
-                        escape_markdown(&content.text()),
+                        escape_markdown(&content.text),
                     ));
                 }
-                ContentSlot::Media(image) if image.kind() == MediaKind::Image => {
+                Content::Image(image) => {
                     let key = Self::pending_image(image, messages, pending);
                     has_images = true;
                     images = images.child(Self::image(messages.preview_state(&key)));
@@ -243,12 +241,12 @@ impl EntryRenderer {
     fn tool(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
-        call: &ToolSlot,
+        call: &ToolRecord,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let index = frame.index;
         let binding = frame.binding.clone();
-        let title = nocterm_ai::tool_display::managed_header(call);
+        let title = nocterm_ai::tool_display::header(call);
         let title = if frame.redact {
             nocterm_ai::redact::redact(&title)
         } else {
@@ -272,11 +270,11 @@ impl EntryRenderer {
             })),
         );
         if frame.expanded {
-            if let Some(input) = tool_input::source_managed(call) {
+            if let Some(input) = tool_input::source(call) {
                 let input = if frame.redact { input.redact() } else { input };
                 row = row.child(tool_input::render(index, input, cx));
             }
-            if let Some(output) = tool_output::source_managed(call, frame.redact) {
+            if let Some(output) = tool_output::source(call, frame.redact) {
                 row = row.child(tool_output::render(index, output, cx));
             }
         }

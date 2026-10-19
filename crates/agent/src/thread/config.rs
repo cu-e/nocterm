@@ -1,29 +1,27 @@
-//! Feature-owned configuration decisions over the document's advertised controls.
+//! Feature-owned chat configuration; legacy wire values remain at existing seams.
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigOption, ConfigSetting, Modes};
+use nocterm_ai::model::ids::{ConfigId, ModeId, SessionId};
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 pub(in crate::thread) mod operation;
-mod pending;
-use super::controls::Controls;
 use nocterm_ai::{
-    history::source::ManagedNotice,
-    model::{
-        controls::{ConfigCategory, ConfigKind, ConfigOption, Modes, SelectChoices},
-        ids::{ConfigId, ModeId, SessionId},
-    },
+    AgentError,
     session::{SessionPhase, Ticket},
     session_config::{self, Choices, ConfigValue, StoredOption},
 };
-use pending::PendingNotices;
 
 #[derive(Default)]
 pub(crate) struct ChatConfig {
     choices: Choices,
     mode_choice: Option<ModeId>,
-    /// The user's mode choice shown before the agent confirms it.
-    chosen_mode: Option<ModeId>,
-    /// Host-built options shown until an agent advertises its own.
-    preview_options: Vec<ConfigOption>,
+    options: Vec<ConfigOption>,
+    modes: Option<Modes>,
+    current_mode: Option<ModeId>,
+    commands: Vec<AvailableCommand>,
+    commands_revision: u64,
     last_prompt_model: Option<String>,
     last_saved_model: Option<String>,
-    pending: PendingNotices,
+    pending_controls: Vec<(SessionId, SessionUpdate)>,
     reconciliation: Option<Reconciliation>,
 }
 struct Reconciliation {
@@ -60,26 +58,36 @@ impl ChoiceOutcome {
 pub(super) struct RestartConfig {
     choices: Choices,
     mode_choice: Option<ModeId>,
-    chosen_mode: Option<ModeId>,
-    preview_options: Vec<ConfigOption>,
+    options: Vec<ConfigOption>,
+    modes: Option<Modes>,
+    current_mode: Option<ModeId>,
+    commands: Vec<AvailableCommand>,
+    commands_revision: u64,
     last_prompt_model: Option<String>,
     last_saved_model: Option<String>,
 }
 impl ChatConfig {
-    #[cfg(test)]
-    pub(crate) fn preview_options(&self) -> &[ConfigOption] {
-        &self.preview_options
+    pub(crate) fn options(&self) -> &[ConfigOption] {
+        &self.options
     }
-    /// The agent's own options, or the host's preview before it advertises any.
-    pub(super) fn effective_options(&self, controls: &Controls) -> Vec<ConfigOption> {
-        if controls.options.is_empty() {
-            self.preview_options.clone()
+    pub(crate) fn preview_options(&self, opening: bool) -> Vec<ConfigOption> {
+        if opening {
+            session_config::with_choices(self.options.clone(), &self.choices)
         } else {
-            controls.options.clone()
+            self.options.clone()
         }
     }
-    pub(super) fn chosen_mode(&self) -> Option<&ModeId> {
-        self.chosen_mode.as_ref()
+    pub(crate) fn modes(&self) -> Option<&Modes> {
+        self.modes.as_ref()
+    }
+    pub(crate) fn current_mode(&self) -> Option<&ModeId> {
+        self.current_mode.as_ref()
+    }
+    pub(crate) fn commands(&self) -> &[AvailableCommand] {
+        &self.commands
+    }
+    pub(crate) fn commands_revision(&self) -> u64 {
+        self.commands_revision
     }
     pub(super) fn choices(&self) -> &Choices {
         &self.choices
@@ -92,8 +100,8 @@ impl ChatConfig {
             .clone()
             .or_else(|| self.last_saved_model.clone())
     }
-    pub(super) fn overrides_modes(&self, controls: &Controls) -> bool {
-        self.effective_options(controls)
+    pub(crate) fn config_overrides_modes(&self) -> bool {
+        self.options
             .iter()
             .any(|option| option.category == Some(ConfigCategory::Mode))
     }
@@ -113,26 +121,16 @@ impl ChatConfig {
     pub(super) fn preview(&mut self, mut defaults: Choices, stored: &[StoredOption]) {
         defaults.extend(std::mem::take(&mut self.choices));
         self.choices = defaults;
-        self.preview_options =
-            session_config::with_choices(session_config::restore(stored), &self.choices);
+        self.options = session_config::with_choices(session_config::restore(stored), &self.choices);
     }
-    pub(super) fn choose_option(
-        &mut self,
-        id: &ConfigId,
-        value: &ConfigValue,
-        controls: &Controls,
-    ) -> ChoiceOutcome {
+    pub(super) fn choose_option(&mut self, id: &ConfigId, value: &ConfigSetting) -> ChoiceOutcome {
         let ignored = || ChoiceOutcome {
             accepted: false,
             durable_changed: false,
             remember: None,
         };
-        let choice = value.clone();
-        let Some(option) = self
-            .effective_options(controls)
-            .into_iter()
-            .find(|option| option.id == *id)
-        else {
+        let choice = ConfigValue::from_setting(value);
+        let Some(option) = self.options.iter().find(|option| option.id == *id).cloned() else {
             return ignored();
         };
         let mut offered = vec![option.clone()];
@@ -145,7 +143,7 @@ impl ChatConfig {
         {
             return ignored();
         }
-        session_config::choose(&mut self.preview_options, id.as_str(), &choice);
+        session_config::choose(&mut self.options, id.as_str(), &choice);
         let changed = self.choices.get(&id.to_string()) != Some(&choice);
         self.choices.insert(id.to_string(), choice.clone());
         ChoiceOutcome {
@@ -157,11 +155,11 @@ impl ChatConfig {
     pub(super) fn choose_mode(&mut self, mode: ModeId) -> bool {
         let changed = self.mode_choice.as_ref() != Some(&mode);
         self.mode_choice = Some(mode.clone());
-        self.chosen_mode = Some(mode);
+        self.current_mode = Some(mode);
         changed
     }
     pub(super) fn opening_started(&mut self, ticket: Ticket) {
-        self.pending.clear();
+        self.pending_controls.clear();
         self.reconciliation = Some(Reconciliation {
             ticket,
             attempted: Vec::new(),
@@ -175,81 +173,135 @@ impl ChatConfig {
             });
         }
     }
-    pub(super) fn current(&self, ticket: Ticket) -> bool {
+    fn current(&self, ticket: Ticket) -> bool {
         self.reconciliation
             .as_ref()
             .is_some_and(|state| state.ticket == ticket)
     }
-    /// The opened session advertises its own controls; the host's preview ends.
-    pub(super) fn opened(&mut self, ticket: Ticket) -> bool {
+    pub(super) fn start_open(
+        &mut self,
+        ticket: Ticket,
+        modes: Option<Modes>,
+        options: Vec<ConfigOption>,
+    ) {
         if !self.current(ticket) {
-            return false;
+            return;
         }
-        self.preview_options.clear();
-        self.chosen_mode = None;
+        self.modes = modes;
+        self.current_mode = None;
+        self.options = options;
+    }
+    pub(super) fn begin_reconciliation(&mut self, session: &SessionId, ticket: Ticket) {
+        if !self.current(ticket) {
+            return;
+        }
+        for (id, update) in std::mem::take(&mut self.pending_controls) {
+            if &id == session {
+                self.report_control(&update);
+            }
+        }
+    }
+    pub(super) fn keep_control(&mut self, ticket: Ticket, notification: &SessionNotice) {
+        if !self.current(ticket) || !Self::is_control(&notification.update) {
+            return;
+        }
+        let kind = std::mem::discriminant(&notification.update);
+        self.pending_controls.retain(|(id, update)| {
+            id != &notification.session || std::mem::discriminant(update) != kind
+        });
+        if self.pending_controls.len() == 64 {
+            self.pending_controls.remove(0);
+        }
+        self.pending_controls
+            .push((notification.session.clone(), notification.update.clone()));
+    }
+    fn is_control(update: &SessionUpdate) -> bool {
+        matches!(
+            update,
+            SessionUpdate::AvailableCommandsUpdate(_)
+                | SessionUpdate::CurrentModeUpdate(_)
+                | SessionUpdate::ConfigOptionUpdate(_)
+        )
+    }
+    pub(super) fn report_control(&mut self, update: &SessionUpdate) -> bool {
+        match update {
+            SessionUpdate::AvailableCommandsUpdate(update) => {
+                self.commands = update.clone();
+                self.commands_revision = self.commands_revision.wrapping_add(1);
+            }
+            SessionUpdate::CurrentModeUpdate(update) => self.current_mode = Some(update.clone()),
+            SessionUpdate::ConfigOptionUpdate(update) => self.options = update.clone(),
+            _ => return false,
+        }
         true
     }
-    pub(super) fn keep_control(&mut self, ticket: Ticket, notice: ManagedNotice) {
-        if self.current(ticket) {
-            self.pending.keep(notice);
-        }
-    }
-    /// Control notices received before the session opened, for `session` only.
-    pub(super) fn take_pending(&mut self, session: &SessionId) -> Vec<ManagedNotice> {
-        self.pending.take_for(session)
-    }
-    /// The agent reported its own mode; the user's unconfirmed choice no longer applies.
-    pub(super) fn agent_set_mode(&mut self) {
-        self.chosen_mode = None;
-    }
-    pub(super) fn next_request(&mut self, ticket: Ticket, controls: &Controls) -> ConfigStep {
+    pub(super) fn next_request(&mut self, ticket: Ticket) -> ConfigStep {
         if !self.current(ticket) {
             return ConfigStep::Stale;
         }
-        let options = self.effective_options(controls);
-        let wanted_mode = self.pending_mode(controls);
         let Some(state) = self.reconciliation.as_mut() else {
             return ConfigStep::Stale;
         };
-        if let Some((id, value)) = session_config::requests(&options, &self.choices).into_iter().find(|(id, value)| !state.attempted.iter().any(|old| matches!(old, Attempt::Option(was, choice) if was.as_str() == id.as_str() && choice == value))) {
+        if let Some((id, value)) = session_config::requests(&self.options, &self.choices).into_iter().find(|(id, value)| !state.attempted.iter().any(|old| matches!(old, Attempt::Option(was, choice) if *was == *id.as_str() && choice == value))) {
             state.attempted.push(Attempt::Option(id.to_string(), value.clone()));
             return ConfigStep::SetOption(id, value);
         }
-        if let Some(wanted) = wanted_mode
-            && !state
+        if let Some(wanted) = self.pending_mode() {
+            let Some(state) = self.reconciliation.as_mut() else {
+                return ConfigStep::Stale;
+            };
+            if !state
                 .attempted
                 .iter()
                 .any(|old| matches!(old, Attempt::Mode(mode) if mode == &wanted))
-        {
-            state.attempted.push(Attempt::Mode(wanted.clone()));
-            return ConfigStep::SetMode(wanted);
+            {
+                state.attempted.push(Attempt::Mode(wanted.clone()));
+                return ConfigStep::SetMode(wanted);
+            }
         }
         ConfigStep::Ready
     }
-    fn current_mode(&self, controls: &Controls) -> Option<ModeId> {
-        self.chosen_mode
-            .clone()
-            .or_else(|| controls.current_mode.clone())
-    }
-    fn pending_mode(&self, controls: &Controls) -> Option<ModeId> {
-        if self.overrides_modes(controls) {
+    fn pending_mode(&self) -> Option<ModeId> {
+        if self.config_overrides_modes() {
             return None;
         }
         let wanted = self.mode_choice.as_ref()?;
-        let modes: &Modes = controls.modes.as_ref()?;
-        let current = self
-            .current_mode(controls)
-            .unwrap_or_else(|| modes.current.clone());
-        (&current != wanted && modes.choices.iter().any(|mode| &mode.id == wanted))
+        let modes = self.modes.as_ref()?;
+        let current = self.current_mode.as_ref().unwrap_or(&modes.current);
+        (current != wanted && modes.choices.iter().any(|mode| &mode.id == wanted))
             .then(|| wanted.clone())
     }
-    /// A failed mode request not made while opening drops the unconfirmed choice.
-    pub(super) fn mode_failed(&mut self, opening: bool) {
-        if !opening {
-            self.chosen_mode = None;
+    pub(super) fn accept_option_result(
+        &mut self,
+        ticket: Ticket,
+        result: Result<Vec<ConfigOption>, AgentError>,
+    ) -> Option<Result<(), AgentError>> {
+        if !self.current(ticket) {
+            return None;
         }
+        Some(result.map(|options| self.options = options))
     }
-    pub(super) fn sync_ready(&mut self, phase: SessionPhase, controls: &Controls) -> bool {
+    pub(super) fn accept_mode_result(
+        &mut self,
+        ticket: Ticket,
+        mode: ModeId,
+        result: Result<(), AgentError>,
+        opening: bool,
+    ) -> Option<Result<(), AgentError>> {
+        if !self.current(ticket) {
+            return None;
+        }
+        Some(
+            result
+                .map(|()| self.current_mode = Some(mode))
+                .inspect_err(|_| {
+                    if !opening {
+                        self.current_mode = None;
+                    }
+                }),
+        )
+    }
+    pub(super) fn sync_ready(&mut self, phase: SessionPhase) -> bool {
         if !matches!(
             phase,
             SessionPhase::Ready | SessionPhase::Prompting | SessionPhase::Cancelling
@@ -257,42 +309,51 @@ impl ChatConfig {
             return false;
         }
         let mut changed = false;
-        for (id, value) in session_config::current(&self.effective_options(controls)) {
+        for (id, value) in session_config::current(&self.options) {
             if self.choices.get(&id) != Some(&value) {
                 self.choices.insert(id, value);
                 changed = true;
             }
         }
-        let mode = self.current_mode(controls);
+        let mode = self
+            .current_mode
+            .clone()
+            .or_else(|| self.modes.as_ref().map(|modes| modes.current.clone()));
         if mode.is_some() && mode != self.mode_choice {
             self.mode_choice = mode;
             changed = true;
         }
         changed
     }
-    pub(super) fn prompt_started(&mut self, controls: &Controls) {
+    pub(super) fn prompt_started(&mut self) {
         self.last_prompt_model = self
-            .effective_options(controls)
+            .options
             .iter()
             .find(|option| option.category == Some(ConfigCategory::Model))
             .map(super::config_label)
             .filter(|model| !model.is_empty());
     }
     pub(super) fn detached(&mut self) {
-        self.pending.clear();
+        self.pending_controls.clear();
         self.reconciliation = None;
     }
     pub(super) fn disabled(&mut self) {
         self.detached();
-        self.preview_options.clear();
-        self.chosen_mode = None;
+        self.options.clear();
+        self.modes = None;
+        self.current_mode = None;
+        self.commands.clear();
+        self.commands_revision = 0;
     }
     pub(super) fn restart_snapshot(&self) -> RestartConfig {
         RestartConfig {
             choices: self.choices.clone(),
             mode_choice: self.mode_choice.clone(),
-            chosen_mode: self.chosen_mode.clone(),
-            preview_options: self.preview_options.clone(),
+            options: self.options.clone(),
+            modes: self.modes.clone(),
+            current_mode: self.current_mode.clone(),
+            commands: self.commands.clone(),
+            commands_revision: self.commands_revision,
             last_prompt_model: self.last_prompt_model.clone(),
             last_saved_model: self.last_saved_model.clone(),
         }
@@ -301,8 +362,11 @@ impl ChatConfig {
         *self = Self {
             choices: saved.choices,
             mode_choice: saved.mode_choice,
-            chosen_mode: saved.chosen_mode,
-            preview_options: saved.preview_options,
+            options: saved.options,
+            modes: saved.modes,
+            current_mode: saved.current_mode,
+            commands: saved.commands,
+            commands_revision: saved.commands_revision,
             last_prompt_model: saved.last_prompt_model,
             last_saved_model: saved.last_saved_model,
             ..Self::default()
@@ -312,30 +376,3 @@ impl ChatConfig {
 
 #[cfg(test)]
 mod tests;
-
-pub(crate) fn config_label(option: &ConfigOption) -> String {
-    match &option.kind {
-        ConfigKind::Select { current, choices } => {
-            let options = match choices {
-                SelectChoices::Flat(values) => values.iter().collect::<Vec<_>>(),
-                SelectChoices::Groups(groups) => groups
-                    .iter()
-                    .flat_map(|group| group.choices.iter())
-                    .collect(),
-            };
-            options
-                .iter()
-                .find(|value| value.id == *current)
-                .map(|value| value.name.clone())
-                .unwrap_or_else(|| current.to_string())
-        }
-        ConfigKind::Boolean(value) => {
-            if *value {
-                "On".into()
-            } else {
-                "Off".into()
-            }
-        }
-        ConfigKind::Unsupported { .. } => String::new(),
-    }
-}

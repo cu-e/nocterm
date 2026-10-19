@@ -1,7 +1,8 @@
 //! Session-scoped approval transitions. GPUI effects and tool execution stay in the coordinator.
 use super::permissions::{PermissionCard, PermissionGate, ProviderRequests};
 use super::{bound_call::BoundToolCall, session_grants::SessionGrants};
-use nocterm_ai::model::{auth::ProviderPermission, ids::PermissionOptionId};
+use nocterm_ai::model::auth::ProviderPermission;
+use nocterm_ai::model::ids::PermissionOptionId;
 use nocterm_ai::{ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

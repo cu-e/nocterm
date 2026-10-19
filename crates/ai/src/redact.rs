@@ -4,22 +4,52 @@
 //! chat and payment providers, JWTs), credentials embedded in URLs, HTTP
 //! authorization headers and `name = value` assignments whose name says it
 //! holds a secret. Arbitrary secrets cannot be recognized reliably.
-mod rules;
 use regex::Regex;
-pub use rules::{RedactionRule, Replacement, rules as redaction_rules};
 use std::sync::LazyLock;
 
-static PRIVATE_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(rules::rules()[0].pattern()).expect("private key pattern"));
-static TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(rules::rules()[1].pattern()).expect("token pattern"));
+static PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)",
+    )
+    .expect("private key pattern")
+});
+static TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"\b(?:",
+        // OpenAI, Anthropic and compatible API keys.
+        r"sk-(?:ant-|proj-)?[A-Za-z0-9_-]{8,}",
+        // GitHub, GitLab, npm, Hugging Face, PyPI.
+        r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|glpat-[A-Za-z0-9_-]{8,}",
+        r"|npm_[A-Za-z0-9]{16,}|hf_[A-Za-z0-9]{16,}|pypi-[A-Za-z0-9_-]{16,}",
+        // Slack, Stripe, SendGrid, Twilio.
+        r"|xox[abprs]-[A-Za-z0-9-]{8,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}",
+        r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|SK[0-9a-f]{32}",
+        // AWS access key ids, Google API keys.
+        r"|(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{35}",
+        // JSON Web Tokens.
+        r"|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+        r")",
+    ))
+    .expect("token pattern")
+});
 /// `scheme://user:password@host`: keeps the user, hides the password.
-static URL_CREDENTIALS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(rules::rules()[2].pattern()).expect("url pattern"));
-static AUTHORIZATION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(rules::rules()[3].pattern()).expect("authorization pattern"));
-static ASSIGNMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(rules::rules()[4].pattern()).expect("secret pattern"));
+static URL_CREDENTIALS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@").expect("url pattern")
+});
+static AUTHORIZATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(authorization|proxy-authorization)\s*:\s*(?:bearer|basic|token)?\s*[^\s,;]+",
+    )
+    .expect("authorization pattern")
+});
+static ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r#"(?i)\b([a-z0-9_.-]*(?:password|passwd|passphrase|secret|api[_-]?key|access[_-]?key|"#,
+        r#"private[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|token)[a-z0-9_.-]*)"#,
+        r#"(["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:bearer\s+)?[^\s,;"']+)"#,
+    ))
+    .expect("secret pattern")
+});
 
 /// Best effort only: arbitrary secrets cannot be recognized reliably.
 pub fn redact(text: &str) -> String {

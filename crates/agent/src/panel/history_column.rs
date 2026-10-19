@@ -149,7 +149,7 @@ impl HistoryColumn {
     }
     pub(super) fn start_search(
         &mut self,
-        jobs: Vec<crate::thread::document::SearchJob>,
+        ids: Vec<String>,
         reader: HistoryReader,
         catalog: Vec<(EntityId, bool)>,
         cx: &mut Context<AgentPanel>,
@@ -162,24 +162,19 @@ impl HistoryColumn {
         let query = ticket.query.clone();
         let work = cx.background_executor().spawn(async move {
             let mut matches = HashSet::new();
-            for (id, document, source) in jobs {
+            for id in ids {
                 if flag.load(Ordering::Acquire) {
                     break;
                 }
-                let Ok(load) = reader.load_managed(document, source) else {
-                    continue;
-                };
-                let Ok((mut delivery, permit)) = load.await else {
-                    continue;
-                };
-                let found = !flag.load(Ordering::Acquire)
-                    && delivery.error().is_none()
-                    && delivery.mentions(&query).unwrap_or(false);
-                // Release original physical delivery/source before opening the shared gate.
-                drop(delivery);
-                drop(permit);
-                if found {
-                    matches.insert(id);
+                let (loaded, _permit) = reader.load(id.clone()).await;
+                if let Ok(chat) = loaded {
+                    let transcript = nocterm_ai::thread::ThreadState {
+                        entries: chat.entries,
+                        ..Default::default()
+                    };
+                    if transcript.mentions(&query) {
+                        matches.insert(id);
+                    }
                 }
             }
             matches

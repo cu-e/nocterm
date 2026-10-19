@@ -284,7 +284,7 @@ vault feature.
 AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
 permissions, tool registrations, processes and panel visibility across windows.
 Chats are saved one file each in a private state directory and reopened through
-ACP session resume/load; fork uses `session/fork`. All three are sent only when
+the agent's session resume/load; fork uses `session/fork`. All three are sent only when
 advertised. Favorites have a separate state file. Usage limits come from Claude's
 `usage_update` metadata and Codex's session logs through an injected
 `AccountUsageSource`. See [AI agents](../AI_AGENTS.md) for protocol, limits and
@@ -366,10 +366,9 @@ Snapshot framing uses the existing identity and timestamp. The transcript reduce
 receives timestamps from its coordinator. Each panel
 and chat retains explicit host collaborators through ChatHost, including a
 ChatMetadataSource injected by root and shared by all windows. New/fork identities
-and timestamps are supplied to pure document transitions
-([ADR0040](../adr/0040-native-chat-metadata.md)); saved history encodes neutral
-records as version two, with the bounded version-one fallback of
-[ADR0058](../adr/0058-neutral-agent-protocol-boundary.md).
+and timestamps are supplied to pure document transitions; version-one
+protocol-backed history retains its current representation
+([ADR0040](../adr/0040-native-chat-metadata.md)).
 
 Deferred normal offers coalesce while preserving an immutable candidate and its
 semantic revision. Capture offers pending work without consuming it. Admission to

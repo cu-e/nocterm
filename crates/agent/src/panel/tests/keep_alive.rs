@@ -36,7 +36,7 @@ async fn the_shown_chat_outlives_the_idle_timeout_until_the_user_moves_on(cx: &m
     tick(cx, 3);
     cx.update(|cx| {
         assert!(!first.read(cx).is_leased());
-        assert_eq!(first.read(cx).history_rows().len(), 2);
+        assert_eq!(first.read(cx).transcript().entries.len(), 2);
     });
 }
 
@@ -58,10 +58,11 @@ async fn a_session_still_closing_frees_the_slot_so_no_second_chat_is_evicted(
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.run_until_parked();
-    assert_eq!(f.connector.connect_count(), 2);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
 
     // The evicted session takes a while to close.
-    let open = f.script.gate_close();
+    let (open, gate) = futures::channel::oneshot::channel();
+    *f.commands.close_gate.lock().unwrap() = Some(gate);
     new_chat(&f, cx);
     let third = cx.update(|cx| f.panel.read(cx).current().unwrap());
     for _ in 0..5 {
@@ -86,7 +87,7 @@ async fn a_session_still_closing_frees_the_slot_so_no_second_chat_is_evicted(
             .count();
         assert_eq!(leased, 1);
     });
-    assert_eq!(f.connector.connect_count(), 3);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 3);
 }
 
 #[gpui_kit::test]

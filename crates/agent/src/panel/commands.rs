@@ -17,10 +17,8 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ai::model::{
-    controls::{ConfigCategory, ConfigKind, ConfigOption, SelectChoices},
-    notice::AdvertisedCommand,
-};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoices, ConfigKind, ConfigOption};
 
 pub(super) struct CommandState {
     selected: usize,
@@ -88,7 +86,7 @@ impl CommandState {
         self.token_prefix = None;
         true
     }
-    pub(super) fn matches(&self, value: &str, commands: &[AdvertisedCommand]) -> Vec<usize> {
+    pub(super) fn matches(&self, value: &str, commands: &[AvailableCommand]) -> Vec<usize> {
         if self.dismissed.as_deref() == Some(value) {
             return Vec::new();
         }
@@ -210,8 +208,8 @@ pub(crate) fn init(cx: &mut App) {
 #[cfg(test)]
 pub(super) fn matches<'a>(
     text: &str,
-    commands: &'a [AdvertisedCommand],
-) -> Vec<&'a AdvertisedCommand> {
+    commands: &'a [AvailableCommand],
+) -> Vec<&'a AvailableCommand> {
     let Some(prefix) = nocterm_ai::commands::prefix(text) else {
         return Vec::new();
     };
@@ -249,23 +247,23 @@ fn summary(text: &str) -> String {
     result
 }
 
-fn input_hint(command: &AdvertisedCommand) -> Option<&str> {
-    command.input_hint.as_deref()
+fn input_hint(command: &AvailableCommand) -> Option<&str> {
+    command.hint.as_deref()
 }
 pub(super) fn config_hint(option: &ConfigOption) -> String {
     if option.category != Some(ConfigCategory::Model) {
         return option.name.clone();
     }
     let count = match &option.kind {
-        ConfigKind::Select { choices, .. } => match choices {
-            SelectChoices::Flat(values) => values.len(),
-            SelectChoices::Groups(groups) => groups.iter().map(|group| group.choices.len()).sum(),
+        ConfigKind::Select(select) => match &select.choices {
+            ConfigChoices::Flat(values) => values.len(),
+            ConfigChoices::Grouped(groups) => groups.iter().map(|group| group.choices.len()).sum(),
         },
         _ => 0,
     };
     format!("Choose model · {count} available · open to browse or search")
 }
-pub(super) fn details(command: &AdvertisedCommand, cx: &App) -> AnyElement {
+pub(super) fn details(command: &AvailableCommand, cx: &App) -> AnyElement {
     v_flex()
         .id("command-details")
         .test_support()
@@ -363,7 +361,7 @@ pub(super) struct CommandRenderer;
 impl CommandRenderer {
     fn row(
         index: usize,
-        command: &AdvertisedCommand,
+        command: &AvailableCommand,
         selected: bool,
         origin: CommandOrigin,
         cx: &mut Context<AgentPanel>,
@@ -425,7 +423,7 @@ impl CommandRenderer {
 impl CommandRenderer {
     pub(super) fn list(
         scroll: gpui_kit::ListState,
-        rows: Vec<AdvertisedCommand>,
+        rows: Vec<AvailableCommand>,
         selected: usize,
         origin: CommandOrigin,
         cx: &mut Context<AgentPanel>,

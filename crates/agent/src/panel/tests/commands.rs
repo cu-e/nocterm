@@ -1,16 +1,15 @@
 use super::*;
 use gpui_kit::px;
-use nocterm_ai::model::{
-    controls::{ConfigCategory, ConfigChoice, ConfigKind, SelectChoices},
-    ids::{ConfigChoiceId, ConfigId},
-    notice::AdvertisedCommand,
-};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::session::SessionUpdate;
 
-fn commands(f: &Fixture, values: Vec<AdvertisedCommand>, text: &str, cx: &mut TestAppContext) {
+fn commands(f: &Fixture, values: Vec<AvailableCommand>, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
-                report_control(f, thread, SessionUpdate::Commands(values), cx);
+                report_control(thread, SessionUpdate::AvailableCommandsUpdate(values), cx);
                 cx.notify();
             });
         });
@@ -33,7 +32,7 @@ fn clicked_unicode_command_keeps_focus_and_appends_at_end(cx: &mut TestAppContex
     new_chat(&f, cx);
     commands(
         &f,
-        vec![AdvertisedCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "/",
         cx,
     );
@@ -57,8 +56,8 @@ fn long_description_has_same_row_height_and_bounded_full_details(cx: &mut TestAp
     commands(
         &f,
         vec![
-            AdvertisedCommand::new("short", "Short description"),
-            AdvertisedCommand::new("long", long),
+            AvailableCommand::new("short", "Short description"),
+            AvailableCommand::new("long", long),
         ],
         "/",
         cx,
@@ -109,7 +108,7 @@ fn typed_command_is_highlighted_and_details_only_appear_on_token_hover(cx: &mut 
     new_chat(&f, cx);
     commands(
         &f,
-        vec![AdvertisedCommand::new("long", "Full command details")],
+        vec![AvailableCommand::new("long", "Full command details")],
         "/long arguments",
         cx,
     );
@@ -143,7 +142,7 @@ fn arrows_before_tab_and_tab_cycle_reveal_offscreen_commands(cx: &mut TestAppCon
     commands(
         &f,
         (0..20)
-            .map(|i| AdvertisedCommand::new(format!("command{i}"), "Description"))
+            .map(|i| AvailableCommand::new(format!("command{i}"), "Description"))
             .collect(),
         "/",
         cx,
@@ -220,7 +219,7 @@ fn pasted_command_annotation_preserves_caret_undo_delete_and_raw_submission(
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    commands(&f, vec![AdvertisedCommand::new("обзор", "Review")], "", cx);
+    commands(&f, vec![AvailableCommand::new("обзор", "Review")], "", cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.input("/обзор аргументы", cx)
     })
@@ -288,37 +287,23 @@ fn model_token_hover_opens_actual_model_picker(cx: &mut TestAppContext) {
             .current()
             .unwrap()
             .update(cx, |thread, cx| {
-                let option = ConfigOption {
-                    id: ConfigId::new("model"),
-                    name: "Model".into(),
-                    description: None,
-                    category: Some(ConfigCategory::Model),
-                    extensions: None,
-                    kind: ConfigKind::Select {
-                        current: ConfigChoiceId::new("one"),
-                        choices: SelectChoices::Flat(vec![
-                            ConfigChoice {
-                                id: ConfigChoiceId::new("one"),
-                                name: "First".into(),
-                                description: None,
-                                extensions: None,
-                            },
-                            ConfigChoice {
-                                id: ConfigChoiceId::new("two"),
-                                name: "Second".into(),
-                                description: None,
-                                extensions: None,
-                            },
-                        ]),
-                    },
-                };
-                report_control(&f, thread, SessionUpdate::Configuration(vec![option]), cx);
+                let mut option = ConfigOption::select(
+                    "model",
+                    "Model",
+                    "one",
+                    vec![
+                        ConfigChoice::new("one", "First"),
+                        ConfigChoice::new("two", "Second"),
+                    ],
+                );
+                option.category = Some(ConfigCategory::Model);
+                report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
                 cx.notify();
             });
     });
     commands(
         &f,
-        vec![AdvertisedCommand::new("model", "Choose a model")],
+        vec![AvailableCommand::new("model", "Choose a model")],
         "/model ",
         cx,
     );
@@ -348,7 +333,7 @@ fn clipboard_paste_keeps_the_command_and_arguments_editable(cx: &mut TestAppCont
     new_chat(&f, cx);
     commands(
         &f,
-        vec![AdvertisedCommand::new("обзор", "Review changes")],
+        vec![AvailableCommand::new("обзор", "Review changes")],
         "",
         cx,
     );
@@ -389,8 +374,8 @@ fn typing_slash_then_arrow_selects_before_tab_without_moving_the_caret(cx: &mut 
     commands(
         &f,
         vec![
-            AdvertisedCommand::new("first", "First action"),
-            AdvertisedCommand::new("second", "Second action"),
+            AvailableCommand::new("first", "First action"),
+            AvailableCommand::new("second", "Second action"),
         ],
         "",
         cx,
@@ -438,7 +423,7 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
     new_chat(&f, cx);
     commands(
         &f,
-        vec![AdvertisedCommand::new("review", "Review changes")],
+        vec![AvailableCommand::new("review", "Review changes")],
         " /",
         cx,
     );
@@ -486,6 +471,47 @@ fn escape_dismisses_whitespace_prefixed_suggestions_then_propagates(cx: &mut Tes
 }
 
 #[gpui_kit::test]
+fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new("обзор", "Review")]),
+            cx,
+        );
+
+        cx.notify();
+    });
+    set_input(&f, "/обзор args", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("composer-command-token").is_some());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            thread,
+            SessionUpdate::AvailableCommandsUpdate(Vec::new()),
+            cx,
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
+        assert!(window.try_find("composer-command-token").is_none());
+        window.input("界", cx);
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
+}
+
+#[gpui_kit::test]
 fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
     cx: &mut TestAppContext,
 ) {
@@ -494,15 +520,19 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
     f.panel.update(cx, |panel, cx| {
         panel.current().unwrap().update(cx, |thread, cx| {
             report_control(
-                &f,
                 thread,
-                SessionUpdate::Commands(
+                SessionUpdate::AvailableCommandsUpdate(
                     (0..1000)
-                        .map(|index| AdvertisedCommand {
-                            name: format!("skill{index:04}"),
-                            description: "description ".repeat(1000),
-                            input_hint: (index % 2 == 1)
-                                .then(|| "Provide optional arguments".into()),
+                        .map(|index| {
+                            let command = AvailableCommand::new(
+                                format!("skill{index:04}"),
+                                "description ".repeat(1000),
+                            );
+                            if index % 2 == 1 {
+                                command.hint("Provide optional arguments")
+                            } else {
+                                command
+                            }
                         })
                         .collect(),
                 ),
@@ -562,43 +592,7 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
     })
     .unwrap();
 }
-#[gpui_kit::test]
-fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| {
-        report_control(
-            &f,
-            thread,
-            SessionUpdate::Commands(vec![AdvertisedCommand::new("обзор", "Review")]),
-            cx,
-        );
 
-        cx.notify();
-    });
-    set_input(&f, "/обзор args", cx);
-    cx.update_window(f.handle, |_, window, cx| {
-        window.press("left", cx);
-        window.press("left", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("composer-command-token").is_some());
-    })
-    .unwrap();
-    thread.update(cx, |thread, cx| {
-        report_control(&f, thread, SessionUpdate::Commands(Vec::new()), cx);
-        cx.notify();
-    });
-    cx.run_until_parked();
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
-        assert!(window.try_find("composer-command-token").is_none());
-        window.input("界", cx);
-    })
-    .unwrap();
-    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
-}
 #[gpui_kit::test]
 fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -607,14 +601,10 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
                 report_control(
-                    &f,
                     thread,
-                    SessionUpdate::Commands(vec![
-                        nocterm_ai::model::notice::AdvertisedCommand::new(
-                            "review",
-                            "Review changes",
-                        ),
-                        nocterm_ai::model::notice::AdvertisedCommand::new("rename", "Rename chat"),
+                    SessionUpdate::AvailableCommandsUpdate(vec![
+                        AvailableCommand::new("review", "Review changes"),
+                        AvailableCommand::new("rename", "Rename chat"),
                     ]),
                     cx,
                 );

@@ -116,9 +116,6 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
 publication, catalog scanning and rebuildable metadata sidecars. The transcript
 is authoritative: a sidecar failure cannot revoke a successful publication.
-State TOML decode, read and directory failures, chat deletion and the legacy
-shared-chat publication route reach the domain error as their original concrete
-values.
 An archived-draft update merges only its draft and timestamp into the original
 transcript under the service's shared serial gate.
 
@@ -154,10 +151,13 @@ changed canonical cwd, protected roots, unsupported platforms and missing or
 unexecutable bubblewrap. It projects ordered policy mounts into native flags while
 process grouping and cleanup retain their existing owner.
 
+`nocterm-acp::mapping` is the only place where the agent protocol SDK is mapped to and
+from the neutral `nocterm_ai::model` records; no other package may depend on the SDK
+([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
+
 ACP native taskkill diagnostics retain their original I/O error through foundation
-SharedError, including native classification and shared allocation identity. Managed
-shutdown reports an unconfirmed cleanup as `ManagedCommandError::CleanupUnconfirmed`,
-which keeps that typed native failure instead of a string.
+SharedError, including native classification and shared allocation identity. The public
+process shutdown port retains its existing stringified AgentError diagnostic.
 
 ## Connection files and native values
 

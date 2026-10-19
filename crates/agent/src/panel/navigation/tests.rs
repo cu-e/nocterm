@@ -1,37 +1,9 @@
 use super::*;
-use nocterm_ai::model::{
-    content::{Content, Text},
-    ids::ToolId,
-    tools::{ToolKind, ToolRecord, ToolStatus},
-};
-use nocterm_ai::{testing::ManagedRows, thread::Entry};
-fn text(text: &str) -> Content {
-    Content::Text(Text {
-        text: text.into(),
-        annotations: None,
-        extensions: None,
-    })
-}
-fn tool(id: &str, title: &str) -> ToolRecord {
-    ToolRecord {
-        id: ToolId::new(id),
-        title: title.into(),
-        name: None,
-        kind: ToolKind::Other,
-        status: ToolStatus::Pending,
-        output: Vec::new(),
-        locations: Vec::new(),
-        arguments: None,
-        result: None,
-        extensions: None,
-        claims: Default::default(),
-        literal: Default::default(),
-        client_display: None,
-    }
-}
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::tools::ToolRecord;
 
-fn message(value: &str) -> Entry {
-    Entry::User(vec![text(value)])
+fn message(text: &str) -> Entry {
+    Entry::User(vec![Content::text(text)])
 }
 fn top(item_ix: usize, offset: f32) -> ListOffset {
     ListOffset {
@@ -42,11 +14,11 @@ fn top(item_ix: usize, offset: f32) -> ListOffset {
 fn mixed() -> Vec<Entry> {
     vec![
         Entry::Thought("before messages".into()),
-        Entry::User(vec![text("question")]),
-        Entry::Tool(tool("tool", "Inspect")),
+        Entry::User(vec![Content::text("question")]),
+        Entry::Tool(ToolRecord::new("tool", "Inspect")),
         Entry::Thought("thinking".into()),
         Entry::Agent("answer".into()),
-        Entry::Content(text("content")),
+        Entry::Content(Content::text("content")),
         message("final"),
     ]
 }
@@ -54,7 +26,7 @@ fn mixed() -> Vec<Entry> {
 #[test]
 fn targets_use_user_messages_and_distinguish_partial_from_exact_starts() {
     let mut navigation = MessageNavigation::default();
-    navigation.observe(1.into(), ManagedRows::new(mixed()).unwrap().rows(), &[]);
+    navigation.observe(1.into(), &mixed(), &[]);
     assert_eq!(navigation.anchors, [1, 6]);
     for (viewport, expected) in [
         (top(0, 0.), None),
@@ -89,23 +61,20 @@ fn cache_refreshes_only_appended_and_dirty_classifications() {
         })
         .collect::<Vec<_>>();
     let mut navigation = MessageNavigation::default();
-    let mut rows = ManagedRows::new(entries.clone()).unwrap();
-    navigation.observe(1.into(), rows.rows(), &[]);
+    navigation.observe(1.into(), &entries, &[]);
     assert_eq!(navigation.inspections, 10_000);
-    navigation.observe(1.into(), rows.rows(), &[]);
+    navigation.observe(1.into(), &entries, &[]);
     assert_eq!(
         navigation.inspections, 10_000,
         "unchanged frame walked history"
     );
     entries[9998] = message("streamed text grows without changing classification");
-    rows.replace(entries.clone()).unwrap();
-    navigation.observe(1.into(), rows.rows(), &[9998]);
+    navigation.observe(1.into(), &entries, &[9998]);
     assert_eq!(navigation.inspections, 10_001);
-    entries.push(Entry::Tool(tool("new", "Tool")));
+    entries.push(Entry::Tool(ToolRecord::new("new", "Tool")));
     entries.push(message("new answer"));
     entries[0] = Entry::Thought("old row changes classification".into());
-    rows.replace(entries).unwrap();
-    navigation.observe(1.into(), rows.rows(), &[0, 10_001, usize::MAX]);
+    navigation.observe(1.into(), &entries, &[0, 10_001, usize::MAX]);
     assert_eq!(
         navigation.inspections, 10_004,
         "append and one dirty row must inspect three entries"
@@ -127,12 +96,10 @@ fn cache_refreshes_only_appended_and_dirty_classifications() {
 fn dirty_rows_can_become_messages_without_duplicates_or_stale_anchors() {
     let mut entries = mixed();
     let mut navigation = MessageNavigation::default();
-    let mut rows = ManagedRows::new(entries.clone()).unwrap();
-    navigation.observe(1.into(), rows.rows(), &[]);
+    navigation.observe(1.into(), &entries, &[]);
     entries[2] = message("tool row replaced by restored answer");
     entries[4] = Entry::Thought("answer row replaced by thought".into());
-    rows.replace(entries).unwrap();
-    navigation.observe(1.into(), rows.rows(), &[4, 2, 2]);
+    navigation.observe(1.into(), &entries, &[4, 2, 2]);
     assert_eq!(navigation.anchors, [1, 2, 6]);
     assert_eq!(navigation.previous(top(5, 0.)), Some(2));
 }
@@ -140,22 +107,10 @@ fn dirty_rows_can_become_messages_without_duplicates_or_stale_anchors() {
 #[test]
 fn truncate_chat_switch_clear_empty_and_tools_only_reset_targets() {
     let mut navigation = MessageNavigation::default();
-    navigation.observe(1.into(), ManagedRows::new(mixed()).unwrap().rows(), &[]);
-    navigation.observe(
-        1.into(),
-        ManagedRows::new(vec![message("short replacement")])
-            .unwrap()
-            .rows(),
-        &[],
-    );
+    navigation.observe(1.into(), &mixed(), &[]);
+    navigation.observe(1.into(), &[message("short replacement")], &[]);
     assert_eq!(navigation.anchors, [0]);
-    navigation.observe(
-        2.into(),
-        ManagedRows::new(vec![Entry::Thought("another chat".into())])
-            .unwrap()
-            .rows(),
-        &[],
-    );
+    navigation.observe(2.into(), &[Entry::Thought("another chat".into())], &[]);
     assert!(
         navigation.anchors.is_empty(),
         "equal-length chat switch reused anchors"
@@ -165,9 +120,7 @@ fn truncate_chat_switch_clear_empty_and_tools_only_reset_targets() {
     assert_eq!(navigation.first(top(0, 10.)), None);
     navigation.observe(
         2.into(),
-        ManagedRows::new(vec![Entry::Tool(tool("only", "Tool"))])
-            .unwrap()
-            .rows(),
+        &[Entry::Tool(ToolRecord::new("only", "Tool"))],
         &[],
     );
     assert!(navigation.anchors.is_empty());

@@ -160,33 +160,6 @@ impl Paths {
 /// another user cannot plant a directory where sockets and tokens will go. A
 /// directory of ours with looser permissions is tightened.
 pub fn ensure_private_dir(path: &Path) -> io::Result<()> {
-    ensure_private_dir_checked(path).map_err(|error| match error {
-        crate::fs::PrivateDirectoryCheckError::Native(source) => source,
-        crate::fs::PrivateDirectoryCheckError::Policy(reason) => reason.compatibility_error(path),
-    })
-}
-
-/// Requested bytes of the ancestor list that pinned std 1.98 `create_dir_all`
-/// allocates for a cold hierarchy: at most one `&Path` per ancestor before an
-/// empty or root path. [`ensure_private_dir_checked`] makes its calls serially,
-/// so this is their maximum, derived from `path` before any native operation.
-pub fn private_directory_ancestor_bytes(path: &Path) -> Option<usize> {
-    fn uncreated(path: &Path) -> usize {
-        path.ancestors()
-            .take_while(|ancestor| *ancestor != Path::new("") && ancestor.parent().is_some())
-            .count()
-    }
-    let ancestors = path.parent().map_or(0, uncreated);
-    #[cfg(not(unix))]
-    let ancestors = ancestors.max(uncreated(path));
-    ancestors.checked_mul(std::mem::size_of::<&Path>())
-}
-
-/// Same native private-directory operation, with allocation-free policy facts.
-/// Callers may admit the original dynamic diagnostic before constructing it.
-pub fn ensure_private_dir_checked(
-    path: &Path,
-) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -210,18 +183,20 @@ fn create_private(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn verify_private(path: &Path) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
+fn verify_private(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
-            crate::fs::PrivateDirectoryReason::NotPlain,
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a plain directory", path.display()),
         ));
     }
     if metadata.uid() != nix::unistd::Uid::effective().as_raw() {
-        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
-            crate::fs::PrivateDirectoryReason::ForeignOwner,
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} belongs to another user", path.display()),
         ));
     }
     if metadata.permissions().mode() & 0o077 != 0 {
@@ -231,11 +206,12 @@ fn verify_private(path: &Path) -> Result<(), crate::fs::PrivateDirectoryCheckErr
 }
 
 #[cfg(not(unix))]
-fn verify_private(path: &Path) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
+fn verify_private(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
-            crate::fs::PrivateDirectoryReason::NotPlain,
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a plain directory", path.display()),
         ));
     }
     Ok(())
@@ -272,35 +248,6 @@ fn user_tag() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn private_directory_ancestor_bound_covers_every_parent_below_root() {
-        let entry = std::mem::size_of::<&Path>();
-        assert_eq!(
-            private_directory_ancestor_bytes(Path::new("/a/b/c")),
-            Some(2 * entry)
-        );
-        assert_eq!(
-            private_directory_ancestor_bytes(Path::new("x/y/z")),
-            Some(2 * entry)
-        );
-        assert_eq!(private_directory_ancestor_bytes(Path::new("/a")), Some(0));
-        assert_eq!(private_directory_ancestor_bytes(Path::new("a")), Some(0));
-        assert_eq!(private_directory_ancestor_bytes(Path::new("/")), Some(0));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn private_directory_ancestor_bound_counts_the_missing_ancestors_of_a_cold_hierarchy() {
-        let root = tempfile::tempdir().unwrap();
-        let private = root.path().join("a/b/c/private");
-        let missing = 3;
-        let bound = private_directory_ancestor_bytes(&private).unwrap();
-        assert!(bound >= missing * std::mem::size_of::<&Path>());
-        ensure_private_dir_checked(&private).unwrap();
-        assert!(private.is_dir());
-    }
 
     #[test]
     fn rooted_layout_separates_config_from_state() {

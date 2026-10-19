@@ -1,73 +1,45 @@
 use super::*;
+use crate::model::controls::{ConfigCategory, ConfigChoice, ConfigGroup, ConfigOption};
+use crate::model::ids::ConfigId;
 
-fn choice(id: &str, name: &str) -> ConfigChoice {
-    ConfigChoice {
-        id: ConfigChoiceId::new(id),
-        name: name.into(),
-        description: None,
-        extensions: None,
-    }
-}
-fn option(id: &str, name: &str, category: ConfigCategory, kind: ConfigKind) -> ConfigOption {
-    ConfigOption {
-        id: ConfigId::new(id),
-        name: name.into(),
-        description: None,
-        category: Some(category),
-        kind,
-        extensions: None,
-    }
-}
 fn options() -> Vec<ConfigOption> {
-    let mut opus = choice("opus", "Opus");
-    opus.description = Some("Slower".into());
     vec![
-        option(
+        ConfigOption::select(
             "model",
             "Model",
-            ConfigCategory::Model,
-            ConfigKind::Select {
-                current: ConfigChoiceId::new("sonnet"),
-                choices: SelectChoices::Groups(vec![
-                    ConfigGroup {
-                        id: ConfigGroupId::new("fast"),
-                        name: "Fast".into(),
-                        choices: vec![choice("sonnet", "Sonnet")],
-                        extensions: None,
-                    },
-                    ConfigGroup {
-                        id: ConfigGroupId::new("deep"),
-                        name: "Deep".into(),
-                        choices: vec![opus],
-                        extensions: None,
-                    },
-                ]),
-            },
-        ),
-        option(
+            "sonnet",
+            vec![
+                ConfigGroup::new("fast", "Fast", vec![ConfigChoice::new("sonnet", "Sonnet")]),
+                ConfigGroup::new(
+                    "deep",
+                    "Deep",
+                    vec![ConfigChoice::new("opus", "Opus").description("Slower".to_string())],
+                ),
+            ],
+        )
+        .category(ConfigCategory::Model),
+        ConfigOption::select(
             "effort",
             "Effort",
-            ConfigCategory::ThoughtLevel,
-            ConfigKind::Select {
-                current: ConfigChoiceId::new("low"),
-                choices: SelectChoices::Flat(vec![choice("low", "Low"), choice("high", "High")]),
-            },
-        ),
-        option(
+            "low",
+            vec![
+                ConfigChoice::new("low", "Low"),
+                ConfigChoice::new("high", "High"),
+            ],
+        )
+        .category(ConfigCategory::ThoughtLevel),
+        ConfigOption::select(
             "mode",
             "Mode",
-            ConfigCategory::Mode,
-            ConfigKind::Select {
-                current: ConfigChoiceId::new("ask"),
-                choices: SelectChoices::Flat(vec![choice("ask", "Ask"), choice("auto", "Auto")]),
-            },
-        ),
-        option(
-            "web",
-            "Web search",
-            ConfigCategory::Other("_tools".into()),
-            ConfigKind::Boolean(false),
-        ),
+            "ask",
+            vec![
+                ConfigChoice::new("ask", "Ask"),
+                ConfigChoice::new("auto", "Auto"),
+            ],
+        )
+        .category(ConfigCategory::Mode),
+        ConfigOption::boolean("web", "Web search", false)
+            .category(ConfigCategory::Other("_tools".into())),
     ]
 }
 
@@ -141,12 +113,9 @@ fn only_model_and_effort_carry_over_to_new_chats() {
 }
 
 #[test]
-fn values_round_trip_through_unchanged_preference_grammar() {
+fn values_round_trip_through_settings() {
     for value in [value("opus"), ConfigValue::Flag(true)] {
-        assert_eq!(
-            serde_json::from_slice::<ConfigValue>(&serde_json::to_vec(&value).unwrap()).unwrap(),
-            value
-        );
+        assert_eq!(ConfigValue::from_setting(&value.to_setting()), value);
     }
 }
 

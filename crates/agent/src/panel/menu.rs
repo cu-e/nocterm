@@ -12,13 +12,10 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_ai::{
-    model::{
-        controls::{ConfigCategory, ConfigKind, ConfigOption, SelectChoices},
-        ids::{ConfigId, ModeId},
-    },
-    session_config::ConfigValue,
+use nocterm_ai::model::controls::{
+    ConfigCategory, ConfigChoices, ConfigKind, ConfigOption, ConfigSetting,
 };
+use nocterm_ai::model::ids::{ConfigId, ModeId};
 use nocterm_ui::IconName;
 
 use super::{
@@ -30,7 +27,7 @@ use super::{
 pub(super) struct ConfigurationSelection {
     thread: gpui_kit::Entity<crate::thread::AgentThread>,
     config: ConfigId,
-    value: ConfigValue,
+    value: ConfigSetting,
 }
 #[derive(Clone)]
 pub(super) struct ModeSelection {
@@ -64,7 +61,7 @@ impl ConfigChoice {
             action: ConfigurationSelection {
                 thread,
                 config,
-                value: ConfigValue::Flag(value),
+                value: ConfigSetting::Boolean(value),
             },
             favorite: None,
         }
@@ -208,7 +205,10 @@ impl ConfigMenuRenderer {
             Some(MenuKind::Config(id)) => {
                 if let Some(thread) = frame.thread.clone() {
                     let options = thread.read(cx).config_options();
-                    if let Some(option) = options.iter().find(|option| option.id.as_str() == id) {
+                    if let Some(option) = options
+                        .iter()
+                        .find(|option| option.id.as_str() == id.as_str())
+                    {
                         let model = option.category == Some(ConfigCategory::Model);
                         if model {
                             menu = menu.child(frame.query_input);
@@ -246,7 +246,7 @@ impl ConfigMenuRenderer {
                         .read(cx)
                         .config_options()
                         .iter()
-                        .find(|option| option.id.as_str() == id)
+                        .find(|option| option.id.as_str() == id.as_str())
                         .map(|option| option.name.clone())
                 })
                 .unwrap_or_default(),
@@ -301,22 +301,15 @@ impl ConfigMenuRenderer {
         favorites: &nocterm_ai::favorites::AgentStateFile,
         cx: &gpui_kit::App,
     ) -> Vec<(String, Vec<ConfigChoice>)> {
-        let Some(agent) = thread
-            .read(cx)
-            .document()
-            .agent_id()
-            .map(|id| id.to_string())
-        else {
-            return Vec::new();
-        };
+        let agent = thread.read(cx).document().agent_id().to_owned();
         let model = option.category == Some(ConfigCategory::Model);
         match &option.kind {
-            ConfigKind::Select { current, choices } => {
-                let groups = match choices {
-                    SelectChoices::Flat(options) => {
+            ConfigKind::Select(select) => {
+                let groups = match &select.choices {
+                    ConfigChoices::Flat(options) => {
                         vec![(String::new(), options.clone())]
                     }
-                    SelectChoices::Groups(groups) => groups
+                    ConfigChoices::Grouped(groups) => groups
                         .iter()
                         .map(|group| (group.name.clone(), group.choices.clone()))
                         .collect(),
@@ -339,11 +332,11 @@ impl ConfigMenuRenderer {
                                 ConfigChoice {
                                     id: format!("config-{}-{}", option.id, value.id),
                                     label: value.name,
-                                    selected: value.id == *current,
+                                    selected: value.id == select.current,
                                     action: ConfigurationSelection {
                                         thread: thread.clone(),
                                         config: option.id.clone(),
-                                        value: ConfigValue::Value(value.id.to_string()),
+                                        value: ConfigSetting::Choice(value.id.clone()),
                                     },
                                     favorite: model.then(|| FavoriteSelection {
                                         agent: agent.clone(),
@@ -366,7 +359,6 @@ impl ConfigMenuRenderer {
                     !*boolean,
                 )],
             )],
-            _ => Vec::new(),
         }
     }
 }
@@ -379,13 +371,14 @@ impl ConfigMenuRenderer {
         let Some(thread) = thread else {
             return Vec::new();
         };
-        let Some(modes) = thread.read(cx).configuration().modes() else {
+        let Some(modes) = thread.read(cx).configuration().modes().cloned() else {
             return Vec::new();
         };
         let current = thread
             .read(cx)
             .configuration()
             .current_mode()
+            .cloned()
             .unwrap_or(modes.current);
         modes
             .choices
@@ -428,7 +421,7 @@ impl ConfigurationSelection {
     ) -> (
         gpui_kit::Entity<crate::thread::AgentThread>,
         ConfigId,
-        ConfigValue,
+        ConfigSetting,
     ) {
         (self.thread, self.config, self.value)
     }

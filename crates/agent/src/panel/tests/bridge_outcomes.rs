@@ -1,37 +1,11 @@
 //! Bridge-owned outcomes are independent of provider result envelopes.
-use super::provider_fixtures::{known_title, provider_tool};
+use super::provider_fixtures::update;
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
-use nocterm_ai::model::{
-    controls::Presence,
-    json::OwnedJson,
-    literal::{LiteralIdentity, TextRange},
-    retention::RetentionAuthority,
-    tools::{Claim, ToolRecord, ToolStatus},
-};
-use nocterm_ai::{TerminalCall, tool_display};
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolRecord, ToolStatus};
+use nocterm_ai::{TerminalCall, thread::Entry, tool_display};
 use serde_json::{Value, json};
-fn provider_row(
-    authority: &RetentionAuthority,
-    id: &str,
-    provider: &str,
-    tool: &str,
-    arguments: Value,
-    result: Option<Value>,
-) -> ToolRecord {
-    let mut row =
-        super::provider_fixtures::provider_tool(id, title(provider, tool), ToolStatus::Pending);
-    let (owner, start) = match provider {
-        "codex" => (12..14, 15),
-        "claude" => (13..15, 17),
-        _ => (12..14, 15),
-    };
-    let end = row.title.len();
-    super::provider_fixtures::known_title(&mut row, owner, start..end);
-    row.arguments = Some(OwnedJson::from_untracked(authority, arguments).unwrap());
-    row.result = result.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
-    row
-}
 
 fn title(provider: &str, tool: &str) -> String {
     match provider {
@@ -62,13 +36,12 @@ fn send(
 }
 
 fn assert_error(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) {
-    let call = thread.read(cx).tool_slot(index);
-    assert!(tool_display::managed_header(call).contains("Execute program"));
-    assert_eq!(
-        tool_input::source_managed(call).unwrap().label,
-        "Requested command"
-    );
-    let output = tool_output::source_managed(call, false).unwrap();
+    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
+        panic!("tool row");
+    };
+    assert!(tool_display::header(call).contains("Execute program"));
+    assert_eq!(tool_input::source(call).unwrap().label, "Requested command");
+    let output = tool_output::source(call, false).unwrap();
     assert_eq!(output.sections.len(), 1);
     assert_eq!(output.sections[0].label, "Error");
     assert!(!output.sections[0].text.contains("provider garbage"));
@@ -106,15 +79,10 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             json!({"terminal_id":terminal,"program":"sh","args":["-c","echo requested"]}),
         ),
     ] {
-        let row = provider_row(
-            &f.installation.retention,
-            id,
-            provider,
-            tool,
-            args.clone(),
-            Some(json!({"new_provider_wrapper":"provider garbage"})),
-        );
-        deliver(&f, &session, SessionUpdate::ToolStarted(row), cx);
+        let row = ToolRecord::new(id, title(provider, tool))
+            .raw_input(args.clone())
+            .raw_output(json!({"new_provider_wrapper":"provider garbage"}));
+        update(&f, &session, SessionUpdate::ToolCall(Box::new(row)), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
             mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
@@ -149,8 +117,10 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
         }
     }
     cx.update(|cx| {
-        let call = thread.read(cx).tool_slot(0);
-        let output = tool_output::source_managed(call, false).unwrap();
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
+            panic!("tool row");
+        };
+        let output = tool_output::source(call, false).unwrap();
         assert_eq!(output.sections[0].label, "Context");
         assert!(!output.sections[0].text.contains("provider garbage"));
         for index in 1..4 {
@@ -183,16 +153,11 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     let terminal = cx.update(|cx| thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone()));
     let arguments =
         json!({"terminal_id":terminal,"program":"sh","args":["-c","echo active"],"yield_ms":1000});
-    deliver(
+    update(
         &f,
         &session,
-        SessionUpdate::ToolStarted(provider_row(
-            &f.installation.retention,
-            "active",
-            "codex",
-            "exec_command",
-            arguments.clone(),
-            None,
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("active", title("codex", "exec_command")).raw_input(arguments.clone()),
         )),
         cx,
     );
@@ -203,16 +168,11 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
         cx,
     );
     assert!(pending.try_recv().unwrap().is_none());
-    deliver(
+    update(
         &f,
         &session,
-        SessionUpdate::ToolStarted(provider_row(
-            &f.installation.retention,
-            "complete",
-            "codex",
-            "list_terminals",
-            json!({}),
-            None,
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
         )),
         cx,
     );
@@ -225,19 +185,23 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.stop(cx);
-            let active = thread.tool_slot(0);
+            let Entry::Tool(active) = &thread.transcript().entries[0] else {
+                panic!("tool row");
+            };
             assert!(matches!(
-                tool_display::ToolDisplay::from_managed(active)
+                tool_display::ToolDisplay::from_call(active)
                     .unwrap()
                     .outcome,
-                Presence::Value(tool_display::ToolOutcome::Failed(_))
+                Some(tool_display::ToolOutcome::Err(_))
             ));
-            let complete = thread.tool_slot(1);
+            let Entry::Tool(complete) = &thread.transcript().entries[1] else {
+                panic!("tool row");
+            };
             assert!(matches!(
-                tool_display::ToolDisplay::from_managed(complete)
+                tool_display::ToolDisplay::from_call(complete)
                     .unwrap()
                     .outcome,
-                Presence::Value(tool_display::ToolOutcome::Succeeded(_))
+                Some(tool_display::ToolOutcome::Ok(_))
             ));
         })
     });
@@ -250,16 +214,11 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    deliver(
+    update(
         &f,
         &session,
-        SessionUpdate::ToolStarted(provider_row(
-            &f.installation.retention,
-            "late",
-            "codex",
-            "typo",
-            json!({}),
-            None,
+        SessionUpdate::ToolCall(Box::new(
+            ToolRecord::new("late", title("codex", "typo")).raw_input(json!({})),
         )),
         cx,
     );
@@ -274,67 +233,43 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let call = thread.read(cx).tool_slot(0);
-        assert!(tool_display::ToolDisplay::from_managed(call).is_none());
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
+            panic!("tool row");
+        };
+        assert!(tool_display::ToolDisplay::from_call(call).is_none());
     });
 }
 
 #[test]
 fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_fixtures::provider_tool(
-        "error",
-        title("codex", "list_terminals"),
-        ToolStatus::Pending,
-    );
-    let mut display =
-        tool_display::ToolDisplay::requested(&authority, "list_terminals".into(), json!({}))
-            .unwrap();
-    display
-        .finish(Err("password=private-value".into()))
-        .unwrap();
+    let mut call = ToolRecord::new("error", title("codex", "list_terminals"));
+    let mut display = tool_display::ToolDisplay::requested("list_terminals".into(), json!({}));
+    display.finish(Err("password=private-value".into()));
     display.attach(&mut call);
     let output = tool_output::source(&call, false).unwrap();
     assert_eq!(output.sections[0].label, "Error");
     assert!(!output.sections[0].text.contains("private-value"));
     assert!(
-        !serde_json::to_string(&call.client_display)
+        !serde_json::to_string(&call.meta)
             .unwrap()
             .contains("private-value")
     );
 }
+
 #[test]
 fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
-    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
-        nocterm_ai::history::MAX_RESIDENT_BYTES,
-    )
-    .unwrap();
-    let mut call = provider_tool("call-1", "mcp.nocterm-11.exec_command", ToolStatus::Failed);
-    let title_len = call.title.len();
-    known_title(&mut call, 12..14, 15..title_len);
-    call.arguments = Some(OwnedJson::from_untracked(&authority, json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
-        "terminal_id":"t1", "program":"/bin/sh", "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"], "timeout_ms":1_800_000, "yield_ms":1000,
-    }})).unwrap());
-    let input = call.arguments.as_ref().unwrap();
-    let server = input["server"].as_str().unwrap();
-    let tool = input["tool"].as_str().unwrap();
-    call.literal.input = LiteralIdentity::Registered {
-        owner: TextRange::supplied(server, &server[8..]).unwrap(),
-        tool: TextRange::supplied(tool, tool).unwrap(),
-    };
-    call.claims.input = Claim::Known {
-        registration: "11".into(),
-        tool: "exec_command".into(),
-    };
-    call.result = Some(
-        OwnedJson::from_untracked(
-            &authority,
-            json!({"result":null, "error":{
-                "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+    let mut call = ToolRecord::new("call-1", "mcp.nocterm-11.exec_command")
+        .raw_input(
+            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+                "terminal_id":"t1", "program":"/bin/sh",
+                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
+                "timeout_ms":1_800_000, "yield_ms":1000,
             }}),
         )
-        .unwrap(),
-    );
+        .raw_output(json!({"result":null, "error":{
+            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+        }}));
+    call.status = ToolStatus::Failed;
     assert_eq!(
         tool_display::header(&call),
         "Nocterm · Execute program · Failed"

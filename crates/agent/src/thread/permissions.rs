@@ -1,9 +1,7 @@
 //! ACP provider permissions are independent of Nocterm terminal grants.
 use super::approval_inbox::ApprovalToken;
-use nocterm_ai::model::{
-    auth::{PermissionEffect, PermissionOutcome, ProviderPermission},
-    ids::{PermissionOptionId, SessionId},
-};
+use nocterm_ai::model::auth::{PermissionEffect, PermissionOutcome, ProviderPermission};
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
 
 const ONE_TIME_REQUIRED: &str = "Automatic approval needs a valid Allow once option. This agent did not provide one. Review its choices or cancel this request.";
 

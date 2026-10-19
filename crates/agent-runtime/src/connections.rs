@@ -1,22 +1,19 @@
 //! Connection membership and retained process-cleanup ownership.
 use super::{Client, Connection};
-use super::{process_cleanup::ProcessCleanup, startup::CleanupError};
 use gpui::{EntityId, Task};
-use nocterm_ai::{
-    AgentLaunch,
-    connection::{ManagedCommandsHandle, ManagedWorkspaceHandle},
-};
+use nocterm_ai::{AgentCommands, AgentInfo, AgentLaunch};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[derive(Default)]
 pub(super) struct ConnectionManager {
     active: HashMap<u64, Connection>,
     closing: HashMap<u64, String>,
-    cleanup: HashMap<u64, ProcessCleanup>,
+    cleanup: HashMap<u64, Arc<super::process_cleanup::ProcessCleanup>>,
     serial: u64,
     startups: HashMap<u64, super::startup::Completion>,
 }
@@ -55,24 +52,21 @@ impl ConnectionManager {
     pub(super) fn connected(
         &mut self,
         key: u64,
-        commands: ManagedCommandsHandle,
-        workspace: Option<ManagedWorkspaceHandle>,
+        commands: Arc<dyn AgentCommands>,
+        info: AgentInfo,
         workdir: PathBuf,
-        events: super::event_pump::EventPump,
-        executor: &gpui::BackgroundExecutor,
-    ) -> Result<Vec<Client>, CleanupError> {
+        events: Task<()>,
+    ) -> Vec<Client> {
         let Some(connection) = self.active.get_mut(&key) else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
-        debug_assert!(connection.users.len() <= 1, "one chat owns each connection");
-        let source = connection.source.clone();
         connection.commands = Some(commands.clone());
-        connection.workspace = workspace;
+        connection.info = Some(info);
         connection.workdir = workdir;
         connection._events = Some(events);
         let clients = connection.users.values().cloned().collect();
-        self.retain_cleanup(key, commands, source, executor)?;
-        Ok(clients)
+        self.retain_cleanup(key, commands);
+        clients
     }
     pub(super) fn occupied(&self) -> usize {
         self.active.len() + self.closing.len()
@@ -93,9 +87,11 @@ impl ConnectionManager {
         &mut self,
         key: u64,
         owner: EntityId,
-        commands: Option<ManagedCommandsHandle>,
-        executor: &gpui::BackgroundExecutor,
-    ) -> Option<(Connection, Option<Result<ProcessCleanup, CleanupError>>)> {
+        commands: Option<Arc<dyn AgentCommands>>,
+    ) -> Option<(
+        Connection,
+        Option<Arc<super::process_cleanup::ProcessCleanup>>,
+    )> {
         let mut connection = self.active.remove(&key)?;
         connection.cancellation.cancel();
         connection.users.remove(&owner);
@@ -106,11 +102,7 @@ impl ConnectionManager {
         {
             self.startups.insert(key, completion.clone());
         }
-        let source = connection.source.clone();
-        let cleanup = commands.map(|commands| {
-            self.retain_cleanup(key, commands.clone(), source, executor)
-                .inspect_err(|_| commands.shutdown())
-        });
+        let cleanup = commands.map(|commands| self.retain_cleanup(key, commands));
         Some((connection, cleanup))
     }
     pub(super) fn closed(&mut self, key: u64) {
@@ -121,21 +113,16 @@ impl ConnectionManager {
     fn retain_cleanup(
         &mut self,
         key: u64,
-        commands: ManagedCommandsHandle,
-        source: nocterm_ai::history::source::SourceLifetime,
-        executor: &gpui::BackgroundExecutor,
-    ) -> Result<ProcessCleanup, CleanupError> {
-        let cleanup = match self
+        commands: Arc<dyn AgentCommands>,
+    ) -> Arc<super::process_cleanup::ProcessCleanup> {
+        let cleanup = self
             .cleanup
             .values()
             .find(|cleanup| cleanup.owns(&commands))
             .cloned()
-        {
-            Some(cleanup) => cleanup,
-            None => ProcessCleanup::new(commands, source, executor.clone())?,
-        };
+            .unwrap_or_else(|| Arc::new(super::process_cleanup::ProcessCleanup::new(commands)));
         self.cleanup.insert(key, cleanup.clone());
-        Ok(cleanup)
+        cleanup
     }
     pub(super) fn take_cleanup(&mut self) -> CleanupWork {
         let mut startups = std::mem::take(&mut self.startups)
@@ -149,9 +136,9 @@ impl ConnectionManager {
                 startups.push(completion);
             }
         }
-        let mut owners: Vec<ProcessCleanup> = Vec::new();
+        let mut owners = Vec::new();
         for (_, cleanup) in self.cleanup.drain() {
-            if !owners.iter().any(|other| other.owns(cleanup.commands())) {
+            if !owners.iter().any(|other| Arc::ptr_eq(other, &cleanup)) {
                 owners.push(cleanup);
             }
         }
@@ -165,16 +152,12 @@ impl ConnectionManager {
 }
 
 pub(super) struct CleanupWork {
-    processes: Vec<Result<super::process_cleanup::Completion, CleanupError>>,
+    processes: Vec<super::startup::Completion>,
     startups: Vec<super::startup::Completion>,
 }
 impl CleanupWork {
     pub(super) async fn run(self) -> Result<(), nocterm_store::StoreError> {
-        let processes = futures::future::join_all(
-            self.processes
-                .into_iter()
-                .map(|completion| async move { completion?.await }),
-        );
+        let processes = futures::future::join_all(self.processes);
         let startups = futures::future::join_all(self.startups);
         let (processes, startups) = futures::future::join(processes, startups).await;
         for result in processes {

@@ -1,88 +1,74 @@
-//! Authoritative borrowed version-two envelope, including bounded transcript projection.
-use super::{
-    FORMAT, HistoryFraming, HistoryPrompts, HistoryShape, HistoryView, MAX_SAVED_IMAGE_BYTES,
-    SavedAttachment, VERSION,
-};
-use crate::{
-    model::{
-        content::{Content, MediaKind, Text},
-        tools::ToolRecord,
-    },
-    thread::Entry,
-};
+//! Borrowed, bounded persistence view. JSON and byte budgeting use the same serializer.
+use super::{MAX_SAVED_ENTRIES, MAX_SAVED_IMAGE_BYTES, SavedChat, SavedPrompt};
+use crate::model::content::Content;
+use crate::model::tools::ToolRecord;
+use crate::thread::Entry;
 use serde::{Serialize, Serializer, ser::SerializeSeq};
+use std::sync::Arc;
+
 #[derive(Serialize)]
-pub(super) struct Wire<'a> {
-    format: &'static str,
+pub(super) struct Wire<'a, Q: Serialize + ?Sized> {
     version: u32,
-    document: Document<'a>,
-}
-#[derive(Serialize)]
-struct Document<'a> {
     id: &'a str,
-    metadata: &'a super::ChatMetadata,
-    resume: &'a super::ResumeDescriptor,
-    transcript: Transcript<'a>,
-    composer: Composer<'a>,
-}
-#[derive(Serialize)]
-struct Transcript<'a> {
+    agent_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: &'a Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: &'a Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: &'a Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workdir: &'a Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: &'a Option<String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    config: &'a crate::session_config::Choices,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: &'a Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pending_history: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draft: &'a Option<String>,
+    updated: u64,
     entries: Entries<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue: Option<&'a Q>,
+    #[serde(skip_serializing_if = "<[super::SavedAttachment]>::is_empty")]
+    attachments: &'a [super::SavedAttachment],
+    #[serde(skip_serializing_if = "<[u64]>::is_empty")]
     times: &'a [u64],
 }
-#[derive(Serialize)]
-struct Composer<'a> {
-    draft: Option<&'a str>,
-    queue: Prompts<'a>,
-    attachments: &'a [SavedAttachment],
-}
-struct EmptyPrompts;
-impl HistoryPrompts for EmptyPrompts {
-    fn len(&self) -> usize {
-        0
-    }
-    fn get(&self, _index: usize) -> Option<&super::SavedPrompt> {
-        None
-    }
-}
-static EMPTY_PROMPTS: EmptyPrompts = EmptyPrompts;
-impl<'a> Wire<'a> {
-    pub(super) fn new(view: HistoryView<'a>) -> Self {
-        Self::parts(view.framing(), view.entries(), view.prompts())
-    }
-    fn parts(
-        frame: HistoryFraming<'a>,
-        entries: &'a [Entry],
-        prompts: &'a dyn HistoryPrompts,
-    ) -> Self {
+impl<'a, Q: Serialize + ?Sized> Wire<'a, Q> {
+    pub(super) fn new(chat: &'a SavedChat, queue: Option<&'a Q>) -> Self {
+        let skip = chat.entries.len().saturating_sub(MAX_SAVED_ENTRIES);
         Self {
-            format: FORMAT,
-            version: VERSION,
-            document: Document {
-                id: frame.id,
-                metadata: frame.metadata,
-                resume: frame.resume,
-                transcript: Transcript {
-                    entries: Entries(entries),
-                    times: frame.times,
-                },
-                composer: Composer {
-                    draft: frame.draft,
-                    queue: Prompts(prompts),
-                    attachments: frame.attachments,
-                },
-            },
+            version: chat.version,
+            id: &chat.id,
+            agent_id: &chat.agent_id,
+            title: &chat.title,
+            name: &chat.name,
+            pinned: chat.pinned,
+            session_id: &chat.session_id,
+            workdir: &chat.workdir,
+            model: &chat.model,
+            config: &chat.config,
+            mode: &chat.mode,
+            pending_history: chat.pending_history,
+            draft: &chat.draft,
+            updated: chat.updated,
+            entries: Entries(&chat.entries[skip..]),
+            queue,
+            attachments: &chat.attachments,
+            times: chat.times.get(skip..).unwrap_or_default(),
         }
-    }
-    /// Arrays/framing only; real times and metadata occur once, no fabricated prompt.
-    pub(super) fn framing(frame: HistoryFraming<'a>, _shape: HistoryShape) -> Self {
-        Self::parts(frame, &[], &EMPTY_PROMPTS)
     }
 }
 pub(super) struct Entries<'a>(pub &'a [Entry]);
 impl Serialize for Entries<'_> {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut seq = s.serialize_seq(Some(self.0.len()))?;
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
         for entry in self.0 {
             seq.serialize_element(&bounded(entry))?;
         }
@@ -103,86 +89,62 @@ fn bounded(entry: &Entry) -> BorrowedEntry<'_> {
         Entry::User(blocks) => BorrowedEntry::User(Blocks(blocks)),
         Entry::Agent(text) => BorrowedEntry::Agent(text),
         Entry::Thought(text) => BorrowedEntry::Thought(text),
-        Entry::Content(content) => BorrowedEntry::Content(Block(content)),
-        Entry::Tool(call) => BorrowedEntry::Tool(call),
+        Entry::Content(block) => BorrowedEntry::Content(Block(block)),
+        Entry::Tool(tool) => BorrowedEntry::Tool(tool),
     }
 }
 struct Blocks<'a>(&'a [Content]);
 impl Serialize for Blocks<'_> {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut seq = s.serialize_seq(Some(self.0.len()))?;
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
         for block in self.0 {
             seq.serialize_element(&Block(block))?;
         }
         seq.end()
     }
 }
-#[derive(Serialize)]
-struct OmittedText {
-    text: &'static str,
-    annotations: Option<()>,
-    extensions: Option<()>,
-}
-#[derive(Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-enum Omitted {
-    Text(OmittedText),
-}
 struct Block<'a>(&'a Content);
 impl Serialize for Block<'_> {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            Content::Media(media)
-                if media.kind == MediaKind::Image
-                    && media.encoded.len() > MAX_SAVED_IMAGE_BYTES =>
-            {
-                Omitted::Text(OmittedText {
-                    text: "[Image not kept in history]",
-                    annotations: None,
-                    extensions: None,
-                })
-                .serialize(s)
+            Content::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
+                Content::text("[Image not kept in history]").serialize(serializer)
             }
-            content => content.serialize(s),
+            block => block.serialize(serializer),
         }
     }
 }
-struct Prompts<'a>(&'a dyn HistoryPrompts);
+pub(super) struct Prompts<'a>(pub &'a [Arc<SavedPrompt>]);
 impl Serialize for Prompts<'_> {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut seq = s.serialize_seq(Some(self.0.len()))?;
-        for index in 0..self.0.len() {
-            seq.serialize_element(self.0.get(index).ok_or_else(|| {
-                <S::Error as serde::ser::Error>::custom("candidate prompt sequence changed")
-            })?)?;
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for prompt in self.0 {
+            seq.serialize_element(&**prompt)?;
         }
         seq.end()
     }
 }
-pub(super) fn entry_measure(entry: &Entry) -> Result<super::FormatSize, super::MeasurementError> {
-    super::size::measure(&bounded(entry))
+pub(super) fn entry_memory(entry: &Entry) -> Result<usize, serde_json::Error> {
+    super::size::structural_size(&bounded(entry))
+}
+pub(super) fn entry_size(entry: &Entry) -> Result<usize, serde_json::Error> {
+    super::size::encoded_len(&bounded(entry))
 }
 pub(super) fn clone_entries(entries: &[Entry]) -> Vec<Entry> {
-    entries[entries.len().saturating_sub(super::MAX_SAVED_ENTRIES)..]
+    entries[entries.len().saturating_sub(MAX_SAVED_ENTRIES)..]
         .iter()
         .map(|entry| match entry {
             Entry::User(blocks) => Entry::User(blocks.iter().map(clone_block).collect()),
-            Entry::Content(content) => Entry::Content(clone_block(content)),
+            Entry::Content(block) => Entry::Content(clone_block(block)),
             entry => entry.clone(),
         })
         .collect()
 }
-fn clone_block(content: &Content) -> Content {
-    match content {
-        Content::Media(media)
-            if media.kind == MediaKind::Image && media.encoded.len() > MAX_SAVED_IMAGE_BYTES =>
-        {
-            Content::Text(Text {
-                text: "[Image not kept in history]".into(),
-                annotations: None,
-                extensions: None,
-            })
+fn clone_block(block: &Content) -> Content {
+    match block {
+        Content::Image(image) if image.data.len() > MAX_SAVED_IMAGE_BYTES => {
+            Content::text("[Image not kept in history]")
         }
-        content => content.clone(),
+        block => block.clone(),
     }
 }

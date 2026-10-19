@@ -55,19 +55,6 @@ impl WorkdirError {
     }
 }
 pub trait WorkdirResolver: Send + Sync {
-    fn prepare_managed(
-        &self,
-        startup: crate::connection::ManagedStartupHandle,
-        lifetime: crate::history::source::SourceLifetime,
-    ) -> Result<
-        crate::history::source::ManagedSourceFuture<
-            Result<
-                crate::model::native::NativeOwned<PreparedWorkspace>,
-                crate::history::source::ManagedCommandError,
-            >,
-        >,
-        crate::model::json::deferred::NativeAllocationError,
-    >;
     fn prepare(
         &self,
         request: WorkdirRequest,

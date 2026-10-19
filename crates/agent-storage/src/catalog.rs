@@ -1,9 +1,6 @@
 //! Rebuildable bounded sidecars. The transcript remains the source of truth.
-pub(crate) mod publication;
-use crate::{format, legacy, loading};
-#[cfg(test)]
-use nocterm_ai::history::SavedChat;
-use nocterm_ai::history::{ChatSummary, FileStamp, MAX_FILE_BYTES, MAX_RESTORED};
+use crate::loading;
+use nocterm_ai::history::{ChatSummary, FileStamp, MAX_FILE_BYTES, MAX_RESTORED, SavedChat};
 use std::{
     fs,
     io::{BufReader, Read as _},
@@ -24,9 +21,8 @@ fn stamp(metadata: &fs::Metadata) -> FileStamp {
             .map_or(0, |time| time.as_nanos()),
     }
 }
-#[cfg(test)]
 pub(super) fn update_cache(dir: &Path, chat: &SavedChat, queued: bool) {
-    let Ok(path) = loading::file(dir, chat.id()) else {
+    let Ok(path) = loading::file(dir, &chat.id) else {
         return;
     };
     let Ok(metadata) = fs::metadata(path) else {
@@ -76,13 +72,9 @@ pub(super) fn load_catalog(dir: &Path) -> Vec<ChatSummary> {
             .filter(|row| row.matches_stamp(id, file_stamp));
         let summary = cached.or_else(|| {
             let bytes = loading::read(&path, id).ok()?;
-            let summary = match format::classify(&bytes).ok()? {
-                format::Format::Version2 => {
-                    nocterm_ai::history::decode_summary(&bytes, id, file_stamp)
-                }
-                format::Format::LegacyV1 => legacy::decode_summary(&bytes, id, file_stamp),
-            };
-            summary.ok()?.inspect(|row| write_cache(dir, row))
+            nocterm_ai::history::decode_summary(&bytes, id, file_stamp)
+                .ok()?
+                .inspect(|row| write_cache(dir, row))
         });
         if let Some(row) = summary.filter(|row| row.has_content || row.name.is_some() || row.pinned)
         {

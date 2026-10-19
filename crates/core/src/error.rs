@@ -35,12 +35,6 @@ impl<E: Error + Send + Sync + 'static + ?Sized> SharedError<E> {
     pub fn from_arc(inner: Arc<E>) -> Self {
         Self { inner }
     }
-
-    /// Transfer the existing shared payload into an older typed boundary.
-    /// Consuming the holder preserves its allocation and all surviving aliases.
-    pub fn into_arc(self) -> Arc<E> {
-        self.inner
-    }
 }
 
 impl<E: Error + Send + Sync + 'static + ?Sized> AsRef<E> for SharedError<E> {

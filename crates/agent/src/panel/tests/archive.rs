@@ -1,9 +1,7 @@
 //! Lazy history, authority and metadata operations cross the runtime/UI boundary.
 use super::*;
 use nocterm_ai::{
-    history::{
-        ChatMetadata, ComposerData, ResumeDescriptor, SavedChat, SavedPrompt, TranscriptData,
-    },
+    history::{SavedChat, SavedPrompt},
     metadata::ChatMetadataSource as _,
     thread::Entry,
 };
@@ -25,7 +23,7 @@ pub(super) fn archived(
         f.panel
             .read(cx)
             .chat_documents()
-            .find(|thread| thread.read(cx).chat_id_string() == chat.id())
+            .find(|thread| thread.read(cx).document().chat_id() == chat.id)
             .unwrap()
             .clone()
     })
@@ -41,26 +39,11 @@ fn enter_literal(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
 }
-fn saved(f: &Fixture, cx: &mut TestAppContext) -> SavedChat {
-    saved_with(f, cx, |_, _, _, _| {})
-}
-pub(super) fn saved_with(
-    f: &Fixture,
-    cx: &mut TestAppContext,
-    edit: impl FnOnce(&mut ChatMetadata, &mut ResumeDescriptor, &mut TranscriptData, &mut ComposerData),
-) -> SavedChat {
+fn saved(f: &Fixture) -> SavedChat {
     let identity = f._directory.metadata.new_identity();
-    cx.update(|cx| {
-        let retention = f.installation.installed.runtime().retention(cx);
-        let chat =
-            SavedChat::for_identity(retention, "codex".into(), identity.id, identity.created);
-        let (id, mut metadata, mut resume, mut transcript, mut composer, _) = chat.into_parts();
-        transcript
-            .entries
-            .push(Entry::Agent("historic answer".into()));
-        edit(&mut metadata, &mut resume, &mut transcript, &mut composer);
-        SavedChat::from_parts(retention, id, metadata, resume, transcript, composer).unwrap()
-    })
+    let mut chat = SavedChat::for_identity("codex".into(), identity.id, identity.created);
+    chat.entries.push(Entry::Agent("historic answer".into()));
+    chat
 }
 #[gpui_kit::test]
 fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused(
@@ -68,14 +51,13 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
 ) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |_, _, _, composer| {
-        composer.draft = Some("literal draft".into());
-        composer.queue.push(SavedPrompt {
-            id: 8,
-            text: "pending".into(),
-            images: vec![],
-            attachments: vec![],
-        });
+    let mut chat = saved(&f);
+    chat.draft = Some("literal draft".into());
+    chat.queue.push(SavedPrompt {
+        id: 8,
+        text: "pending".into(),
+        images: vec![],
+        attachments: vec![],
     });
     let thread = archived(&f, &chat, cx);
     let updates = Rc::new(std::cell::Cell::new(0));
@@ -87,7 +69,7 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
     assert_eq!(updates.get(), 0);
     cx.update(|cx| {
         assert!(thread.read(cx).is_archived());
-        assert!(thread.read(cx).history_rows().is_empty());
+        assert!(thread.read(cx).history_entries().is_empty());
         assert!(thread.read(cx).flush_snapshot(cx).is_none());
     });
     f.panel
@@ -96,8 +78,8 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert!(!thread.is_archived());
-        assert_eq!(thread.history_rows().len(), 1);
-        assert_eq!(thread.draft_text().as_deref(), Some("literal draft"));
+        assert_eq!(thread.history_entries().len(), 1);
+        assert_eq!(thread.draft_text(), Some("literal draft"));
         assert_eq!(thread.queued_prompt_ids().next().unwrap(), 8);
         // Opened, the chat connects so its pickers work, but the queue it
         // was saved with waits for the user.
@@ -107,14 +89,14 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
         );
         assert!(!thread.queue_dispatchable());
     });
-    assert_eq!(f.connector.connect_count(), 1);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     assert!(f.commands.prompts.lock().unwrap().is_empty());
 }
 #[gpui_kit::test]
 fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     thread.update(cx, |thread, cx| {
         thread.rename(Some("New name".into()), cx);
@@ -122,17 +104,17 @@ fn rename_and_pin_hydrate_before_writing_the_archive(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.update(|_| {
-        let loaded = f.repository.transcript(chat.id()).unwrap();
-        assert_eq!(loaded.metadata().name.as_deref(), Some("New name"));
-        assert!(loaded.metadata().pinned);
-        assert_eq!(loaded.transcript().entries.len(), 1);
+        let loaded = f.repository.transcript(&chat.id).unwrap();
+        assert_eq!(loaded.name.as_deref(), Some("New name"));
+        assert!(loaded.pinned);
+        assert_eq!(loaded.entries.len(), 1);
     });
 }
 #[gpui_kit::test]
 fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
@@ -143,12 +125,12 @@ fn delete_while_loading_does_not_resurrect_the_document(cx: &mut TestAppContext)
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(f.repository.transcript(chat.id()).is_err());
+        assert!(f.repository.transcript(&chat.id).is_err());
         assert!(
             f.panel
                 .read(cx)
                 .chat_documents()
-                .all(|thread| thread.read(cx).chat_id_string() != chat.id())
+                .all(|thread| thread.read(cx).document().chat_id() != chat.id)
         );
     });
 }
@@ -184,17 +166,16 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
             .detach();
     });
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |_, resume, _, _| {
-        resume.workdir = Some(a.clone());
-        resume.session_id = Some("previous-session".into());
-    });
+    let mut chat = saved(&f);
+    chat.workdir = Some(a.clone());
+    chat.session_id = Some("previous-session".into());
     let thread = archived(&f, &chat, cx);
     // Opening warms the chat, which restores it right away.
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(RestoreFailure::Unavailable("no rollout"));
+        .push_back(AgentError::RestoreUnavailable("no rollout".into()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -208,7 +189,7 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
         f.commands.new_dirs.lock().unwrap().as_slice(),
         std::slice::from_ref(&canonical)
     );
-    let roots = f.connector.roots();
+    let roots = f.connector.roots.lock().unwrap();
     assert_eq!(roots[0].0, canonical);
     let policy = roots[0].1.as_ref().expect("workspace sandbox");
     assert!(policy.writable.contains(&canonical));
@@ -220,10 +201,9 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
     cx.run_until_parked();
     let mut chats = Vec::new();
     for index in 0..15 {
-        let chat = saved_with(&f, cx, |metadata, _, transcript, _| {
-            metadata.updated = index;
-            transcript.entries = (0..2000).map(|_| Entry::Agent("r".repeat(3000))).collect();
-        });
+        let mut chat = saved(&f);
+        chat.updated = index;
+        chat.entries = (0..2000).map(|_| Entry::Agent("row".into())).collect();
         chats.push(chat);
     }
     for chat in &chats {
@@ -232,7 +212,7 @@ fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut Tes
     let blocked = f
         .repository
         .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chats.first().unwrap().id().to_owned(),
+            chats.first().unwrap().id.clone(),
         ));
     cx.update(|cx| f.installation.installed.runtime().reload_history(cx));
     cx.run_until_parked();
@@ -291,16 +271,13 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
     let f = fixture(cx);
     lazy_start(&f, cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |metadata, _, _, composer| {
-        metadata.updated = 1;
-        composer.draft = Some("old saved draft".into());
-    });
+    let mut chat = saved(&f);
+    chat.updated = 1;
+    chat.draft = Some("old saved draft".into());
     let thread = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -320,37 +297,28 @@ fn typing_while_archive_loading_preserves_latest_literal_draft(cx: &mut TestAppC
             f.panel.read(cx).composer_text(cx).as_ref(),
             "new literal\ndraft"
         );
-        assert_eq!(
-            thread.read(cx).draft_text().as_deref(),
-            Some("new literal\ndraft")
-        );
+        assert_eq!(thread.read(cx).draft_text(), Some("new literal\ndraft"));
         assert_eq!(thread.read(cx).updated_at(), edited_at);
-        let loaded = f.repository.transcript(chat.id()).unwrap();
-        assert_eq!(
-            loaded.composer().draft.as_deref(),
-            Some("new literal\ndraft")
-        );
-        assert_eq!(loaded.metadata().updated, edited_at);
+        let loaded = f.repository.transcript(&chat.id).unwrap();
+        assert_eq!(loaded.draft.as_deref(), Some("new literal\ndraft"));
+        assert_eq!(loaded.updated, edited_at);
     });
 }
 #[gpui_kit::test]
 fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |_, _, _, composer| {
-        composer.queue.push(SavedPrompt {
-            id: 3,
-            text: "queued request".into(),
-            images: vec![],
-            attachments: vec![],
-        });
+    let mut chat = saved(&f);
+    chat.queue.push(SavedPrompt {
+        id: 3,
+        text: "queued request".into(),
+        images: vec![],
+        attachments: vec![],
     });
     let thread = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -365,13 +333,10 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
     });
     cx.run_until_parked();
     cx.update(|_| {
-        let saved = f.repository.transcript(chat.id()).unwrap();
-        assert_eq!(
-            saved.composer().draft.as_deref(),
-            Some("draft before disable")
-        );
-        assert_eq!(saved.transcript().entries.len(), 1);
-        assert_eq!(saved.composer().queue[0].id, 3);
+        let saved = f.repository.transcript(&chat.id).unwrap();
+        assert_eq!(saved.draft.as_deref(), Some("draft before disable"));
+        assert_eq!(saved.entries.len(), 1);
+        assert_eq!(saved.queue[0].id, 3);
     });
     let _ = blocked.send(Ok(()));
     cx.run_until_parked();
@@ -380,32 +345,29 @@ fn disable_while_loading_saves_draft_patch_without_truncating_archive(cx: &mut T
 fn native_quit_flushes_pending_archived_draft_with_history_gate_held(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |metadata, _, _, composer| {
-        metadata.name = Some("original name".into());
-        composer.queue.push(SavedPrompt {
-            id: 4,
-            text: "pending queue".into(),
-            images: vec![],
-            attachments: vec![],
-        });
+    let mut chat = saved(&f);
+    chat.name = Some("original name".into());
+    chat.queue.push(SavedPrompt {
+        id: 4,
+        text: "pending queue".into(),
+        images: vec![],
+        attachments: vec![],
     });
     let thread = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
     enter_literal(&f, "draft at quit", cx);
     cx.run_until_parked();
     cx.update(App::shutdown);
-    let saved = f.repository.transcript(chat.id()).unwrap();
-    assert_eq!(saved.composer().draft.as_deref(), Some("draft at quit"));
-    assert_eq!(saved.transcript().entries.len(), 1);
-    assert_eq!(saved.composer().queue[0].id, 4);
-    assert_eq!(saved.metadata().name.as_deref(), Some("original name"));
+    let saved = f.repository.transcript(&chat.id).unwrap();
+    assert_eq!(saved.draft.as_deref(), Some("draft at quit"));
+    assert_eq!(saved.entries.len(), 1);
+    assert_eq!(saved.queue[0].id, 4);
+    assert_eq!(saved.name.as_deref(), Some("original name"));
     let _ = blocked.send(Ok(()));
 }
 #[gpui_kit::test]
@@ -413,26 +375,24 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
     let resolver = workspace_resolver();
     let f = fixture_with_width(cx, 26., usage_source(), resolver.clone(), image_deps());
     cx.run_until_parked();
+    let mut invalid = saved(&f);
+    invalid.session_id = Some("old-session".into());
     let removed = f._directory.path().join("removed-project");
     resolver.supply(
         removed.clone(),
         Err(nocterm_ai::workspace::WorkdirError::InvalidDirectory),
     );
-    let invalid = saved_with(&f, cx, |_, resume, _, _| {
-        resume.session_id = Some("old-session".into());
-        resume.workdir = Some(removed);
-    });
+    invalid.workdir = Some(removed);
     let thread = archived(&f, &invalid, cx);
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
     thread.update(cx, |thread, cx| thread.send("continue".into(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     cx.update(|cx| assert!(thread.read(cx).has_status_error()));
-    let legacy = saved_with(&f, cx, |_, resume, _, _| {
-        resume.session_id = Some("old-without-directory".into());
-    });
+    let mut legacy = saved(&f);
+    legacy.session_id = Some("old-without-directory".into());
     let thread = archived(&f, &legacy, cx);
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
@@ -441,7 +401,7 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
     cx.run_until_parked();
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     assert!(f.commands.restores.lock().unwrap().is_empty());
-    let roots = f.connector.roots();
+    let roots = f.connector.roots.lock().unwrap();
     assert_eq!(f.commands.new_dirs.lock().unwrap()[0], roots[0].0);
     cx.update(|cx| {
         assert_eq!(
@@ -455,10 +415,10 @@ fn invalid_saved_root_fails_safely_and_legacy_missing_root_starts_fresh(cx: &mut
 fn failed_hydration_retries_with_only_new_metadata_intentions(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let thread = archived(&f, &chat, cx);
     f.repository.fail_next(
-        nocterm_ai::testing::StorageOperation::Load(chat.id().to_owned()),
+        nocterm_ai::testing::StorageOperation::Load(chat.id.clone()),
         nocterm_ai::storage::AgentStorageError::Interrupted,
     );
     thread.update(cx, |thread, cx| {
@@ -468,27 +428,24 @@ fn failed_hydration_retries_with_only_new_metadata_intentions(cx: &mut TestAppCo
     cx.update(|cx| assert!(thread.read(cx).is_archived()));
     thread.update(cx, |thread, cx| thread.set_pinned(true, cx));
     cx.run_until_parked();
-    let durable = f.repository.transcript(chat.id()).unwrap();
-    assert_eq!(durable.metadata().name, chat.metadata().name);
-    assert!(durable.metadata().pinned);
-    assert_eq!(durable.transcript().entries.len(), 1);
-    assert_eq!(f.connector.connect_count(), 0);
+    let durable = f.repository.transcript(&chat.id).unwrap();
+    assert_eq!(durable.name, chat.name);
+    assert!(durable.pinned);
+    assert_eq!(durable.entries.len(), 1);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
 fn deferred_fork_uses_original_chat_and_row_after_active_chat_changes(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |metadata, _, transcript, _| {
-        metadata.name = Some("original source".into());
-        transcript.entries.push(Entry::Agent("later answer".into()));
-    });
+    let mut chat = saved(&f);
+    chat.name = Some("original source".into());
+    chat.entries.push(Entry::Agent("later answer".into()));
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread_at(source.entity_id(), Some(0), window, cx);
@@ -503,35 +460,23 @@ fn deferred_fork_uses_original_chat_and_row_after_active_chat_changes(cx: &mut T
         .repository
         .chats()
         .into_iter()
-        .find(|saved| saved.metadata().name.as_deref() == Some("original source (fork)"))
+        .find(|saved| saved.name.as_deref() == Some("original source (fork)"))
         .expect("original source was forked");
-    assert_ne!(fork.id(), chat.id());
-    assert_eq!(fork.transcript().entries.len(), 1);
-    assert!(
-        matches!(&fork.transcript().entries[0], Entry::Agent(text) if text == "historic answer")
-    );
-    assert_eq!(
-        f.repository
-            .transcript(chat.id())
-            .unwrap()
-            .transcript()
-            .entries
-            .len(),
-        2
-    );
+    assert_ne!(fork.id, chat.id);
+    assert_eq!(fork.entries.len(), 1);
+    assert!(matches!(&fork.entries[0], Entry::Agent(text) if text == "historic answer"));
+    assert_eq!(f.repository.transcript(&chat.id).unwrap().entries.len(), 2);
 }
 
 #[gpui_kit::test]
 fn deleted_source_does_not_fork_after_deferred_hydration(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(source.entity_id(), window, cx);
@@ -544,22 +489,19 @@ fn deleted_source_does_not_fork_after_deferred_hydration(cx: &mut TestAppContext
     cx.run_until_parked();
     assert!(f.repository.chats().is_empty());
     cx.update(|cx| assert_eq!(f.panel.read(cx).chat_documents().len(), 0));
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
 fn clearing_native_input_while_hydration_waits_wins_over_saved_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |_, _, _, composer| {
-        composer.draft = Some("old persisted draft".into());
-    });
+    let mut chat = saved(&f);
+    chat.draft = Some("old persisted draft".into());
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(source.entity_id(), cx));
     cx.run_until_parked();
@@ -568,9 +510,9 @@ fn clearing_native_input_while_hydration_waits_wins_over_saved_draft(cx: &mut Te
     cx.run_until_parked();
     let _ = blocked.send(Ok(()));
     cx.run_until_parked();
-    let loaded = f.repository.transcript(chat.id()).unwrap();
-    assert!(loaded.composer().draft.is_none());
-    assert_eq!(loaded.transcript().entries.len(), 1);
+    let loaded = f.repository.transcript(&chat.id).unwrap();
+    assert!(loaded.draft.is_none());
+    assert_eq!(loaded.entries.len(), 1);
     cx.update(|cx| {
         assert!(source.read(cx).draft_text().is_none());
         assert!(f.panel.read(cx).composer_text(cx).is_empty());
@@ -583,7 +525,7 @@ fn hydration_observer_can_rename_then_delete_without_reentering_owner_borrow(
 ) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let panel = f.panel.clone();
     let window = f.handle;
@@ -607,7 +549,7 @@ fn hydration_observer_can_rename_then_delete_without_reentering_owner_borrow(
         .update(cx, |panel, cx| panel.open_thread(source.entity_id(), cx));
     cx.run_until_parked();
     assert!(once.get());
-    assert!(f.repository.transcript(chat.id()).is_err());
+    assert!(f.repository.transcript(&chat.id).is_err());
     cx.update(|cx| assert_eq!(f.panel.read(cx).chat_documents().len(), 0));
 }
 
@@ -615,13 +557,11 @@ fn hydration_observer_can_rename_then_delete_without_reentering_owner_borrow(
 fn closed_original_window_does_not_fork_after_hydration(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved(&f, cx);
+    let chat = saved(&f);
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(source.entity_id(), window, cx)
@@ -636,28 +576,25 @@ fn closed_original_window_does_not_fork_after_hydration(cx: &mut TestAppContext)
     cx.run_until_parked();
     let saved = f.repository.chats();
     assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].id(), chat.id());
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(saved[0].id, chat.id);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
 }
 
 #[gpui_kit::test]
 fn blocked_open_applies_metadata_intentions_once_before_warm_connection(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
-    let chat = saved_with(&f, cx, |_, _, _, composer| {
-        composer.queue.push(SavedPrompt {
-            id: 9,
-            text: "held queue".into(),
-            images: vec![],
-            attachments: vec![],
-        });
+    let mut chat = saved(&f);
+    chat.queue.push(SavedPrompt {
+        id: 9,
+        text: "held queue".into(),
+        images: vec![],
+        attachments: vec![],
     });
     let source = archived(&f, &chat, cx);
     let blocked = f
         .repository
-        .block_next(nocterm_ai::testing::StorageOperation::Load(
-            chat.id().to_owned(),
-        ));
+        .block_next(nocterm_ai::testing::StorageOperation::Load(chat.id.clone()));
     f.panel
         .update(cx, |panel, cx| panel.open_thread(source.entity_id(), cx));
     cx.run_until_parked();
@@ -667,20 +604,17 @@ fn blocked_open_applies_metadata_intentions_once_before_warm_connection(cx: &mut
         thread.rename(Some("latest accepted name".into()), cx);
     });
     cx.run_until_parked();
-    assert_eq!(f.connector.connect_count(), 0);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
     let _ = blocked.send(Ok(()));
     cx.run_until_parked();
-    let loaded = f.repository.transcript(chat.id()).unwrap();
-    assert_eq!(
-        loaded.metadata().name.as_deref(),
-        Some("latest accepted name")
-    );
-    assert!(loaded.metadata().pinned);
-    assert_eq!(loaded.transcript().entries.len(), 1);
-    assert_eq!(loaded.composer().queue[0].id, 9);
-    assert_eq!(f.connector.connect_count(), 1);
+    let loaded = f.repository.transcript(&chat.id).unwrap();
+    assert_eq!(loaded.name.as_deref(), Some("latest accepted name"));
+    assert!(loaded.pinned);
+    assert_eq!(loaded.entries.len(), 1);
+    assert_eq!(loaded.queue[0].id, 9);
+    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     assert!(f.commands.prompts.lock().unwrap().is_empty());
     let loads = f.repository.operations().iter().filter(|operation|
-        matches!(operation, nocterm_ai::testing::StorageOperation::Load(id) if id == chat.id())).count();
+        matches!(operation, nocterm_ai::testing::StorageOperation::Load(id) if id == &chat.id)).count();
     assert_eq!(loads, 1);
 }

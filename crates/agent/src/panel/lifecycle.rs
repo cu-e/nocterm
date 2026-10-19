@@ -2,8 +2,8 @@ use super::history_column::SearchTicket;
 use super::*;
 use crate::thread::Attachment;
 use std::collections::HashSet;
-enum PreparedThreadStart {
-    New(Box<crate::thread::document::ChatDocument>),
+enum ThreadStart {
+    New(String),
     Restart(Box<crate::thread::RestartData>),
 }
 
@@ -21,15 +21,11 @@ impl AgentPanel {
         if !self.history.search_requested(cx) {
             return;
         }
-        let archived: Vec<_> = self
+        let ids = self
             .chats
             .iter()
             .filter(|thread| thread.read(cx).is_archived())
-            .cloned()
-            .collect();
-        let ids = archived
-            .into_iter()
-            .filter_map(|thread| thread.update(cx, |thread, _| thread.prepare_search()))
+            .map(|thread| thread.read(cx).document().chat_id().to_owned())
             .collect();
         let reader = self.host.runtime().history_reader(cx);
         let catalog = self
@@ -107,14 +103,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(thread) = self.chats.find(id).cloned() {
-            let Some(chat) = thread
-                .read(cx)
-                .document()
-                .chat_id()
-                .map(|id| id.to_string())
-            else {
-                return;
-            };
+            let chat = thread.read(cx).document().chat_id().to_owned();
             thread.update(cx, |thread, cx| thread.release_resources(cx));
             self.host.runtime().delete_chat(chat, cx);
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
@@ -163,18 +152,11 @@ impl AgentPanel {
             return;
         }
         let fork = match last {
-            Some(last) => source.read(cx).fork_at(last + 1, cx),
-            None => source.read(cx).fork(cx),
+            Some(last) => source.read(cx).fork_at(last + 1),
+            None => source.read(cx).fork(),
         };
-        let restored = fork.and_then(|fork| AgentThread::prepare_forked(fork, self.host.clone()));
-        let restored = match restored {
-            Ok(restored) => restored,
-            Err(error) => {
-                tracing::warn!(%error, "chat fork failed");
-                return;
-            }
-        };
-        let thread = cx.new(restored);
+        let host = self.host.clone();
+        let thread = cx.new(|cx| AgentThread::forked(fork, host, cx));
         thread.update(cx, |thread, cx| thread.persist(cx));
         let slot = self.track(&thread, window, cx);
         let id = thread.entity_id();
@@ -331,21 +313,12 @@ impl AgentPanel {
             Ok(true) => {
                 if let Some(thread) = self.chats.iter().find(|thread| thread.entity_id() == id) {
                     thread.update(cx, |thread, cx| {
-                        thread.document_admitted(thread.document().desired_revision(), cx);
-                        thread.release_captured_disabled_document(cx);
+                        thread.document_admitted(thread.document().desired_revision(), cx)
                     });
                 }
                 true
             }
-            Ok(false) => {
-                // Already retired, as when AI was turned off: the runtime owns its last capture.
-                if let Some(thread) = self.chats.iter().find(|thread| thread.entity_id() == id) {
-                    thread.update(cx, |thread, cx| {
-                        thread.release_captured_disabled_document(cx)
-                    });
-                }
-                true
-            }
+            Ok(false) => true,
             Err(error) => {
                 self.notices
                     .set_error(Some(format!("Could not retain chat: {error}")));
@@ -371,37 +344,27 @@ impl AgentPanel {
         self.sync_approval_attention(window, cx);
     }
     pub(super) fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        if nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx))
-            .get(&id)
-            .is_none()
-        {
-            return;
-        }
-        let state = match AgentThread::prepare_new(&id, &self.host, cx) {
-            Ok(state) => state,
-            Err(error) => {
-                self.notices
-                    .set_error(Some(format!("Could not prepare chat: {error}")));
-                return;
-            }
-        };
-        self.install_prepared_thread(
-            PreparedThreadStart::New(Box::new(state)),
-            &id,
-            false,
-            window,
-            cx,
-        );
+        self.new_thread_connection(ThreadStart::New(id), window, cx);
     }
-    fn install_prepared_thread(
+    fn new_thread_connection(
         &mut self,
-        start: PreparedThreadStart,
-        id: &str,
-        restarting: bool,
+        start: ThreadStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.host.runtime().set_last_agent(id, cx);
+        let restarting = matches!(&start, ThreadStart::Restart(_));
+        let id = match &start {
+            ThreadStart::New(id) => id.clone(),
+            ThreadStart::Restart(data) => data.agent_id().to_owned(),
+        };
+        let Some(_launch) =
+            nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx))
+                .get(&id)
+                .cloned()
+        else {
+            return;
+        };
+        self.host.runtime().set_last_agent(&id, cx);
         self.leave_composer(cx);
         let active = self
             .host
@@ -411,14 +374,12 @@ impl AgentPanel {
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
         let thread = cx.new(|cx| match start {
-            PreparedThreadStart::New(state) => {
-                let mut thread = AgentThread::new(*state, self.host.clone(), cx);
+            ThreadStart::New(id) => {
+                let mut thread = AgentThread::new(id, self.host.clone(), cx);
                 thread.preview_config(cx);
                 thread
             }
-            PreparedThreadStart::Restart(data) => {
-                AgentThread::restarted(*data, self.host.clone(), cx)
-            }
+            ThreadStart::Restart(data) => AgentThread::restarted(*data, self.host.clone(), cx),
         });
         if !restarting && let Some(id) = active {
             thread.update(cx, |thread, cx| {
@@ -439,36 +400,14 @@ impl AgentPanel {
         let Some(old) = self.current() else {
             return;
         };
-        let Some(agent) = old.read(cx).document().agent_id().map(|id| id.to_string()) else {
-            return;
-        };
-        if nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx))
-            .get(&agent)
-            .is_none()
-        {
-            return;
-        }
         let draft = self.original_composer_text(cx);
         old.update(cx, |thread, cx| thread.set_draft(draft, cx));
         self.leave_composer_with(true, cx);
         // Release ACP even if another observer still holds the old document entity.
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
-        let data = match old.update(cx, |thread, _| thread.restart_data()) {
-            Ok(data) => data,
-            Err(error) => {
-                self.notices
-                    .set_error(Some(format!("Could not restart chat: {error}")));
-                return;
-            }
-        };
-        self.install_prepared_thread(
-            PreparedThreadStart::Restart(Box::new(data)),
-            &agent,
-            true,
-            window,
-            cx,
-        );
+        let data = old.read(cx).restart_data();
+        self.new_thread_connection(ThreadStart::Restart(Box::new(data)), window, cx);
         let Some(thread) = self
             .current()
             .filter(|thread| thread.entity_id() != old.entity_id())
@@ -495,33 +434,24 @@ impl AgentPanel {
         }
         let (chats, catalog) = self.host.runtime().take_history(cx);
         let mut restored = Vec::new();
-        let mut summaries: Vec<nocterm_ai::history::ChatSummary> = chats
-            .unwrap_or_default()
-            .iter()
-            .map(nocterm_ai::history::ChatSummary::from_chat)
-            .collect();
-        summaries.extend(catalog.unwrap_or_default());
-        {
-            let catalog = summaries;
+        if let Some(chats) = chats {
+            for chat in chats.into_iter().rev() {
+                let thread = cx.new(|cx| AgentThread::restored(chat, self.host.clone(), cx));
+                let slot = self.track(&thread, window, cx);
+                restored.push(slot);
+            }
+        }
+        if let Some(catalog) = catalog {
             for summary in catalog.into_iter().rev() {
                 if self
                     .chats
                     .iter()
                     .chain(restored.iter().map(chat_list::ChatSlot::thread))
-                    .any(|thread| thread.read(cx).chat_id().as_deref() == Some(summary.id.as_str()))
+                    .any(|thread| thread.read(cx).chat_id() == summary.id)
                 {
                     continue;
                 }
-                let state = match AgentThread::prepare_archived(&summary, &self.host, cx) {
-                    Ok(state) => state,
-                    Err(error) => {
-                        self.notices
-                            .set_error(Some(format!("Could not restore chat: {error}")));
-                        continue;
-                    }
-                };
-                let thread =
-                    cx.new(|cx| AgentThread::archived(summary, state, self.host.clone(), cx));
+                let thread = cx.new(|cx| AgentThread::archived(summary, self.host.clone(), cx));
                 let slot = self.track(&thread, window, cx);
                 restored.push(slot);
             }
@@ -551,19 +481,8 @@ impl AgentPanel {
             }
             let bytes = thread.read(cx).resident_history_bytes();
             let query = self.history.query(cx);
-            let matched = !query.is_empty()
-                && thread
-                    .read(cx)
-                    .transcript()
-                    .is_some_and(|state| state.mentions(&query).unwrap_or(false));
-            let Some(chat_id) = thread
-                .read(cx)
-                .document()
-                .chat_id()
-                .map(|id| id.to_string())
-            else {
-                continue;
-            };
+            let matched = !query.is_empty() && thread.read(cx).transcript().mentions(&query);
+            let chat_id = thread.read(cx).document().chat_id().to_owned();
             if thread.update(cx, |thread, cx| thread.evict_history(cx)) {
                 resident = resident.saturating_sub(bytes);
                 if matched {

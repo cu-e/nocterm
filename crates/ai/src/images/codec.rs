@@ -1,10 +1,5 @@
 //! Immutable codec evidence and allocation contracts; no decoding or native I/O.
-mod native;
 use super::{MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS, header};
-pub use native::{
-    ManagedImageCause, NativeImageAllocationRefused, NativeImageAllocationScope,
-    NativeImageErrorSlot, NativeImageScopeError,
-};
 use std::sync::Arc;
 pub const MAX_DECODE_DIMENSION: u32 = 4096;
 pub const MAX_DECODE_BYTES: u64 = 64 * 1024 * 1024;
@@ -31,33 +26,6 @@ impl ImageFormat {
 pub use nocterm_core::SharedCause as ImageCodecCause;
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ImageCodecError {
-    #[error("Image allocation admission failed: {source}")]
-    ManagedAdmission {
-        #[source]
-        source: crate::model::json::deferred::NativeAllocationError,
-    },
-    #[error("This image inspector does not support managed input")]
-    ManagedInspectionUnsupported,
-    #[error("Image allocation exceeds the decoding limit")]
-    ManagedAllocationLimit {
-        #[source]
-        source: ManagedImageCause,
-    },
-    #[error("Invalid image data: {source}")]
-    ManagedInvalidData {
-        #[source]
-        source: ManagedImageCause,
-    },
-    #[error("Invalid image header: {source}")]
-    ManagedInvalidHeader {
-        #[source]
-        source: ManagedImageCause,
-    },
-    #[error("Could not encode preview: {source}")]
-    ManagedEncode {
-        #[source]
-        source: ManagedImageCause,
-    },
     #[error("Image source is empty or exceeds 5 MiB")]
     SourceSize,
     #[error("Invalid or unsupported image")]
@@ -151,13 +119,6 @@ impl InspectedImage {
     }
 }
 pub trait ImageInspector: Send + Sync {
-    fn inspect_managed(
-        &self,
-        _bytes: &super::managed::ManagedImageBytes,
-        _ledger: &crate::model::json::deferred::DecodeLedger,
-    ) -> Result<ImageFacts, ImageCodecError> {
-        Err(ImageCodecError::ManagedInspectionUnsupported)
-    }
     fn inspect(&self, bytes: Arc<[u8]>) -> Result<InspectedImage, ImageCodecError>;
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

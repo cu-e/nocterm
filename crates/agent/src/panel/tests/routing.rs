@@ -1,9 +1,12 @@
 //! Each chat's terminal tools reach that chat, and agents are told to report
 //! a terminal or server they cannot reach.
 use super::*;
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::thread::Entry;
 use nocterm_ai::tool_display::bridge_server_name;
 use nocterm_ai::{RunCommand, TerminalCall};
-use nocterm_ai::{model::notice::AdvertisedCommand, thread::Entry};
 
 fn server_names(f: &Fixture) -> Vec<String> {
     f.commands
@@ -13,10 +16,7 @@ fn server_names(f: &Fixture) -> Vec<String> {
         .iter()
         .map(|servers| {
             assert_eq!(servers.len(), 1);
-            match &servers[0] {
-                ExternalToolEndpoint::LocalCommand { name, .. } => name.clone(),
-                other => panic!("unexpected server {other:?}"),
-            }
+            servers[0].name.clone()
         })
         .collect()
 }
@@ -60,7 +60,7 @@ fn each_chat_gives_its_agent_a_server_of_its_own(cx: &mut TestAppContext) {
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_eq!(
-        f.connector.connect_count(),
+        f.connector.connects.load(Ordering::SeqCst),
         2,
         "each chat owns an independent agent process"
     );
@@ -156,8 +156,7 @@ fn prompts_tell_the_agent_to_report_unreachable_servers(cx: &mut TestAppContext)
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "check the server", "ok", cx);
-    let requests = f.commands.prompts.lock().unwrap();
-    let prompt = &requests[0];
+    let prompt = f.commands.prompts.lock().unwrap()[0].clone();
     let Content::Text(context) = &prompt.content[0] else {
         panic!("the prompt starts with its context");
     };
@@ -191,6 +190,7 @@ fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppConte
     );
     assert!(f.access.sent().borrow().is_empty());
 }
+
 #[gpui_kit::test]
 fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -210,9 +210,11 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
             );
             restore_pending_history(&f, thread, cx);
             report_control(
-                &f,
                 thread,
-                SessionUpdate::Commands(vec![AdvertisedCommand::new("$skill:review", "Review")]),
+                SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                    "$skill:review",
+                    "Review",
+                )]),
                 cx,
             );
             thread.send(input.into(), cx);

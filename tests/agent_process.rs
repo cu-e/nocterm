@@ -2,25 +2,13 @@
 #![cfg(target_os = "linux")]
 
 use nocterm_acp::AcpConnector;
-use nocterm_ai::{
-    AgentLaunch,
-    connection::{
-        ConnectionCancellation, ManagedAgentEvent, ManagedCommandsHandle, ManagedConnectRequest,
-        ManagedStartup, ManagedStartupRequest,
-    },
-    history::source::SourceProducer,
-    model::{
-        native::NativeOwned,
-        retention::{RetentionAuthority, document::DocumentRetention},
-        session::SessionOpen,
-    },
-};
+use nocterm_ai::{AgentCommands, AgentConnector as _, AgentLaunch, ConnectRequest};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -122,80 +110,41 @@ for line in sys.stdin:
 "#).unwrap();
     script
 }
-/// One admitted startup and the native owners that must outlive its connection.
-struct Prepared {
-    request: ManagedConnectRequest,
-    cancellation: ConnectionCancellation,
-    keepalive: Box<dyn std::any::Any>,
-}
-fn prepare(dir: &Path) -> Prepared {
+fn request(dir: &Path) -> ConnectRequest {
     let script = fake(dir);
-    let launch = AgentLaunch {
-        id: "test".into(),
-        name: "Test".into(),
-        command: "/usr/bin/python3".into(),
-        args: vec![script.to_string_lossy().into_owned(), "$LITERAL".into()],
-        env: BTreeMap::from([("EXPECTED".into(), "forwarded".into())]),
-        inherit_env: Vec::new(),
-    };
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let (retention, mut roles) = DocumentRetention::new(&authority).unwrap();
-    let producer = SourceProducer::new(roles.take_source().unwrap()).unwrap();
-    let lease = producer.capture().unwrap();
-    let context = lease.context().unwrap();
-    let resources = nocterm_ai::AgentResourceSettings::default();
-    let facts = context
-        .prepare_startup(ManagedStartupRequest {
-            launch: &launch,
-            working_directory: dir,
-            create_private: false,
-            isolation: None,
-            terminal_auth: false,
-            resources: &resources,
-        })
-        .unwrap();
-    let workspace = nocterm_ai::model::native::workspace::prepared_workspace(
-        context.copy_path(dir).unwrap(),
-        NativeOwned::absent(context.ledger()).unwrap(),
-    )
-    .unwrap();
-    let startup = ManagedStartup::new(facts, lease).unwrap();
-    let cancellation = startup.cancellation().clone();
-    Prepared {
-        request: startup.prepared(workspace).unwrap(),
-        cancellation,
-        keepalive: Box::new((authority, retention, roles, producer)),
+    ConnectRequest {
+        launch: AgentLaunch {
+            id: "test".into(),
+            name: "Test".into(),
+            command: "/usr/bin/python3".into(),
+            args: vec![script.to_string_lossy().into_owned(), "$LITERAL".into()],
+            env: BTreeMap::from([("EXPECTED".into(), "forwarded".into())]),
+            inherit_env: Vec::new(),
+        },
+        working_directory: dir.to_owned(),
+        terminal_auth: false,
+        sandbox: None,
+        resources: Default::default(),
+        cancellation: Default::default(),
     }
 }
-fn connector() -> AcpConnector {
-    AcpConnector::try_managed(PathBuf::from(env!("CARGO_BIN_EXE_nocterm"))).unwrap()
-}
-fn connection(
-    dir: &Path,
-) -> (
-    ManagedCommandsHandle,
-    std::thread::JoinHandle<()>,
-    Box<dyn std::any::Any>,
-) {
-    let Prepared {
-        request, keepalive, ..
-    } = prepare(dir);
-    let connecting = connector().connect_managed(request).unwrap();
-    let (_, commands, mut events) = futures::executor::block_on(connecting)
-        .expect("managed connection")
-        .into_parts();
-    let events = std::thread::spawn(move || {
-        futures::executor::block_on(async move {
-            while let Some(event) = futures::future::poll_fn(|cx| events.poll_event(cx)).await {
-                match event {
-                    ManagedAgentEvent::Barrier(barrier) => barrier.acknowledge(),
-                    ManagedAgentEvent::Exited { .. } | ManagedAgentEvent::Failed(_) => break,
-                    _ => {}
+fn connection(dir: &Path) -> (Arc<dyn AgentCommands>, std::thread::JoinHandle<()>) {
+    let request = request(dir);
+    futures::executor::block_on(async {
+        let connecting =
+            AcpConnector::managed(PathBuf::from(env!("CARGO_BIN_EXE_nocterm"))).connect(request);
+        let connection = connecting.await.expect("managed connection");
+        let events = std::thread::spawn(move || {
+            futures::executor::block_on(async move {
+                while let Ok(event) = connection.events.recv().await {
+                    if let nocterm_ai::AgentEvent::Barrier(ack) = event {
+                        let _ = ack.send(());
+                    }
                 }
-            }
-        })
-    });
-    (commands, events, keepalive)
+            })
+        });
+        (connection.commands, events)
+    })
 }
 fn pids(dir: &Path) -> Vec<u32> {
     fs::read_to_string(dir.join("pids"))
@@ -218,17 +167,14 @@ fn repeated_managed_close_reaps_detached_descendants_and_fds() {
     let mut baseline = None;
     for cycle in 0..6 {
         let dir = tempfile::tempdir().unwrap();
-        let (commands, events, keepalive) = connection(dir.path());
-        let opened = futures::executor::block_on(
-            commands
-                .new_session(&SessionOpen {
-                    working_directory: dir.path().to_owned(),
-                    endpoints: Vec::new(),
-                })
-                .unwrap(),
-        )
+        let (commands, events) = connection(dir.path());
+        let session = futures::executor::block_on(commands.new_session(
+            nocterm_ai::model::session::SessionOpen {
+                working_directory: dir.path().to_path_buf(),
+                endpoints: Vec::new(),
+            },
+        ))
         .unwrap();
-        let session = opened.opened().session.clone();
         let children = pids(dir.path());
         let environment: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.path().join("environment")).unwrap())
@@ -265,13 +211,11 @@ fn repeated_managed_close_reaps_detached_descendants_and_fds() {
                 "512"
             );
         }
-        let outcome =
-            futures::executor::block_on(commands.close_session(&session).unwrap()).unwrap();
+        let outcome = futures::executor::block_on(commands.close_session(session.session)).unwrap();
         assert_eq!(outcome, nocterm_ai::CloseSessionOutcome::Closed);
-        futures::executor::block_on(commands.shutdown_gracefully().unwrap()).unwrap();
-        drop((opened, commands));
+        futures::executor::block_on(commands.shutdown_gracefully()).unwrap();
+        drop(commands);
         events.join().unwrap();
-        drop(keepalive);
         assert_gone(&children);
         std::thread::sleep(Duration::from_millis(100));
         if cycle == 0 {
@@ -372,14 +316,13 @@ fn cancelling_initialization_cleans_an_already_launched_tree() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let Prepared {
-        request, keepalive, ..
-    } = prepare(dir.path());
+    let request = request(dir.path());
     fs::write(dir.path().join("delay-initialize"), "").unwrap();
     let (cancel, cancelled) = futures::channel::oneshot::channel::<()>();
-    let connecting = connector().connect_managed(request).unwrap();
     let worker = std::thread::spawn(move || {
         futures::executor::block_on(async {
+            let connecting = AcpConnector::managed(PathBuf::from(env!("CARGO_BIN_EXE_nocterm")))
+                .connect(request);
             match futures::future::select(connecting, cancelled).await {
                 futures::future::Either::Right(_) => {}
                 futures::future::Either::Left((result, _)) => panic!(
@@ -398,7 +341,6 @@ fn cancelling_initialization_cleans_an_already_launched_tree() {
     let launched = dir.path().join("pids").exists();
     cancel.send(()).unwrap();
     worker.join().unwrap();
-    drop(keepalive);
     assert!(launched, "Delayed agent never started");
     assert_gone(&pids(dir.path()));
 }
@@ -412,14 +354,15 @@ fn startup_cancellation_is_acknowledged_after_cgroup_cleanup() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let Prepared {
-        request,
-        cancellation,
-        keepalive,
-    } = prepare(dir.path());
+    let request = request(dir.path());
+    let cancellation = request.cancellation.clone();
     fs::write(dir.path().join("delay-initialize"), "").unwrap();
-    let connecting = connector().connect_managed(request).unwrap();
-    let worker = std::thread::spawn(move || futures::executor::block_on(connecting).err());
+    let worker = std::thread::spawn(move || {
+        futures::executor::block_on(
+            AcpConnector::managed(PathBuf::from(env!("CARGO_BIN_EXE_nocterm"))).connect(request),
+        )
+        .err()
+    });
     let deadline = Instant::now() + Duration::from_secs(8);
     while !dir.path().join("pids").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(25));
@@ -438,5 +381,4 @@ fn startup_cancellation_is_acknowledged_after_cgroup_cleanup() {
         pids(dir.path()).iter().all(|pid| !running(*pid)),
         "Cancellation returned before the process tree was stopped"
     );
-    drop(keepalive);
 }

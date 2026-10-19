@@ -181,24 +181,16 @@ survives later failure or cancellation without advancing file or byte counters.
 
 ## Agent history
 
-`nocterm-ai` owns neutral version-two transcript codecs, structural/collection
+`nocterm-ai` owns pure version-one transcript codecs, structural/collection
 validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
-Historical version-one grammar stays in the storage adapter; domain records contain
-no protocol SDK values. Authentic retention graphs share allocation marks across
-JSON, identifiers, display, prepared caches and physical transcript components.
-`DocumentRetention` supplies fixed linear producer capabilities and admits actual
-pending construction credit alongside registered retained owners. `ReaderSource`
-and `WriterProducer` loan the original capabilities and return them after physical
-payload retirement; they do not locate scopes by serialized chat ID.
+SavedChat and SharedChat hold neutral `nocterm_ai::model` records whose serialization
+is the version-one transcript JSON; no agent protocol SDK type appears in the domain
+([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
-([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records without adding protocol-specific fields.
-`HistoryCodecError::Json` and the `AgentStorageError` variants `StateDecode`,
-`Read`, `Publish`, `Directory`, `StatePublication` and `Delete` hold their original
-concrete errors in foundation `SharedError`, so standard source traversal reaches
-them and clones share them. Managed variants use their paid resident holders.
+([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
@@ -217,13 +209,14 @@ a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapte
 `nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
 usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing
-`session_config` helpers retain pure neutral choice and category rules.
+`session_config` helpers retain pure choice and category rules; protocol-backed
+version-one values remain migration debt at their established seams.
 
-`SavedChat::for_identity` constructs framing from supplied values without
+Version-one `SavedChat::for_identity` constructs framing from supplied values without
 allocating a replacement UUID or querying time. Its saved-window boundary is shared
 with feature semantic comparisons. Genuine new/fork allocation uses the injected
 native ChatMetadataSource. The transcript reducer receives the same timestamp as the accepted document transition;
-the canonical history projection uses neutral version-two records.
+the history wire format and protocol-backed records retain their current representation.
 
 ## Agent image contracts
 

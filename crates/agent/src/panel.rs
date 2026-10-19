@@ -37,12 +37,11 @@ mod navigation;
 mod notices;
 mod preview_operation;
 mod queue;
+mod queue_image_preparation;
 mod servers;
 mod shell;
 mod sign_in;
 mod stream;
-#[cfg(feature = "test-support")]
-pub mod test_support;
 mod transcript;
 mod usage;
 mod widgets;
@@ -380,13 +379,9 @@ impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         self.history.set_visible(self.history_is_visible(cx), cx);
-        let agent = current.as_ref().and_then(|thread| {
-            thread
-                .read(cx)
-                .document()
-                .agent_id()
-                .map(|id| id.to_string())
-        });
+        let agent = current
+            .as_ref()
+            .map(|thread| thread.read(cx).document().agent_id().to_owned());
         let header = shell::ShellRenderer::header(
             agent,
             self.title(cx),

@@ -19,10 +19,7 @@ tempfile.workspace = true
 futures.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["user", "fs"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Environment", "Win32_Foundation"] }
+nix = { version = "0.28", features = ["user"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,49 +1,21 @@
 use super::*;
 use gpui_kit::px;
-use nocterm_ai::model::{
-    ids::ToolId,
-    json::OwnedJson,
-    literal::{LiteralIdentity, TextRange},
-    retention::RetentionAuthority,
-    tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus},
-};
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
+use nocterm_ai::model::tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus};
 use nocterm_ai::thread::Entry;
 use serde_json::{Value, json};
-fn wrapped_identity(call: &mut ToolRecord, owner: std::ops::Range<usize>) {
-    let server = call.arguments.as_ref().unwrap()["server"].as_str().unwrap();
-    let tool = call.arguments.as_ref().unwrap()["tool"].as_str().unwrap();
-    call.literal.input = LiteralIdentity::Registered {
-        owner: TextRange::supplied(server, &server[owner]).unwrap(),
-        tool: TextRange::supplied(tool, tool).unwrap(),
-    };
-}
 
-use crate::panel::entries::tool_input::source;
+use crate::panel::{entries::tool_input::source, widgets::short_hover_label};
 use nocterm_ai::tool_display::{self, ToolDisplay};
 
-fn verified_call(authority: &RetentionAuthority, tool: &str, input: Value) -> ToolRecord {
+fn verified_call(tool: &str, input: Value) -> ToolRecord {
     let request = tool_display::parse(tool, input.clone()).unwrap();
-    let mut call = super::provider_fixtures::provider_tool(
-        "verified",
-        format!("mcp.nocterm-3.{tool}"),
-        ToolStatus::Pending,
-    );
-    let end = call.title.len();
-    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
-    call.arguments = Some(
-        OwnedJson::from_untracked(
-            authority,
-            json!({"server":"nocterm-3","tool":tool,"arguments":input}),
-        )
-        .unwrap(),
-    );
-    wrapped_identity(&mut call, 8..9);
+    let mut call = ToolRecord::new("verified", format!("mcp.nocterm-3.{tool}"));
+    call.raw_input = Some(json!({"server":"nocterm-3","tool":tool,"arguments":input}));
     ToolDisplay::new(
-        authority,
         &request,
         Some("Production · root@actual.example:2222".into()),
     )
-    .unwrap()
     .attach(&mut call);
     call
 }
@@ -55,10 +27,8 @@ fn verified_call(authority: &RetentionAuthority, tool: &str, input: Value) -> To
     reason = "predates the limit"
 )]
 fn verified_inputs_show_operations_with_literal_arguments_and_separate_options() {
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let command = r#"printf '%s\n' '```literal```' "$HOME""#;
     let call = verified_call(
-        &authority,
         "run_command",
         json!({"terminal_id":"t1","command":command,"timeout_ms":10000,"idle_ms":500}),
     );
@@ -70,7 +40,6 @@ fn verified_inputs_show_operations_with_literal_arguments_and_separate_options()
     let input = "\t*literal*\r\n```\r\n![not an image](url)\r\n";
     for enter in [false, true] {
         let call = verified_call(
-            &authority,
             "send_input",
             json!({"terminal_id":"t1","text":input,"press_enter":enter}),
         );
@@ -88,7 +57,6 @@ fn verified_inputs_show_operations_with_literal_arguments_and_separate_options()
     }
     let args = json!(["-c", "echo 'a b'\n", "", "\t", "'\"`$HOME"]);
     let call = verified_call(
-        &authority,
         "exec_command",
         json!({"terminal_id":"t1","program":"sh","args":args,"stdin":input}),
     );
@@ -141,7 +109,7 @@ fn verified_inputs_show_operations_with_literal_arguments_and_separate_options()
             vec![],
         ),
     ] {
-        let selected = source(&verified_call(&authority, tool, input)).unwrap();
+        let selected = source(&verified_call(tool, input)).unwrap();
         assert_eq!(selected.label, label);
         assert_eq!(selected.text, literal);
         assert_eq!(selected.parameters, parameters);
@@ -150,14 +118,11 @@ fn verified_inputs_show_operations_with_literal_arguments_and_separate_options()
 
 #[test]
 fn display_snapshot_takes_precedence_over_mutated_provider_inputs() {
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let mut call = verified_call(
-        &authority,
         "run_command",
         json!({"terminal_id":"t1","command":"echo original"}),
     );
-    call.arguments =
-        Some(OwnedJson::from_untracked(&authority, json!({"command":"echo forged"})).unwrap());
+    call.raw_input = Some(json!({"command":"echo forged"}));
     call.title = "forged destination".into();
     assert_eq!(source(&call).unwrap().text, "echo original");
     assert!(
@@ -168,16 +133,9 @@ fn display_snapshot_takes_precedence_over_mutated_provider_inputs() {
 
 #[test]
 fn historical_nocterm_input_is_requested_data_without_a_guessed_destination() {
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_fixtures::provider_tool(
-        "historical",
-        "mcp.nocterm-3.run_command",
-        ToolStatus::Pending,
-    );
-    let end = call.title.len();
-    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
-    call.arguments=Some(OwnedJson::from_untracked(&authority,json!({"server":"nocterm-3","tool":"run_command","arguments":{"terminal_id":"t1","command":"echo original","timeout_ms":10000,"idle_ms":1000}})).unwrap());
-    wrapped_identity(&mut call, 8..9);
+    let mut call = ToolRecord::new("historical", "mcp.nocterm-3.run_command").raw_input(json!({
+        "server":"nocterm-3", "tool":"run_command", "arguments":{"terminal_id":"t1", "command":"echo original", "timeout_ms":10000,"idle_ms":1000}
+    }));
     let selected = source(&call).unwrap();
     assert_eq!(selected.label, "Requested command");
     assert_eq!(selected.text, "echo original");
@@ -189,11 +147,7 @@ fn historical_nocterm_input_is_requested_data_without_a_guessed_destination() {
         json!({"server":"nocterm-3", "tool":"send_input", "arguments":{"terminal_id":"t1","text":"foreign"}}),
         json!({"arguments":{"command":"foreign nested input"}}),
     ] {
-        call.arguments = Some(OwnedJson::from_untracked(&authority, input.clone()).unwrap());
-        call.literal.input = LiteralIdentity::Invalid;
-        if let Some(server) = input.get("server").and_then(Value::as_str) {
-            wrapped_identity(&mut call, 8..server.len());
-        }
+        call.raw_input = Some(input.clone());
         assert_eq!(source(&call).unwrap().label, "Tool input");
         assert_eq!(
             source(&call).unwrap().text,
@@ -201,36 +155,29 @@ fn historical_nocterm_input_is_requested_data_without_a_guessed_destination() {
         );
     }
     call.title = "mcp.foreign.run_command".into();
-    call.literal.title = LiteralIdentity::Invalid;
-    call.arguments=Some(OwnedJson::from_untracked(&authority,json!({"server":"nocterm-3","tool":"run_command","arguments":{"terminal_id":"t1","command":"echo foreign"}})).unwrap());
+    call.raw_input = Some(
+        json!({"server":"nocterm-3", "tool":"run_command", "arguments":{"terminal_id":"t1", "command":"echo foreign"}}),
+    );
     assert_eq!(source(&call).unwrap().label, "Tool input");
 }
 
 #[test]
 fn tool_source_preserves_literals_and_uses_explicit_fields() {
-    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let literal = "python3 - <<'PY'\r\n\tprint('*literal*')\r\nPY\r\n";
     for input in [
         json!({"command":literal,"script":"other","code":"other"}),
         json!({"command":3,"script":literal,"code":"other"}),
         json!({"code":literal}),
     ] {
-        let mut call = super::provider_fixtures::provider_tool(
-            "call",
-            "provider summary",
-            ToolStatus::Pending,
-        );
-        call.arguments = Some(OwnedJson::from_untracked(&authority, input.clone()).unwrap());
+        let mut call = ToolRecord::new("call", "provider summary");
+        call.raw_input = Some(input.clone());
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Script");
         assert_eq!(selected.text, literal);
-        assert_eq!(
-            call.arguments.as_ref().map(OwnedJson::as_value),
-            Some(&input)
-        );
+        assert_eq!(call.raw_input.as_ref(), Some(&input));
     }
-    let mut call = super::provider_fixtures::provider_tool("call", "summary", ToolStatus::Pending);
-    call.arguments = Some(OwnedJson::from_untracked(&authority, json!(literal)).unwrap());
+    let mut call = ToolRecord::new("call", "summary");
+    call.raw_input = Some(json!(literal));
     let selected = source(&call).unwrap();
     assert_eq!(selected.label, "Tool input");
     assert_eq!(selected.text, literal);
@@ -239,28 +186,31 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
         json!([1, "two"]),
         json!(false),
     ] {
-        let mut call = super::provider_fixtures::provider_tool(
-            "call",
-            "summary\nwith lines",
-            ToolStatus::Pending,
-        );
-        call.arguments = Some(OwnedJson::from_untracked(&authority, input.clone()).unwrap());
+        let mut call = ToolRecord::new("call", "summary\nwith lines");
+        call.raw_input = Some(input.clone());
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Tool input");
         assert_eq!(selected.text, serde_json::to_string_pretty(&input).unwrap());
     }
     for input in [None, Some(Value::Null)] {
-        let mut call =
-            super::provider_fixtures::provider_tool("call", literal, ToolStatus::Pending);
-        call.arguments = input
-            .clone()
-            .map(|value| OwnedJson::from_untracked(&authority, value).unwrap());
+        let mut call = ToolRecord::new("call", literal);
+        call.raw_input = input.clone();
         let selected = source(&call).unwrap();
         assert_eq!(selected.label, "Tool details");
         assert_eq!(selected.text, literal);
         call.title = "ordinary title".into();
         assert!(source(&call).is_none());
     }
+}
+
+#[test]
+fn hover_summary_is_short_and_unicode_safe() {
+    assert_eq!(short_hover_label("short\n title"), "short title");
+    let long = "界🚀".repeat(100);
+    let shortened = short_hover_label(&long);
+    assert_eq!(shortened.chars().count(), 161);
+    assert_eq!(shortened, format!("{}…", "界🚀".repeat(80)));
+    assert_eq!(short_hover_label(&"界".repeat(160)), "界".repeat(160));
 }
 
 fn settle(f: &Fixture, cx: &mut TestAppContext) {
@@ -271,23 +221,19 @@ fn settle(f: &Fixture, cx: &mut TestAppContext) {
     }
 }
 
-fn tool_chat(cx: &mut TestAppContext) -> Fixture {
+fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> Fixture {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
-    f
-}
-
-fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> Fixture {
-    let f = tool_chat(cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
-        let mut call =
-            super::provider_fixtures::provider_tool("script", title, ToolStatus::Pending);
+        let mut call = ToolRecord::new("script", title);
         call.status = ToolStatus::Succeeded;
-        call.arguments =
-            input.map(|value| OwnedJson::from_untracked(&f.installation.retention, value).unwrap());
-        call.output = vec![super::tool_output::text_output("original result".into())];
+        call.raw_input = input;
+        call.content = serde_json::from_value(json!([
+            {"type":"content", "content":{"type":"text", "text":"original result"}}
+        ]))
+        .unwrap();
         restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
         thread.mark_dirty(0);
         cx.notify();
@@ -317,19 +263,12 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
         window.click(("copy-tool-input", 0usize), cx);
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
         let thread = f.panel.read(cx).current().unwrap();
-        let facts = thread.read(cx).tool_facts();
-        assert_eq!(facts[0].arguments, Some(json!({"command":script})));
-        thread.read(cx).with_tool(0, |call| {
-            let nocterm_ai::history::physical::OutputSlot::Content { content, .. } =
-                &call.output()[0]
-            else {
-                panic!("expected original result content")
-            };
-            let nocterm_ai::history::physical::ContentSlot::Text(text) = content.as_ref() else {
-                panic!("expected original result text")
-            };
-            assert_eq!(&*text.text(), "original result");
-        });
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
+            panic!("tool missing")
+        };
+        assert_eq!(call.raw_input, Some(json!({"command":script})));
+        let result = serde_json::to_value(&call.content).unwrap();
+        assert_eq!(result[0]["content"]["text"], "original result");
     })
     .unwrap();
 
@@ -345,24 +284,16 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
             .clone()
             .unwrap()
     });
-    deliver(
-        &f,
-        &session,
-        SessionUpdate::ToolChanged(ToolPatch {
-            id: ToolId::new("script"),
-            changes: ToolChanges {
-                arguments: Some(
-                    OwnedJson::from_untracked(&f.installation.retention, json!({"script":updated}))
-                        .unwrap(),
-                ),
-                ..Default::default()
-            },
-            extensions: None,
-            claims: Default::default(),
-            literal: Default::default(),
-        }),
-        cx,
-    );
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            session,
+            SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "script",
+                ToolChanges::default().raw_input(json!({"script":updated})),
+            ))),
+        )))
+        .unwrap();
+    cx.run_until_parked();
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click(("copy-tool-input", 0usize), cx);
@@ -457,32 +388,11 @@ fn set_verified(f: &Fixture, mut call: ToolRecord, cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn verified_server_and_command_remain_readable_in_both_themes(cx: &mut TestAppContext) {
-    use nocterm_ai::history::SavedChat;
     let command = r#"printf '%s\n' '```literal```' "$HOME""#;
-    let f = tool_chat(cx);
-    let mut call = verified_call(
-        &f.installation.retention,
-        "run_command",
-        json!({"terminal_id":"t1","command":command}),
-    );
+    let f = tool_fixture(cx, "placeholder", None);
+    let mut call = verified_call("run_command", json!({"terminal_id":"t1","command":command}));
     // Restored entries carry their original destination with no attachment.
-    let retention = &f.installation.retention;
-    let saved = SavedChat::for_identity(
-        retention,
-        "fixture".into(),
-        "00000000-0000-4000-8000-0000000000d2".into(),
-        0,
-    );
-    let (id, metadata, resume, mut transcript, composer, _) = saved.into_parts();
-    transcript.entries = vec![Entry::Tool(call)];
-    let saved =
-        SavedChat::from_parts(retention, id, metadata, resume, transcript, composer).unwrap();
-    f.repository.seed_chat(&saved).unwrap();
-    let restored = f.repository.transcript(saved.id()).unwrap();
-    let Entry::Tool(restored) = &restored.transcript().entries[0] else {
-        unreachable!()
-    };
-    call = restored.clone();
+    call = serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
     set_verified(&f, call, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click(("tool-call", 0usize), cx)
@@ -515,27 +425,21 @@ fn verified_server_and_command_remain_readable_in_both_themes(cx: &mut TestAppCo
 
 #[gpui_kit::test]
 fn copying_a_redacted_snapshot_cannot_reveal_original_input(cx: &mut TestAppContext) {
-    let f = tool_chat(cx);
     let original = "password=1 ".repeat(1400);
     let request = tool_display::parse(
         "run_command",
         json!({"terminal_id":"t1","command":original}),
     )
     .unwrap();
-    let mut display = ToolDisplay::new(
-        &f.installation.retention,
-        &request,
-        Some("Original server".into()),
-    )
-    .unwrap();
-    display.redact().unwrap();
+    let mut display = ToolDisplay::new(&request, Some("Original server".into()));
+    display.redact();
     let redacted = display.arguments["command"].as_str().unwrap().to_owned();
     let mut call = verified_call(
-        &f.installation.retention,
         "run_command",
         json!({"terminal_id":"t1","command":original}),
     );
     display.attach(&mut call);
+    let f = tool_fixture(cx, "placeholder", None);
     set_verified(&f, call, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click(("tool-call", 0usize), cx)
@@ -559,11 +463,10 @@ fn copying_a_redacted_snapshot_cannot_reveal_original_input(cx: &mut TestAppCont
 fn structured_arguments_and_stdin_are_independently_copyable(cx: &mut TestAppContext) {
     let args = json!(["-c", "printf '%s' 'a b'", "", "\t"]);
     let stdin = "\t*literal*\r\n```\r\n![not an image](url)\r\n";
-    let f = tool_chat(cx);
+    let f = tool_fixture(cx, "placeholder", None);
     set_verified(
         &f,
         verified_call(
-            &f.installation.retention,
             "exec_command",
             json!({"terminal_id":"t1","program":"sh","args":args,"stdin":stdin}),
         ),
@@ -597,6 +500,53 @@ fn structured_arguments_and_stdin_are_independently_copyable(cx: &mut TestAppCon
         assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), stdin);
     })
     .unwrap();
+}
+
+struct ConnectedAccess {
+    base: Rc<Access>,
+    target: std::cell::RefCell<nocterm_session::Target>,
+}
+impl TerminalState for ConnectedAccess {
+    fn info(&self, cx: &App) -> Option<TerminalInfo> {
+        let mut info = self.base.info(cx)?;
+        info.local = false;
+        info.profile = Some("edited-profile".into());
+        info.target = Some(self.target.borrow().clone());
+        Some(info)
+    }
+}
+impl TerminalTextSource for ConnectedAccess {
+    fn read(
+        &self,
+        expected: ExpectedSession,
+        request: TextRequest,
+        cx: &App,
+    ) -> Result<TerminalText, nocterm_workspace::TerminalError> {
+        self.base.read(expected, request, cx)
+    }
+}
+impl TerminalInput for ConnectedAccess {
+    fn send_text(
+        &self,
+        expected: ExpectedSession,
+        text: &str,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
+        self.base.send_text(expected, text, cx)
+    }
+}
+impl SignInPrompts for ConnectedAccess {
+    fn pending(&self, cx: &App) -> Option<nocterm_workspace::SignInPrompt> {
+        self.info(cx)?.sign_in
+    }
+    fn answer(
+        &self,
+        token: UserPromptToken,
+        answer: nocterm_session::Secret,
+        cx: &mut App,
+    ) -> Result<(), nocterm_workspace::TerminalError> {
+        self.base.answer(token, answer, cx)
+    }
 }
 
 #[gpui_kit::test]
@@ -652,18 +602,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
             thread.read(cx).registration().as_ref().unwrap().id
         )
     });
-    let mut call = super::provider_fixtures::provider_tool(
-        "snapshot",
-        format!("mcp.{server}.run_command"),
-        ToolStatus::Pending,
+    let mut call = ToolRecord::new("snapshot", format!("mcp.{server}.run_command"));
+    call.raw_input = Some(
+        json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo snapshot"}}),
     );
-    let end = call.title.len();
-    super::provider_fixtures::known_title(&mut call, 12..4 + server.len(), 5 + server.len()..end);
-    call.arguments=Some(OwnedJson::from_untracked(&f.installation.retention,json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo snapshot"}})).unwrap());
-    wrapped_identity(&mut call, 8..server.len());
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            report_control(&f, thread, SessionUpdate::ToolStarted(call), cx);
+            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo snapshot"})),
@@ -672,39 +617,29 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 call: request.clone(),
                 respond,
             };
-            thread
-                .record_tool_display(&mut request, Some(&entry), cx)
-                .unwrap();
+            thread.record_tool_display(&mut request, Some(&entry), cx);
             thread.clear_composer_context(cx);
         })
     });
     directory.0.borrow_mut()[0].name = "Renamed".into();
     *access.target.borrow_mut() = nocterm_session::Target::new("reconnected", "new.example", 22);
     cx.update(|cx| {
-        thread.update(cx, |thread, cx| {
-            report_control(
-                &f,
-                thread,
-                SessionUpdate::ToolChanged(ToolPatch {
-                    id: ToolId::new("snapshot"),
-                    changes: ToolChanges {
-                        title: Some("Renamed".into()),
-                        status: Some(ToolStatus::Succeeded),
-                        ..Default::default()
-                    },
-                    extensions: None,
-                    claims: Default::default(),
-                    literal: Default::default(),
-                }),
-                cx,
-            );
-            let call = thread.tool_slot(0);
+        thread.update(cx, |thread, _| {
+            thread.apply_presented_update(SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                "snapshot",
+                ToolChanges::default()
+                    .title("Renamed")
+                    .status(ToolStatus::Succeeded),
+            ))));
+            let Entry::Tool(call) = &thread.transcript().entries[0] else {
+                unreachable!()
+            };
             assert_eq!(
-                tool_display::managed_header(call),
+                tool_display::header(call),
                 "Production · original@original.example:2222 · Run command · Completed"
             );
-            assert!(!tool_display::managed_header(call).contains("edited.example"));
-            assert!(!tool_display::managed_header(call).contains("new.example"));
+            assert!(!tool_display::header(call).contains("edited.example"));
+            assert!(!tool_display::header(call).contains("new.example"));
         })
     });
     *access.target.borrow_mut() = nocterm_session::Target::new("root", "::1", 2222);
@@ -713,18 +648,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
         json!({"terminal_id":"t1","command":"echo ipv6"}),
     )
     .unwrap();
-    let mut call = super::provider_fixtures::provider_tool(
-        "ipv6",
-        format!("mcp.{server}.run_command"),
-        ToolStatus::Pending,
+    let mut call = ToolRecord::new("ipv6", format!("mcp.{server}.run_command"));
+    call.raw_input = Some(
+        json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo ipv6"}}),
     );
-    let end = call.title.len();
-    super::provider_fixtures::known_title(&mut call, 12..4 + server.len(), 5 + server.len()..end);
-    call.arguments=Some(OwnedJson::from_untracked(&f.installation.retention,json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo ipv6"}})).unwrap());
-    wrapped_identity(&mut call, 8..server.len());
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            report_control(&f, thread, SessionUpdate::ToolStarted(call), cx);
+            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo ipv6"})),
@@ -733,12 +663,12 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
                 call: ipv6.clone(),
                 respond,
             };
-            thread
-                .record_tool_display(&mut request, Some(&entry), cx)
-                .unwrap();
-            let call = thread.tool_slot(1);
+            thread.record_tool_display(&mut request, Some(&entry), cx);
+            let Entry::Tool(call) = &thread.transcript().entries[1] else {
+                unreachable!()
+            };
             assert!(
-                tool_display::managed_header(call)
+                tool_display::header(call)
                     .starts_with("Production · root@[::1]:2222 · Run command")
             );
         })

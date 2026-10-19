@@ -150,13 +150,11 @@ fn check_dependency(
     Ok(())
 }
 
-/// Agent protocol SDK types stay in the protocol adapter and the storage
-/// adapter's historical grammar; other crates use neutral AI records (ADR 0058).
+/// Agent protocol SDK types stay in the protocol adapter; other crates use
+/// neutral AI records (ADR 0058).
 fn check_protocol_dependency(package: &str, dependency: &Dependency) -> anyhow::Result<()> {
     let name = dependency.name.as_str();
-    if name.starts_with("agent-client-protocol")
-        && !matches!(package, "nocterm-acp" | "nocterm-agent-storage")
-    {
+    if name.starts_with("agent-client-protocol") && package != "nocterm-acp" {
         bail!("{package} depends on agent protocol SDK {name}");
     }
     Ok(())
@@ -547,7 +545,7 @@ mod tests {
         assert!(check_dependency("app", &missing, &layers).is_err());
     }
     #[test]
-    fn agent_protocol_sdk_is_limited_to_its_adapters() {
+    fn agent_protocol_sdk_is_limited_to_its_adapter() {
         for name in ["agent-client-protocol", "agent-client-protocol-schema"] {
             for kind in [None, Some("dev")] {
                 let dependency = Dependency {
@@ -557,11 +555,10 @@ mod tests {
                     features: Vec::new(),
                     uses_default_features: true,
                 };
-                for package in ["nocterm-acp", "nocterm-agent-storage"] {
-                    assert!(check_protocol_dependency(package, &dependency).is_ok());
-                }
+                assert!(check_protocol_dependency("nocterm-acp", &dependency).is_ok());
                 for package in [
                     "nocterm-ai",
+                    "nocterm-agent-storage",
                     "nocterm-agent-runtime",
                     "nocterm-agent",
                     "nocterm",

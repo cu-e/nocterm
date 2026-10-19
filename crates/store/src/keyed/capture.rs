@@ -1,5 +1,5 @@
 //! Immutable independent-key policy for the one Store captured runner.
-use super::{Candidate, CloneValues, DiskStamps, KeyedStamp, KeyedValueOwnership, KeyedWriter};
+use super::{Candidate, DiskStamps, KeyedStamp, KeyedWriter};
 use crate::{
     StoreError,
     worker::{
@@ -9,7 +9,7 @@ use crate::{
 };
 use futures::future::BoxFuture;
 use nocterm_core::persist::WriteGate;
-use std::{collections::VecDeque, hash::Hash, sync::Arc};
+use std::{collections::VecDeque, hash::Hash};
 
 pub struct KeyedOutcome<K, Tag> {
     stamp: KeyedStamp<K, Tag>,
@@ -27,28 +27,22 @@ impl<K, Tag> KeyedOutcome<K, Tag> {
         self.result.clone()
     }
 }
-pub struct CapturedKeys<K, V, Tag, P: KeyedValueOwnership<V> = CloneValues> {
+pub struct CapturedKeys<K, V, Tag> {
     pending: VecDeque<Candidate<K, V, Tag>>,
-    writer: KeyedWriter<K, P::Write>,
+    writer: KeyedWriter<K, V>,
     gate: WriteGate,
     disk: DiskStamps<K, Tag>,
     active: Option<KeyedStamp<K, Tag>>,
     outcomes: Vec<KeyedOutcome<K, Tag>>,
-    ownership: Arc<P>,
 }
-impl<
-    K: Clone + Eq + Hash + Send + 'static,
-    V: Send + 'static,
-    Tag: Clone + Send + 'static,
-    P: KeyedValueOwnership<V>,
-> CapturedKeys<K, V, Tag, P>
+impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clone + Send + 'static>
+    CapturedKeys<K, V, Tag>
 {
     pub(super) fn new(
         candidates: Vec<Candidate<K, V, Tag>>,
-        writer: KeyedWriter<K, P::Write>,
+        writer: KeyedWriter<K, V>,
         gate: WriteGate,
         disk: DiskStamps<K, Tag>,
-        ownership: Arc<P>,
     ) -> Self {
         Self {
             pending: candidates.into(),
@@ -57,19 +51,14 @@ impl<
             disk,
             active: None,
             outcomes: Vec::new(),
-            ownership,
         }
     }
     pub fn run(self) -> BoxFuture<'static, Vec<KeyedOutcome<K, Tag>>> {
         captured::run(self)
     }
 }
-impl<
-    K: Clone + Eq + Hash + Send + 'static,
-    V: Send + 'static,
-    Tag: Clone + Send + 'static,
-    P: KeyedValueOwnership<V>,
-> CapturedPolicy for CapturedKeys<K, V, Tag, P>
+impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clone + Send + 'static>
+    CapturedPolicy for CapturedKeys<K, V, Tag>
 {
     type Physical = ();
     type Output = Vec<KeyedOutcome<K, Tag>>;
@@ -98,12 +87,8 @@ impl<
                 let writer = self.writer.clone();
                 let disk = self.disk.clone();
                 let stamp = candidate.stamp.clone();
-                let capture = self.ownership.capture(&candidate.value);
                 return Some(DiskOperation::new(
-                    move || match capture {
-                        Ok(capture) => capture.run(candidate.stamp.key, writer),
-                        Err(error) => Box::pin(async move { Err(error) }),
-                    },
+                    move || writer(candidate.stamp.key, candidate.value),
                     move |result| {
                         if result.is_ok() {
                             disk.lock()

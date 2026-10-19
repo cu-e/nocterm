@@ -1,24 +1,44 @@
 use super::*;
 use crate::thread::AgentThread;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 
 #[gpui_kit::test]
 fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
     new_chat(&f, cx);
-    let session = exchange(&f, "hello", "answer", cx);
+    let session = cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
+        thread.read(cx).session().clone().unwrap()
+    });
+    cx.run_until_parked();
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            session.clone(),
+            SessionUpdate::AgentMessageChunk(Content::Text(nocterm_ai::model::content::Text::new(
+                "answer",
+            ))),
+        )))
+        .unwrap();
+    cx.run_until_parked();
+    let finish = f.commands.pending.lock().unwrap().take().unwrap();
+    finish
+        .send(PromptOutcome::new(StopReason::EndTurn))
+        .unwrap();
+    cx.run_until_parked();
 
     let saved = f.repository.chats();
     assert_eq!(saved.len(), 1);
-    assert_eq!(
-        saved[0].resume().session_id.as_deref(),
-        Some(session.as_str())
-    );
+    assert_eq!(saved[0].session_id.as_deref(), Some(session.as_str()));
     assert!(matches!(
-        saved[0].transcript().entries.as_slice(),
+        saved[0].entries.as_slice(),
         [nocterm_ai::thread::Entry::User(_), nocterm_ai::thread::Entry::Agent(answer)] if answer == "answer"
     ));
     // The terminal context sent with the prompt is not part of the chat.
-    let text = String::from_utf8(f.repository.encoded(saved[0].id()).unwrap()).unwrap();
+    let text = String::from_utf8(f.repository.encoded(&saved[0].id).unwrap()).unwrap();
     assert!(
         !text.contains(nocterm_ai::context::TERMINAL_RULES),
         "{text}"
@@ -44,15 +64,10 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert!(thread.dormant());
-        assert!(thread.is_archived());
+        assert_eq!(thread.transcript().entries.len(), 2);
         assert!(thread.session().is_none());
     });
     assert!(f.commands.restores.lock().unwrap().is_empty());
-    let opened = thread.entity_id();
-    f.panel
-        .update(cx, |panel, cx| panel.open_thread(opened, cx));
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(thread.read(cx).history_rows().len(), 2));
 
     // Opening it reopens the agent's session instead of starting another.
     let sessions = f.commands.sessions.load(Ordering::SeqCst);
@@ -65,7 +80,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), sessions);
     cx.update(|cx| assert_eq!(thread.read(cx).session().as_ref(), Some(&session)));
 
-    let id = cx.update(|cx| thread.read(cx).chat_id_string());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     cx.update(|cx| f.installation.installed.runtime().delete_chat(id, cx));
     cx.run_until_parked();
     assert!(f.repository.chats().is_empty());
@@ -85,7 +100,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
     let (old, chat) = cx.update(|cx| {
         let panel = f.panel.read(cx);
         let old = panel.chat_documents().next().unwrap().clone();
-        let chat = old.read(cx).chat_id_string();
+        let chat = old.read(cx).document().chat_id().to_owned();
         (old, chat)
     });
     let id = old.entity_id();
@@ -108,7 +123,7 @@ fn empty_chats_are_dropped_when_another_starts_and_restart_keeps_the_chat(cx: &m
         assert_eq!(panel.chat_documents().len(), 1);
         let thread = panel.current().unwrap().read(cx);
         assert_ne!(panel.current().unwrap().entity_id(), id);
-        assert_eq!(thread.chat_id_string(), chat);
+        assert_eq!(thread.document().chat_id().to_owned(), chat);
         assert_eq!(thread.title(), "check the disk");
         assert!(!thread.ended());
     });
@@ -175,8 +190,8 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     })
     .unwrap();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].metadata().name.as_deref(), Some("Disks"));
-    assert!(saved[0].metadata().pinned);
+    assert_eq!(saved[0].name.as_deref(), Some("Disks"));
+    assert!(saved[0].pinned);
 
     // A fork starts with the chat's messages, in a copy of its session.
     cx.update_window(f.handle, |_, window, cx| {
@@ -194,12 +209,15 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
 
         let fork = panel.current().unwrap().read(cx);
         assert_eq!(fork.title(), "restart nginx (fork)");
-        assert_eq!(fork.history_rows().len(), 2);
+        assert_eq!(fork.transcript().entries.len(), 2);
         assert_eq!(
             fork.session().clone(),
             Some(SessionId::new(format!("fork-of-{nginx_session}")))
         );
-        assert_ne!(fork.chat_id_string(), nginx.read(cx).chat_id_string());
+        assert_ne!(
+            fork.document().chat_id(),
+            nginx.read(cx).document().chat_id().to_owned()
+        );
     });
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -237,16 +255,18 @@ fn assert_unaccepted_prompts_leave_no_history(
     thread: &mut AgentThread,
     cx: &mut gpui_kit::Context<AgentThread>,
 ) {
-    assert!(thread.history_rows().is_empty());
+    assert!(thread.history_entries().is_empty());
     thread.send("  ".into(), cx);
-    assert!(thread.history_rows().is_empty());
+    assert!(thread.history_entries().is_empty());
+    thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
     thread.send("Queued before the session is ready".into(), cx);
     assert_eq!(thread.composer().queue().len(), 1);
     let ids = thread.queued_prompt_ids().collect::<Vec<_>>();
     for id in ids {
         thread.remove_queued(id, None, cx);
     }
-    assert!(thread.history_rows().is_empty());
+    assert!(thread.history_entries().is_empty());
+    thread.end_composer_edit(false, cx);
 }
 
 #[gpui_kit::test]
@@ -257,14 +277,14 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| {
             assert_unaccepted_prompts_leave_no_history(thread, cx);
-            let mut option = super::composer::select(
+            let mut option = ConfigOption::select(
                 "model",
                 "Agent model",
                 "first",
-                vec![("first", "First model")],
+                vec![ConfigChoice::new("first", "First model")],
             );
-            option.category = Some(nocterm_ai::model::controls::ConfigCategory::Model);
-            report_control(&f, thread, SessionUpdate::Configuration(vec![option]), cx);
+            option.category = Some(ConfigCategory::Model);
+            report_control(thread, SessionUpdate::ConfigOptionUpdate(vec![option]), cx);
             thread.send("First request".into(), cx);
         });
     });
@@ -274,22 +294,22 @@ fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestA
         thread.update(cx, |thread, cx| {
             let model = thread.model();
             assert_eq!(model.as_deref(), Some("First model"));
-            assert_eq!(thread.history_rows().len(), 1);
-            report_control(&f, thread, SessionUpdate::Configuration(Vec::new()), cx);
+            assert_eq!(thread.transcript().entries.len(), 1);
+            report_control(thread, SessionUpdate::ConfigOptionUpdate(Vec::new()), cx);
             thread.send("Rejected while busy".into(), cx);
-            assert_eq!(thread.history_rows().len(), 1);
+            assert_eq!(thread.transcript().entries.len(), 1);
             assert_eq!(thread.model(), model);
             report_control(
-                &f,
                 thread,
-                SessionUpdate::Info(nocterm_ai::model::controls::Change::Set(
-                    "Updated title".into(),
-                )),
+                SessionUpdate::SessionInfoUpdate(nocterm_ai::model::session::SessionInfo {
+                    title: nocterm_ai::model::controls::Change::Set("Updated title".into()),
+                    meta: None,
+                }),
                 cx,
             );
             thread.stop(cx);
             thread.send("Rejected while stopping".into(), cx);
-            assert_eq!(thread.history_rows().len(), 1);
+            assert_eq!(thread.transcript().entries.len(), 1);
         });
     });
     cx.update_window(f.handle, |_, window, cx| {

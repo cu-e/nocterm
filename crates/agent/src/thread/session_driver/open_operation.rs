@@ -1,18 +1,15 @@
 //! An open attempt retains original commands, authority and bounded restore fallback.
-use super::{SessionAuthority, settle};
+use super::SessionAuthority;
 use crate::thread::Restore;
+use nocterm_ai::model::ids::SessionId;
+use nocterm_ai::model::session::{ExternalToolEndpoint, SessionOpen, SessionOpened};
 use nocterm_ai::{
-    connection::ManagedCommandsHandle,
-    history::source::{ManagedCommandError, ManagedOpened},
-    model::{
-        ids::SessionId,
-        session::{ExternalToolEndpoint, RestoreSession, SessionOpen},
-    },
-    session::{RESTORE_ATTEMPTS, RestoreFallback, managed_restore_fallback},
+    AgentCommands, AgentError,
+    session::{RESTORE_ATTEMPTS, RestoreFallback, restore_fallback},
 };
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 pub(in crate::thread) struct OpenSessionOperation {
-    commands: ManagedCommandsHandle,
+    commands: Arc<dyn AgentCommands>,
     authority: SessionAuthority,
     restore: Option<Restore>,
     workdir: PathBuf,
@@ -21,20 +18,11 @@ pub(in crate::thread) struct OpenSessionOperation {
 }
 pub(in crate::thread) struct OpenSessionCompletion {
     authority: SessionAuthority,
-    result: Result<ManagedOpened, ManagedCommandError>,
+    result: Result<SessionOpened, AgentError>,
     restored: Option<bool>,
     workdir: PathBuf,
     pending_restore: Option<Restore>,
 }
-/// The parts of a finished open attempt: authority, result, whether it was a
-/// restore, its working directory and the restore still pending.
-pub(in crate::thread) type OpenedParts = (
-    SessionAuthority,
-    Result<ManagedOpened, ManagedCommandError>,
-    Option<bool>,
-    PathBuf,
-    Option<Restore>,
-);
 impl OpenSessionCompletion {
     pub(in crate::thread) fn authority(&self) -> &SessionAuthority {
         &self.authority
@@ -43,9 +31,17 @@ impl OpenSessionCompletion {
         self.result
             .as_ref()
             .ok()
-            .map(|response| response.opened().session.clone())
+            .map(|response| response.session.clone())
     }
-    pub(in crate::thread) fn into_parts(self) -> OpenedParts {
+    pub(in crate::thread) fn into_parts(
+        self,
+    ) -> (
+        SessionAuthority,
+        Result<SessionOpened, AgentError>,
+        Option<bool>,
+        PathBuf,
+        Option<Restore>,
+    ) {
         (
             self.authority,
             self.result,
@@ -57,7 +53,7 @@ impl OpenSessionCompletion {
 }
 impl OpenSessionOperation {
     pub(in crate::thread) fn new(
-        commands: ManagedCommandsHandle,
+        commands: Arc<dyn AgentCommands>,
         authority: SessionAuthority,
         restore: Option<Restore>,
         workdir: PathBuf,
@@ -83,20 +79,23 @@ impl OpenSessionOperation {
             pending_restore: self.restore,
         }
     }
-    async fn open(&self) -> (Result<ManagedOpened, ManagedCommandError>, Option<bool>) {
+    async fn open(&self) -> (Result<SessionOpened, AgentError>, Option<bool>) {
         if let Some(restore) = &self.restore {
             for attempt in 0..RESTORE_ATTEMPTS {
-                let request = RestoreSession {
-                    session: restore.session.clone(),
-                    working_directory: restore.workdir.clone(),
-                    endpoints: self.servers.clone(),
-                    fork: restore.fork,
-                };
-                let error = match settle(self.commands.restore_session(&request)).await {
+                let error = match self
+                    .commands
+                    .restore_session(nocterm_ai::model::session::RestoreSession {
+                        session: restore.session.clone(),
+                        working_directory: restore.workdir.clone(),
+                        endpoints: self.servers.clone(),
+                        fork: restore.fork,
+                    })
+                    .await
+                {
                     Ok(response) => return (Ok(response), Some(true)),
                     Err(error) => error,
                 };
-                match managed_restore_fallback(&error, attempt, restore.fork) {
+                match restore_fallback(&error, attempt, restore.fork) {
                     RestoreFallback::SignIn | RestoreFallback::Fail => return (Err(error), None),
                     RestoreFallback::Retry => self.executor.timer(Duration::from_millis(250)).await,
                     RestoreFallback::StartFresh => {
@@ -106,11 +105,13 @@ impl OpenSessionOperation {
                 }
             }
         }
-        let request = SessionOpen {
-            working_directory: self.workdir.clone(),
-            endpoints: self.servers.clone(),
-        };
-        let result = settle(self.commands.new_session(&request)).await;
+        let result = self
+            .commands
+            .new_session(SessionOpen {
+                working_directory: self.workdir.clone(),
+                endpoints: self.servers.clone(),
+            })
+            .await;
         (result, self.restore.is_some().then_some(false))
     }
 }

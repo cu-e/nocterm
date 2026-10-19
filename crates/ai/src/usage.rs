@@ -1,13 +1,16 @@
 //! What a chat uses: its context window, the tokens spent, and the plan
 //! limits of the account behind the agent.
 //!
-//! Adapters report context/token totals and semantic plan limits. Native account
-//! logs are read through an injected source; provider metadata is not interpreted here.
+//! ACP reports the context window (`usage_update`) and, at the end of a turn,
+//! the session's token totals. Plan limits are not part of ACP: the Claude
+//! adapter attaches them to `usage_update` under `_claude/rateLimit`, and
+//! Codex writes them into session logs read through an injected account source.
+use crate::model::content::Content;
 
 mod source;
 pub use source::{AccountUsageSource, UsageAgent, UsageReadError};
 
-use crate::{model::content::Content, thread::Entry};
+use crate::{model::usage::ContextUsage, thread::Entry};
 
 /// The span a plan limit counts usage over.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -93,6 +96,28 @@ impl Limits {
     }
 }
 
+/// The plan limit the Claude adapter attached to `update`, if any.
+pub fn claude_limit(update: &ContextUsage) -> Option<RateLimit> {
+    let info = update.meta.as_ref()?.get("_claude/rateLimit")?;
+    let window = match info.get("rateLimitType")?.as_str()? {
+        "five_hour" => Window::FiveHour,
+        "seven_day" => Window::Weekly,
+        "seven_day_opus" => Window::WeeklyModel("Opus".into()),
+        "seven_day_sonnet" => Window::WeeklyModel("Sonnet".into()),
+        "overage" | "seven_day_overage_included" => Window::Extra,
+        _ => return None,
+    };
+    Some(RateLimit {
+        window,
+        used: info
+            .get("utilization")
+            .and_then(serde_json::Value::as_f64)
+            .map(|used| used.clamp(0., 1.)),
+        resets_at: info.get("resetsAt").and_then(serde_json::Value::as_u64),
+        reached: info.get("status").and_then(serde_json::Value::as_str) == Some("rejected"),
+    })
+}
+
 /// What fills the context window, estimated from the transcript.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Breakdown {
@@ -129,51 +154,15 @@ impl Breakdown {
                 Entry::Tool(call) => {
                     parts.tools += tokens(&call.title)
                         + call
-                            .arguments
+                            .raw_input
                             .iter()
-                            .chain(call.result.iter())
+                            .chain(call.raw_output.iter())
                             .map(|value| tokens(&value.to_string()))
                             .sum::<u64>();
                 }
                 Entry::Content(_) => {}
             }
         }
-        parts.scale_to(used)
-    }
-
-    /// Borrow the real immutable physical rows. JSON uses the same compact
-    /// bytes as the original display estimate without allocating those bytes.
-    pub fn estimate_managed(
-        entries: &[crate::history::physical::RowSlot],
-        used: u64,
-    ) -> Result<Self, crate::history::MeasurementError> {
-        use crate::history::physical::{ContentSlot, RowBody};
-        let mut parts = Self::default();
-        for entry in entries {
-            match entry.view() {
-                RowBody::User(values) => {
-                    for value in values.contents() {
-                        if let ContentSlot::Text(value) = value {
-                            parts.messages += tokens(&value.text());
-                        }
-                    }
-                }
-                RowBody::Agent(value) => parts.messages += tokens(&value.read()),
-                RowBody::Thought(value) => parts.reasoning += tokens(&value.read()),
-                RowBody::Tool(value) => {
-                    parts.tools += tokens(&value.title());
-                    for json in value.arguments().into_iter().chain(value.result()) {
-                        let bytes = crate::history::measure_json(&*json)?.encoded_bytes;
-                        parts.tools += (bytes as u64).div_ceil(4);
-                    }
-                }
-                RowBody::Content(_) => {}
-            }
-        }
-        Ok(parts.scale_to(used))
-    }
-    fn scale_to(mut self, used: u64) -> Self {
-        let parts = &mut self;
         let shown = parts.messages + parts.reasoning + parts.tools;
         if shown > used {
             let scale = |part: u64| (part as u128 * used as u128 / shown.max(1) as u128) as u64;
@@ -182,13 +171,49 @@ impl Breakdown {
             parts.tools = scale(parts.tools);
         }
         parts.agent = used - (parts.messages + parts.reasoning + parts.tools).min(used);
-        self
+        parts
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn update(meta: serde_json::Value) -> ContextUsage {
+        ContextUsage::new(10, 100).meta(
+            meta.as_object()
+                .cloned()
+                .map(crate::model::extensions::Extensions::from),
+        )
+    }
+
+    #[test]
+    fn claude_limits_come_from_usage_metadata() {
+        let limit = claude_limit(&update(serde_json::json!({
+            "_claude/rateLimit": {
+                "status": "allowed_warning",
+                "rateLimitType": "five_hour",
+                "utilization": 0.82,
+                "resetsAt": 1_791_588_105u64,
+            }
+        })))
+        .unwrap();
+        assert_eq!(limit.window, Window::FiveHour);
+        assert_eq!(limit.used, Some(0.82));
+        assert_eq!(limit.resets_at, Some(1_791_588_105));
+        assert!(!limit.reached);
+
+        let reached = claude_limit(&update(serde_json::json!({
+            "_claude/rateLimit": {"status": "rejected", "rateLimitType": "seven_day_opus"}
+        })))
+        .unwrap();
+        assert_eq!(reached.window, Window::WeeklyModel("Opus".into()));
+        assert_eq!(reached.used, None);
+        assert!(reached.reached);
+
+        assert!(claude_limit(&ContextUsage::new(1, 2)).is_none());
+        assert!(claude_limit(&update(serde_json::json!({"other": 1}))).is_none());
+    }
 
     #[test]
     fn limits_merge_by_window_in_order() {
@@ -213,11 +238,7 @@ mod tests {
     #[test]
     fn breakdown_splits_reported_usage_by_transcript() {
         let entries = vec![
-            Entry::User(vec![Content::Text(crate::model::content::Text {
-                text: "a".repeat(400),
-                annotations: None,
-                extensions: None,
-            })]),
+            Entry::User(vec![Content::text("a".repeat(400))]),
             Entry::Thought("b".repeat(80)),
             Entry::Agent("c".repeat(400)),
         ];
@@ -230,94 +251,5 @@ mod tests {
         let parts = Breakdown::estimate(&entries, 110);
         assert!(parts.messages + parts.reasoning + parts.tools <= 110);
         assert_eq!(parts.messages, 100);
-    }
-}
-
-#[cfg(test)]
-mod managed_tests {
-    use super::*;
-    use crate::{
-        history::physical::SnapshotBuilder,
-        model::{
-            json::deferred::{DecodeLedger, literal::LiteralBuilder},
-            native::{NativeList, NativeOwned},
-            retention::{
-                RetentionAuthority,
-                document::{
-                    DocumentRetention,
-                    tests::{snapshot, text},
-                },
-            },
-            tools::{ToolKind, ToolStatus},
-        },
-    };
-    #[test]
-    fn managed_estimate_matches_original_text_json_and_compaction_rules() {
-        let authority = RetentionAuthority::new(usize::MAX).unwrap();
-        let (_, mut roles) = DocumentRetention::new(&authority).unwrap();
-        let mut foreground = roles.take_foreground().unwrap();
-        let mut live = roles.take_live().unwrap();
-        live.replace(snapshot(&foreground, "")).unwrap();
-        let ledger =
-            DecodeLedger::for_operation(&foreground, crate::history::MAX_RESIDENT_BYTES).unwrap();
-        let mut content = NativeList::new(&ledger, 1).unwrap();
-        content
-            .push(crate::model::native::content::from_text(
-                crate::model::native::content::text_content(
-                    text(&ledger, &"message Ω".repeat(43)),
-                    NativeOwned::absent(&ledger).unwrap(),
-                    NativeOwned::absent(&ledger).unwrap(),
-                )
-                .unwrap(),
-            ))
-            .unwrap();
-        let mut json = LiteralBuilder::new(&ledger).unwrap();
-        let mut encoded = json.exact_text("quote\"\\\nΩ".len()).unwrap();
-        encoded.append("quote\"\\\nΩ").unwrap();
-        json.string(encoded.finish().unwrap()).unwrap();
-        let arguments =
-            crate::model::native::content::json(json.finish_native().unwrap(), &ledger).unwrap();
-        let tool = crate::history::native::entries::tool_entry(
-            crate::model::native::tools::record(
-                crate::model::native::tools::header(
-                    crate::model::native::tools::tool_id(text(&ledger, "tool")).unwrap(),
-                    text(&ledger, "title Ω"),
-                    NativeOwned::absent(&ledger).unwrap(),
-                    ToolKind::Read,
-                    ToolStatus::Pending,
-                )
-                .unwrap(),
-                NativeList::new(&ledger, 0).unwrap().finish(),
-                NativeList::new(&ledger, 0).unwrap().finish(),
-                NativeOwned::supplied(arguments),
-                NativeOwned::supplied(crate::model::native::content::null_json(&ledger).unwrap()),
-                NativeOwned::absent(&ledger).unwrap(),
-                NativeOwned::absent(&ledger).unwrap(),
-            )
-            .unwrap(),
-        );
-        let entries = vec![
-            crate::history::native::entries::user(content.finish()),
-            crate::history::native::entries::thought(text(&ledger, &"thought".repeat(11))),
-            crate::history::native::entries::agent(text(&ledger, &"reply".repeat(61))),
-            tool,
-        ];
-        // Independent old DTO oracle only; actual physical build consumes the
-        // original managed inputs and never materializes this clone in production.
-        let oracle = entries
-            .iter()
-            .map(|value| value.get().clone())
-            .collect::<Vec<_>>();
-        let mut builder = SnapshotBuilder::from_role(&mut foreground, &live).unwrap();
-        for entry in entries {
-            builder.append_row(entry, 7).unwrap();
-        }
-        live.replace(builder.finish(None).unwrap()).unwrap();
-        for used in [0, 1, 50, 110, 10_000] {
-            assert_eq!(
-                Breakdown::estimate_managed(live.snapshot().unwrap().rows(), used).unwrap(),
-                Breakdown::estimate(&oracle, used)
-            );
-        }
     }
 }

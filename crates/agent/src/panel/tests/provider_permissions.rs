@@ -1,60 +1,22 @@
 use super::*;
 use nocterm_ai::ApprovalPolicy;
-
-use nocterm_ai::model::{
-    auth::{PermissionChoice, PermissionEffect, PermissionOutcome, ProviderPermission},
-    ids::{PermissionOptionId, ToolId},
-    tools::{ToolChanges, ToolPatch},
+use nocterm_ai::model::auth::{
+    PermissionChoice, PermissionEffect, PermissionOutcome, ProviderPermission,
 };
-pub(super) fn choice(id: &str, label: &str, effect: PermissionEffect) -> PermissionChoice {
-    PermissionChoice {
-        id: PermissionOptionId::new(id),
-        label: label.into(),
-        effect,
-        extensions: None,
-    }
-}
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
+
 fn options() -> Vec<PermissionChoice> {
     vec![
-        choice("reject", "Allow once", PermissionEffect::DenyOnce),
-        choice("always", "Allow", PermissionEffect::AllowRemembered),
-        choice("once", "Continue", PermissionEffect::AllowOnce),
+        PermissionChoice::new("reject", "Allow once", PermissionEffect::DenyOnce),
+        PermissionChoice::new("always", "Allow", PermissionEffect::AllowRemembered),
+        PermissionChoice::new("once", "Continue", PermissionEffect::AllowOnce),
     ]
 }
-pub(super) fn permission(
-    session: SessionId,
-    id: &str,
-    title: &str,
-    choices: Vec<PermissionChoice>,
-) -> ProviderPermission {
-    ProviderPermission {
-        session,
-        tool: ToolPatch {
-            id: ToolId::new(id),
-            changes: ToolChanges {
-                title: Some(title.into()),
-                ..Default::default()
-            },
-            extensions: None,
-            claims: Default::default(),
-            literal: Default::default(),
-        },
-        choices,
-        extensions: None,
-    }
-}
-/// One call with a single "Allow" once choice.
-pub(super) fn allow_once(session: SessionId, id: &str, title: &str) -> ProviderPermission {
-    permission(
-        session,
-        id,
-        title,
-        vec![choice("allow", "Allow", PermissionEffect::AllowOnce)],
-    )
-}
+
 fn request(session: SessionId, options: Vec<PermissionChoice>) -> ProviderPermission {
-    permission(session, "provider-tool", "Use agent files", options)
+    permission_request(session, "provider-tool", Some("Use agent files"), options)
 }
+
 fn submit(
     f: &Fixture,
     cx: &mut TestAppContext,
@@ -87,7 +49,7 @@ fn set_policy(f: &Fixture, cx: &mut TestAppContext, policy: ApprovalPolicy) {
 
 fn selected_once(receive: &mut oneshot::Receiver<PermissionOutcome>) {
     assert!(
-        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(selected)) if selected == PermissionOptionId::new("once"))
+        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(selected)) if selected == PermissionOptionId::from("once"))
     );
 }
 
@@ -185,7 +147,7 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
         &f,
         cx,
         session,
-        vec![choice(
+        vec![PermissionChoice::new(
             "always",
             "Allow once",
             PermissionEffect::AllowRemembered,
@@ -217,14 +179,18 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
         &f,
         cx,
         session.clone(),
-        vec![choice("shared", "Allow once", PermissionEffect::AllowOnce)],
+        vec![PermissionChoice::new(
+            "shared",
+            "Allow once",
+            PermissionEffect::AllowOnce,
+        )],
     );
     let old_generation = cx.update(|cx| thread.read(cx).permission_cards()[0].token());
     let mut always = submit(
         &f,
         cx,
         session,
-        vec![choice(
+        vec![PermissionChoice::new(
             "shared",
             "Remember",
             PermissionEffect::AllowRemembered,
@@ -237,11 +203,7 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
     ));
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.choose_permission_request(
-                old_generation,
-                Some(PermissionOptionId::new("shared")),
-                cx,
-            )
+            thread.choose_permission_request(old_generation, Some("shared".into()), cx)
         })
     });
     assert!(always.try_recv().unwrap().is_none());
@@ -271,7 +233,7 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
         thread.update(cx, |thread, cx| {
             thread.choose_permission_request(
                 thread.permission_cards()[0].token(),
-                Some(PermissionOptionId::new("foreign-id")),
+                Some("foreign-id".into()),
                 cx,
             )
         })
@@ -357,8 +319,9 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
         queued.try_recv().unwrap(),
         Some(PermissionOutcome::Cancelled)
     );
-    assert_eq!(f.script.shutdowns(), 1);
+    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
 }
+
 #[gpui_kit::test]
 fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
     let f = fixture(cx);
@@ -379,21 +342,13 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
-            request: super::provider_permissions::permission(
+            request: permission_request(
                 session,
                 "permission",
-                "Provider action",
+                Some("Provider action"),
                 vec![
-                    super::provider_permissions::choice(
-                        "no",
-                        "Yes",
-                        nocterm_ai::model::auth::PermissionEffect::DenyOnce,
-                    ),
-                    super::provider_permissions::choice(
-                        "yes",
-                        "No",
-                        nocterm_ai::model::auth::PermissionEffect::AllowOnce,
-                    ),
+                    PermissionChoice::new("no", "Yes", PermissionEffect::DenyOnce),
+                    allow_once_choice("yes", "No"),
                 ],
             ),
             respond,
@@ -413,8 +368,8 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     });
     cx.run_until_parked();
     assert!(
-        matches!(receive.try_recv().unwrap(), Some(nocterm_ai::model::auth::PermissionOutcome::Selected(choice))
-        if choice == nocterm_ai::model::ids::PermissionOptionId::new("yes"))
+        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(choice))
+        if choice == PermissionOptionId::from("yes"))
     );
     cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
 }

@@ -21,12 +21,8 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
 "#
     )
     .into_bytes();
+    nocterm_ai::history::decode(&bytes, id).unwrap();
     std::fs::write(&file, &bytes).unwrap();
-    let repository = nocterm_agent_storage::FileChatRepository::new(chats);
-    let catalog = nocterm_ai::storage::ChatRepository::catalog(&repository)
-        .await
-        .unwrap();
-    assert!(catalog.iter().any(|row| row.id == id));
     let (booted, window, workspace) = cx.update(|cx| {
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings.update::<nocterm_ai::AiSettings>(|ai| ai.sessions.warm_start = false);

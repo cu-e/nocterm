@@ -1,26 +1,26 @@
 //! Prompt completion carries the exact turn authority that launched its request.
 use super::SessionAuthority;
-use nocterm_ai::{
-    history::source::{ManagedCommandError, ManagedDispatchFuture},
-    model::{native::NativeOwned, session::PromptOutcome},
-};
+use nocterm_ai::model::session::{PromptOutcome, PromptRequest};
+use nocterm_ai::{AgentCommands, AgentError};
+use std::sync::Arc;
 pub(in crate::thread) struct PromptOperation {
     authority: SessionAuthority,
-    work: ManagedDispatchFuture<Result<NativeOwned<PromptOutcome>, ManagedCommandError>>,
+    response: futures::future::BoxFuture<'static, Result<PromptOutcome, AgentError>>,
 }
 impl PromptOperation {
     pub(in crate::thread) fn new(
         authority: SessionAuthority,
-        work: ManagedDispatchFuture<Result<NativeOwned<PromptOutcome>, ManagedCommandError>>,
+        commands: Arc<dyn AgentCommands>,
+        request: PromptRequest,
     ) -> Self {
-        Self { authority, work }
+        Self {
+            authority,
+            response: commands.prompt(request),
+        }
     }
     pub(in crate::thread) async fn run(
         self,
-    ) -> (
-        SessionAuthority,
-        Result<NativeOwned<PromptOutcome>, ManagedCommandError>,
-    ) {
-        (self.authority, self.work.await)
+    ) -> (SessionAuthority, Result<PromptOutcome, AgentError>) {
+        (self.authority, self.response.await)
     }
 }

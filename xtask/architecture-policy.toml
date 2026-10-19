@@ -12,6 +12,3 @@
 "nocterm_explorer::settings::Opener" = "Serialized opener description."
 "nocterm_monitor::settings::MonitorSettings" = "Serialized settings section."
 "nocterm_vault::settings::VaultSettings" = "Serialized settings section."
-"nocterm_agent::thread::controls::Controls" = "Owned control values read once before a config decision."
-"nocterm_agent::thread::document::ResumeFacts" = "Resumable session facts borrowed for one comparison."
-"nocterm_agent::thread::document::RecordedResume" = "Resumable facts read once from a restored document."

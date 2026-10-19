@@ -1,68 +1,70 @@
-use std::sync::Arc;
+//! Runtime-neutral ACP connector: one protocol driver per live subprocess.
+use futures::{FutureExt, future::BoxFuture};
+use nocterm_ai::{AgentConnection, AgentConnector, AgentError, ConnectRequest};
 
-use nocterm_ai::AgentConnector;
+mod commands;
+mod driver;
+mod error;
+mod exit_report;
+mod handlers;
+mod handshake;
+mod pipes;
+mod remote_errors;
+mod startup;
+mod stderr_tail;
 
-/// Runtime-neutral ACP connector. Each live subprocess has one protocol driver.
-#[derive(Clone)]
+/// Names the behavior tests exercise through `use super::*`.
+#[cfg(test)]
+use {
+    agent_client_protocol::{Agent, ConnectionTo},
+    agent_client_protocol_schema::v1 as acp,
+    commands::close_session,
+    futures::future::{Either, select},
+    handlers::client_builder,
+    nocterm_ai::{
+        AgentEvent,
+        model::{
+            auth::PermissionOutcome,
+            controls::{ConfigKind, ConfigSetting},
+            ids::{ConfigChoiceId, ConfigId, SessionId},
+            session::{PromptRequest, RestoreSession, SessionOpen, SessionUpdate, SetConfigOption},
+        },
+    },
+    remote_errors::{map_error, map_error_with, restore_error},
+    std::{sync::Arc, time::Duration},
+};
+
+/// Connects agents over a spawned ACP subprocess.
+#[derive(Clone, Default)]
 pub struct AcpConnector {
-    helper: Option<Arc<std::path::PathBuf>>,
-    rules: Option<Arc<crate::managed::DiagnosticRedactor>>,
+    helper: Option<std::path::PathBuf>,
 }
 impl AcpConnector {
     pub fn managed(helper: std::path::PathBuf) -> Self {
         Self {
-            helper: Some(Arc::new(helper)),
-            rules: None,
+            helper: Some(helper),
         }
     }
     pub fn unmanaged() -> Self {
-        Self {
-            helper: None,
-            rules: None,
-        }
-    }
-    pub fn try_managed(helper: std::path::PathBuf) -> Result<Self, crate::DiagnosticBuildError> {
-        Ok(Self {
-            helper: Some(Arc::new(helper)),
-            rules: Some(Arc::new(crate::managed::DiagnosticRedactor::new()?)),
-        })
-    }
-    pub fn try_unmanaged() -> Result<Self, crate::DiagnosticBuildError> {
-        Ok(Self {
-            helper: None,
-            rules: Some(Arc::new(crate::managed::DiagnosticRedactor::new()?)),
-        })
-    }
-    pub fn connect_managed(
-        &self,
-        request: nocterm_ai::connection::ManagedConnectRequest,
-    ) -> Result<
-        nocterm_ai::history::source::ManagedSourceFuture<
-            Result<
-                nocterm_ai::connection::ManagedAgentConnection,
-                nocterm_ai::history::source::ManagedCommandError,
-            >,
-        >,
-        nocterm_ai::model::json::deferred::NativeAllocationError,
-    > {
-        crate::managed::ConnectionPreparation::new(self.helper.clone(), self.rules.clone())
-            .operation(request)
+        Self::default()
     }
 }
 
 impl AgentConnector for AcpConnector {
-    fn connect_managed(
+    fn connect(
         &self,
-        request: nocterm_ai::connection::ManagedConnectRequest,
-    ) -> Result<
-        nocterm_ai::history::source::ManagedSourceFuture<
-            Result<
-                nocterm_ai::connection::ManagedAgentConnection,
-                nocterm_ai::history::source::ManagedCommandError,
-            >,
-        >,
-        nocterm_ai::model::json::deferred::NativeAllocationError,
-    > {
-        AcpConnector::connect_managed(self, request)
+        request: ConnectRequest,
+    ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
+        startup::connect(request, self.helper.clone()).boxed()
     }
 }
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod lifecycle_tests;
+#[cfg(all(test, unix))]
+mod restore_classification;
+#[cfg(all(test, unix))]
+mod startup_failures;

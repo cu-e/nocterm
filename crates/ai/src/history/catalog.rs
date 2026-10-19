@@ -1,8 +1,7 @@
 //! Rebuildable metadata cache. Transcript files remain authoritative.
 use super::{HistoryCodecError, SavedChat, VERSION};
+use crate::model::content::Content;
 use serde::{Deserialize, Serialize};
-mod wire;
-pub use wire::ChatSummaryWire;
 
 /// Primitive file stamp supplied by the storage adapter, never filesystem metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,48 +26,31 @@ pub struct ChatSummary {
     modified_nanos: u128,
 }
 impl ChatSummary {
-    pub fn from_projection(
-        id: &str,
-        metadata: &super::ChatMetadata,
-        has_content: bool,
-        fallback: Option<String>,
-    ) -> Self {
+    pub fn from_chat(chat: &SavedChat) -> Self {
+        let fallback = chat.entries.iter().find_map(|entry| match entry {
+            crate::thread::Entry::User(blocks) => blocks.iter().find_map(|block| match block {
+                Content::Text(text) if !text.text.trim().is_empty() => {
+                    Some(text.text.trim().chars().take(60).collect())
+                }
+                _ => None,
+            }),
+            _ => None,
+        });
         Self {
             cache_version: 1,
-            id: id.into(),
-            agent_id: bounded(&metadata.agent_id),
-            title: metadata.title.as_deref().map(bounded).or(fallback),
-            name: metadata.name.as_deref().map(bounded),
-            pinned: metadata.pinned,
-            updated: metadata.updated,
-            model: metadata.model.as_deref().map(bounded),
-            has_content,
+            id: chat.id.clone(),
+            agent_id: bounded(&chat.agent_id),
+            title: chat.title.as_deref().map(bounded).or(fallback),
+            name: chat.name.as_deref().map(bounded),
+            pinned: chat.pinned,
+            updated: chat.updated,
+            model: chat.model.as_deref().map(bounded),
+            has_content: !chat.entries.is_empty()
+                || !chat.queue.is_empty()
+                || chat.draft.as_ref().is_some_and(|text| !text.is_empty()),
             bytes: 0,
             modified_nanos: 0,
         }
-    }
-    pub fn from_chat(chat: &SavedChat) -> Self {
-        let fallback = chat
-            .transcript()
-            .entries
-            .iter()
-            .find_map(|entry| match entry {
-                crate::thread::Entry::User(blocks) => blocks.iter().find_map(|block| match block {
-                    crate::model::content::Content::Text(text) if !text.text.trim().is_empty() => {
-                        Some(text.text.trim().chars().take(60).collect())
-                    }
-                    _ => None,
-                }),
-                _ => None,
-            });
-        let has_content = !chat.transcript().entries.is_empty()
-            || !chat.composer().queue.is_empty()
-            || chat
-                .composer()
-                .draft
-                .as_ref()
-                .is_some_and(|text| !text.is_empty());
-        Self::from_projection(chat.id(), chat.metadata(), has_content, fallback)
     }
     pub fn with_stamp(mut self, stamp: FileStamp, queued: bool) -> Self {
         self.bytes = stamp.bytes;
@@ -93,27 +75,24 @@ fn bounded(text: &str) -> String {
     text.chars().take(512).collect()
 }
 #[derive(Deserialize)]
-struct Envelope {
-    format: String,
+struct Legacy {
     version: u32,
-    document: Document,
-}
-#[derive(Deserialize)]
-struct Document {
     id: String,
-    metadata: super::ChatMetadata,
-    transcript: Transcript,
-    composer: Composer,
-}
-#[derive(Deserialize)]
-struct Transcript {
-    #[serde(deserialize_with = "entry_summary")]
-    entries: EntrySummary,
-}
-#[derive(Deserialize)]
-struct Composer {
+    agent_id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    pinned: bool,
+    updated: u64,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
     draft: Option<String>,
-    #[serde(deserialize_with = "count")]
+    #[serde(deserialize_with = "entry_summary", default)]
+    entries: EntrySummary,
+    #[serde(deserialize_with = "count", default)]
     queue: usize,
 }
 #[derive(Default)]
@@ -184,22 +163,16 @@ impl<'de> Deserialize<'de> for TitleValue {
                 mut seq: A,
             ) -> Result<TitleValue, A::Error> {
                 #[derive(Deserialize)]
-                struct TextPart<'a> {
+                struct Block<'a> {
+                    #[serde(rename = "type", borrow)]
+                    kind: std::borrow::Cow<'a, str>,
                     #[serde(default, borrow)]
                     text: Option<std::borrow::Cow<'a, str>>,
-                }
-                #[derive(Deserialize)]
-                struct Block<'a> {
-                    #[serde(borrow)]
-                    kind: std::borrow::Cow<'a, str>,
-                    #[serde(borrow)]
-                    value: TextPart<'a>,
                 }
                 let mut title = None;
                 while let Some(block) = seq.next_element::<Block<'de>>()? {
                     if title.is_none() && block.kind == "text" {
                         title = block
-                            .value
                             .text
                             .filter(|text| !text.trim().is_empty())
                             .map(|text| text.trim().chars().take(60).collect());
@@ -235,35 +208,32 @@ pub fn decode_summary(
 ) -> Result<Option<ChatSummary>, HistoryCodecError> {
     super::check_size(bytes.len())?;
     super::preflight::check(bytes)?;
-    let envelope: Envelope = serde_json::from_slice(bytes)?;
-    if envelope.format != super::FORMAT {
-        return Err(HistoryCodecError::FormatMismatch);
+    let old: Legacy = serde_json::from_slice(bytes)?;
+    if old.version != VERSION {
+        return Err(HistoryCodecError::UnsupportedVersion(old.version));
     }
-    if envelope.version != VERSION {
-        return Err(HistoryCodecError::UnsupportedVersion(envelope.version));
-    }
-    let document = envelope.document;
-    if document.id != id {
+    if old.id != id {
         return Err(HistoryCodecError::IdentityMismatch);
     }
-    let content = document.transcript.entries.len != 0
-        || document.composer.queue != 0
-        || document
-            .composer
-            .draft
-            .is_some_and(|draft| !draft.is_empty());
-    if !content && document.metadata.name.is_none() && !document.metadata.pinned {
+    let content =
+        old.entries.len != 0 || old.queue != 0 || old.draft.is_some_and(|draft| !draft.is_empty());
+    if !content && old.name.is_none() && !old.pinned {
         return Ok(None);
     }
-    Ok(Some(
-        ChatSummary::from_projection(
-            id,
-            &document.metadata,
-            content,
-            document.transcript.entries.title,
-        )
-        .with_stamp(stamp, document.composer.queue != 0),
-    ))
+    Ok(Some(ChatSummary {
+        cache_version: 1,
+        id: old.id,
+        agent_id: bounded(&old.agent_id),
+        title: old.title.as_deref().map(bounded).or(old.entries.title),
+        name: old.name.as_deref().map(bounded),
+        pinned: old.pinned,
+        updated: old.updated,
+        model: old.model.as_deref().map(bounded),
+        has_content: content,
+        bytes: stamp.bytes,
+        modified_nanos: stamp.modified_nanos,
+    }))
 }
+
 #[cfg(test)]
 mod tests;

@@ -1,24 +1,25 @@
 //! A thread is a client of the runtime: it applies the runtime's events to itself.
 use super::tools::unreachable;
-use super::{AgentThread, approval_inbox::ApprovalToken};
+use super::{AgentThread, approval_inbox::ApprovalToken, permissions::PermissionGate};
 use super::{
     approval_inbox::{ToolDecision, ToolRejection},
     bound_call::BoundToolCall,
 };
 use crate::runtime::SessionEvent;
 use gpui_kit::{App, Context};
-use nocterm_ai::model::{ids::SessionId, notice::SessionUpdate, session::PromptOutcome};
+use nocterm_ai::PermissionResponder;
+use nocterm_ai::model::auth::ProviderPermission;
+use nocterm_ai::model::ids::{PermissionOptionId, SessionId};
+use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::{
-    BridgeCall, BridgeRejection, TerminalCall, ToolFailure,
-    connection::ManagedCommandsHandle,
-    history::source::{ManagedCommandError, ManagedNotice},
-    model::native::NativeOwned,
-    thread::ThreadChange,
+    AgentCommands, AgentInfo, BridgeCall, BridgeRejection, TerminalCall, ToolFailure,
+    thread::{Entry, ThreadChange},
     tool_display::{self, ToolDisplay},
 };
 
 use nocterm_workspace::TerminalEntry;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 impl AgentThread {
     pub(super) fn on_tool_completion(
@@ -141,10 +142,7 @@ impl AgentThread {
             self.finish(call, Err("Chat is unavailable.".into()));
             return;
         }
-        if let Err(error) = self.record_tool_display(&mut call, None, cx) {
-            self.finish(call, Err(error.to_string().into()));
-            return;
-        }
+        self.record_tool_display(&mut call, None, cx);
         if let Err(error) = call.call.validate() {
             self.finish(call, Err(error.into()));
             return;
@@ -181,12 +179,8 @@ impl AgentThread {
     }
 
     fn normalize_tool_displays(&mut self) {
-        let patches = self.tools.normalize_displays(self.state.rows());
-        for patch in patches {
-            if let Err(error) = self.state.patch_display(patch.row(), patch.display()) {
-                tracing::warn!(%error, "tool display was not retained");
-            }
-        }
+        let patches = self.tools.normalize_displays(self.state.entries());
+        self.state.patch_tool_rows(patches, self.host.timestamp());
     }
 
     pub(super) fn finalize_tool_displays(&mut self) {
@@ -207,29 +201,13 @@ impl AgentThread {
             return;
         }
         let server = tool_display::bridge_server_name(rejected.registration_id);
-        let display = (|| {
-            let mut display = ToolDisplay::requested(
-                self.host.retention(cx),
-                rejected.tool.clone(),
-                rejected.arguments.clone(),
-            )?;
-            display.finish(Err(rejected.error.into()))?;
-            if self.host.ai(cx).approval.redact_secrets {
-                display.redact()?;
-            }
-            Ok::<_, nocterm_ai::model::diagnostic::ModelError>(display)
-        })();
-        let display = match display {
-            Ok(display) => display,
-            Err(error) => {
-                self.notice.present(error.to_string());
-                self.notice.mark_error();
-                cx.notify();
-                return;
-            }
-        };
+        let mut display = ToolDisplay::requested(rejected.tool.clone(), rejected.arguments.clone());
+        display.finish(Err(rejected.error.into()));
+        if self.host.ai(cx).approval.redact_secrets {
+            display.redact();
+        }
         self.tools
-            .prepare_displays(self.session.turn(), self.state.rows().len());
+            .prepare_displays(self.session.turn(), self.state.entries().len());
         self.tools
             .record_display(server, (rejected.tool, rejected.arguments), display);
         self.normalize_tool_displays();
@@ -241,9 +219,9 @@ impl AgentThread {
         call: &mut BridgeCall,
         provided_entry: Option<&TerminalEntry>,
         cx: &mut Context<Self>,
-    ) -> Result<(), nocterm_ai::model::diagnostic::ModelError> {
+    ) {
         let Some(registration) = &self.registration() else {
-            return Ok(());
+            return;
         };
         let server = tool_display::bridge_server_name(registration.id);
         let (tool, normalized) = tool_display::request(&call.call);
@@ -254,30 +232,39 @@ impl AgentThread {
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
             .map(|(_, entry, _)| entry);
         let destination = self.tool_destination(&call.call, provided_entry.or(entry.as_ref()), cx);
-        let mut display =
-            ToolDisplay::requested(self.host.retention(cx), tool.into(), arguments.clone())?;
-        display.destination = destination
-            .map_or(nocterm_ai::model::controls::Presence::Null, |text| {
-                nocterm_ai::model::controls::Presence::Value(nocterm_ai::redact::redact(&text))
-            });
+        let mut display = ToolDisplay::requested(tool.into(), arguments.clone());
+        display.destination = destination.map(|text| nocterm_ai::redact::redact(&text));
         if self.host.ai(cx).approval.redact_secrets {
-            display.redact()?;
+            display.redact();
         }
         self.tools
-            .prepare_displays(self.session.turn(), self.state.rows().len());
+            .prepare_displays(self.session.turn(), self.state.entries().len());
         call.display_token = self
             .tools
             .record_display(server, (tool.into(), arguments), display)
             .map(|id| (self.session.turn(), id));
         self.normalize_tool_displays();
         cx.notify();
-        Ok(())
+    }
+
+    pub(crate) fn apply_presented_update(&mut self, mut update: SessionUpdate) -> ThreadChange {
+        self.tools
+            .prepare_displays(self.session.turn(), self.state.entries().len());
+        tool_display::strip_provider_meta(&mut update);
+        let change = if self.config.report_control(&update) {
+            ThreadChange::Controls
+        } else {
+            self.state.apply_transcript(update, self.host.timestamp())
+        };
+        let patches = self.tools.normalize_displays(self.state.entries());
+        self.state.patch_tool_rows(patches, self.host.timestamp());
+        change
     }
 
     pub(super) fn on_prompt_completion(
         &mut self,
         authority: super::session_driver::SessionAuthority,
-        result: Result<NativeOwned<PromptOutcome>, ManagedCommandError>,
+        result: Result<PromptOutcome, nocterm_ai::AgentError>,
         is_command: bool,
         cx: &mut Context<Self>,
     ) {
@@ -286,7 +273,7 @@ impl AgentThread {
         }
         let completed = matches!(
             &result,
-            Ok(response) if !response.get().ending.is_cancelled()
+            Ok(response) if response.stop_reason != StopReason::Cancelled
         ) && !self.session.stopped();
         if !self.session.finish_turn(authority.ticket(), completed) {
             return;
@@ -296,9 +283,29 @@ impl AgentThread {
         self.finalize_tool_displays();
         self.persist(cx);
         match result {
-            Ok(response) => self.prompt_succeeded(&response, !is_command && completed, cx),
-            Err(error) if error.authentication_required() => {
-                self.require_authentication(&error.to_string(), cx);
+            Ok(response) => {
+                if response.usage.is_some() {
+                    self.state.tokens(response.usage);
+                }
+                // Agents that keep limits in their own files have
+                // just written this turn's.
+                let agent = self.state.agent_id().to_owned();
+                let runtime = self.host.runtime().clone();
+                cx.defer(move |cx| runtime.refresh_limits(&agent, cx));
+                self.notice.present(if self.session.stopped() {
+                    "Stopped".into()
+                } else {
+                    format!("{:?}", response.stop_reason)
+                });
+                if !is_command && completed {
+                    self.state.set_pending_history(false, self.host.timestamp());
+                    self.persist(cx);
+                }
+                self.dispatch_next(cx);
+                cx.notify();
+            }
+            Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                self.require_authentication(&message, cx);
             }
             // Some agents answer a cancelled prompt with an error; the
             // session itself goes on.
@@ -312,40 +319,11 @@ impl AgentThread {
         }
     }
 
-    fn prompt_succeeded(
-        &mut self,
-        response: &NativeOwned<PromptOutcome>,
-        clears_pending: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let response = response.get();
-        if response.tokens.is_some()
-            && let Err(error) = self.state.finish_turn(response.tokens.clone())
-        {
-            tracing::warn!(%error, "turn token totals were not retained");
+    pub(super) fn clear_settled_disabled_document(&mut self, cx: &gpui_kit::App) {
+        if !self.host.enabled(cx) && self.state.release_disabled() {
+            self.config.disabled();
+            self.composer.reset_after_disable();
         }
-        // Agents that keep limits in their own files have
-        // just written this turn's.
-        let agent = self
-            .state
-            .agent_id()
-            .map(|agent| agent.to_string())
-            .unwrap_or_default();
-        let runtime = self.host.runtime().clone();
-        cx.defer(move |cx| runtime.refresh_limits(&agent, cx));
-        self.notice.present(if self.session.stopped() {
-            "Stopped".into()
-        } else {
-            response.ending.display_label().to_owned()
-        });
-        if clears_pending {
-            if let Err(error) = self.state.set_pending_history(false, self.host.timestamp()) {
-                tracing::warn!(%error, "pending history flag was not cleared");
-            }
-            self.persist(cx);
-        }
-        self.dispatch_next(cx);
-        cx.notify();
     }
 
     /// The chat's connection stopped. With AI turned off, the chat also
@@ -357,55 +335,41 @@ impl AgentThread {
 
     /// Applies one notification from the chat's connection. Notifications
     /// for other sessions sharing the connection are ignored.
-    pub(crate) fn session_update(&mut self, notice: ManagedNotice, cx: &mut Context<Self>) {
+    pub(crate) fn session_update(&mut self, notification: &SessionNotice, cx: &mut Context<Self>) {
         if self.session.opening() && self.session().is_none() {
-            self.config.keep_control(self.session.ticket(), notice);
-            return;
+            self.config
+                .keep_control(self.session.ticket(), notification);
         }
-        let facts = notice.notice();
-        if self.session().as_ref() != Some(&facts.session)
+        if self.session().as_ref() != Some(&notification.session)
             || !self.session.accepts_updates()
-            || matches!(facts.update, SessionUpdate::UserChunk(_))
+            || matches!(notification.update, SessionUpdate::UserMessageChunk(_))
         {
             return;
         }
-        let Some(epoch) = self.session.epoch().cloned() else {
-            return;
+        let index = match &notification.update {
+            SessionUpdate::ToolCallUpdate(update) => self
+                .state
+                .entries()
+                .iter()
+                .position(|entry| matches!(entry, Entry::Tool(call) if call.id == update.id)),
+            _ => self.state.entries().len().checked_sub(1),
         };
-        let changed_tool = match &facts.update {
-            SessionUpdate::ToolChanged(patch) => {
-                super::tool_display::tool_row(self.state.rows(), patch.id.as_str())
-            }
-            _ => None,
-        };
-        let configuration = matches!(facts.update, SessionUpdate::Configuration(_));
-        let mode = matches!(facts.update, SessionUpdate::Mode(_));
-        self.tools
-            .prepare_displays(self.session.turn(), self.state.rows().len());
-        let now = self.host.timestamp();
-        let change = match self.state.apply_notice(&epoch, notice, now) {
-            Ok(applied) => applied.change(),
-            Err(error) => {
-                tracing::warn!(%error, "agent update was not retained");
-                return;
-            }
-        };
-        self.normalize_tool_displays();
-        if mode {
-            self.config.agent_set_mode();
-        }
-        match change {
+        let configuration = matches!(
+            notification.update,
+            SessionUpdate::ConfigOptionUpdate(_) | SessionUpdate::CurrentModeUpdate(_)
+        );
+        match self.apply_presented_update(notification.update.clone()) {
             ThreadChange::Transcript => {
-                if let Some(index) = changed_tool {
+                if let Some(index) = index {
                     self.mark_dirty(index);
                 }
-                if let Some(index) = self.state.rows().len().checked_sub(1) {
+                if let Some(index) = self.state.entries().len().checked_sub(1) {
                     self.mark_dirty(index);
                 }
             }
             ThreadChange::Metadata => self.persist(cx),
             // The agent changed its configuration itself, e.g. left plan mode.
-            ThreadChange::Controls if configuration || mode => self.sync_config(true, cx),
+            ThreadChange::Controls if configuration => self.sync_config(true, cx),
             _ => {}
         }
         cx.notify();
@@ -420,14 +384,22 @@ impl AgentThread {
     ) {
         use super::config::operation::ConfigurationResult;
         if !self.session.session_current(ticket)
-            || !self.config.current(ticket)
             || !self.host.enabled(cx)
             || (reconciling && !self.session.opening())
         {
             return;
         }
         let option = matches!(&response, ConfigurationResult::Option(_));
-        let result = self.apply_configuration(response, reconciling);
+        let result = match response {
+            ConfigurationResult::Option(result) => self.config.accept_option_result(ticket, result),
+            ConfigurationResult::Mode(id, result) => {
+                self.config
+                    .accept_mode_result(ticket, id, result, reconciling)
+            }
+        };
+        let Some(result) = result else {
+            return;
+        };
         if reconciling {
             if let Err(error) = result {
                 tracing::warn!(%error, "{}", super::config::operation::rejection_description(option));
@@ -458,39 +430,11 @@ impl AgentThread {
         }
     }
 
-    /// The agent's confirmed value replaces the retained control, or its refusal is reported.
-    fn apply_configuration(
-        &mut self,
-        response: super::config::operation::ConfigurationResult,
-        reconciling: bool,
-    ) -> Result<(), super::ConfigurationFailure> {
-        use super::config::operation::ConfigurationResult;
-        let epoch = self.session.epoch().cloned();
-        let now = self.host.timestamp();
-        match response {
-            ConfigurationResult::Option(result) => {
-                let options = result?;
-                let epoch = epoch.ok_or(super::ConfigurationFailure::Detached)?;
-                self.state.apply_options(&epoch, options, now)?;
-            }
-            ConfigurationResult::Mode(id, result) => {
-                if let Err(error) = result {
-                    self.config.mode_failed(reconciling);
-                    return Err(error.into());
-                }
-                let epoch = epoch.ok_or(super::ConfigurationFailure::Detached)?;
-                self.state.apply_mode(&epoch, &id, now)?;
-                self.config.agent_set_mode();
-            }
-        }
-        Ok(())
-    }
-
     pub(super) fn start_configuration(
         &mut self,
         ticket: nocterm_ai::session::Ticket,
         reconciling: bool,
-        commands: ManagedCommandsHandle,
+        commands: Arc<dyn AgentCommands>,
         session: SessionId,
         request: super::config::operation::ConfigurationRequest,
         cx: &mut Context<Self>,
@@ -519,8 +463,7 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         use super::config::{ConfigStep, operation::ConfigurationRequest};
-        let controls = super::controls::Controls::read(self.live_controls());
-        let step = self.config.next_request(ticket, &controls);
+        let step = self.config.next_request(ticket);
         let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
         else {
             return;
@@ -528,7 +471,9 @@ impl AgentThread {
         let request = match step {
             ConfigStep::Stale => return,
             ConfigStep::Ready => return self.configured(cx),
-            ConfigStep::SetOption(id, value) => ConfigurationRequest::Option(id, value),
+            ConfigStep::SetOption(id, value) => {
+                ConfigurationRequest::Option(id, value.to_setting())
+            }
             ConfigStep::SetMode(id) => ConfigurationRequest::Mode(id),
         };
         self.start_configuration(ticket, true, commands, session, request, cx);
@@ -548,60 +493,40 @@ impl AgentThread {
             self.session.retain_failed_restore(ticket, pending_restore);
         }
         match result {
-            Ok(opened) => return self.session_opened(ticket, opened, restored, workdir, cx),
-            Err(error) if error.authentication_required() => {
-                self.require_authentication(&error.to_string(), cx)
+            Ok(response) => {
+                let session = response.session;
+                if !self.session.accept_open(
+                    ticket,
+                    session.clone(),
+                    (restored == Some(false)).then_some(workdir),
+                ) {
+                    return false;
+                }
+                self.config.start_open(
+                    ticket,
+                    response.modes,
+                    response.configuration.unwrap_or_default(),
+                );
+                self.config.begin_reconciliation(&session, ticket);
+                self.state.set_pending_history(
+                    self.state.pending_history()
+                        || (restored != Some(true) && !self.state.entries().is_empty()),
+                    self.host.timestamp(),
+                );
+                self.notice.present(if self.state.pending_history() {
+                    "Reconnected in a new session. Saved conversation will accompany the next message.".into()
+                } else {
+                    "Ready".into()
+                });
+                self.accept_document_inputs(cx, false);
+                self.save(cx);
+                self.configure(ticket, cx);
+            }
+            Err(nocterm_ai::AgentError::AuthRequired(message)) => {
+                self.require_authentication(&message, cx)
             }
             Err(error) => self.fail(&error.to_string(), cx),
         }
-        true
-    }
-
-    fn session_opened(
-        &mut self,
-        ticket: nocterm_ai::session::Ticket,
-        opened: nocterm_ai::history::source::ManagedOpened,
-        restored: Option<bool>,
-        workdir: PathBuf,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let session = opened.opened().session.clone();
-        if !self.session.accept_open(
-            ticket,
-            session.clone(),
-            (restored == Some(false)).then_some(workdir),
-        ) {
-            return false;
-        }
-        let Some(epoch) = self.session.epoch().cloned() else {
-            return false;
-        };
-        self.config.opened(ticket);
-        let now = self.host.timestamp();
-        // Opening clears the flag in the document; the carried value is read first.
-        let was_pending = self.state.pending_history();
-        if let Err(error) = self.state.open_epoch(epoch.clone(), opened) {
-            self.fail(&error.to_string(), cx);
-            return true;
-        }
-        for notice in self.config.take_pending(&session) {
-            if let Err(error) = self.state.apply_notice(&epoch, notice, now) {
-                tracing::warn!(%error, "buffered agent control was not retained");
-            }
-        }
-        let pending = was_pending || (restored != Some(true) && !self.state.rows().is_empty());
-        if let Err(error) = self.state.set_pending_history(pending, now) {
-            tracing::warn!(%error, "pending history flag was not retained");
-        }
-        self.notice.present(if self.state.pending_history() {
-            "Reconnected in a new session. Saved conversation will accompany the next message."
-                .into()
-        } else {
-            "Ready".into()
-        });
-        self.record_resume();
-        self.save(cx);
-        self.configure(ticket, cx);
         true
     }
 
@@ -611,7 +536,8 @@ impl AgentThread {
     /// message. Only a sign-in keeps the chat from going on.
     pub(crate) fn create_session(
         &mut self,
-        commands: ManagedCommandsHandle,
+        commands: Arc<dyn AgentCommands>,
+        info: AgentInfo,
         workdir: PathBuf,
         cx: &mut Context<Self>,
     ) {
@@ -622,7 +548,10 @@ impl AgentThread {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
-        if !self.session.begin_open(commands.clone(), workdir.clone()) {
+        if !self
+            .session
+            .begin_open(commands.clone(), info, workdir.clone())
+        {
             return;
         }
         self.notice.present("Starting chat…".into());
@@ -632,7 +561,7 @@ impl AgentThread {
             .session
             .restore()
             .clone()
-            .filter(|restore| !self.state.rows().is_empty() && restore.workdir.is_absolute())
+            .filter(|restore| !self.state.entries().is_empty() && restore.workdir.is_absolute())
             .map(|mut restore| {
                 restore.workdir = workdir.clone();
                 restore
@@ -657,28 +586,87 @@ impl AgentThread {
                 })
                 .unwrap_or(false);
             if !transferred && let Some(session) = orphan {
-                // Only the session is closed; process shutdown belongs to the runtime.
-                if let Ok(cleanup) = commands.close_session(&session) {
-                    cx.background_executor()
-                        .spawn(async move {
-                            let _ = cleanup.await;
-                        })
-                        .detach();
-                }
+                let cleanup = commands.close_session(session);
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = cleanup.await;
+                        let _ = commands.shutdown_gracefully().await;
+                    })
+                    .detach();
             }
         })
         .detach();
         cx.notify();
     }
 
+    fn permission_gate(&self, cx: &App) -> PermissionGate {
+        PermissionGate::new(
+            self.host.enabled(cx),
+            self.session.accepts_updates(),
+            self.session.stopped(),
+            self.session().clone(),
+        )
+    }
+    pub(crate) fn permission(
+        &mut self,
+        request: ProviderPermission,
+        respond: PermissionResponder,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        let policy = self.host.ai(cx).approval.agent_permissions;
+        if self
+            .tools
+            .approval_receive_provider(request, respond, &gate, policy)
+        {
+            cx.notify();
+        }
+    }
+    pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
+        let gate = self.permission_gate(cx);
+        let policy = self.host.ai(cx).approval.agent_permissions;
+        if self.tools.approval_apply_provider_policy(&gate, policy) {
+            cx.notify();
+        }
+    }
+    pub(crate) fn choose_permission_request(
+        &mut self,
+        token: ApprovalToken,
+        choice: Option<PermissionOptionId>,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        if self.tools.approval_choose_provider(token, choice, &gate) {
+            cx.notify();
+        }
+    }
     /// Whether the chat still holds connection `key`.
     fn holds(&self, key: u64) -> bool {
         self.connection_key() == Some(key)
     }
-    pub(super) fn runtime_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
-        if self.state.is_retired() {
+    pub(crate) fn document_admitted(&mut self, revision: u64, cx: &mut Context<Self>) {
+        self.state.acknowledge_admission(revision);
+        self.clear_settled_disabled_document(cx);
+        cx.notify();
+    }
+    pub(super) fn document_save_failed(
+        &mut self,
+        revision: u64,
+        error: crate::runtime::AgentPersistenceError,
+        cx: &mut Context<Self>,
+    ) {
+        let message = format!(
+            "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
+        );
+        if !self.state.failed(revision, error) {
             return;
         }
+        self.notice.present(message);
+        self.composer.pause();
+        self.notice.mark_error();
+        cx.notify();
+    }
+    pub(super) fn runtime_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Leased(lease) => self.begin_lease(lease),
             SessionEvent::Connected {
@@ -688,15 +676,12 @@ impl AgentThread {
                 workdir,
             } => {
                 if self.holds(connection) && self.session.opening() {
-                    if let Err(error) = self.state.install_info(info) {
-                        tracing::warn!(%error, "agent information was not retained");
-                    }
-                    self.create_session(commands, workdir, cx);
+                    self.create_session(commands, *info, workdir, cx);
                 }
             }
-            SessionEvent::Update(notice) => self.session_update(notice, cx),
+            SessionEvent::Update(notification) => self.session_update(&notification, cx),
             SessionEvent::Permission { request, respond } => {
-                self.permission(request, respond, cx);
+                self.permission(*request, respond, cx);
             }
             SessionEvent::Tool(call) => self.handle_tool(call, cx),
             SessionEvent::ToolRejected(rejected) => self.record_rejected_tool(rejected, cx),
@@ -733,8 +718,6 @@ impl AgentThread {
                 self.session.connection_closed();
                 cx.notify();
             }
-            // Admission is not publication: a failed write retries from the
-            // retained snapshot, so only `Saved` may release a disabled chat.
             SessionEvent::SaveAdmitted { revision } => self.document_admitted(revision, cx),
             SessionEvent::Saved { revision } => {
                 if self.state.published(revision) {

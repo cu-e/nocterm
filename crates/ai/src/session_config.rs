@@ -5,7 +5,13 @@
 //! protocol-independent form, so a chat shows its pickers before it connects.
 //! Choices made before the session opens, and the model and reasoning effort
 //! last chosen for the agent, are applied as soon as it does.
-use crate::model::{controls::*, ids::*};
+use crate::model::{
+    controls::{
+        ConfigCategory, ConfigChoice, ConfigChoices, ConfigGroup, ConfigKind, ConfigOption,
+        ConfigSelect, ConfigSetting,
+    },
+    ids::{ConfigChoiceId, ConfigId},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -17,38 +23,28 @@ pub enum ConfigValue {
     Value(String),
 }
 impl ConfigValue {
-    fn current(option: &ConfigOption) -> Option<Self> {
+    pub fn from_setting(setting: &ConfigSetting) -> Self {
+        match setting {
+            ConfigSetting::Boolean(value) => Self::Flag(*value),
+            ConfigSetting::Choice(value) => Self::Value(value.to_string()),
+        }
+    }
+    pub fn to_setting(&self) -> ConfigSetting {
+        match self {
+            Self::Flag(value) => ConfigSetting::Boolean(*value),
+            Self::Value(value) => ConfigSetting::Choice(ConfigChoiceId::new(value.clone())),
+        }
+    }
+    fn current(option: &ConfigOption) -> Self {
         match &option.kind {
-            ConfigKind::Select { current, .. } => Some(Self::Value(current.as_str().into())),
-            ConfigKind::Boolean(value) => Some(Self::Flag(*value)),
-            ConfigKind::Unsupported { .. } => None,
+            ConfigKind::Select(select) => Self::Value(select.current.to_string()),
+            ConfigKind::Boolean(current) => Self::Flag(*current),
         }
     }
 }
 
 /// Values chosen for a chat or an agent, by option id.
 pub type Choices = BTreeMap<String, ConfigValue>;
-
-/// Backing envelope for the pinned Rust 1.98 B-tree implementation (B=6).
-/// An internal node contains at most eleven keys/values, twelve edges and
-/// parent/index/length fields. Sixteen pointer widths cover edges, header and
-/// alignment padding on supported targets. Payload String buffers are separate.
-fn choice_node_bound() -> Option<usize> {
-    use std::mem::size_of;
-    size_of::<String>()
-        .checked_add(size_of::<ConfigValue>())?
-        .checked_mul(11)?
-        .checked_add(size_of::<usize>().checked_mul(16)?)
-}
-/// Stable nodes are nonempty, so their count never exceeds the number of keys.
-pub fn choices_retained_backing_bound(entries: usize) -> Option<usize> {
-    choice_node_bound()?.checked_mul(entries)
-}
-/// Reserve before insertion; two extra nodes cover an unfinished split and root
-/// promotion while the old nodes and all text payloads remain alive.
-pub fn choices_construction_backing_bound(entries: usize) -> Option<usize> {
-    choice_node_bound()?.checked_mul(entries.checked_add(2)?)
-}
 
 /// One option an agent reported, independent of the protocol schema.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,53 +92,52 @@ fn category(name: &str) -> ConfigCategory {
         other => ConfigCategory::Other(other.into()),
     }
 }
+
 fn stored_value(value: &ConfigChoice, group: Option<&ConfigGroup>) -> StoredValue {
     StoredValue {
-        value: value.id.as_str().into(),
+        value: value.id.to_string(),
         name: value.name.clone(),
         description: value.description.clone(),
-        group: group.map(|group| (group.id.as_str().into(), group.name.clone())),
+        group: group.map(|group| (group.id.to_string(), group.name.clone())),
     }
 }
-/// The options an agent reported, in the unchanged preference grammar.
+
+/// The options an agent reported, in storable form.
 pub fn store(options: &[ConfigOption]) -> Vec<StoredOption> {
     options
         .iter()
-        .filter_map(|option| {
+        .map(|option| {
             let values = match &option.kind {
-                ConfigKind::Select {
-                    choices: SelectChoices::Flat(values),
-                    ..
-                } => values
-                    .iter()
-                    .map(|value| stored_value(value, None))
-                    .collect(),
-                ConfigKind::Select {
-                    choices: SelectChoices::Groups(groups),
-                    ..
-                } => groups
-                    .iter()
-                    .flat_map(|group| {
-                        group
-                            .choices
-                            .iter()
-                            .map(move |value| stored_value(value, Some(group)))
-                    })
-                    .collect(),
-                _ => Vec::new(),
+                ConfigKind::Select(select) => match &select.choices {
+                    ConfigChoices::Flat(values) => values
+                        .iter()
+                        .map(|value| stored_value(value, None))
+                        .collect(),
+                    ConfigChoices::Grouped(groups) => groups
+                        .iter()
+                        .flat_map(|group| {
+                            group
+                                .choices
+                                .iter()
+                                .map(move |value| stored_value(value, Some(group)))
+                        })
+                        .collect(),
+                },
+                ConfigKind::Boolean(_) => Vec::new(),
             };
-            Some(StoredOption {
-                id: option.id.as_str().into(),
+            StoredOption {
+                id: option.id.to_string(),
                 name: option.name.clone(),
                 description: option.description.clone(),
                 category: option.category.as_ref().map(category_name),
-                current: ConfigValue::current(option)?,
+                current: ConfigValue::current(option),
                 values,
-            })
+            }
         })
         .collect()
 }
-/// Restore presentation options without native or provider lookup.
+
+/// Stored options as the agent would report them.
 pub fn restore(stored: &[StoredOption]) -> Vec<ConfigOption> {
     stored
         .iter()
@@ -150,11 +145,10 @@ pub fn restore(stored: &[StoredOption]) -> Vec<ConfigOption> {
             let kind = match &option.current {
                 ConfigValue::Flag(value) => ConfigKind::Boolean(*value),
                 ConfigValue::Value(current) => {
-                    let choice = |value: &StoredValue| ConfigChoice {
+                    let value = |value: &StoredValue| ConfigChoice {
                         id: ConfigChoiceId::new(value.value.clone()),
                         name: value.name.clone(),
                         description: value.description.clone(),
-                        extensions: None,
                     };
                     let choices = if option.values.iter().any(|value| value.group.is_some()) {
                         let mut groups: Vec<ConfigGroup> = Vec::new();
@@ -162,24 +156,19 @@ pub fn restore(stored: &[StoredOption]) -> Vec<ConfigOption> {
                             let (id, name) = stored.group.clone().unwrap_or_default();
                             match groups.last_mut() {
                                 Some(group) if group.id.as_str() == id => {
-                                    group.choices.push(choice(stored))
+                                    group.choices.push(value(stored))
                                 }
-                                _ => groups.push(ConfigGroup {
-                                    id: ConfigGroupId::new(id),
-                                    name,
-                                    choices: vec![choice(stored)],
-                                    extensions: None,
-                                }),
+                                _ => groups.push(ConfigGroup::new(id, name, vec![value(stored)])),
                             }
                         }
-                        SelectChoices::Groups(groups)
+                        ConfigChoices::Grouped(groups)
                     } else {
-                        SelectChoices::Flat(option.values.iter().map(choice).collect())
+                        ConfigChoices::Flat(option.values.iter().map(value).collect())
                     };
-                    ConfigKind::Select {
+                    ConfigKind::Select(ConfigSelect {
                         current: ConfigChoiceId::new(current.clone()),
                         choices,
-                    }
+                    })
                 }
             };
             ConfigOption {
@@ -188,46 +177,46 @@ pub fn restore(stored: &[StoredOption]) -> Vec<ConfigOption> {
                 description: option.description.clone(),
                 category: option.category.as_deref().map(category),
                 kind,
-                extensions: None,
             }
         })
         .collect()
 }
+
+/// The values `options` currently have, by option id.
 pub fn current(options: &[ConfigOption]) -> Choices {
     options
         .iter()
-        .filter_map(|option| Some((option.id.as_str().into(), ConfigValue::current(option)?)))
+        .map(|option| (option.id.to_string(), ConfigValue::current(option)))
         .collect()
 }
+
+/// `options` showing the `choices` they offer as their current values.
 pub fn with_choices(mut options: Vec<ConfigOption>, choices: &Choices) -> Vec<ConfigOption> {
     for (id, value) in choices {
         choose(&mut options, id, value);
     }
     options
 }
+
+/// Whether `option` offers `value`.
 fn offers(option: &ConfigOption, value: &ConfigValue) -> bool {
     match (&option.kind, value) {
         (ConfigKind::Boolean(_), ConfigValue::Flag(_)) => true,
-        (
-            ConfigKind::Select {
-                choices: SelectChoices::Flat(choices),
-                ..
-            },
-            ConfigValue::Value(value),
-        ) => choices.iter().any(|choice| choice.id.as_str() == value),
-        (
-            ConfigKind::Select {
-                choices: SelectChoices::Groups(groups),
-                ..
-            },
-            ConfigValue::Value(value),
-        ) => groups
-            .iter()
-            .flat_map(|group| &group.choices)
-            .any(|choice| choice.id.as_str() == value),
+        (ConfigKind::Select(select), ConfigValue::Value(value)) => match &select.choices {
+            ConfigChoices::Flat(values) => {
+                values.iter().any(|offered| offered.id.as_str() == value)
+            }
+            ConfigChoices::Grouped(groups) => groups
+                .iter()
+                .flat_map(|group| &group.choices)
+                .any(|offered| offered.id.as_str() == value),
+        },
         _ => false,
     }
 }
+
+/// Shows `value` as the current value of option `id` until the agent
+/// reports otherwise. Returns whether the option offers it.
 pub fn choose(options: &mut [ConfigOption], id: &str, value: &ConfigValue) -> bool {
     let Some(option) = options
         .iter_mut()
@@ -237,30 +226,36 @@ pub fn choose(options: &mut [ConfigOption], id: &str, value: &ConfigValue) -> bo
     };
     match (&mut option.kind, value) {
         (ConfigKind::Boolean(current), ConfigValue::Flag(value)) => *current = *value,
-        (ConfigKind::Select { current, .. }, ConfigValue::Value(value)) => {
-            *current = ConfigChoiceId::new(value.clone())
+        (ConfigKind::Select(select), ConfigValue::Value(value)) => {
+            select.current = ConfigChoiceId::new(value.clone())
         }
         _ => return false,
     }
     true
 }
-/// Preserve agent option order and skip unchanged/unoffered selections.
+
+/// The requests that give an open session the `choices`, in the agent's
+/// option order: a model is set before the reasoning effort it offers.
+/// Choices the session already has, or no longer offers, are skipped.
 pub fn requests(options: &[ConfigOption], choices: &Choices) -> Vec<(ConfigId, ConfigValue)> {
     options
         .iter()
         .filter_map(|option| {
             let value = choices.get(option.id.as_str())?;
-            (offers(option, value) && ConfigValue::current(option).as_ref() != Some(value))
+            (offers(option, value) && ConfigValue::current(option) != *value)
                 .then(|| (option.id.clone(), value.clone()))
         })
         .collect()
 }
-/// Permissive modes never carry over to another chat.
+
+/// Whether a choice of `option` carries over to the agent's next chats. The
+/// mode is not: a permissive mode must be chosen for each chat.
 pub fn remembered(option: &ConfigOption) -> bool {
     matches!(
         option.category,
         Some(ConfigCategory::Model | ConfigCategory::ThoughtLevel)
     )
 }
+
 #[cfg(test)]
 mod tests;

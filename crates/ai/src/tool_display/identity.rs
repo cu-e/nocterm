@@ -1,188 +1,213 @@
-//! Adapters describe ranges in retained literals; domain compares evidence without wire parsing.
-use super::{deserialize, operation, parse};
-use crate::{
-    TerminalCall,
-    model::{literal::LiteralIdentity, tools::ToolRecord},
-};
-use serde_json::{Value, json};
+//! Exact provider spellings for the registered Nocterm bridge.
+use serde_json::json;
 
+use crate::{TerminalCall, model::tools::ToolRecord};
+
+use super::{deserialize, operation, parse};
+
+const SERVER_PREFIX: &str = "nocterm-";
+
+/// The name of a chat's terminal tools server. Each chat's is unique: agents
+/// such as Hermes keep one server per name for the whole process, so a shared
+/// name would send every chat's calls to the first chat's bridge.
 pub fn bridge_server_name(registration: u64) -> String {
-    format!("nocterm-{registration}")
+    format!("{SERVER_PREFIX}{registration}")
 }
-fn registration(server: &str) -> Option<&str> {
-    let value = server.strip_prefix("nocterm-")?;
-    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
-}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Description<'a> {
-    Registered(&'a str, &'a str),
-    Historical(&'a str),
+struct Identity<'a> {
+    /// The registration digits, which every spelling preserves verbatim.
+    registration: &'a str,
+    tool: &'a str,
 }
-impl<'a> Description<'a> {
-    fn tool(self) -> &'a str {
-        match self {
-            Self::Registered(_, tool) | Self::Historical(tool) => tool,
-        }
-    }
+
+fn registration(server: &str) -> Option<&str> {
+    let registration = server.strip_prefix(SERVER_PREFIX)?;
+    (!registration.is_empty() && registration.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(registration)
 }
-fn field<'a>(fact: LiteralIdentity, value: Option<&'a str>) -> Option<Option<Description<'a>>> {
-    Some(match fact {
-        LiteralIdentity::Absent => None,
-        LiteralIdentity::Invalid => return None,
-        LiteralIdentity::Registered { owner, tool } => Some(Description::Registered(
-            owner.get(value?)?,
-            tool.get(value?)?,
-        )),
-        LiteralIdentity::Historical { tool } => Some(Description::Historical(tool.get(value?)?)),
-    })
+
+/// Codex `mcp.<server>.<tool>`, Claude `mcp__<server>__<tool>` and Hermes
+/// `mcp_<server>_<tool>`, where Hermes replaces the server's `-` with `_`.
+fn identity(name: &str) -> Option<Identity<'_>> {
+    let (registration, tool) = if let Some(name) = name.strip_prefix("mcp.") {
+        let (server, tool) = name.rsplit_once('.')?;
+        (self::registration(server)?, tool)
+    } else if let Some(name) = name.strip_prefix("mcp__") {
+        let (server, tool) = name.split_once("__")?;
+        (self::registration(server)?, tool)
+    } else {
+        let name = name.strip_prefix("mcp_nocterm_")?;
+        let digits = name.bytes().take_while(u8::is_ascii_digit).count();
+        (
+            name.get(..digits).filter(|digits| !digits.is_empty())?,
+            name[digits..].strip_prefix('_')?,
+        )
+    };
+    (!tool.is_empty()
+        && tool
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'))
+    .then_some(Identity { registration, tool })
 }
-fn input_parts(
-    literal: crate::model::literal::LiteralEvidence,
-    arguments: Option<&crate::model::json::OwnedJson>,
-) -> Option<Option<Description<'_>>> {
-    Some(match literal.input {
-        LiteralIdentity::Absent => None,
-        LiteralIdentity::Invalid => return None,
-        LiteralIdentity::Registered { owner, tool } => {
-            let value = arguments?;
-            Some(Description::Registered(
-                owner.get(value.get("server")?.as_str()?)?,
-                tool.get(value.get("tool")?.as_str()?)?,
-            ))
-        }
-        LiteralIdentity::Historical { tool } => Some(Description::Historical(
-            tool.get(arguments?.get("tool")?.as_str()?)?,
-        )),
-    })
-}
-fn explicit_parts<'a>(
-    literal: crate::model::literal::LiteralEvidence,
-    name: Option<&'a str>,
-    title: &'a str,
-) -> Option<Option<Description<'a>>> {
-    let name = field(literal.name, name)?;
-    let title = field(literal.title, Some(title))?;
+
+fn explicit_identity(call: &ToolRecord) -> Option<Option<Identity<'_>>> {
+    let title = call.title.as_str();
+    let title_is_identity = title.starts_with("mcp.") || title.starts_with("mcp_");
+    let title = if title_is_identity {
+        Some(identity(title)?)
+    } else {
+        None
+    };
+    let name = match call.name.as_deref() {
+        Some(name) => Some(identity(name)?),
+        None => None,
+    };
     match (name, title) {
         (Some(name), Some(title)) if name != title => None,
         (Some(name), _) => Some(Some(name)),
         (_, title) => Some(title),
     }
 }
-fn described(call: &ToolRecord) -> Option<(Description<'_>, bool)> {
-    let named = explicit_parts(call.literal, call.name.as_deref(), &call.title)?;
-    let wrapped = input_parts(call.literal, call.arguments.as_ref())?;
-    combine(named, wrapped)
-}
-fn combine<'a>(
-    named: Option<Description<'a>>,
-    wrapped: Option<Description<'a>>,
-) -> Option<(Description<'a>, bool)> {
-    match (named, wrapped) {
-        (Some(named), Some(wrapped)) if named != wrapped => None,
-        (Some(named), Some(_)) => Some((named, true)),
-        (Some(named), None) => Some((named, false)),
-        (None, Some(wrapped @ Description::Registered(_, _))) => Some((wrapped, true)),
-        _ => None,
-    }
-}
-fn arguments(call: &ToolRecord, wrapped: bool) -> Option<Value> {
-    if wrapped {
-        call.arguments.as_ref()?.get("arguments").cloned()
-    } else {
-        Some(
-            call.arguments
-                .as_ref()
-                .filter(|value| !value.is_null())
-                .map(|value| value.as_value().clone())
-                .unwrap_or_else(|| json!({})),
-        )
-    }
-}
-/// Exact descriptive identity and literal arguments, including rejected unknown tools.
-/// Fixed range evidence itself contains no copied arbitrary name or authority grant.
-pub fn raw_envelope(call: &ToolRecord, server: &str) -> Option<(String, Value)> {
-    let (Description::Registered(owner, tool), wrapped) = described(call)? else {
-        return None;
-    };
-    if owner != registration(server)? {
-        return None;
-    }
-    Some((tool.into(), arguments(call, wrapped)?))
-}
-/// Shape validation is separate from original executor/receipt/turn authorization.
+
+/// Only exact names or a consistent explicit MCP envelope establish the request
+/// format. Neither establishes an execution destination.
 pub fn envelope(call: &ToolRecord, server: &str) -> Option<TerminalCall> {
-    let (tool, arguments) = raw_envelope(call, server)?;
-    parse(&tool, arguments)
+    envelope_of(call, registration(server)?, parse)
 }
+
+/// Exact provider identity and original arguments, including rejected requests.
+pub fn raw_envelope(call: &ToolRecord, server: &str) -> Option<(String, serde_json::Value)> {
+    let registration = registration(server)?;
+    let named = explicit_identity(call)?;
+    if named.is_some_and(|named| named.registration != registration) {
+        return None;
+    }
+    let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) else {
+        return Some((named?.tool.into(), json!({})));
+    };
+    if ["server", "tool", "arguments"]
+        .iter()
+        .any(|key| input.get(key).is_some())
+    {
+        let envelope_server = input.get("server")?.as_str()?;
+        let tool = input.get("tool")?.as_str()?;
+        if self::registration(envelope_server) != Some(registration)
+            || named.is_some_and(|named| named.tool != tool)
+        {
+            return None;
+        }
+        return Some((tool.into(), input.get("arguments")?.clone()));
+    }
+    Some((named?.tool.into(), input.clone()))
+}
+
+/// `read` turns the tool's arguments into a request: strictly when matching
+/// requests the bridge executed, by shape alone when only showing one.
+fn envelope_of(
+    call: &ToolRecord,
+    registration: &str,
+    read: fn(&str, serde_json::Value) -> Option<TerminalCall>,
+) -> Option<TerminalCall> {
+    let named = explicit_identity(call)?;
+    if named.is_some_and(|named| named.registration != registration) {
+        return None;
+    }
+    let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) else {
+        // Hermes omits the input of a call without arguments.
+        return read(named?.tool, json!({}));
+    };
+    if ["server", "tool", "arguments"]
+        .iter()
+        .any(|key| input.get(key).is_some())
+    {
+        let envelope_server = input.get("server")?.as_str()?;
+        let tool = input.get("tool")?.as_str()?;
+        if self::registration(envelope_server) != Some(registration)
+            || named.is_some_and(|named| named.tool != tool)
+        {
+            return None;
+        }
+        return read(tool, input.get("arguments")?.clone());
+    }
+    read(named?.tool, input.clone())
+}
+
+/// Presentation identity remains useful even when its arguments are malformed.
 pub fn fallback_tool(call: &ToolRecord) -> Option<&str> {
     requested_arguments(call).map(|(tool, _)| tool)
 }
-pub fn requested_arguments(call: &ToolRecord) -> Option<(&str, Value)> {
-    let (description, wrapped) = described(call)?;
-    let tool = description.tool();
-    (operation(tool) != "Tool").then_some((tool, arguments(call, wrapped)?))
+
+/// Original request arguments for display, without executor shape validation.
+/// Explicit provider names and any server envelope must still agree.
+pub fn requested_arguments(call: &ToolRecord) -> Option<(&str, serde_json::Value)> {
+    match explicit_identity(call) {
+        Some(Some(named)) => {
+            if operation(named.tool) == "Tool" {
+                return None;
+            }
+            let server = format!("{SERVER_PREFIX}{}", named.registration);
+            let (_, arguments) = raw_envelope(call, &server)?;
+            Some((named.tool, arguments))
+        }
+        Some(None) => {
+            let input = call.raw_input.as_ref()?;
+            let server = input.get("server")?.as_str()?;
+            let tool = input.get("tool")?.as_str()?;
+            if operation(tool) == "Tool" {
+                return None;
+            }
+            let (_, arguments) = raw_envelope(call, server)?;
+            Some((tool, arguments))
+        }
+        None => legacy_arguments(call),
+    }
 }
+
+/// What a Nocterm tool row asked for, including requests the bridge rejected.
 pub fn requested_call(call: &ToolRecord) -> Option<TerminalCall> {
     let (tool, arguments) = requested_arguments(call)?;
     deserialize(tool, arguments)
 }
 
-/// Borrowed physical evidence follows the same literal precedence as wire facts.
-pub fn requested_arguments_managed(
-    call: &crate::history::physical::ToolSlot,
-) -> Option<(String, Value)> {
-    let name = call.name();
-    let title = call.title();
-    let arguments = call.arguments();
-    let (description, wrapped) = combine(
-        explicit_parts(call.literal(), name.as_deref(), &title)?,
-        input_parts(call.literal(), arguments.as_deref())?,
-    )?;
-    let tool = description.tool();
-    if operation(tool) == "Tool" {
-        return None;
+/// Older Hermes builds used one bridge server named simply `nocterm`.
+/// This spelling is display-only: it never establishes a registered server.
+fn legacy_tool(call: &ToolRecord) -> Option<&str> {
+    fn tool(name: &str) -> Option<&str> {
+        let tool = name.strip_prefix("mcp_nocterm_")?;
+        (operation(tool) != "Tool").then_some(tool)
     }
-    let value = if wrapped {
-        arguments.as_ref()?.get("arguments")?.clone()
+    let title = if call.title.starts_with("mcp.") || call.title.starts_with("mcp_") {
+        Some(tool(&call.title)?)
     } else {
-        arguments
-            .as_ref()
-            .filter(|value| !value.is_null())
-            .map(|value| value.as_value().clone())
-            .unwrap_or_else(|| json!({}))
+        None
     };
-    Some((tool.to_owned(), value))
-}
-/// Borrowed physical counterpart of `raw_envelope`, for transcript rows.
-pub fn raw_envelope_managed(
-    call: &crate::history::physical::ToolSlot,
-    server: &str,
-) -> Option<(String, Value)> {
-    let name = call.name();
-    let title = call.title();
-    let arguments = call.arguments();
-    let (Description::Registered(owner, tool), wrapped) = combine(
-        explicit_parts(call.literal(), name.as_deref(), &title)?,
-        input_parts(call.literal(), arguments.as_deref())?,
-    )?
-    else {
-        return None;
+    let name = match call.name.as_deref() {
+        Some(name) => Some(tool(name)?),
+        None => None,
     };
-    if owner != registration(server)? {
-        return None;
+    match (name, title) {
+        (Some(name), Some(title)) if name != title => None,
+        (Some(name), _) => Some(name),
+        (_, title) => title,
     }
-    let value = if wrapped {
-        arguments.as_ref()?.get("arguments")?.clone()
-    } else {
-        arguments
-            .as_ref()
-            .filter(|value| !value.is_null())
-            .map(|value| value.as_value().clone())
-            .unwrap_or_else(|| json!({}))
-    };
-    Some((tool.to_owned(), value))
 }
-pub fn requested_call_managed(call: &crate::history::physical::ToolSlot) -> Option<TerminalCall> {
-    let (tool, arguments) = requested_arguments_managed(call)?;
-    deserialize(&tool, arguments)
+
+fn legacy_arguments(call: &ToolRecord) -> Option<(&str, serde_json::Value)> {
+    let tool = legacy_tool(call)?;
+    let input = call
+        .raw_input
+        .clone()
+        .filter(|input| !input.is_null())
+        .unwrap_or(json!({}));
+    if ["server", "tool", "arguments"]
+        .iter()
+        .any(|key| input.get(key).is_some())
+    {
+        if input.get("server")?.as_str()? != "nocterm" || input.get("tool")?.as_str()? != tool {
+            return None;
+        }
+        return Some((tool, input.get("arguments")?.clone()));
+    }
+    Some((tool, input))
 }

@@ -1,36 +1,25 @@
 //! Advertised slash commands share one interpretation in UI and prompt dispatch.
-use crate::model::notice::AdvertisedCommand;
+use crate::model::commands::AvailableCommand;
 use std::ops::Range;
 pub struct Invocation<'a> {
     pub name: &'a str,
     pub range: Range<usize>,
     pub has_arguments: bool,
 }
-pub fn invocation<'a>(text: &'a str, commands: &[AdvertisedCommand]) -> Option<Invocation<'a>> {
-    invoked(text, |name| {
-        commands.iter().any(|command| command.name == name)
-    })
-}
-/// Same grammar over the advertised commands retained by the document.
-pub fn invocation_managed<'a>(
-    text: &'a str,
-    commands: &[crate::history::physical::CommandSlot],
-) -> Option<Invocation<'a>> {
-    invoked(text, |name| {
-        commands.iter().any(|command| &*command.name() == name)
-    })
-}
-fn invoked<'a>(text: &'a str, known: impl Fn(&str) -> bool) -> Option<Invocation<'a>> {
+pub fn invocation<'a>(text: &'a str, commands: &[AvailableCommand]) -> Option<Invocation<'a>> {
     let trimmed = text.trim_start();
     let start = text.len() - trimmed.len();
     let body = trimmed.strip_prefix('/')?;
     let end = body.find(char::is_whitespace).unwrap_or(body.len());
     let name = &body[..end];
-    known(name).then_some(Invocation {
-        name,
-        range: start..start + 1 + end,
-        has_arguments: end < body.len(),
-    })
+    commands
+        .iter()
+        .any(|command| command.name == name)
+        .then_some(Invocation {
+            name,
+            range: start..start + 1 + end,
+            has_arguments: end < body.len(),
+        })
 }
 /// Suggestions stop once the user starts arguments. Unknown slash text is ordinary input.
 pub fn prefix(text: &str) -> Option<&str> {
@@ -44,8 +33,8 @@ mod tests {
     #[test]
     fn only_exact_advertised_names_have_administrative_semantics() {
         let commands = vec![
-            AdvertisedCommand::new("review", "Review"),
-            AdvertisedCommand::new("$skills:界", "Skill"),
+            AvailableCommand::new("review", "Review"),
+            AvailableCommand::new("$skills:界", "Skill"),
         ];
         assert!(invocation("/var/log/nginx/error.log проверь", &commands).is_none());
         assert!(invocation("/unknown", &commands).is_none());

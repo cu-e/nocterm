@@ -72,18 +72,16 @@ impl HistoryReader {
     ) -> Self {
         Self { repository, gate }
     }
-    /// Wait for the shared permit before capturing this document's original
-    /// reader. The guarded identity and native task retain their physical credit
-    /// through cancellation, refusal and delivery without another future Box.
-    pub fn load_managed(
+    pub async fn load(
         &self,
-        id: nocterm_ai::history::ReaderDocumentId,
-        source: nocterm_ai::history::ReaderSource,
-    ) -> Result<
-        nocterm_ai::history::PreparedReaderLoad,
-        nocterm_ai::model::json::deferred::NativeAllocationError,
-    > {
-        id.prepare_load(source, self.gate.clone(), self.repository.clone())
+        id: String,
+    ) -> (
+        Result<nocterm_ai::history::SavedChat, AgentStorageError>,
+        nocterm_ai::history::HistoryPermit,
+    ) {
+        let permit = self.gate.acquire().await;
+        let loaded = self.repository.load(id).await;
+        (loaded, permit)
     }
 }
 

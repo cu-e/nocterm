@@ -1,16 +1,13 @@
 //! Bounded reads and checked chat paths.
-mod held_file;
-pub(crate) mod reader_task;
-mod string_reader;
 use nocterm_ai::{
     history::{HistoryCodecError, MAX_FILE_BYTES},
     storage::AgentStorageError,
 };
-use nocterm_core::SharedError;
 use std::{
     fs::File,
     io::Read as _,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 pub(super) fn file(dir: &Path, id: &str) -> Result<PathBuf, AgentStorageError> {
     if uuid::Uuid::parse_str(id).is_err() {
@@ -47,21 +44,6 @@ pub(super) fn read(path: &Path, id: &str) -> Result<Vec<u8>, AgentStorageError> 
 fn read_error(path: &Path, source: std::io::Error) -> AgentStorageError {
     AgentStorageError::Read {
         path: path.to_owned(),
-        source: SharedError::from_error(source),
+        source: Arc::new(source),
     }
 }
-
-#[cfg(test)]
-mod legacy_validation;
-
-mod literal_reader;
-
-mod json_fields;
-mod json_frames;
-#[cfg(test)]
-mod v2_plan;
-
-#[cfg(test)]
-mod v2_rows;
-
-pub(crate) mod native;

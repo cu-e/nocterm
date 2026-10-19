@@ -10,7 +10,8 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_ai::history::physical::{ContentSlot, RowBody, RowSlot};
+use nocterm_ai::model::content::Content;
+use nocterm_ai::thread::Entry;
 use nocterm_ui::IconName;
 
 use super::AgentPanel;
@@ -19,23 +20,19 @@ use super::AgentPanel;
 pub(super) const MESSAGE_GROUP: &str = "agent-message-row";
 
 /// The text a message copies as.
-pub(super) fn message_text(entry: &RowSlot) -> Option<String> {
-    match entry.view() {
-        RowBody::User(parts) => {
-            let mut output = String::new();
-            let mut first = true;
-            for part in parts.contents() {
-                if let ContentSlot::Text(text) = part {
-                    if !first {
-                        output.push('\n');
-                    }
-                    first = false;
-                    output.push_str(&text.text());
-                }
-            }
-            Some(output)
-        }
-        RowBody::Agent(text) => Some(text.read().to_string()),
+pub(super) fn message_text(entry: &Entry) -> Option<String> {
+    match entry {
+        Entry::User(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|part| match part {
+                    Content::Text(text) => Some(text.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        Entry::Agent(text) => Some(text.clone()),
         _ => None,
     }
 }

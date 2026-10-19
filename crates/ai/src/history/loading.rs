@@ -23,15 +23,3 @@ impl Drop for HistoryPermit {
         let _ = self.0.try_send(());
     }
 }
-
-mod completion;
-mod coordinator;
-mod phase;
-mod source;
-pub use completion::{NativeLoadError, ReaderCompletion, ReaderFailure, ReaderOutcome};
-pub use coordinator::PreparedReaderLoad;
-pub use phase::{NativeMaterialized, NativePhase};
-pub use source::{
-    ManagedReaderFuture, ReaderDelivery, ReaderDocumentId, ReaderInstallError, ReaderMaterializer,
-    ReaderPreparationFailure, ReaderRequest, ReaderSource, ReaderSourceError,
-};

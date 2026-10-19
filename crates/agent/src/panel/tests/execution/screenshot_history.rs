@@ -1,15 +1,13 @@
-//! Screenshot identity and MCP results across late input and saved history.
-use super::super::provider_fixtures::{Program, bridge, known_title, provider_tool};
+//! Screenshot identity and MCP results survive late input and history.
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
+use crate::panel::tests::provider_fixtures::{Program, bridge, update};
 use nocterm_ai::ApprovalPolicy;
-use nocterm_ai::model::{
-    ids::ToolId,
-    json::OwnedJson,
-    tools::{ToolChanges, ToolOutput, ToolPatch, ToolStatus},
-};
-use nocterm_ai::{thread::Entry, tool_display};
+use nocterm_ai::model::session::SessionUpdate;
+use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch, ToolRecord, ToolStatus};
+use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use serde_json::json;
+
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &mut TestAppContext) {
@@ -55,19 +53,21 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     assert_eq!(actual.program, "bash");
     assert_eq!(actual.args, args);
     assert_eq!(actual.stdin.as_deref(), Some(&b"input\r\n"[..]));
-    let authority = cx.update(|cx| f.installation.installed.runtime().retention(cx).clone());
-    let mut call = provider_tool(
-        "provider-call",
-        "mcp__nocterm-17__exec_command",
-        ToolStatus::Pending,
+    update(
+        &f,
+        &session,
+        SessionUpdate::ToolCall(Box::new(ToolRecord::new(
+            "provider-call",
+            "mcp__nocterm-17__exec_command",
+        ))),
+        cx,
     );
-    let title_len = call.title.len();
-    known_title(&mut call, 13..15, 17..title_len);
-    deliver(&f, &session, SessionUpdate::ToolStarted(call), cx);
     cx.update(|cx| {
-        let call = thread.read(cx).tool_slot(0);
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
+            unreachable!()
+        };
         assert!(
-            tool_display::ToolDisplay::from_managed(call).is_none(),
+            tool_display::ToolDisplay::from_call(call).is_none(),
             "name alone cannot establish the executed host"
         );
     });
@@ -93,50 +93,41 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     );
     assert_eq!(result["state"], "exited");
     let wire = nocterm_ai::mcp::tool_result(json!(42), Ok(result.clone()));
-    let patch = ToolPatch {
-        id: ToolId::new("provider-call"),
-        changes: ToolChanges {
-            arguments: Some(
-                OwnedJson::from_untracked(&authority, serde_json::to_value(&request).unwrap())
+    update(
+        &f,
+        &session,
+        SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+            "provider-call",
+            ToolChanges::default()
+                .raw_input(serde_json::to_value(&request).unwrap())
+                .raw_output(wire["result"].clone())
+                .content(
+                    serde_json::from_value::<Vec<ToolContent>>(
+                        json!([{"type":"content","content":{
+                            "type":"text","text":result.to_string()
+                        }}]),
+                    )
                     .unwrap(),
-            ),
-            result: Some(OwnedJson::from_untracked(&authority, wire["result"].clone()).unwrap()),
-            output: Some(vec![ToolOutput::Content {
-                content: Box::new(Content::Text(Text {
-                    text: result.to_string(),
-                    annotations: None,
-                    extensions: None,
-                })),
-                extensions: None,
-            }]),
-            status: Some(ToolStatus::Succeeded),
-            ..Default::default()
-        },
-        extensions: None,
-        claims: Default::default(),
-        literal: Default::default(),
-    };
-    deliver(&f, &session, SessionUpdate::ToolChanged(patch), cx);
+                )
+                .status(ToolStatus::Succeeded),
+        ))),
+        cx,
+    );
     cx.update(|cx| {
-        let call = thread.read(cx).tool_slot(0);
-        assert_eq!(
-            tool_display::managed_header(call),
-            "This computer · Execute program · Completed"
-        );
-        let snapshot = thread.read(cx).snapshot(cx).unwrap();
-        f.repository.seed_chat(&snapshot).unwrap();
-        let restored_chat = f.repository.transcript(snapshot.id()).unwrap();
-        let Entry::Tool(restored) = &restored_chat.transcript().entries[0] else {
-            panic!("restored tool row");
+        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
+            unreachable!()
         };
         assert_eq!(
-            tool_display::header(restored),
-            tool_display::managed_header(call)
+            tool_display::header(call),
+            "This computer · Execute program · Completed"
         );
-        let input = tool_input::source(restored).unwrap();
+        let restored: ToolRecord =
+            serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
+        assert_eq!(tool_display::header(&restored), tool_display::header(call));
+        let input = tool_input::source(&restored).unwrap();
         assert_eq!(input.text, script);
         assert_eq!(input.language, Some("bash"));
-        let output = tool_output::source(restored, false).unwrap();
+        let output = tool_output::source(&restored, false).unwrap();
         assert_eq!(
             output.sections.len(),
             2,
@@ -161,15 +152,10 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
     });
     cx.update(|cx| thread.update(cx, |thread, cx| thread.clear_composer_context(cx)));
-    deliver(&f, &session, SessionUpdate::ToolChanged(ToolPatch {
-        id: ToolId::new("provider-call"),
-        changes: ToolChanges {
-            title: Some("Different destination".into()),
-            arguments: Some(OwnedJson::from_untracked(&authority, json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})).unwrap()),
-            ..Default::default()
-        },
-        extensions: None, claims: Default::default(), literal: Default::default(),
-    }), cx);
+    update(&f, &session, SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+        "provider-call", ToolChanges::default().title("Different destination")
+            .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),
+    ))), cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(("tool-call", 0usize), cx);

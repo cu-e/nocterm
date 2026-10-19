@@ -1,11 +1,15 @@
-use super::json::OwnedJson;
+//! Tool rows. `ToolRecord` and its children are stored in saved transcripts, so their
+//! JSON shape (names, field order, omitted defaults, lenient decoding) is a compatibility contract.
 use super::{
     content::Content,
     extensions::Extensions,
     ids::{ProviderTerminalId, ToolId},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_with::{DefaultOnError, VecSkipError, serde_as, skip_serializing_none};
 use std::path::PathBuf;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
@@ -17,100 +21,107 @@ pub enum ToolKind {
     Execute,
     Think,
     Fetch,
+    #[serde(rename = "switch_mode")]
     ChangeMode,
     #[default]
+    #[serde(other)]
     Other,
 }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
     #[default]
     Pending,
+    #[serde(rename = "in_progress")]
     Running,
+    #[serde(rename = "completed")]
     Succeeded,
     Failed,
 }
-impl ToolStatus {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pending => "Pending",
-            Self::Running => "InProgress",
-            Self::Succeeded => "Completed",
-            Self::Failed => "Failed",
-        }
-    }
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolRecord {
+    #[serde(rename = "toolCallId")]
     pub id: ToolId,
     pub title: String,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub name: Option<String>,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub kind: ToolKind,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub status: ToolStatus,
-    pub output: Vec<ToolOutput>,
+    #[serde_as(deserialize_as = "DefaultOnError<VecSkipError<_>>")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<ToolContent>,
+    #[serde_as(deserialize_as = "DefaultOnError<VecSkipError<_>>")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<Location>,
-    #[serde(with = "json_presence")]
-    pub arguments: Option<OwnedJson>,
-    #[serde(with = "json_presence")]
-    pub result: Option<OwnedJson>,
-    pub extensions: Option<Extensions>,
-    #[serde(skip)]
-    pub claims: BridgeClaims,
-    #[serde(skip)]
-    pub literal: super::literal::LiteralEvidence,
-    #[serde(with = "shared_display")]
-    pub client_display: Option<super::shared_display::SharedDisplay>,
-}
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ToolPatch {
-    pub id: ToolId,
-    pub changes: ToolChanges,
-    pub extensions: Option<Extensions>,
-    #[serde(skip)]
-    pub claims: BridgeClaims,
-    #[serde(skip)]
-    pub literal: super::literal::LiteralEvidence,
-}
-/// None keeps the previous value; Some(empty) clears a collection. JSON null in
-/// raw input/output decodes as absent under the current wire optional-field rules.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct ToolChanges {
-    pub kind: Option<ToolKind>,
-    pub status: Option<ToolStatus>,
-    pub title: Option<String>,
-    pub name: Option<String>,
-    pub output: Option<Vec<ToolOutput>>,
-    pub locations: Option<Vec<Location>>,
-    #[serde(with = "json_presence")]
-    pub arguments: Option<OwnedJson>,
-    #[serde(with = "json_presence")]
-    pub result: Option<OwnedJson>,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
+    pub raw_input: Option<Value>,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
+    pub raw_output: Option<Value>,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Extensions>,
 }
 impl ToolRecord {
-    pub(crate) fn adopt_retention(
-        &self,
-        authority: &super::retention::RetentionAuthority,
-    ) -> Result<(), super::retention::RetentionError> {
-        self.id.adopt_retention(authority)?;
-        for output in &self.output {
-            if let ToolOutput::TerminalReference { id, .. } = output {
-                id.adopt_retention(authority)?;
-            }
+    pub fn new(id: impl Into<ToolId>, title: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            name: None,
+            kind: ToolKind::default(),
+            status: ToolStatus::default(),
+            content: Vec::new(),
+            locations: Vec::new(),
+            raw_input: None,
+            raw_output: None,
+            meta: None,
         }
-        Ok(())
     }
-
-    pub fn apply(&mut self, patch: ToolPatch) -> bool {
-        if self.id != patch.id {
-            return false;
-        }
-        let changes = patch.changes;
-        self.literal.apply(
-            patch.literal,
-            changes.name.is_some(),
-            changes.title.is_some(),
-            changes.arguments.is_some(),
-        );
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+    pub fn kind(mut self, kind: ToolKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn status(mut self, status: ToolStatus) -> Self {
+        self.status = status;
+        self
+    }
+    pub fn content(mut self, content: Vec<ToolContent>) -> Self {
+        self.content = content;
+        self
+    }
+    pub fn raw_input(mut self, value: impl Into<Option<Value>>) -> Self {
+        self.raw_input = value.into();
+        self
+    }
+    pub fn raw_output(mut self, value: impl Into<Option<Value>>) -> Self {
+        self.raw_output = value.into();
+        self
+    }
+    pub fn meta(mut self, meta: impl Into<Option<Extensions>>) -> Self {
+        self.meta = meta.into();
+        self
+    }
+    /// Absent changes keep the current value; an empty list clears it.
+    pub fn apply(&mut self, changes: ToolChanges) {
         if let Some(value) = changes.kind {
             self.kind = value;
         }
@@ -123,181 +134,150 @@ impl ToolRecord {
         if let Some(value) = changes.name {
             self.name = Some(value);
         }
-        if let Some(value) = changes.output {
-            self.output = value;
+        if let Some(value) = changes.content {
+            self.content = value;
         }
         if let Some(value) = changes.locations {
             self.locations = value;
         }
-        if let Some(value) = changes.arguments {
-            self.arguments = Some(value);
+        if let Some(value) = changes.raw_input {
+            self.raw_input = Some(value);
         }
-        if let Some(value) = changes.result {
-            self.result = Some(value);
+        if let Some(value) = changes.raw_output {
+            self.raw_output = Some(value);
         }
-        self.claims.merge(patch.claims);
-        true
     }
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum ToolOutput {
-    Content {
-        content: Box<Content>,
-        extensions: Option<Extensions>,
-    },
-    FileDiff(FileDiff),
-    TerminalReference {
-        id: ProviderTerminalId,
-        extensions: Option<Extensions>,
-    },
+
+/// A sparse update of one tool row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolPatch {
+    pub id: ToolId,
+    pub changes: ToolChanges,
+    pub meta: Option<Extensions>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+impl ToolPatch {
+    pub fn new(id: impl Into<ToolId>, changes: ToolChanges) -> Self {
+        Self {
+            id: id.into(),
+            changes,
+            meta: None,
+        }
+    }
+}
+
+/// None keeps the previous value; Some(empty) clears a collection.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ToolChanges {
+    pub kind: Option<ToolKind>,
+    pub status: Option<ToolStatus>,
+    pub title: Option<String>,
+    pub name: Option<String>,
+    pub content: Option<Vec<ToolContent>>,
+    pub locations: Option<Vec<Location>>,
+    pub raw_input: Option<Value>,
+    pub raw_output: Option<Value>,
+}
+impl ToolChanges {
+    pub fn kind(mut self, kind: ToolKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+    pub fn status(mut self, status: ToolStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+    pub fn content(mut self, content: Vec<ToolContent>) -> Self {
+        self.content = Some(content);
+        self
+    }
+    pub fn raw_input(mut self, value: Value) -> Self {
+        self.raw_input = Some(value);
+        self
+    }
+    pub fn raw_output(mut self, value: Value) -> Self {
+        self.raw_output = Some(value);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolContent {
+    Content(Box<ContentOutput>),
+    Diff(FileDiff),
+    Terminal(TerminalReference),
+}
+impl From<Content> for ToolContent {
+    fn from(content: Content) -> Self {
+        Self::Content(Box::new(ContentOutput {
+            content,
+            meta: None,
+        }))
+    }
+}
+impl From<&str> for ToolContent {
+    fn from(text: &str) -> Self {
+        Content::from(text).into()
+    }
+}
+impl From<String> for ToolContent {
+    fn from(text: String) -> Self {
+        Content::from(text).into()
+    }
+}
+
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentOutput {
+    pub content: Content,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Extensions>,
+}
+
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileDiff {
     pub path: PathBuf,
-    pub previous: Option<String>,
-    pub replacement: String,
-    pub extensions: Option<Extensions>,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
+    pub old_text: Option<String>,
+    pub new_text: String,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Extensions>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReference {
+    pub terminal_id: ProviderTerminalId,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Extensions>,
+}
+
+#[serde_as]
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Location {
     pub path: PathBuf,
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default)]
     pub line: Option<u32>,
-    pub extensions: Option<Extensions>,
-}
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum Claim {
-    #[default]
-    Absent,
-    Known {
-        registration: String,
-        tool: String,
-    },
-    Invalid,
-}
-impl Claim {
-    fn merge(&mut self, incoming: Self) {
-        match (&*self, &incoming) {
-            (_, Self::Absent) => {}
-            (Self::Absent, _) => *self = incoming,
-            (current, next) if current == next => {}
-            _ => *self = Self::Invalid,
-        }
-    }
-}
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeClaims {
-    pub name: Claim,
-    pub title: Claim,
-    pub input: Claim,
-    pub legacy_display_hint: Option<String>,
-}
-impl BridgeClaims {
-    pub fn merge(&mut self, incoming: Self) {
-        self.name.merge(incoming.name);
-        self.title.merge(incoming.title);
-        self.input.merge(incoming.input);
-        if incoming.legacy_display_hint.is_some() {
-            self.legacy_display_hint = incoming.legacy_display_hint;
-        }
-    }
-    /// Evidence describes a row. It never grants permission to execute.
-    pub fn consistent_identity(&self) -> Option<(&str, &str)> {
-        let mut identity = None;
-        for claim in [&self.name, &self.title, &self.input] {
-            match claim {
-                Claim::Absent => {}
-                Claim::Invalid => return None,
-                Claim::Known { registration, tool } => {
-                    let next = (registration.as_str(), tool.as_str());
-                    if identity.is_some_and(|current| current != next) {
-                        return None;
-                    }
-                    identity = Some(next);
-                }
-            }
-        }
-        identity
-    }
-}
-
-/// Durable presentation supplied by the client, never a restored capability.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ClientDisplay {
-    pub version: u8,
-    pub tool: String,
-    pub arguments: OwnedJson,
-    pub destination: super::controls::Presence<String>,
-    pub redacted: super::controls::Presence<bool>,
-    pub outcome: super::controls::Presence<DisplayOutcome>,
-}
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub enum DisplayOutcome {
-    Pending,
-    #[serde(rename = "Ok")]
-    Succeeded(OwnedJson),
-    #[serde(rename = "Err")]
-    Failed(String),
-}
-
-/// The owned storage grammar preserves supplied JSON null without conflating
-/// it with a missing optional field. Live adapter patches still follow the SDK's
-/// optional-field decoding; this representation does not invent wire clears.
-mod json_presence {
-    use super::super::json::OwnedJson;
-    use serde::Serialize;
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &Option<OwnedJson>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        #[derive(Serialize)]
-        #[serde(tag = "presence", content = "value", rename_all = "snake_case")]
-        enum BorrowedPresence<'a> {
-            Absent,
-            Supplied(&'a OwnedJson),
-        }
-        match value {
-            None => BorrowedPresence::Absent,
-            Some(value) => BorrowedPresence::Supplied(value),
-        }
-        .serialize(serializer)
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn owned_optional_json_roundtrips_literal_null_and_absence_separately() {
-        let authority = crate::model::retention::RetentionAuthority::new(usize::MAX).unwrap();
-        let absent = ToolChanges::default();
-        let supplied = ToolChanges {
-            arguments: Some(
-                OwnedJson::from_untracked(&authority, serde_json::Value::Null).unwrap(),
-            ),
-            ..ToolChanges::default()
-        };
-        for original in [absent, supplied] {
-            let encoded = serde_json::to_vec(&original).unwrap();
-            assert_eq!(
-                <ToolChanges as crate::model::decode::Decode>::decode(
-                    &authority,
-                    &mut serde_json::Deserializer::from_slice(&encoded)
-                )
-                .unwrap(),
-                original
-            );
-        }
-    }
-}
-
-mod shared_display {
-    use crate::model::shared_display::SharedDisplay;
-    use serde::Serialize;
-    pub(super) fn serialize<S: serde::Serializer>(
-        value: &Option<SharedDisplay>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        value.as_deref().serialize(serializer)
-    }
+    #[serde_as(deserialize_as = "DefaultOnError")]
+    #[serde(default, rename = "_meta")]
+    pub meta: Option<Extensions>,
 }

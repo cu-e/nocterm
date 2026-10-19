@@ -1,21 +1,18 @@
 //! Owned conversation facts. Native capabilities and transport schemas stay outside.
-pub mod allocations;
+//!
+//! `content` and `tools` records are stored in saved transcripts; their JSON shape is
+//! a compatibility contract pinned by the version-one history fixtures.
 pub mod auth;
+pub mod commands;
 pub mod content;
 pub mod controls;
-pub mod decode;
 pub mod diagnostic;
 pub mod extensions;
-pub mod failure;
 pub mod ids;
-pub mod json;
-pub mod native;
-pub mod notice;
-pub mod retention;
+pub mod plan;
 pub mod session;
 pub mod tools;
 pub mod usage;
 
-pub mod literal;
-
-pub mod shared_display;
+#[cfg(test)]
+mod fixture_tests;

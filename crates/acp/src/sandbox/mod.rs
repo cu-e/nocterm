@@ -1,8 +1,6 @@
 //! Native sandbox facts and launch projection; policy remains in AI.
-#[cfg(all(test, unix))]
 mod launch;
 pub(crate) mod resolution;
-#[cfg(all(test, unix))]
 pub(crate) use launch::SandboxLauncher;
 #[cfg(test)]
 mod tests;
@@ -20,11 +18,24 @@ impl SandboxProbe for NativeSandboxProbe {
     }
 }
 pub(crate) fn availability(env: &BTreeMap<String, String>, cwd: Option<&Path>) -> Availability {
+    lookup(env, cwd, false).unwrap_or(Availability::Missing)
+}
+pub(crate) fn strict_availability(
+    env: &BTreeMap<String, String>,
+    cwd: &Path,
+) -> Result<Availability, nocterm_ai::workspace::WorkdirError> {
+    lookup(env, Some(cwd), true)
+}
+fn lookup(
+    env: &BTreeMap<String, String>,
+    cwd: Option<&Path>,
+    strict: bool,
+) -> Result<Availability, nocterm_ai::workspace::WorkdirError> {
     if !cfg!(target_os = "linux") {
-        return Availability::Unsupported;
+        return Ok(Availability::Unsupported);
     }
     let Some(path) = env.get("PATH") else {
-        return Availability::Missing;
+        return Ok(Availability::Missing);
     };
     for directory in std::env::split_paths(path) {
         if directory.as_os_str().is_empty() {
@@ -36,9 +47,21 @@ pub(crate) fn availability(env: &BTreeMap<String, String>, cwd: Option<&Path>) -
             cwd.map_or(directory.clone(), |cwd| cwd.join(directory))
         };
         let candidate = directory.join("bwrap");
-        if std::fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file()) {
-            return Availability::Available(candidate);
+        match std::fs::metadata(&candidate) {
+            Ok(metadata) if metadata.is_file() => return Ok(Availability::Available(candidate)),
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(source) if strict => {
+                return Err(nocterm_ai::workspace::WorkdirError::resolve(
+                    candidate, source,
+                ));
+            }
+            Err(_) => {}
         }
     }
-    Availability::Missing
+    Ok(Availability::Missing)
 }

@@ -8,7 +8,7 @@ use std::{
 };
 
 use nocterm_acp::{BridgeServer, RelayCommand};
-use nocterm_ai::{ToolBridge as _, model::session::ExternalToolEndpoint};
+use nocterm_ai::ToolBridge as _;
 use nocterm_core::Paths;
 
 #[test]
@@ -22,9 +22,7 @@ fn the_launched_server_answers_through_the_chat_bridge() {
         },
     );
     let registration = bridge.register().unwrap();
-    let ExternalToolEndpoint::LocalCommand { launch: server, .. } = registration.endpoint() else {
-        panic!("the relay is a stdio server");
-    };
+    let server = registration.endpoint().launch;
     let mut relay = Command::new(&server.program)
         .args(&server.args)
         .env_clear()

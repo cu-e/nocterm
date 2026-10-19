@@ -1,5 +1,7 @@
 use super::*;
-use nocterm_ai::model::{content::MediaKind, notice::AdvertisedCommand};
+use nocterm_ai::model::commands::AvailableCommand;
+use nocterm_ai::model::content::Content;
+use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 
 fn texts(f: &Fixture) -> Vec<String> {
     f.commands
@@ -32,12 +34,12 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
         assert!(thread.submit("second".into(), None, cx).unwrap());
         thread.replace_composer_context(vec![Attachment::Group("third context".into())], cx);
         assert!(thread.submit("third".into(), None, cx).unwrap());
-        let id = thread.composer().queue()[0].id();
+        let id = thread.composer().queue()[0].saved.id;
         thread.replace_composer_context(vec![Attachment::Group("edited context".into())], cx);
         assert!(thread.submit("edited second".into(), Some(id), cx).unwrap());
         assert_eq!(thread.composer().queue().len(), 2);
-        assert_eq!(thread.composer().queue()[0].id(), id);
-        assert_eq!(thread.composer().queued_rows()[1].text(), "third");
+        assert_eq!(thread.composer().queue()[0].saved.id, id);
+        assert_eq!(thread.composer().queue()[1].saved.text, "third");
         let error = thread
             .submit("edited again".into(), Some(u64::MAX), cx)
             .unwrap_err();
@@ -46,13 +48,13 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     cx.run_until_parked();
     assert_eq!(texts(&f), ["first"]);
     let saved = f.repository.chats();
-    assert_eq!(saved[0].composer().queue.len(), 2);
-    assert_eq!(saved[0].composer().queue[0].text, "edited second");
+    assert_eq!(saved[0].queue.len(), 2);
+    assert_eq!(saved[0].queue[0].text, "edited second");
     complete_active(&f, cx);
     assert_eq!(texts(&f), ["first", "edited second"]);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).scope_attachments(),
+            thread.read(cx).prompt_scope().as_ref().unwrap(),
             &[Attachment::Group("edited context".into())]
         )
     });
@@ -60,7 +62,7 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
     assert_eq!(texts(&f), ["first", "edited second", "third"]);
     cx.update(|cx| {
         assert_eq!(
-            thread.read(cx).scope_attachments(),
+            thread.read(cx).prompt_scope().as_ref().unwrap(),
             &[Attachment::Group("third context".into())]
         )
     });
@@ -77,7 +79,7 @@ fn send_now_waits_for_cancellation_then_retains_other_messages(cx: &mut TestAppC
     thread.update(cx, |thread, cx| {
         thread.send("second".into(), cx);
         thread.send("priority".into(), cx);
-        let priority = thread.composer().queue()[1].id();
+        let priority = thread.composer().queue()[1].saved.id;
         thread.send_now(priority, cx);
     });
     cx.run_until_parked();
@@ -111,14 +113,14 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     cx.update(|cx| assert_eq!(thread.read(cx).composer().queue().len(), 1));
     f.commands.auth_required.store(true, Ordering::SeqCst);
     thread.update(cx, |thread, cx| {
-        let id = thread.composer().queue()[0].id();
+        let id = thread.composer().queue()[0].saved.id;
         thread.send_now(id, cx);
         thread.send("third".into(), cx);
     });
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
-        assert_eq!(thread.read(cx).composer().queued_rows()[0].text(), "third");
+        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "third");
     });
     assert_eq!(texts(&f), ["first", "second"]);
 }
@@ -165,8 +167,9 @@ fn queue_edit_restores_the_unsent_composer_draft(cx: &mut TestAppContext) {
                 .unwrap()
                 .read(cx)
                 .composer()
-                .queued_rows()[0]
-                .text(),
+                .queue()[0]
+                .saved
+                .text,
             "replacement"
         );
     })
@@ -186,11 +189,10 @@ fn slash_popup_keyboard_completion_keeps_commands_as_raw_prompts(cx: &mut TestAp
             .unwrap()
             .update(cx, |thread, cx| {
                 report_control(
-                    &f,
                     thread,
-                    SessionUpdate::Commands(vec![
-                        AdvertisedCommand::new("plan", "Plan a task"),
-                        AdvertisedCommand::new("review", "Review changes"),
+                    SessionUpdate::AvailableCommandsUpdate(vec![
+                        AvailableCommand::new("plan", "Plan a task"),
+                        AvailableCommand::new("review", "Review changes"),
                     ]),
                     cx,
                 );
@@ -221,52 +223,59 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    cx.run_until_parked();
-    let work = f._directory.path().join("work");
-    let saved = super::archive::saved_with(&f, cx, |_, resume, transcript, _| {
-        resume.workdir = Some(work);
-        resume.session_id = Some("saved-session".into());
-        transcript.entries = vec![
-            nocterm_ai::thread::Entry::User(vec![super::navigation::content("remember disk")]),
-            nocterm_ai::thread::Entry::Agent("disk is full".into()),
-        ];
+    new_chat(&f, cx);
+    exchange(&f, "remember disk", "disk is full", cx);
+    let saved = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .snapshot(cx)
+            .unwrap()
     });
-    let thread = super::archive::archived(&f, &saved, cx);
+    f.panel.update(cx, |panel, cx| {
+        panel
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| thread.release_resources(cx));
+    });
+    cx.run_until_parked();
+    let thread = cx.new(|cx| {
+        crate::thread::AgentThread::restored(
+            saved.clone(),
+            f._directory
+                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+            cx,
+        )
+    });
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(RestoreFailure::Authentication("Sign in"));
-    f.panel
-        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
-    cx.run_until_parked();
+        .push_back(AgentError::AuthRequired("Sign in".into()));
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
         assert_eq!(
-            thread
-                .read(cx)
-                .snapshot(cx)
-                .unwrap()
-                .resume()
-                .session_id
-                .clone(),
-            saved.resume().session_id.clone()
+            thread.read(cx).snapshot(cx).unwrap().session_id,
+            saved.session_id
         );
         let restore = thread.read(cx).pending_restore().as_ref().unwrap();
         assert_eq!(
             restore.session.as_str(),
-            saved.resume().session_id.as_deref().unwrap()
+            saved.session_id.as_deref().unwrap()
         );
     });
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(RestoreFailure::Unavailable("No native resume"));
+        .push_back(AgentError::RestoreUnavailable("No native resume".into()));
     cx.update_window(f.handle, |_, window, cx| {
         thread.update(cx, |thread, cx| {
-            thread.authenticate(AuthMethodId::new("sign-in"), window, cx)
+            thread.authenticate("sign-in".into(), window, cx)
         });
     })
     .unwrap();
@@ -296,7 +305,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
 
 #[test]
 fn slash_prefixes_do_not_capture_normal_text_or_command_arguments() {
-    let commands = [AdvertisedCommand::new("plan", "Plan")];
+    let commands = [AvailableCommand::new("plan", "Plan")];
     assert_eq!(crate::panel::commands::matches("/PL", &commands).len(), 1);
     for text in [
         "path/to/file",
@@ -315,10 +324,13 @@ fn controls_received_before_session_response_are_kept(cx: &mut TestAppContext) {
     *f.commands.session_gate.lock().unwrap() = Some(gate);
     new_chat(&f, cx);
     f.events
-        .try_send(AgentEvent::Session(SessionNotice {
-            session: SessionId::new("s0"),
-            update: SessionUpdate::Commands(vec![AdvertisedCommand::new("early", "Early command")]),
-        }))
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            "s0",
+            SessionUpdate::AvailableCommandsUpdate(vec![AvailableCommand::new(
+                "early",
+                "Early command",
+            )]),
+        )))
         .unwrap();
     cx.run_until_parked();
     ready.send(()).unwrap();
@@ -339,65 +351,46 @@ fn controls_received_before_session_response_are_kept(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn controls_for_another_session_are_dropped_before_and_after_the_session_opens(
-    cx: &mut TestAppContext,
-) {
-    let f = fixture(cx);
-    let (ready, gate) = oneshot::channel();
-    *f.commands.session_gate.lock().unwrap() = Some(gate);
-    new_chat(&f, cx);
-    let foreign = |name: &str| {
-        AgentEvent::Session(SessionNotice {
-            session: SessionId::new("another-session"),
-            update: SessionUpdate::Commands(vec![AdvertisedCommand::new(name, "Foreign command")]),
-        })
-    };
-    f.events.try_send(foreign("before")).unwrap();
-    cx.run_until_parked();
-    ready.send(()).unwrap();
-    cx.run_until_parked();
-    f.events.try_send(foreign("after")).unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let thread = f.panel.read(cx).current().unwrap();
-        assert!(thread.read(cx).configuration().commands().is_empty());
-    });
-}
-
-#[gpui_kit::test]
 fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    cx.run_until_parked();
-    let work = f._directory.path().join("work");
-    let saved = super::archive::saved_with(&f, cx, |_, resume, transcript, _| {
-        resume.workdir = Some(work);
-        resume.session_id = Some("saved-session".into());
-        transcript.entries = vec![
-            nocterm_ai::thread::Entry::User(vec![super::navigation::content("remember")]),
-            nocterm_ai::thread::Entry::Agent("yes".into()),
-        ];
+    new_chat(&f, cx);
+    exchange(&f, "remember", "yes", cx);
+    let saved = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .snapshot(cx)
+            .unwrap()
     });
-    let thread = super::archive::archived(&f, &saved, cx);
+    f.panel.update(cx, |panel, cx| {
+        panel
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| thread.release_resources(cx));
+    });
+    cx.run_until_parked();
+    let thread = cx.new(|cx| {
+        crate::thread::AgentThread::restored(
+            saved.clone(),
+            f._directory
+                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+            cx,
+        )
+    });
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(RestoreFailure::Io("temporary"));
+        .push_back(AgentError::Io("temporary".into()));
     let count = f.commands.sessions.load(Ordering::SeqCst);
-    f.panel
-        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
-    cx.run_until_parked();
+    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            thread
-                .read(cx)
-                .snapshot(cx)
-                .unwrap()
-                .resume()
-                .session_id
-                .clone(),
-            saved.resume().session_id.clone()
+            thread.read(cx).snapshot(cx).unwrap().session_id,
+            saved.session_id
         )
     });
     cx.background_executor
@@ -407,7 +400,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
     cx.update(|cx| {
         assert_eq!(
             thread.read(cx).session().as_ref().unwrap().as_str(),
-            saved.resume().session_id.as_deref().unwrap()
+            saved.session_id.as_deref().unwrap()
         );
         assert!(!thread.read(cx).document().pending_history());
     });
@@ -418,14 +411,14 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| thread.read(cx).chat_id_string());
+    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
     thread.update(cx, |thread, cx| thread.send("active".into(), cx));
     cx.run_until_parked();
     f.repository.reject(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
             path: f._directory.path().join("chats"),
-            source: nocterm_core::SharedError::from_error(std::io::Error::new(
+            source: Arc::new(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "blocks directory creation",
             )),
@@ -439,10 +432,7 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
         assert!(thread.read(cx).composer().paused());
         assert!(thread.read(cx).has_status_error());
         assert!(thread.read(cx).status().contains("Could not save chat"));
-        assert_eq!(
-            thread.read(cx).composer().queued_rows()[0].text(),
-            "retained"
-        );
+        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "retained");
     });
     complete_active(&f, cx);
     assert_eq!(texts(&f), ["active"]);
@@ -476,9 +466,9 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
                 .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
         );
         assert!(f.panel.read(cx).composer_text(cx).is_empty());
-        assert_eq!(old.read(cx).composer().queued_rows()[0].text(), "queued");
+        assert_eq!(old.read(cx).composer().queue()[0].saved.text, "queued");
         assert_eq!(
-            old.read(cx).composer().attachments().to_vec(),
+            old.read(cx).composer().attachments(),
             [Attachment::Terminal(f.terminal)]
         );
     });
@@ -504,17 +494,22 @@ fn shutdown_flush_preserves_queue_and_stable_context(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| f.installation.installed.runtime().shutdown(cx).detach());
     let saved = f.repository.chats();
-    assert_eq!(saved[0].composer().queue[0].text, "after restart");
-    assert!(saved[0].composer().attachments.contains(
-        &nocterm_ai::history::SavedAttachment::Connection("saved-server".into())
-    ));
-    assert!(saved[0].composer().attachments.contains(
-        &nocterm_ai::history::SavedAttachment::Group("production".into())
-    ));
-    assert_eq!(
-        saved[0].composer().queue[0].attachments,
-        saved[0].composer().attachments
+    assert_eq!(saved[0].queue[0].text, "after restart");
+    assert!(
+        saved[0]
+            .attachments
+            .contains(&nocterm_ai::history::SavedAttachment::Connection(
+                "saved-server".into()
+            ))
     );
+    assert!(
+        saved[0]
+            .attachments
+            .contains(&nocterm_ai::history::SavedAttachment::Group(
+                "production".into()
+            ))
+    );
+    assert_eq!(saved[0].queue[0].attachments, saved[0].attachments);
 }
 
 #[gpui_kit::test]
@@ -531,11 +526,10 @@ fn slash_commands_match_adapter_first_block_and_preserve_history_fallback(cx: &m
         );
         restore_pending_history(&f, thread, cx);
         report_control(
-            &f,
             thread,
-            SessionUpdate::Commands(vec![
-                AdvertisedCommand::new("usage", "Usage"),
-                AdvertisedCommand::new("review", "Review"),
+            SessionUpdate::AvailableCommandsUpdate(vec![
+                AvailableCommand::new("usage", "Usage"),
+                AvailableCommand::new("review", "Review"),
             ]),
             cx,
         );
@@ -586,6 +580,7 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let (ready, wait) = oneshot::channel();
     let bytes = image_bytes();
+    let codec = image_codec();
     cx.update_window(f.handle, |_, window, cx| {
         replace_composer_value(
             f.panel.read(cx).composer_focus(cx),
@@ -597,7 +592,10 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
             panel.prepare_images(
                 async move {
                     wait.await.unwrap();
-                    Ok(vec![bytes])
+                    Ok(vec![nocterm_ai::images::PromptImage::validate(
+                        bytes,
+                        codec.as_ref(),
+                    )?])
                 },
                 cx,
             );
@@ -625,7 +623,7 @@ fn pending_image_preparation_blocks_early_submit_and_retains_prompt(cx: &mut Tes
         requests[0]
             .content
             .iter()
-            .any(|block| matches!(block, Content::Media(media) if media.kind == MediaKind::Image))
+            .any(|block| matches!(block, Content::Image(_)))
     );
     assert!(
         requests[0]
@@ -677,99 +675,4 @@ fn late_image_preparation_cannot_attach_to_a_different_chat(cx: &mut TestAppCont
                 .is_empty()
         );
     });
-}
-
-#[gpui_kit::test]
-fn queued_media_above_transcript_omission_limit_reaches_actual_prompt_observer_complete(
-    cx: &mut TestAppContext,
-) {
-    use nocterm_ai::{
-        images::{ImageFacts, ImageFormat, PromptImage},
-        testing::ScriptedImageCodec,
-    };
-    let f = fixture(cx);
-    f.connector.support_images();
-    new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
-    cx.run_until_parked();
-    // Supplied inspection exercises the public image/queue/dispatch contract,
-    // not native decoding or real provider support for this supplied payload.
-    let mut bytes = image_bytes();
-    bytes.resize(600 * 1024, b'x');
-    let codec = Arc::new(ScriptedImageCodec::default());
-    codec.inspection(&bytes, Ok(ImageFacts::new(ImageFormat::Png, 2, 2).unwrap()));
-    let image = PromptImage::validate(bytes.clone(), codec.as_ref()).unwrap();
-    let expected = image.content();
-    assert!(
-        nocterm_ai::history::content_size(&expected).unwrap()
-            > nocterm_ai::history::MAX_SAVED_IMAGE_BYTES
-    );
-    thread.update(cx, |thread, cx| {
-        attach_image(thread, bytes.clone(), codec.clone(), cx);
-        thread.send("queued complete image".into(), cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
-    complete_active(&f, cx);
-    let requests = f.commands.prompts.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert!(
-        requests[1]
-            .content
-            .iter()
-            .any(|content| content == &expected)
-    );
-    assert!(requests[1].content.iter().any(
-        |content| matches!(content, Content::Text(text) if text.text == "queued complete image")
-    ));
-}
-#[gpui_kit::test]
-fn running_scope_does_not_follow_future_defaults_and_detachment_revokes_only_that_scope(
-    cx: &mut TestAppContext,
-) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let kept = Attachment::Group("kept".into());
-    let detached = Attachment::Group("detached".into());
-    let future = Attachment::Group("future".into());
-    thread.update(cx, |thread, cx| {
-        thread.replace_composer_context(vec![kept.clone(), detached.clone()], cx);
-        thread.send("first".into(), cx);
-    });
-    cx.run_until_parked();
-    thread.update(cx, |thread, cx| {
-        thread.replace_composer_context(vec![kept.clone(), detached.clone(), future.clone()], cx);
-        assert_eq!(thread.scope_attachments(), [kept.clone(), detached.clone()]);
-        thread.attach(detached.clone(), cx);
-        assert_eq!(thread.scope_attachments(), std::slice::from_ref(&kept));
-    });
-    complete_active(&f, cx);
-    thread.update(cx, |thread, cx| thread.send("second".into(), cx));
-    cx.run_until_parked();
-    cx.update(|cx| assert_eq!(thread.read(cx).scope_attachments(), [kept, future]));
-    complete_active(&f, cx);
-}
-#[gpui_kit::test]
-fn a_refused_prompt_preparation_keeps_the_queued_prompt_uncommitted(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    f.commands.prompt_refused.store(true, Ordering::SeqCst);
-    thread.update(cx, |thread, cx| thread.send("first".into(), cx));
-    cx.run_until_parked();
-    assert!(texts(&f).is_empty());
-    let id = cx.update(|cx| {
-        let thread = thread.read(cx);
-        assert!(thread.history_rows().is_empty());
-        assert_eq!(thread.composer().queued_rows()[0].text(), "first");
-        thread.composer().queue()[0].id()
-    });
-    f.commands.prompt_refused.store(false, Ordering::SeqCst);
-    thread.update(cx, |thread, cx| thread.send_now(id, cx));
-    cx.run_until_parked();
-    assert_eq!(texts(&f), ["first"]);
-    cx.update(|cx| assert!(thread.read(cx).composer().queue().is_empty()));
-    complete_active(&f, cx);
 }

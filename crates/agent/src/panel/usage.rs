@@ -1,5 +1,6 @@
 //! The context ring under the composer and the usage card it opens: how full
 //! the context window is, the session's tokens and the plan's limits.
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 use gpui_kit::{
     App, ClickEvent, Context, MouseButton, PathBuilder, TestSupportExt as _, canvas,
@@ -12,7 +13,6 @@ use gpui_kit::{
     prelude::*,
     px, relative,
 };
-use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 use nocterm_ui::IconName;
 
 use super::AgentPanel;

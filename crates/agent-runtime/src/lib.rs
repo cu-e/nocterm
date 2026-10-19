@@ -11,12 +11,11 @@
 //! Invariants: one current document owner per ID; delete seals an ID; persistence
 //! admission and physical publication are separate revision-bearing events. Registry
 //! stamps change only after writer acceptance; final work reads no App and joins
-//! captured admission failures with publication failures. Startup, notices, permissions and
-//! process cleanup keep their original paid native owners: each certificate reaches one chat
-//! exactly once and a refused or dropped certificate refunds its policy. Shared cleanup
-//! diagnostics retain the original paid native failure through standard source traversal.
-//! A connection's event receiver and process cleanup are released before its close is
-//! reported, so the chat may immediately reopen the same original source.
+//! captured admission failures with publication failures. Shared cleanup diagnostics
+//! retain the original typed AgentError through standard source traversal.
+use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
+use nocterm_ai::model::controls::ConfigOption;
+use nocterm_ai::model::session::SessionUpdate;
 
 mod handle;
 pub use handle::RuntimeHandle;
@@ -29,8 +28,6 @@ mod usage;
 pub use catalog::PreparedHistory;
 mod connections;
 mod documents;
-mod event_pump;
-pub use documents::{CaptureAdmission, DocumentWriter};
 mod lease;
 mod lifecycle;
 mod process_cleanup;
@@ -38,16 +35,12 @@ mod startup;
 mod state;
 use futures::future::BoxFuture;
 mod storage;
-pub use client::{CaptureError, Client, ClientState, SessionClient, SessionEvent};
+pub use client::{Client, ClientState, SessionClient, SessionEvent};
 use gpui::{App, Context, Entity, EntityId, Task};
 pub use lease::SessionLease;
 use nocterm_ai::{
-    AgentConnector, AgentLaunch, BridgeRegistration, ToolBridge,
-    connection::{
-        ManagedAgentConnection, ManagedAgentEvent, ManagedCommandsHandle, ManagedWorkspaceHandle,
-    },
-    history::source::SourceLifetime,
-    model::{auth::TerminalSetup, controls::ConfigOption, notice::SessionUpdate},
+    AgentCommands, AgentConnector, AgentEvent, AgentInfo, AgentLaunch, BridgeRegistration,
+    ToolBridge,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 pub use storage::{AgentPersistenceError, AgentStorage, HistoryReader};
@@ -61,7 +54,6 @@ pub struct TerminalAuthRequest {
 }
 /// What the runtime connects agents with, and where it keeps their state.
 pub struct RuntimeServices {
-    pub retention: nocterm_ai::model::retention::RetentionAuthority,
     pub settings: nocterm_store::SettingsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
@@ -85,12 +77,11 @@ struct Connection {
     workdir: PathBuf,
     /// Whether the process runs isolated; a changed setting restarts it.
     isolated: bool,
-    commands: Option<ManagedCommandsHandle>,
-    workspace: Option<ManagedWorkspaceHandle>,
-    source: SourceLifetime,
+    commands: Option<Arc<dyn AgentCommands>>,
+    info: Option<AgentInfo>,
     users: HashMap<EntityId, Client>,
     serial: u64,
-    _events: Option<event_pump::EventPump>,
+    _events: Option<Task<()>>,
     _connecting: Option<Task<()>>,
     cancellation: nocterm_ai::ConnectionCancellation,
     startup_completion: Option<startup::Completion>,
@@ -308,16 +299,18 @@ impl Runtime {
     pub fn terminal_auth_request(
         &self,
         key: u64,
-        method: &TerminalSetup,
-        label: &str,
+        method: &AuthMethod,
     ) -> Option<TerminalAuthRequest> {
+        let AuthFlow::TerminalSetup(setup) = &method.flow else {
+            return None;
+        };
         let connection = self.connections.get(key)?;
         let launch = &connection.launch;
         let mut args = launch.args.clone();
-        args.extend(method.args.iter().cloned());
+        args.extend(setup.args.iter().cloned());
         let mut env = nocterm_ai::env::sanitized_environment(launch, std::env::vars());
         env.extend(
-            method
+            setup
                 .env
                 .iter()
                 .filter(|(key, value)| {
@@ -332,53 +325,8 @@ impl Runtime {
             args,
             env,
             cwd: connection.workdir.clone(),
-            title: format!("Sign in: {label}"),
+            title: format!("Sign in: {}", method.label),
         })
-    }
-    fn startup_workdir(&self, client: &Client, cx: &App) -> PathBuf {
-        client
-            .state(cx)
-            .and_then(|state| state.workdir)
-            .unwrap_or_else(|| {
-                self.ai(cx)
-                    .working_directory
-                    .as_ref()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| self.services.workdir.clone())
-            })
-    }
-    /// Copied launch facts are paid against the chat's document before any registration exists.
-    fn prepare_startup(
-        &self,
-        client: &Client,
-        launch: &AgentLaunch,
-        workdir: &std::path::Path,
-        isolated: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<nocterm_ai::connection::ManagedStartup> {
-        let resources = self.ai(cx).resources.clone();
-        let isolation = isolated.then(|| nocterm_ai::workspace::IsolationPaths {
-            private_dirs: self.services.private_dirs.clone(),
-            shared_dirs: self.services.shared_dirs.clone(),
-        });
-        let request = nocterm_ai::connection::ManagedStartupRequest {
-            launch,
-            working_directory: workdir,
-            create_private: workdir == self.services.workdir,
-            isolation: isolation.as_ref(),
-            terminal_auth: self.services.terminal_auth,
-            resources: &resources,
-        };
-        match client.prepare_startup(request, cx) {
-            Ok(startup) => Some(startup),
-            Err(error) => {
-                client.emit(
-                    SessionEvent::Failed(nocterm_ai::redact::redact(&error.to_string())),
-                    cx,
-                );
-                None
-            }
-        }
     }
     pub fn connect(
         &mut self,
@@ -390,7 +338,16 @@ impl Runtime {
         if self.shutting_down || !self.ai_enabled(cx) {
             return;
         }
-        let workdir = self.startup_workdir(&client, cx);
+        let workdir = client
+            .state(cx)
+            .and_then(|state| state.workdir)
+            .unwrap_or_else(|| {
+                self.ai(cx)
+                    .working_directory
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.services.workdir.clone())
+            });
         if !workdir.is_absolute() {
             client.emit(
                 SessionEvent::Failed(
@@ -401,9 +358,6 @@ impl Runtime {
             return;
         }
         let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
-        let Some(startup) = self.prepare_startup(&client, &launch, &workdir, isolated, cx) else {
-            return;
-        };
         let key = self.connections.reserve_key(&launch, &workdir, isolated);
         let registration = match self.register_bridge(&client, cx) {
             Ok(registration) => registration,
@@ -415,14 +369,17 @@ impl Runtime {
         let lease = SessionLease::new(client.id(), key, registration, self.releases.sender());
         client.emit(SessionEvent::Leased(lease), cx);
         let serial = self.connections.serial();
-        let cancellation = startup.cancellation().clone();
-        let source = startup.lifetime();
+        let cancellation = nocterm_ai::ConnectionCancellation::default();
         let (delivery, startup_completion) = startup::start(
-            startup::ManagedStartupConfig::new(
-                startup,
-                self.services.workdir_resolver.clone(),
-                self.services.connector.clone(),
+            startup::StartupConfig::for_connection(
+                &self.services,
+                launch.clone(),
+                workdir.clone(),
+                isolated,
+                self.ai(cx).resources.clone(),
+                cancellation.clone(),
             ),
+            self.services.connector.clone(),
             cx.background_executor(),
         );
         self.connections.insert(
@@ -433,22 +390,21 @@ impl Runtime {
                 workdir: workdir.clone(),
                 isolated,
                 commands: None,
-                workspace: None,
-                source,
+                info: None,
                 users: HashMap::from([(client.id(), client.clone())]),
                 serial,
                 _events: None,
                 _connecting: None,
-                cancellation,
+                cancellation: cancellation.clone(),
                 startup_completion: Some(startup_completion),
             },
         );
         let connecting = cx.spawn(async move |this, cx| {
             if let Ok(delivery) = delivery.await {
-                let (result, workspace, decision) = delivery.into_parts();
+                let (result, effective, decision) = delivery.into_parts();
                 let accepted = this
                     .update(cx, |this, cx| {
-                        this.accept_startup(key, serial, result, workspace, cx)
+                        this.accept_startup(key, serial, result, effective, cx)
                     })
                     .unwrap_or(false);
                 let _ = decision.send(accepted);
@@ -460,8 +416,8 @@ impl Runtime {
         &mut self,
         key: u64,
         serial: u64,
-        result: Result<ManagedAgentConnection, startup::StartupError>,
-        workspace: Option<ManagedWorkspaceHandle>,
+        result: Result<nocterm_ai::AgentConnection, nocterm_ai::AgentError>,
+        effective: PathBuf,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self
@@ -475,22 +431,11 @@ impl Runtime {
         }
         match result {
             Ok(connection) => {
-                let (info, commands, mut receiver) = connection.into_parts();
-                let workdir = workspace
-                    .as_ref()
-                    .map(|workspace| workspace.workspace().root.clone())
-                    .or_else(|| {
-                        self.connections
-                            .get(key)
-                            .map(|connection| connection.workdir.clone())
-                    })
-                    .unwrap_or_default();
-                let (mut signals, control) = event_pump::signals();
-                let task = cx.spawn(async move |this, cx| {
-                    while let Some(event) = signals
-                        .until_stopped(futures::future::poll_fn(|task| receiver.poll_event(task)))
-                        .await
-                    {
+                let commands = connection.commands.clone();
+                let info = connection.info.clone();
+                let workdir = effective.clone();
+                let events = cx.spawn(async move |this, cx| {
+                    while let Ok(event) = connection.events.recv().await {
                         if this
                             .update(cx, |this, cx| this.event(key, serial, event, cx))
                             .is_err()
@@ -498,37 +443,20 @@ impl Runtime {
                             break;
                         }
                     }
-                    drop(receiver);
-                    signals.finished();
                 });
-                let events = event_pump::EventPump::new(task, control);
-                let clients = match self.connections.connected(
+                for client in self.connections.connected(
                     key,
                     commands.clone(),
-                    workspace,
-                    workdir.clone(),
+                    info.clone(),
+                    effective,
                     events,
-                    cx.background_executor(),
                 ) {
-                    Ok(clients) => clients,
-                    Err(error) => {
-                        commands.shutdown();
-                        self.stop_connection(
-                            key,
-                            &nocterm_ai::redact::redact(&error.to_string()),
-                            cx,
-                        );
-                        return true;
-                    }
-                };
-                // The information certificate is consumed once, by the connection's only user.
-                if let Some(client) = clients.into_iter().next() {
                     client.emit(
                         SessionEvent::Connected {
                             connection: key,
-                            commands,
-                            info,
-                            workdir,
+                            commands: commands.clone(),
+                            info: Box::new(info.clone()),
+                            workdir: workdir.clone(),
                         },
                         cx,
                     );
@@ -540,9 +468,9 @@ impl Runtime {
         }
         true
     }
-    fn event(&mut self, key: u64, serial: u64, event: ManagedAgentEvent, cx: &mut Context<Self>) {
-        if let ManagedAgentEvent::Barrier(barrier) = event {
-            barrier.acknowledge();
+    fn event(&mut self, key: u64, serial: u64, event: AgentEvent, cx: &mut Context<Self>) {
+        if let AgentEvent::Barrier(ack) = event {
+            let _ = ack.send(());
             return;
         }
         let Some(connection) = self
@@ -553,64 +481,50 @@ impl Runtime {
             return;
         };
         match event {
-            ManagedAgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
-            ManagedAgentEvent::Session(notice) => {
-                if let SessionUpdate::Usage(update) = &notice.notice().update
-                    && !update.rate_limits.is_empty()
+            AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
+            AgentEvent::Session(notification) => {
+                if let SessionUpdate::UsageUpdate(update) = &notification.update
+                    && let Some(limit) = nocterm_ai::usage::claude_limit(update)
                 {
                     let agent = connection.launch.id.clone();
-                    for limit in &update.rate_limits {
-                        self.usage.merge(agent.clone(), limit.clone());
-                    }
+                    self.usage.merge(agent, limit);
                     cx.notify();
                 }
                 let Some(connection) = self.connections.get(key) else {
                     return;
                 };
-                // A notice is delivered once. With a single user, pre-open controls reach it
-                // before it owns a session, so they can be kept until the open completes.
-                let session = &notice.notice().session;
+                let notification = std::rc::Rc::new(notification);
+                let clients: Vec<_> = connection.users.values().cloned().collect();
+                for client in clients {
+                    client.emit(SessionEvent::Update(notification.clone()), cx);
+                }
+            }
+            AgentEvent::Permission { request, respond } => {
                 let client = connection
                     .users
                     .values()
                     .find(|client| {
                         client
                             .state(cx)
-                            .is_some_and(|state| state.session.as_ref() == Some(session))
-                    })
-                    .or_else(|| {
-                        (connection.users.len() == 1)
-                            .then(|| connection.users.values().next())
-                            .flatten()
-                    })
-                    .cloned();
-                if let Some(client) = client {
-                    client.emit(SessionEvent::Update(notice), cx);
-                }
-            }
-            ManagedAgentEvent::Permission { request, respond } => {
-                let client = connection
-                    .users
-                    .values()
-                    .find(|client| {
-                        client.state(cx).is_some_and(|state| {
-                            state.session.as_ref() == Some(&request.permission().session)
-                        })
+                            .is_some_and(|state| state.session.as_ref() == Some(&request.session))
                     })
                     .cloned();
                 // A request no thread takes is answered `Cancelled` on drop.
                 if let Some(client) = client {
-                    client.emit(SessionEvent::Permission { request, respond }, cx);
+                    client.emit(
+                        SessionEvent::Permission {
+                            request: Box::new(request),
+                            respond,
+                        },
+                        cx,
+                    );
                 }
             }
-            ManagedAgentEvent::Failed(error) => {
-                self.stop_connection(key, &nocterm_ai::redact::redact(&error.to_string()), cx)
-            }
-            ManagedAgentEvent::Exited { code, stderr_tail } => self.stop_connection(
+            AgentEvent::Exited { code, stderr_tail } => self.stop_connection(
                 key,
                 &format!(
                     "Agent exited ({code:?}). {}",
-                    nocterm_ai::redact::redact(stderr_tail.as_str())
+                    nocterm_ai::redact::redact(&stderr_tail)
                 ),
                 cx,
             ),

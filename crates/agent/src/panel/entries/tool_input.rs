@@ -12,12 +12,9 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-#[cfg(any(test, feature = "test-support"))]
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::{
     TerminalCall,
-    history::physical::ToolSlot,
-    model::controls::Presence,
     tool_display::{self, ToolDisplay},
 };
 use nocterm_ui::IconName;
@@ -89,10 +86,24 @@ fn parameters_source(arguments: &Value) -> Source {
     )
 }
 
-#[cfg(any(test, feature = "test-support"))]
 pub(in crate::panel) fn source(call: &ToolRecord) -> Option<Source> {
     if let Some(display) = ToolDisplay::from_call(call) {
-        return Some(display_source(display));
+        let mut source = if let Some(request) = display.display_request() {
+            let mut source = request_source(request);
+            if matches!(
+                display.outcome,
+                Some(nocterm_ai::tool_display::ToolOutcome::Err(_))
+            ) {
+                requested_label(&mut source);
+            }
+            source
+        } else {
+            parameters_source(&display.arguments)
+        };
+        if display.redacted {
+            source.parameters.push("Secrets hidden".into());
+        }
+        return Some(source);
     }
     if let Some(request) = tool_display::requested_call(call) {
         let mut source = request_source(request);
@@ -102,46 +113,7 @@ pub(in crate::panel) fn source(call: &ToolRecord) -> Option<Source> {
     if let Some((_, arguments)) = tool_display::requested_arguments(call) {
         return Some(parameters_source(&arguments));
     }
-    literal_source(call.arguments.as_ref().map(|v| v.as_value()), &call.title)
-}
-
-pub(in crate::panel) fn source_managed(call: &ToolSlot) -> Option<Source> {
-    if let Some(display) = ToolDisplay::from_managed(call) {
-        return Some(display_source(&display));
-    }
-    if let Some(request) = tool_display::requested_call_managed(call) {
-        let mut source = request_source(request);
-        requested_label(&mut source);
-        return Some(source);
-    }
-    if let Some((_, arguments)) = tool_display::requested_arguments_managed(call) {
-        return Some(parameters_source(&arguments));
-    }
-    let arguments = call.arguments();
-    literal_source(arguments.as_ref().map(|v| v.as_value()), &call.title())
-}
-
-fn display_source(display: &ToolDisplay) -> Source {
-    let mut source = if let Some(request) = display.display_request() {
-        let mut source = request_source(request);
-        if matches!(
-            display.outcome,
-            Presence::Value(nocterm_ai::tool_display::ToolOutcome::Failed(_))
-        ) {
-            requested_label(&mut source);
-        }
-        source
-    } else {
-        parameters_source(&display.arguments)
-    };
-    if display.redacted.value().copied().unwrap_or(false) {
-        source.parameters.push("Secrets hidden".into());
-    }
-    source
-}
-
-fn literal_source(input: Option<&Value>, title: &str) -> Option<Source> {
-    if let Some(input) = input.filter(|input| !input.is_null()) {
+    if let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) {
         let literal = ["command", "script", "code"]
             .into_iter()
             .find_map(|key| input.get(key).and_then(Value::as_str));
@@ -157,9 +129,9 @@ fn literal_source(input: Option<&Value>, title: &str) -> Option<Source> {
             ),
         });
     }
-    title
+    call.title
         .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
-        .then(|| Source::plain("Tool details", title.to_owned(), None))
+        .then(|| Source::plain("Tool details", call.title.clone(), None))
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]

@@ -1,14 +1,14 @@
-//! Pure owned transcript reduction; all timestamps are supplied by the host.
-use crate::model::{content::Content, notice::PlanStep, tools::ToolRecord};
-use serde::Serialize;
-mod fork;
-pub use fork::ForkStaging;
-#[derive(Clone, Debug, PartialEq, Serialize)]
+use crate::model::{
+    content::Content,
+    controls::Change,
+    plan::Plan,
+    session::SessionUpdate,
+    tools::ToolRecord,
+    usage::{ContextUsage, TokenTotals},
+};
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "history accounting charges size_of::<Entry>() per row; boxing would hide tool records from it"
-)]
 pub enum Entry {
     User(Vec<Content>),
     Agent(String),
@@ -16,27 +16,17 @@ pub enum Entry {
     Content(Content),
     Tool(ToolRecord),
 }
+#[derive(Clone, Debug, Default)]
 pub struct ThreadState {
-    live: crate::history::live::LiveOwner,
-    reader: crate::history::ReaderSource,
-    writer: crate::history::writing::WriterProducer,
-    source: crate::history::source::SourceProducer,
-    candidate: crate::model::retention::document::RetainedRole,
-}
-#[derive(Debug, thiserror::Error)]
-pub enum ThreadStateError {
-    #[error(transparent)]
-    Live(#[from] crate::history::live::LiveError),
-    #[error(transparent)]
-    Retention(#[from] crate::model::retention::RetentionError),
-    #[error(transparent)]
-    Reader(#[from] crate::history::ReaderSourceError),
-    #[error(transparent)]
-    Writer(#[from] crate::history::writing::WriterCapabilityError),
-    #[error(transparent)]
-    Source(#[from] crate::history::source::SourceError),
-    #[error("original document capability was already transferred")]
-    MissingRole,
+    pub entries: Vec<Entry>,
+    /// When each entry began, in seconds since the Unix epoch; 0 where it
+    /// is not known (chats saved before times were kept).
+    pub times: Vec<u64>,
+    pub plan: Option<Plan>,
+    pub usage: Option<ContextUsage>,
+    /// The session's token totals as of the last finished turn.
+    pub tokens: Option<TokenTotals>,
+    pub title: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadChange {
@@ -46,106 +36,105 @@ pub enum ThreadChange {
     Ignored,
 }
 impl ThreadState {
-    /// Prepare the original physical document before allocating a visible entity.
-    pub fn new(
-        authority: &crate::model::retention::RetentionAuthority,
-        agent: &str,
-        id: &str,
-        updated: u64,
-    ) -> Result<Self, ThreadStateError> {
-        let (_, mut roles) = crate::model::retention::document::DocumentRetention::new(authority)?;
-        let mut live = crate::history::live::LiveOwner::new(
-            roles.take_live().ok_or(ThreadStateError::MissingRole)?,
-            roles
-                .take_foreground()
-                .ok_or(ThreadStateError::MissingRole)?,
-            roles
-                .take_prompt_dispatch()
-                .ok_or(ThreadStateError::MissingRole)?,
-        )?;
-        live.initialize(agent, id, updated)?;
-        let reader = crate::history::ReaderSource::new(
-            roles.take_reader().ok_or(ThreadStateError::MissingRole)?,
-            roles.take_delivery().ok_or(ThreadStateError::MissingRole)?,
-        )?;
-        let writer = crate::history::writing::WriterProducer::new(
-            roles
-                .take_writer_latest()
-                .ok_or(ThreadStateError::MissingRole)?,
-            roles
-                .take_writer_active()
-                .ok_or(ThreadStateError::MissingRole)?,
-            roles.take_writer().ok_or(ThreadStateError::MissingRole)?,
-        )?;
-        let source = crate::history::source::SourceProducer::new(
-            roles.take_source().ok_or(ThreadStateError::MissingRole)?,
-        )?;
-        Ok(Self {
-            live,
-            reader,
-            writer,
-            source,
-            candidate: roles
-                .take_candidate()
-                .ok_or(ThreadStateError::MissingRole)?,
-        })
+    pub fn push_user(&mut self, content: Vec<Content>, now: u64) {
+        self.push(Entry::User(content), now);
     }
-    pub fn live(&self) -> &crate::history::live::LiveOwner {
-        &self.live
+    fn push(&mut self, entry: Entry, now: u64) {
+        self.times.resize(self.entries.len(), 0);
+        self.entries.push(entry);
+        self.times.push(now);
     }
-    pub fn live_mut(&mut self) -> &mut crate::history::live::LiveOwner {
-        &mut self.live
-    }
-    pub fn rows(&self) -> &[crate::history::physical::RowSlot] {
-        self.live.rows()
-    }
-    pub fn times(&self) -> &[u64] {
-        self.live.times()
-    }
+    /// When entry `index` began, if known.
     pub fn time(&self, index: usize) -> Option<u64> {
-        self.times().get(index).copied().filter(|value| *value > 0)
+        self.times.get(index).copied().filter(|time| *time > 0)
     }
-    pub fn mentions(&self, query: &str) -> Result<bool, crate::history::live::LiveError> {
-        self.live.mentions(query)
+    /// Keeps the first `len` entries.
+    pub fn truncate(&mut self, len: usize) {
+        self.entries.truncate(len);
+        self.times.truncate(len);
     }
-    pub fn title(&self) -> Option<crate::history::physical::TextGuard<'_>> {
-        self.live
-            .role()
-            .snapshot()
-            .and_then(|owner| owner.metadata().title())
+    pub fn apply(&mut self, update: SessionUpdate, now: u64) -> ThreadChange {
+        match update {
+            SessionUpdate::AgentMessageChunk(content) => {
+                self.chunk(content, false, now);
+                ThreadChange::Transcript
+            }
+            SessionUpdate::AgentThoughtChunk(content) => {
+                self.chunk(content, true, now);
+                ThreadChange::Transcript
+            }
+            SessionUpdate::UserMessageChunk(content) => {
+                if let Some(Entry::User(parts)) = self.entries.last_mut() {
+                    parts.push(content);
+                } else {
+                    self.push_user(vec![content], now);
+                }
+                ThreadChange::Transcript
+            }
+            SessionUpdate::ToolCall(call) => {
+                self.push(Entry::Tool(*call), now);
+                ThreadChange::Transcript
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                let update = *update;
+                if let Some(Entry::Tool(call)) = self
+                    .entries
+                    .iter_mut()
+                    .find(|e| matches!(e, Entry::Tool(t) if t.id == update.id))
+                {
+                    call.apply(update.changes);
+                }
+                ThreadChange::Transcript
+            }
+            SessionUpdate::Plan(plan) => {
+                self.plan = Some(plan);
+                ThreadChange::Transcript
+            }
+            SessionUpdate::SessionInfoUpdate(update) => {
+                match update.title {
+                    Change::Set(value) => self.title = Some(value),
+                    Change::Clear => self.title = None,
+                    Change::Keep => {}
+                }
+                ThreadChange::Metadata
+            }
+            SessionUpdate::UsageUpdate(update) => {
+                self.usage = Some(update);
+                ThreadChange::Controls
+            }
+            _ => ThreadChange::Ignored,
+        }
     }
-    pub fn usage(
-        &self,
-    ) -> Option<crate::history::physical::PayloadGuard<'_, crate::model::usage::ContextUsage>> {
-        self.live.usage().and_then(|usage| usage.context())
+    fn chunk(&mut self, content: Content, thought: bool, now: u64) {
+        if let Content::Text(text) = content {
+            match (self.entries.last_mut(), thought) {
+                (Some(Entry::Agent(value)), false) | (Some(Entry::Thought(value)), true) => {
+                    value.push_str(&text.text)
+                }
+                _ => self.push(
+                    if thought {
+                        Entry::Thought(text.text)
+                    } else {
+                        Entry::Agent(text.text)
+                    },
+                    now,
+                ),
+            }
+        } else {
+            self.push(Entry::Content(content), now);
+        }
     }
-    pub fn tokens(&self) -> Option<&crate::model::usage::TokenTotals> {
-        self.live.usage().and_then(|usage| usage.tokens())
-    }
-    pub fn limits(&self) -> impl Iterator<Item = &crate::history::physical::RateLimitSlot> {
-        self.live
-            .usage()
-            .into_iter()
-            .flat_map(|usage| usage.limits())
-    }
-    pub fn plan(&self) -> Option<crate::history::physical::PayloadGuard<'_, Vec<PlanStep>>> {
-        self.live.plan()
-    }
-    pub fn reader(&self) -> &crate::history::ReaderSource {
-        &self.reader
-    }
-    pub fn source(&self) -> &crate::history::source::SourceProducer {
-        &self.source
-    }
-    pub fn prepare_candidate(&mut self) -> Result<(), ThreadStateError> {
-        self.live
-            .prepare_saved_candidate(self.live.local_admission(), &mut self.candidate)?;
-        Ok(())
-    }
-    pub fn candidate(
-        &self,
-        intent: crate::history::writing::ManagedWriteIntent,
-    ) -> Result<crate::history::writing::CandidateOffer<'_>, ThreadStateError> {
-        Ok(self.writer.candidate(&self.candidate, intent)?)
+    /// Whether the chat's title or any message mentions `query`, ignoring
+    /// case. `query` must be lowercase.
+    pub fn mentions(&self, query: &str) -> bool {
+        let found = |text: &str| text.to_lowercase().contains(query);
+        self.title.as_deref().is_some_and(found)
+            || self.entries.iter().any(|entry| match entry {
+                Entry::User(blocks) => blocks
+                    .iter()
+                    .any(|block| matches!(block, Content::Text(text) if found(&text.text))),
+                Entry::Agent(text) => found(text),
+                _ => false,
+            })
     }
 }
