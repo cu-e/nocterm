@@ -22,6 +22,27 @@ pub(super) enum CreationError {
     #[error(transparent)]
     Exhausted(AdmittedAnonymousError<NativeScratch>),
 }
+impl CreationError {
+    /// The original native error of a failed native call, without wrappers.
+    pub(super) fn into_native(self) -> Result<io::Error, Self> {
+        match self {
+            Self::Native(error) | Self::Directory(CurrentDirectoryError::Native(error)) => {
+                Ok(error)
+            }
+            cause => Err(cause),
+        }
+    }
+    /// The concrete error this transparent wrapper displays.
+    pub(super) fn concrete(&self) -> &(dyn std::error::Error + 'static) {
+        match self {
+            Self::Admission(error) => error,
+            Self::Path(error) | Self::Directory(CurrentDirectoryError::Admission(error)) => error,
+            Self::Directory(CurrentDirectoryError::Native(error)) | Self::Native(error) => error,
+            Self::Name(error) => error,
+            Self::Exhausted(error) => error,
+        }
+    }
+}
 pub(super) struct Operations<'a> {
     ledger: &'a DecodeLedger,
 }

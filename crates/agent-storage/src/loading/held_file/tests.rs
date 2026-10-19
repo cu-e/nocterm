@@ -280,3 +280,166 @@ fn managed_nonseekable_admission_failure_drops_original_source_and_all_prospecti
     assert_eq!(ledger.live_requested_bytes(), baseline);
     assert!(producer.write_all(b"still original peer").is_err());
 }
+
+/// Runs one missing-directory replay case alone in a child process, because
+/// the temporary directory and the current directory are process-wide.
+#[cfg(target_os = "linux")]
+fn missing_replay_directory_case(name: &str, tmpdir: &Path, removed_cwd: Option<&Path>) {
+    let test = format!("loading::held_file::tests::{name}");
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", &test, "--test-threads=1"])
+        .env(MISSING_REPLAY_CHILD, "1")
+        .env(DOCUMENT_DIRECTORY, std::env::temp_dir())
+        .env("TMPDIR", tmpdir);
+    if let Some(directory) = removed_cwd {
+        command.env(REMOVED_CWD, directory);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+}
+#[cfg(target_os = "linux")]
+const MISSING_REPLAY_CHILD: &str = "NOCTERM_MISSING_REPLAY_DIRECTORY_CHILD";
+#[cfg(target_os = "linux")]
+const REMOVED_CWD: &str = "NOCTERM_MISSING_REPLAY_REMOVED_CWD";
+#[cfg(target_os = "linux")]
+const DOCUMENT_DIRECTORY: &str = "NOCTERM_MISSING_REPLAY_DOCUMENT_DIRECTORY";
+#[cfg(target_os = "linux")]
+fn enter_removed_current_directory() {
+    let removed = std::env::var_os(REMOVED_CWD).unwrap();
+    std::fs::create_dir(&removed).unwrap();
+    std::env::set_current_dir(&removed).unwrap();
+    std::fs::remove_dir(&removed).unwrap();
+}
+
+/// The managed replay classifies a missing directory like the unmanaged replay:
+/// the saved chat's first native fault, with the original error as its cause.
+#[cfg(target_os = "linux")]
+fn assert_missing_replay_directory_is_not_found() {
+    use nocterm_ai::model::{json::deferred::DecodeLedger, retention::RetentionAuthority};
+    use std::{
+        net::Shutdown,
+        os::{fd::OwnedFd, unix::net::UnixStream},
+    };
+    let authority = RetentionAuthority::new(usize::MAX).unwrap();
+    let ledger = DecodeLedger::new(&authority, usize::MAX).unwrap();
+    let baseline = ledger.live_requested_bytes();
+    let directory = tempfile::tempdir_in(std::env::var_os(DOCUMENT_DIRECTORY).unwrap()).unwrap();
+    let id = "689d271a-7214-4d27-8535-d1d48bcb8f4f";
+    let path =
+        crate::writing::native_paths::document(directory.path(), id, ".json", &ledger).unwrap();
+    let context = ReadFaultContext::prepare(directory.path(), id, &ledger).unwrap();
+    let (mut producer, consumer) = UnixStream::pair().unwrap();
+    producer.write_all(b"42").unwrap();
+    producer.shutdown(Shutdown::Write).unwrap();
+    let original: OwnedFd = consumer.into();
+    let identity = StrongIdentity::managed(&ledger).unwrap();
+    let error = match HeldFile::from_source(
+        File::from(original),
+        HeldPath::Managed(path),
+        identity,
+        Some(context),
+        Some(&ledger),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("replay storage is missing"),
+    };
+    let HeldReadError::ManagedNative(failure) = &error else {
+        panic!("not the held document's native fault: {error:?}")
+    };
+    assert_eq!(failure.as_ref().kind(), io::ErrorKind::NotFound);
+    let mut cause = std::error::Error::source(&error);
+    let mut native = None;
+    while let Some(error) = cause {
+        native = native.or(error.downcast_ref::<io::Error>());
+        cause = error.source();
+    }
+    let native = native.unwrap();
+    assert_eq!(native.kind(), io::ErrorKind::NotFound);
+    // No wrapper adds its own prefix between the document and the native cause.
+    assert!(
+        error.to_string().ends_with(&format!(": {native}")),
+        "{error}"
+    );
+    drop(error);
+    assert_eq!(ledger.live_requested_bytes(), baseline);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn managed_replay_in_a_missing_temp_directory_reports_the_saved_chat_as_not_found() {
+    if std::env::var_os(MISSING_REPLAY_CHILD).is_some() {
+        return assert_missing_replay_directory_is_not_found();
+    }
+    let parent = tempfile::tempdir().unwrap();
+    missing_replay_directory_case(
+        "managed_replay_in_a_missing_temp_directory_reports_the_saved_chat_as_not_found",
+        &parent.path().join("absent"),
+        None,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn managed_replay_from_a_removed_current_directory_reports_the_saved_chat_as_not_found() {
+    if std::env::var_os(MISSING_REPLAY_CHILD).is_some() {
+        enter_removed_current_directory();
+        return assert_missing_replay_directory_is_not_found();
+    }
+    let parent = tempfile::tempdir().unwrap();
+    missing_replay_directory_case(
+        "managed_replay_from_a_removed_current_directory_reports_the_saved_chat_as_not_found",
+        Path::new("relative-replay"),
+        Some(&parent.path().join("removed")),
+    );
+}
+
+/// Without a held fault context the replay's own failure still displays and
+/// sources the original native error, without the current-directory prefix.
+#[cfg(target_os = "linux")]
+#[test]
+fn managed_replay_failure_without_a_fault_context_keeps_the_native_cause_unwrapped() {
+    use nocterm_ai::model::{json::deferred::DecodeLedger, retention::RetentionAuthority};
+    use std::os::{fd::OwnedFd, unix::net::UnixStream};
+    if std::env::var_os(MISSING_REPLAY_CHILD).is_none() {
+        let parent = tempfile::tempdir().unwrap();
+        return missing_replay_directory_case(
+            "managed_replay_failure_without_a_fault_context_keeps_the_native_cause_unwrapped",
+            Path::new("relative-replay"),
+            Some(&parent.path().join("removed")),
+        );
+    }
+    enter_removed_current_directory();
+    let authority = RetentionAuthority::new(usize::MAX).unwrap();
+    let ledger = DecodeLedger::new(&authority, usize::MAX).unwrap();
+    let baseline = ledger.live_requested_bytes();
+    let (_producer, consumer) = UnixStream::pair().unwrap();
+    let original: OwnedFd = consumer.into();
+    let error = spool::capture_with_context(
+        File::from(original),
+        Path::new("public-source"),
+        None,
+        Some(&ledger),
+    )
+    .err()
+    .unwrap();
+    let HeldReadError::ManagedReplay(nocterm_ai::storage::AgentStorageError::ManagedReplayRead(
+        failure,
+    )) = &error
+    else {
+        panic!("not the replay's own failure: {error:?}")
+    };
+    let native = std::error::Error::source(failure)
+        .and_then(|failure| failure.source())
+        .and_then(|native| native.downcast_ref::<io::Error>())
+        .unwrap();
+    assert_eq!(native.kind(), io::ErrorKind::NotFound);
+    assert_eq!(
+        error.to_string(),
+        format!("Could not read public-source: {native}")
+    );
+    drop(error);
+    assert_eq!(ledger.live_requested_bytes(), baseline);
+}

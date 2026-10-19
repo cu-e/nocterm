@@ -1,5 +1,8 @@
 //! Fresh native temp-directory observation and paid original creation failures.
-use super::operations::{CreationError, Operations};
+use super::{
+    super::{HeldReadError, managed::ReadFaultContext},
+    operations::{CreationError, Operations},
+};
 use nocterm_ai::{
     model::{
         failure::NativeErrorSlot,
@@ -28,13 +31,13 @@ impl fmt::Display for ReadFailure {
             f,
             "Could not read {}: {}",
             self.path.as_path().display(),
-            self.cause
+            self.cause.concrete()
         )
     }
 }
 impl std::error::Error for ReadFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.cause)
+        Some(self.cause.concrete())
     }
 }
 struct PreparedFailure {
@@ -48,19 +51,34 @@ impl PreparedFailure {
         let path = crate::writing::native_paths::copy(path, ledger)?;
         Ok(Self { path, slot })
     }
-    fn capture(self, cause: CreationError) -> AgentStorageError {
-        if let CreationError::Admission(error) = cause {
-            return AgentStorageError::ManagedAdmission(error);
-        }
-        AgentStorageError::ManagedReplayRead(self.slot.capture(ReadFailure {
-            path: self.path,
-            cause,
-        }))
+    /// A native replay creation fault is the held document's first native read
+    /// fault, as with the unmanaged replay: missing directories stay not found.
+    fn capture(self, cause: CreationError, context: Option<&ReadFaultContext>) -> HeldReadError {
+        let cause = match (cause, context) {
+            (CreationError::Admission(error), _) => {
+                return HeldReadError::ManagedReplay(AgentStorageError::ManagedAdmission(error));
+            }
+            (cause, Some(context)) => match cause.into_native() {
+                Ok(error) => return HeldReadError::ManagedNative(context.capture(error)),
+                Err(cause) => cause,
+            },
+            (cause, None) => cause,
+        };
+        HeldReadError::ManagedReplay(AgentStorageError::ManagedReplayRead(self.slot.capture(
+            ReadFailure {
+                path: self.path,
+                cause,
+            },
+        )))
     }
 }
 
-pub(super) fn create(path: &Path, ledger: &DecodeLedger) -> Result<File, AgentStorageError> {
-    let failure = PreparedFailure::prepare(path, ledger)?;
+pub(super) fn create(
+    path: &Path,
+    ledger: &DecodeLedger,
+    context: Option<&ReadFaultContext>,
+) -> Result<File, HeldReadError> {
+    let failure = PreparedFailure::prepare(path, ledger).map_err(HeldReadError::ManagedReplay)?;
     let mut operations = Operations::new(ledger);
     let result = tempfile::env::with_temp_dir_override(|overridden| {
         if let Some(directory) = overridden {
@@ -83,5 +101,5 @@ pub(super) fn create(path: &Path, ledger: &DecodeLedger) -> Result<File, AgentSt
             }
         }
     });
-    result.map_err(|error| failure.capture(error))
+    result.map_err(|error| failure.capture(error, context))
 }

@@ -34,7 +34,7 @@ pub(super) fn capture_with_context(
 ) -> Result<Captured, HeldReadError> {
     let mut replay = match ledger {
         #[cfg(target_os = "linux")]
-        Some(ledger) => creation::create(path, ledger).map_err(HeldReadError::ManagedReplay)?,
+        Some(ledger) => creation::create(path, ledger, context)?,
         #[cfg(not(target_os = "linux"))]
         Some(_) => return Err(HeldReadError::ReplayPlatformUnavailable),
         None => tempfile::tempfile()
