@@ -252,3 +252,5 @@ pub fn prompt_size(prompt: &SavedPrompt) -> Result<usize, HistoryCodecError> {
 
 #[cfg(test)]
 mod draft_tests;
+#[cfg(test)]
+mod version_one_tests;

@@ -239,3 +239,19 @@ fn best_effort_cache_failure_does_not_revoke_a_published_transcript() {
         serde_json::to_value(chat.entries).unwrap()
     );
 }
+
+#[test]
+fn a_version_one_file_loads_and_saves_back_byte_for_byte() {
+    const ID: &str = "00000000-0000-4000-8000-0000000000a1";
+    const CANONICAL: &[u8] = include_bytes!("../../ai/src/history/fixtures/v1/canonical.json");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(format!("{ID}.json"));
+    std::fs::write(&path, CANONICAL).unwrap();
+
+    let loaded = load(directory.path(), ID).unwrap();
+    assert_eq!(loaded.entries.len(), 6);
+    assert_eq!(loaded.queue.len(), 1);
+    save(directory.path(), &loaded).unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), CANONICAL);
+}
