@@ -138,7 +138,7 @@ fn release_client(client: &ProbeClient, session: bool) {
         unreachable!()
     };
     if session {
-        lease.session = Some("session".into());
+        lease.accept_session("session".into(), None);
     }
     events.clear();
     drop(lease);
