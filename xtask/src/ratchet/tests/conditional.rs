@@ -3,6 +3,92 @@ use super::*;
 use syn::Item;
 
 #[test]
+fn prelude_containers_have_foreign_impl_owners() {
+    for (owner, canonical) in [
+        ("Vec<u8>", "std::vec::Vec"),
+        ("Box<u8>", "std::boxed::Box"),
+        ("String", "std::string::String"),
+        ("Option<u8>", "std::option::Option"),
+        ("Result<(), u8>", "std::result::Result"),
+        ("u64", "core::primitive::u64"),
+        ("bool", "core::primitive::bool"),
+        ("str", "core::primitive::str"),
+        ("f64", "core::primitive::f64"),
+        ("usize", "core::primitive::usize"),
+    ] {
+        let text = format!(
+            "trait Port {{}} type Owner = {owner}; impl Port for {owner} {{}} impl Port for Owner {{}}"
+        );
+        let modules = [module("fixture", "lib.rs", &text)];
+        let symbols = Symbols::new(&modules);
+        assert_eq!(
+            symbols.canonical_type("fixture", &syn::parse_quote!(Owner), &modules[0].imports),
+            canonical
+        );
+        assert!(!counts(&modules).metrics.contains_key("impl_spread"));
+    }
+}
+
+#[test]
+fn explicit_local_owners_override_the_implicit_prelude() {
+    for (text, expected) in [
+        (
+            "struct Vec; impl gpui_kit::Global for Vec {}",
+            "fixture::Vec",
+        ),
+        (
+            "struct u64; impl gpui_kit::Global for u64 {}",
+            "fixture::u64",
+        ),
+        (
+            "struct State; use crate::State as Vec; impl gpui_kit::Global for Vec {}",
+            "fixture::State",
+        ),
+        (
+            "use crate::exports::*; impl gpui_kit::Global for Vec {}",
+            "fixture::exports::Vec",
+        ),
+    ] {
+        let modules = [
+            module("fixture", "lib.rs", text),
+            module("fixture::exports", "exports.rs", "pub struct Vec;"),
+        ];
+        assert_eq!(counts(&modules).metrics["globals"][expected], 1);
+    }
+}
+
+#[test]
+fn history_projection_vector_impls_do_not_become_local_owners() {
+    let modules = [module(
+        "nocterm_ai::history::projection",
+        "projection.rs",
+        "trait HistoryPrompts {} struct SavedPrompt; impl HistoryPrompts for Vec<SavedPrompt> {} impl HistoryPrompts for Vec<std::sync::Arc<SavedPrompt>> {}",
+    )];
+    assert!(!counts(&modules).metrics.contains_key("impl_spread"));
+}
+
+#[test]
+fn prelude_fallback_never_hides_missing_local_owners() {
+    for text in [
+        "impl Missing {}",
+        "trait Port {} impl Port for crate::Vec<u8> {}",
+        "trait Port {} impl Port for crate::u64 {}",
+        "trait Port {} impl Port for self::Option<u8> {}",
+        "use crate::Missing as Vec; trait Port {} impl Port for Vec<u8> {}",
+        "type Owner = Missing; trait Port {} impl Port for Owner {}",
+    ] {
+        let modules = [module("fixture", "lib.rs", text)];
+        let error = metrics::collect(&modules, &Symbols::new(&modules), &BTreeMap::new())
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("unresolved local impl owner"),
+            "{text}: {error}"
+        );
+    }
+}
+
+#[test]
 fn concrete_platform_struct_reexports_keep_impl_ownership() {
     let modules = [
         module(

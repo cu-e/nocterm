@@ -434,6 +434,14 @@ impl Symbols {
                     return normalize_prelude(candidate);
                 }
             }
+            // The implicit prelude loses to declarations and explicit/glob
+            // imports. Qualified local paths never reach this fallback.
+            if let Some(owner) = prelude_type(first) {
+                return std::iter::once(owner.to_owned())
+                    .chain(path[1..].iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join("::");
+            }
             // Unknown paths remain module-qualified: they never collide across modules.
         }
         base.extend_from_slice(rest);
@@ -554,8 +562,36 @@ impl Symbols {
 fn is_external(name: &str) -> bool {
     matches!(
         name,
-        "std" | "core" | "alloc" | "gpui" | "gpui_kit" | "gpui_component" | "String" | "Result"
+        "std" | "core" | "alloc" | "gpui" | "gpui_kit" | "gpui_component"
     )
+}
+
+fn prelude_type(name: &str) -> Option<&'static str> {
+    match name {
+        "Box" => Some("std::boxed::Box"),
+        "Vec" => Some("std::vec::Vec"),
+        "String" => Some("std::string::String"),
+        "Option" => Some("std::option::Option"),
+        "Result" => Some("std::result::Result"),
+        "bool" => Some("core::primitive::bool"),
+        "char" => Some("core::primitive::char"),
+        "str" => Some("core::primitive::str"),
+        "u8" => Some("core::primitive::u8"),
+        "u16" => Some("core::primitive::u16"),
+        "u32" => Some("core::primitive::u32"),
+        "u64" => Some("core::primitive::u64"),
+        "u128" => Some("core::primitive::u128"),
+        "usize" => Some("core::primitive::usize"),
+        "i8" => Some("core::primitive::i8"),
+        "i16" => Some("core::primitive::i16"),
+        "i32" => Some("core::primitive::i32"),
+        "i64" => Some("core::primitive::i64"),
+        "i128" => Some("core::primitive::i128"),
+        "isize" => Some("core::primitive::isize"),
+        "f32" => Some("core::primitive::f32"),
+        "f64" => Some("core::primitive::f64"),
+        _ => None,
+    }
 }
 
 fn guarded_external_target(name: &str) -> bool {
