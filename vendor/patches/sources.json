@@ -424,7 +424,8 @@
       },
       "license": "MIT OR Apache-2.0",
       "patches": [
-        "vendor/patches/png/0001-managed-native-allocations.patch"
+        "vendor/patches/png/0001-managed-native-allocations.patch",
+        "vendor/patches/png/0002-machete-feature-only-dependency.patch"
       ],
       "omitted": []
     },

@@ -128,3 +128,8 @@ version = "0.7.0"
 level = "warn"
 priority = 0
 check-cfg = ["cfg(fuzzing)"]
+
+# Nocterm: as published, `miniz_oxide` is declared only to enable its `simd`
+# feature and is never named in code; see NOCTERM.md.
+[package.metadata.cargo-machete]
+ignored = ["miniz_oxide"]

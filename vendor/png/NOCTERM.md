@@ -22,3 +22,6 @@ These hooks cover decoder paths, not encoder/thumbnail allocations or downstream
 rendering/cache lifetimes. Application-wide physical allocator proof remains a
 separate obligation. Native owners must retain each receipt until its associated
 physical backing has actually been freed; a receipt is not a memory estimate.
+
+The manifest marks `miniz_oxide` as ignored for cargo-machete: as published, the
+crate declares it only to enable its `simd` feature and never names it in code.
