@@ -1,13 +1,16 @@
-use super::content::extensions;
 use agent_client_protocol_schema::v1 as wire;
-use nocterm_ai::model::{controls::*, diagnostic::ModelError, ids::*};
-fn choice(value: wire::SessionConfigSelectOption) -> Result<ConfigChoice, ModelError> {
-    Ok(ConfigChoice {
+use nocterm_ai::model::{
+    controls::*,
+    diagnostic::ModelError,
+    ids::{ConfigChoiceId, ConfigGroupId, ConfigId, ModeId},
+};
+
+fn choice(value: wire::SessionConfigSelectOption) -> ConfigChoice {
+    ConfigChoice {
         id: ConfigChoiceId::new(value.value.to_string()),
         name: value.name,
         description: value.description,
-        extensions: extensions(value.meta)?,
-    })
+    }
 }
 fn category(value: wire::SessionConfigOptionCategory) -> Result<ConfigCategory, ModelError> {
     Ok(match value {
@@ -22,32 +25,25 @@ fn category(value: wire::SessionConfigOptionCategory) -> Result<ConfigCategory, 
 pub(super) fn option(value: wire::SessionConfigOption) -> Result<ConfigOption, ModelError> {
     let kind = match value.kind {
         wire::SessionConfigKind::Boolean(value) => ConfigKind::Boolean(value.current_value),
-        wire::SessionConfigKind::Select(value) => ConfigKind::Select {
+        wire::SessionConfigKind::Select(value) => ConfigKind::Select(ConfigSelect {
             current: ConfigChoiceId::new(value.current_value.to_string()),
             choices: match value.options {
                 wire::SessionConfigSelectOptions::Ungrouped(values) => {
-                    SelectChoices::Flat(values.into_iter().map(choice).collect::<Result<_, _>>()?)
+                    ConfigChoices::Flat(values.into_iter().map(choice).collect())
                 }
-                wire::SessionConfigSelectOptions::Grouped(groups) => SelectChoices::Groups(
+                wire::SessionConfigSelectOptions::Grouped(groups) => ConfigChoices::Grouped(
                     groups
                         .into_iter()
-                        .map(|group| {
-                            Ok(ConfigGroup {
-                                id: ConfigGroupId::new(group.group.to_string()),
-                                name: group.name,
-                                choices: group
-                                    .options
-                                    .into_iter()
-                                    .map(choice)
-                                    .collect::<Result<_, _>>()?,
-                                extensions: extensions(group.meta)?,
-                            })
+                        .map(|group| ConfigGroup {
+                            id: ConfigGroupId::new(group.group.to_string()),
+                            name: group.name,
+                            choices: group.options.into_iter().map(choice).collect(),
                         })
-                        .collect::<Result<_, ModelError>>()?,
+                        .collect(),
                 ),
                 _ => return Err(ModelError::Unsupported("configuration choices")),
             },
-        },
+        }),
         _ => return Err(ModelError::Unsupported("configuration kind")),
     };
     Ok(ConfigOption {
@@ -56,6 +52,30 @@ pub(super) fn option(value: wire::SessionConfigOption) -> Result<ConfigOption, M
         description: value.description,
         category: value.category.map(category).transpose()?,
         kind,
-        extensions: extensions(value.meta)?,
     })
+}
+pub(super) fn options(
+    values: Vec<wire::SessionConfigOption>,
+) -> Result<Vec<ConfigOption>, ModelError> {
+    values.into_iter().map(option).collect()
+}
+pub(super) fn modes(value: wire::SessionModeState) -> Modes {
+    Modes {
+        current: ModeId::new(value.current_mode_id.to_string()),
+        choices: value
+            .available_modes
+            .into_iter()
+            .map(|mode| ModeChoice {
+                id: ModeId::new(mode.id.to_string()),
+                name: mode.name,
+                description: mode.description,
+            })
+            .collect(),
+    }
+}
+pub(super) fn wire_setting(value: ConfigSetting) -> wire::SessionConfigOptionValue {
+    match value {
+        ConfigSetting::Boolean(value) => wire::SessionConfigOptionValue::boolean(value),
+        ConfigSetting::Choice(id) => wire::SessionConfigOptionValue::value_id(id.to_string()),
+    }
 }

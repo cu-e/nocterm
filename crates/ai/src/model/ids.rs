@@ -12,6 +12,15 @@ macro_rules! identifiers {
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(&self.0, f) }
         }
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self { Self::new(value) }
+        }
+        impl From<String> for $name {
+            fn from(value: String) -> Self { Self(value) }
+        }
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str { &self.0 }
+        }
     )+ };
 }
 identifiers!(
