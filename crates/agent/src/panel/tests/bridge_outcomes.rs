@@ -1,12 +1,13 @@
 //! Bridge-owned outcomes are independent of provider result envelopes.
-use super::provider_intersections::update;
+use super::provider_fixtures::{known_title, provider_tool};
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use nocterm_ai::model::{
     controls::Presence,
     json::OwnedJson,
+    literal::{LiteralIdentity, TextRange},
     retention::RetentionAuthority,
-    tools::{ToolRecord, ToolStatus},
+    tools::{Claim, ToolRecord, ToolStatus},
 };
 use nocterm_ai::{TerminalCall, tool_display};
 use serde_json::{Value, json};
@@ -18,18 +19,15 @@ fn provider_row(
     arguments: Value,
     result: Option<Value>,
 ) -> ToolRecord {
-    let mut row = super::provider_intersections::provider_tool(
-        id,
-        title(provider, tool),
-        ToolStatus::Pending,
-    );
+    let mut row =
+        super::provider_fixtures::provider_tool(id, title(provider, tool), ToolStatus::Pending);
     let (owner, start) = match provider {
         "codex" => (12..14, 15),
         "claude" => (13..15, 17),
         _ => (12..14, 15),
     };
     let end = row.title.len();
-    super::provider_intersections::known_title(&mut row, owner, start..end);
+    super::provider_fixtures::known_title(&mut row, owner, start..end);
     row.arguments = Some(OwnedJson::from_untracked(authority, arguments).unwrap());
     row.result = result.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
     row
@@ -116,7 +114,7 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             args.clone(),
             Some(json!({"new_provider_wrapper":"provider garbage"})),
         );
-        update(&f, &session, SessionUpdate::ToolStarted(row), cx);
+        deliver(&f, &session, SessionUpdate::ToolStarted(row), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
             mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
@@ -168,7 +166,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     let f = fixture(cx);
     f.bridge.next.store(17, Ordering::SeqCst);
     *f.access.executor().borrow_mut() =
-        Some(Arc::new(super::provider_intersections::Program::default()));
+        Some(Arc::new(super::provider_fixtures::Program::default()));
     cx.update(|cx| {
         f.installation
             .ready
@@ -185,7 +183,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     let terminal = cx.update(|cx| thread.update(cx, |thread, cx| thread.resolved(cx)[0].0.clone()));
     let arguments =
         json!({"terminal_id":terminal,"program":"sh","args":["-c","echo active"],"yield_ms":1000});
-    update(
+    deliver(
         &f,
         &session,
         SessionUpdate::ToolStarted(provider_row(
@@ -205,7 +203,7 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
         cx,
     );
     assert!(pending.try_recv().unwrap().is_none());
-    update(
+    deliver(
         &f,
         &session,
         SessionUpdate::ToolStarted(provider_row(
@@ -252,7 +250,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    update(
+    deliver(
         &f,
         &session,
         SessionUpdate::ToolStarted(provider_row(
@@ -284,7 +282,7 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
 #[test]
 fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
     let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "error",
         title("codex", "list_terminals"),
         ToolStatus::Pending,
@@ -304,4 +302,51 @@ fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
             .unwrap()
             .contains("private-value")
     );
+}
+#[test]
+fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
+    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
+        nocterm_ai::history::MAX_RESIDENT_BYTES,
+    )
+    .unwrap();
+    let mut call = provider_tool("call-1", "mcp.nocterm-11.exec_command", ToolStatus::Failed);
+    let title_len = call.title.len();
+    known_title(&mut call, 12..14, 15..title_len);
+    call.arguments = Some(OwnedJson::from_untracked(&authority, json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+        "terminal_id":"t1", "program":"/bin/sh", "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"], "timeout_ms":1_800_000, "yield_ms":1000,
+    }})).unwrap());
+    let input = call.arguments.as_ref().unwrap();
+    let server = input["server"].as_str().unwrap();
+    let tool = input["tool"].as_str().unwrap();
+    call.literal.input = LiteralIdentity::Registered {
+        owner: TextRange::supplied(server, &server[8..]).unwrap(),
+        tool: TextRange::supplied(tool, tool).unwrap(),
+    };
+    call.claims.input = Claim::Known {
+        registration: "11".into(),
+        tool: "exec_command".into(),
+    };
+    call.result = Some(
+        OwnedJson::from_untracked(
+            &authority,
+            json!({"result":null, "error":{
+                "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
+            }}),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tool_display::header(&call),
+        "Nocterm · Execute program · Failed"
+    );
+    let input = tool_input::source(&call).unwrap();
+    assert_eq!(input.label, "Requested command");
+    assert_eq!(
+        input.text,
+        "cd ~/dev/NOUMMA && cargo build --release --locked -j 4"
+    );
+    let output = tool_output::source(&call, false).unwrap();
+    assert_eq!(output.sections.len(), 1);
+    assert_eq!(output.sections[0].label, "Error");
+    assert!(output.sections[0].text.starts_with("tool call error"));
 }

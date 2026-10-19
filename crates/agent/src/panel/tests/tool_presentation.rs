@@ -1,6 +1,10 @@
 use super::tool_output::{call, exec_result, expanded_fixture, settle};
 use super::*;
 use crate::panel::entries::tool_input::source;
+use nocterm_ai::model::{
+    ids::ToolId,
+    tools::{ToolChanges, ToolPatch, ToolStatus},
+};
 use nocterm_ai::tool_display;
 use serde_json::json;
 
@@ -130,4 +134,157 @@ fn unmatched_historical_command_is_readable_without_current_attachment_host() {
         tool_display::header(&call),
         "Nocterm · Execute program · Completed"
     );
+}
+/// A chat whose first row is an expanded thought that is still streaming.
+fn expanded_thought(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
+    new_chat(f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    deliver(f, &stream_session(&thread, cx), thought_chunk("short"), cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .unwrap();
+    thread
+}
+fn stream_session(
+    thread: &Entity<crate::thread::AgentThread>,
+    cx: &mut TestAppContext,
+) -> SessionId {
+    cx.update(|cx| thread.read(cx).session().clone().unwrap())
+}
+fn thought_chunk(text: &str) -> SessionUpdate {
+    SessionUpdate::ThoughtChunk(Content::Text(Text {
+        text: text.into(),
+        annotations: None,
+        extensions: None,
+    }))
+}
+/// Adds a pending tool and thirty answered questions after the thought, then expands the tool.
+fn add_tool_and_questions(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    cx: &mut TestAppContext,
+) {
+    let session = stream_session(thread, cx);
+    deliver(
+        f,
+        &session,
+        SessionUpdate::ToolStarted(super::provider_fixtures::provider_tool(
+            "call",
+            "Tool",
+            ToolStatus::Pending,
+        )),
+        cx,
+    );
+    for i in 0..30 {
+        thread.update(cx, |thread, cx| thread.send(format!("question {i}"), cx));
+        cx.run_until_parked();
+        complete_active(f, cx);
+    }
+    thread.update(cx, |thread, cx| {
+        for index in 0..thread.history_rows().len() {
+            thread.mark_dirty(index);
+        }
+        cx.notify();
+    });
+    super::navigation::scroll_to(f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(("tool-call", 1usize), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+fn assert_static_row(f: &Fixture, index: usize, cx: &mut TestAppContext) {
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find(("agent-entry", index)).bounds()
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(("agent-entry", index)).bounds(), before);
+    })
+    .unwrap();
+}
+#[gpui_kit::test]
+fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let thread = expanded_thought(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(("thought", 0usize), cx)
+    })
+    .unwrap();
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find(("agent-entry", 0usize)).bounds().size.height
+        })
+        .unwrap();
+    let session = stream_session(&thread, cx);
+    deliver(
+        &f,
+        &session,
+        thought_chunk(&"thought line\n\n".repeat(10)),
+        cx,
+    );
+    add_tool_and_questions(&f, &thread, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let thought = window.find(("agent-entry", 0usize)).bounds();
+        assert!(thought.size.height > before);
+        assert!(window.find(("agent-entry", 1usize)).bounds().origin.y >= thought.bottom());
+    })
+    .unwrap();
+    assert_static_row(&f, 0, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(
+            (
+                gpui_kit::ElementId::from("agent-transcript"),
+                "jump-to-latest",
+            ),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, _| {
+        assert!(window.try_find(("tool-output", 1usize)).is_none());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(
+            &f,
+            thread,
+            SessionUpdate::ToolChanged(ToolPatch {
+                id: ToolId::new("call"),
+                changes: ToolChanges {
+                    output: Some(vec![super::tool_output::text_output(
+                        "tool line\n".repeat(12),
+                    )]),
+                    ..Default::default()
+                },
+                extensions: None,
+                claims: Default::default(),
+                literal: Default::default(),
+            }),
+            cx,
+        );
+        thread.mark_dirty(1);
+        cx.notify();
+    });
+    super::navigation::scroll_to(&f, 1, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tool = window.find(("agent-entry", 1usize)).bounds();
+        assert!(tool.size.height > gpui_kit::px(160.));
+        assert!(window.find(("agent-entry", 2usize)).bounds().origin.y >= tool.bottom());
+    })
+    .unwrap();
+    assert_static_row(&f, 1, cx);
 }

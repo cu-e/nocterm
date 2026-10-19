@@ -160,11 +160,8 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                 new_chat(&f, cx);
                 thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
                 thread.update(cx, |thread, cx| {
-                    let mut call = super::provider_intersections::provider_tool(
-                        "script",
-                        title.clone(),
-                        status,
-                    );
+                    let mut call =
+                        super::provider_fixtures::provider_tool("script", title.clone(), status);
                     call.arguments = Some(
                         OwnedJson::from_untracked(
                             &f.installation.retention,

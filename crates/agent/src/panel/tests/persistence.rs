@@ -356,3 +356,21 @@ fn shutdown_before_the_draft_timer_saves_the_draft(cx: &mut TestAppContext) {
     );
     cx.update(|cx| assert_eq!(Some(thread.read(cx).document().desired_revision()), first));
 }
+#[gpui_kit::test]
+fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        attach_image(thread, image_bytes(), image_codec(), cx);
+        thread.send("queued\n\"\\界".into(), cx);
+        let saved = thread.snapshot(cx).unwrap();
+        let queued = &saved.composer().queue[0];
+        assert_eq!(queued.text, "queued\n\"\\界");
+        assert_eq!(queued.images.len(), 1);
+        assert_eq!(thread.composer().queue()[0].images().len(), 1);
+        assert_eq!(thread.composer().queue()[0].text().to_string(), queued.text);
+    });
+}

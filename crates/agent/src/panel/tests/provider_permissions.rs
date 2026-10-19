@@ -359,3 +359,62 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     );
     assert_eq!(f.script.shutdowns(), 1);
 }
+#[gpui_kit::test]
+fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.terminal_read = ApprovalPolicy::Allow;
+                settings.approval.terminal_write = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
+    f.events
+        .try_send(AgentEvent::Permission {
+            request: super::provider_permissions::permission(
+                session,
+                "permission",
+                "Provider action",
+                vec![
+                    super::provider_permissions::choice(
+                        "no",
+                        "Yes",
+                        nocterm_ai::model::auth::PermissionEffect::DenyOnce,
+                    ),
+                    super::provider_permissions::choice(
+                        "yes",
+                        "No",
+                        nocterm_ai::model::auth::PermissionEffect::AllowOnce,
+                    ),
+                ],
+            ),
+            respond,
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(receive.try_recv().unwrap().is_none());
+    cx.update(|cx| assert_eq!(thread.read(cx).permission_cards().len(), 1));
+    cx.update(|cx| {
+        f.installation
+            .ready
+            .settings()
+            .update::<nocterm_ai::AiSettings>(cx, |settings| {
+                settings.approval.agent_permissions = ApprovalPolicy::Allow;
+            })
+            .detach()
+    });
+    cx.run_until_parked();
+    assert!(
+        matches!(receive.try_recv().unwrap(), Some(nocterm_ai::model::auth::PermissionOutcome::Selected(choice))
+        if choice == nocterm_ai::model::ids::PermissionOptionId::new("yes"))
+    );
+    cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
+}

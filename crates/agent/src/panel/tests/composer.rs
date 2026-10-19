@@ -385,8 +385,7 @@ fn chat_title_and_usage_handle_empty_unicode_unknown_and_overflow(cx: &mut TestA
 fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
     use nocterm_ai::thread::Entry;
     let tool = |status: ToolStatus| {
-        let mut call =
-            super::provider_intersections::provider_tool("call", "Read terminal", status);
+        let mut call = super::provider_fixtures::provider_tool("call", "Read terminal", status);
         call.kind = ToolKind::Read;
         Entry::Tool(call)
     };
@@ -501,7 +500,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
 
 /// An executed MCP command whose title and output are one long unbroken word.
 fn long_mcp_call(long: &str) -> nocterm_ai::model::tools::ToolRecord {
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "mcp",
         format!("terminal.run_command {long}"),
         ToolStatus::Succeeded,

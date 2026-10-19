@@ -409,7 +409,7 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
         ("in_progress", ToolStatus::Running),
         ("completed", ToolStatus::Succeeded),
     ] {
-        let call = super::provider_intersections::provider_tool(id, "Provider tool", status);
+        let call = super::provider_fixtures::provider_tool(id, "Provider tool", status);
         f.events
             .try_send(AgentEvent::Session(SessionNotice {
                 session: session.clone(),

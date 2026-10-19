@@ -1,6 +1,6 @@
 //! Hermes spells the bridge's tools `mcp_nocterm_<id>_<tool>`, omits the input
 //! of calls without arguments and fences every result it reports.
-use super::provider_intersections::{Program, bridge, update};
+use super::provider_fixtures::{Program, bridge};
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use nocterm_ai::model::{
@@ -19,9 +19,9 @@ fn hermes_row(
     input: Option<Value>,
     output: Option<Value>,
 ) -> ToolRecord {
-    let mut call = super::provider_intersections::provider_tool(id, title, ToolStatus::Pending);
+    let mut call = super::provider_fixtures::provider_tool(id, title, ToolStatus::Pending);
     let end = call.title.len();
-    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
     call.arguments = input.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
     call.result = output.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
     call
@@ -89,7 +89,7 @@ fn assert_terminal_listing(
     cx: &mut TestAppContext,
 ) {
     // A call without arguments arrives without input.
-    update(
+    deliver(
         f,
         session,
         SessionUpdate::ToolStarted(hermes_row(
@@ -103,7 +103,7 @@ fn assert_terminal_listing(
     );
     let listed = bridge(f, TerminalCall::ListTerminals, cx);
     let result = json!({"result": listed.to_string()}).to_string();
-    update(
+    deliver(
         f,
         session,
         completed(
@@ -149,7 +149,7 @@ fn assert_completed_command(
         timeout_ms: None,
         yield_ms: Some(0),
     };
-    update(
+    deliver(
         f,
         session,
         SessionUpdate::ToolStarted(hermes_row(
@@ -182,7 +182,7 @@ fn assert_completed_command(
         cx,
     );
     let result = json!({"result": finished.to_string()}).to_string();
-    update(
+    deliver(
         f,
         session,
         completed(

@@ -376,7 +376,7 @@ fn prompt_authentication_failure_keeps_retry_and_existing_session(cx: &mut TestA
                 ]
                 .into_iter()
                 .map(|(id, status)| {
-                    nocterm_ai::thread::Entry::Tool(super::provider_intersections::provider_tool(
+                    nocterm_ai::thread::Entry::Tool(super::provider_fixtures::provider_tool(
                         id,
                         "Before auth required",
                         status,
@@ -547,7 +547,7 @@ fn stopping_and_failure_finalize_only_unfinished_tool_calls(cx: &mut TestAppCont
                 ]
                 .into_iter()
                 .map(|(id, status)| {
-                    nocterm_ai::thread::Entry::Tool(super::provider_intersections::provider_tool(
+                    nocterm_ai::thread::Entry::Tool(super::provider_fixtures::provider_tool(
                         id, "Tool", status,
                     ))
                 })

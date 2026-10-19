@@ -2,14 +2,6 @@
 use super::*;
 use std::time::Duration;
 
-fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
-    cx.update_window(f.handle, |_, window, cx| {
-        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-}
-
 /// The stored document with its composer and transcript members at the top level.
 pub(super) fn flat_document(bytes: &[u8]) -> serde_json::Value {
     let value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
@@ -33,7 +25,7 @@ fn unsent_chat_survives_switching_and_restores_its_composer(cx: &mut TestAppCont
     let f = fixture(cx);
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    set_input(&f, "draft\n界", cx);
+    type_draft(&f, "draft\n界", cx);
     new_chat(&f, cx);
     cx.update(|cx| assert_eq!(f.panel.read(cx).chat_documents().len(), 2));
     f.panel
@@ -59,7 +51,7 @@ fn ordinary_edits_are_persisted_without_sending_or_switching(cx: &mut TestAppCon
             .read(cx)
             .chat_id_string()
     });
-    set_input(&f, "unsent text\n界", cx);
+    type_draft(&f, "unsent text\n界", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     let saved = saved_value(&f, &id);
@@ -79,7 +71,7 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
             .read(cx)
             .chat_id_string()
     });
-    set_input(&f, "last keystroke", cx);
+    type_draft(&f, "last keystroke", cx);
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(saved_value(&f, &id)["draft"], "last keystroke");
 }
@@ -122,7 +114,7 @@ fn clear_save_and_quit_in_one_update_cannot_resurrect_an_old_draft(cx: &mut Test
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let id = thread.read_with(cx, |thread, _| thread.chat_id_string());
-    set_input(&f, "old text", cx);
+    type_draft(&f, "old text", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     assert_eq!(saved_value(&f, &id)["draft"], "old text");
@@ -152,7 +144,7 @@ fn clearing_a_draft_is_reversible_for_the_same_chat_id(cx: &mut TestAppContext) 
             .chat_id_string()
     });
     for text in ["first", "", "second"] {
-        set_input(&f, text, cx);
+        type_draft(&f, text, cx);
         cx.background_executor.advance_clock(Duration::from_secs(1));
         cx.run_until_parked();
         let chats = f.repository.chats();
@@ -171,13 +163,13 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    set_input(&f, "  ", cx);
+    type_draft(&f, "  ", cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.send(window, cx));
     })
     .unwrap();
     cx.update(|cx| assert_eq!(thread.read(cx).composer().draft().as_deref(), Some("  ")));
-    set_input(&f, "kept when offline", cx);
+    type_draft(&f, "kept when offline", cx);
     f.commands.auth_required.store(true, Ordering::SeqCst);
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
@@ -220,7 +212,7 @@ fn normal_send_clears_the_draft_but_noop_and_rejection_retain_it(cx: &mut TestAp
 fn rapid_new_chats_do_not_copy_the_previous_visible_text(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);
-    set_input(&f, "owner A", cx);
+    type_draft(&f, "owner A", cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
@@ -254,11 +246,11 @@ fn user_input_before_deferred_hydration_wins_and_restart_captures_it(cx: &mut Te
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "first chat", "answer", cx);
-    set_input(&f, "A draft", cx);
+    type_draft(&f, "A draft", cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    set_input(&f, "B draft", cx);
+    type_draft(&f, "B draft", cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.open_thread(first.entity_id(), cx);
@@ -358,7 +350,7 @@ fn hiding_the_panel_flushes_its_latest_text_without_waiting_for_the_timer(cx: &m
             .read(cx)
             .chat_id_string()
     });
-    set_input(&f, "before hide", cx);
+    type_draft(&f, "before hide", cx);
     cx.update_window(f.handle, |_, window, cx| {
         f.workspace
             .update(cx, |workspace, cx| workspace.toggle_right_panel(window, cx));
@@ -373,7 +365,7 @@ fn a_retained_restarted_model_cannot_overwrite_the_replacement_draft(cx: &mut Te
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "saved request", "answer", cx);
-    set_input(&f, "original draft", cx);
+    type_draft(&f, "original draft", cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let id = old.read_with(cx, |thread, _| thread.chat_id_string());
     cx.update_window(f.handle, |_, window, cx| {
@@ -381,7 +373,7 @@ fn a_retained_restarted_model_cannot_overwrite_the_replacement_draft(cx: &mut Te
     })
     .unwrap();
     cx.run_until_parked();
-    set_input(&f, "replacement draft", cx);
+    type_draft(&f, "replacement draft", cx);
     // A late save from the retained old entity has the same history id.
     old.update(cx, |thread, cx| thread.persist(cx));
     cx.background_executor.advance_clock(Duration::from_secs(1));
@@ -505,3 +497,17 @@ fn new_chat_fork_and_durable_edits_use_supplied_identity_and_time(cx: &mut TestA
         assert_eq!(original.read(cx).updated_at(), 2000);
     });
 }
+pub(super) fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+pub(super) fn disk_value(
+    repository: &nocterm_ai::testing::InMemoryAgentRepository,
+    id: &str,
+) -> serde_json::Value {
+    super::drafts::flat_document(&repository.encoded(id).unwrap())
+}
+mod saving;

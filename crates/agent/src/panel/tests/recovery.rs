@@ -184,3 +184,151 @@ fn release_changes_notice_text_and_activation_clears_its_error_emphasis(cx: &mut
         assert!(!thread.is_leased());
     });
 }
+#[gpui_kit::test]
+fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    old.update(cx, |thread, cx| {
+        let mut option = super::composer::select(
+            "model",
+            "Model",
+            "saved",
+            vec![("saved", "remembered model")],
+        );
+        option.category = Some(nocterm_ai::model::controls::ConfigCategory::Model);
+        report_control(&f, thread, SessionUpdate::Configuration(vec![option]), cx);
+        thread.send("active".into(), cx);
+        thread.replace_composer_context(vec![Attachment::Group("queued".into())], cx);
+        thread.send("queued prompt".into(), cx);
+        thread.replace_composer_context(vec![Attachment::Group("default".into())], cx);
+    });
+    cx.run_until_parked();
+    set_input(&f, "original draft", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click("queue-edit-first", cx);
+        old.update(cx, |thread, cx| thread.fail("restart required", cx));
+        f.panel.update(cx, |panel, cx| panel.restart(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let panel = f.panel.read(cx);
+        let current = panel.current().unwrap();
+        assert_ne!(current.entity_id(), old.entity_id());
+        assert_eq!(panel.composer_text(cx).as_ref(), "original draft");
+        assert!(
+            panel
+                .current()
+                .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
+        );
+        assert!(
+            !panel
+                .chat_documents()
+                .any(|thread| thread.entity_id() == old.entity_id())
+        );
+        assert_eq!(
+            current.read(cx).composer().attachments().to_vec(),
+            vec![Attachment::Group("default".into())]
+        );
+        assert_eq!(
+            current.read(cx).model().as_deref(),
+            Some("remembered model")
+        );
+        assert_eq!(
+            current.read(cx).composer().queued_rows()[0].text(),
+            "queued prompt"
+        );
+    });
+}
+#[gpui_kit::test]
+fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    old.update(cx, |thread, cx| {
+        thread.send("active".into(), cx);
+        thread.send("retained first".into(), cx);
+        thread.send("retained second".into(), cx);
+    });
+    cx.run_until_parked();
+    old.update(cx, |thread, cx| thread.fail("Agent exited", cx));
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-restart", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .update(cx, |thread, cx| {
+                assert_eq!(thread.composer().queue().len(), 2);
+                let retained = thread.composer().queue()[0].id();
+                thread.send_now(retained, cx);
+                thread.send("new first".into(), cx);
+                thread.send("new second".into(), cx);
+                thread.send("new third".into(), cx);
+                let ids = thread
+                    .composer()
+                    .queue()
+                    .iter()
+                    .map(|prompt| prompt.id())
+                    .collect::<Vec<_>>();
+                let unique = ids
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(
+                    ids.len(),
+                    unique.len(),
+                    "queued message ids collided: {ids:?}"
+                );
+            });
+    });
+}
+#[gpui_kit::test]
+fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.send("retained".into(), cx);
+    });
+    cx.run_until_parked();
+    drop(f.commands.pending.lock().unwrap().take().unwrap());
+    cx.run_until_parked();
+    thread.update(cx, |thread, _| {
+        assert!(thread.ended());
+        assert!(thread.composer().paused());
+        assert_eq!(thread.composer().queued_rows()[0].text(), "retained");
+    });
+    // Nothing reconnects by itself.
+    cx.run_until_parked();
+    assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
+    let saved = f.repository.chats();
+    assert_eq!(saved[0].composer().queue[0].text, "retained");
+
+    // Sending reconnects the chat and goes on with its queue.
+    thread.update(cx, |thread, cx| {
+        thread.send_now(thread.composer().queue()[0].id(), cx);
+        assert!(thread.submit("another".into(), None, cx).unwrap());
+    });
+    cx.run_until_parked();
+    thread.update(cx, |thread, _| {
+        assert!(!thread.ended());
+        assert!(thread.session_generating());
+        assert_eq!(thread.composer().queue().len(), 1);
+        assert_eq!(thread.composer().queued_rows()[0].text(), "another");
+    });
+    let prompts = f.commands.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].content.iter().any(|block| matches!(
+        block,
+        Content::Text(text) if text.text == "retained"
+    )));
+}

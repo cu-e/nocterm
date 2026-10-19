@@ -21,7 +21,7 @@ fn malformed_input_does_not_make_the_title_or_output_raw() {
         ("mcp_nocterm_exec_command", None, 12..24),
     ] {
         let mut call =
-            super::provider_intersections::provider_tool("malformed", title, ToolStatus::Pending);
+            super::provider_fixtures::provider_tool("malformed", title, ToolStatus::Pending);
         let tool = TextRange::supplied(&call.title, &call.title[tool]).unwrap();
         call.literal.title = match owner {
             Some(owner) => LiteralIdentity::Registered {
@@ -50,13 +50,13 @@ fn malformed_input_does_not_make_the_title_or_output_raw() {
 #[test]
 fn malformed_bridge_arguments_remain_frozen_and_have_readable_error_output() {
     let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "rejected",
         "mcp.nocterm-3.exec_command",
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
     call.arguments =
         Some(OwnedJson::from_untracked(&authority, json!({"program":"forged"})).unwrap());
     call.result = Some(OwnedJson::from_untracked(&authority, json!({"provider":"wrong"})).unwrap());
@@ -80,13 +80,13 @@ fn malformed_bridge_arguments_remain_frozen_and_have_readable_error_output() {
 #[test]
 fn unknown_outputs_do_not_replace_known_titles_and_requests() {
     let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "future",
         "mcp.nocterm-3.exec_command",
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
     call.arguments = Some(
         OwnedJson::from_untracked(
             &authority,
@@ -107,7 +107,7 @@ fn unknown_outputs_do_not_replace_known_titles_and_requests() {
 fn explicit_registered_envelopes_work_without_a_provider_name() {
     let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let mut call =
-        super::provider_intersections::provider_tool("anonymous", "Tool call", ToolStatus::Pending);
+        super::provider_fixtures::provider_tool("anonymous", "Tool call", ToolStatus::Pending);
     call.arguments = Some(
         OwnedJson::from_untracked(
             &authority,

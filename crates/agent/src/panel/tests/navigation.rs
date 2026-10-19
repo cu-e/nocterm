@@ -473,3 +473,115 @@ fn top_of_chat_includes_leading_tools_before_the_first_user_message(cx: &mut Tes
     );
     assert_eq!(top(&f, cx).offset_in_item, px(0.));
 }
+#[gpui_kit::test]
+fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("question".into(), cx));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let full = "Ответ 👨‍👩‍👧‍👦 世界 ".repeat(1000);
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice {
+            session,
+            update: SessionUpdate::AgentChunk(Content::Text(Text {
+                text: full.clone(),
+                annotations: None,
+                extensions: None,
+            })),
+        }))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    complete_active(&f, cx);
+    let before = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            let height = window.find(("agent-entry", 1usize)).bounds().size.height;
+            window.hover(("agent-entry", 1usize), cx);
+            window.click(("copy-message", 1usize), cx);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), full);
+            height
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.find(("agent-entry", 1usize)).bounds().size.height > before,
+            "visible streamed text must continue revealing after copy"
+        );
+        window.hover(("agent-entry", 1usize), cx);
+        window.click(("copy-message", 1usize), cx);
+        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), full);
+    })
+    .unwrap();
+}
+#[gpui_kit::test]
+fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    for index in 0..15 {
+        exchange(
+            &f,
+            &format!("question {index}"),
+            &"Long answer with wrapped text. ".repeat(30),
+            cx,
+        );
+    }
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(1_000_000.),
+            )),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("agent-message-navigation").is_some());
+        assert!(window.find(("agent-entry", 0usize)).visible());
+    })
+    .unwrap();
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("new question".into(), cx));
+    cx.run_until_parked();
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice {
+            session,
+            update: SessionUpdate::AgentChunk(Content::Text(Text {
+                text: "new streamed answer".repeat(100),
+                annotations: None,
+                extensions: None,
+            })),
+        }))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-message-navigation").is_some());
+        assert!(window.find(("agent-entry", 0usize)).visible());
+        window.click(
+            (
+                gpui_kit::ElementId::from("agent-transcript"),
+                "jump-to-latest",
+            ),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("agent-message-navigation").is_none());
+    })
+    .unwrap();
+    complete_active(&f, cx);
+}

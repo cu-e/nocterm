@@ -41,7 +41,7 @@ pub(super) fn call(
         tools::ToolStatus,
     };
     let request = tool_display::parse(tool, args.clone()).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "screenshot",
         format!("mcp__nocterm-17__{tool}"),
         ToolStatus::Succeeded,
@@ -468,11 +468,8 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
 
 #[test]
 fn many_generic_blocks_share_one_literal_preview_and_keep_every_block() {
-    let mut call = super::provider_intersections::provider_tool(
-        "foreign",
-        "Foreign tool",
-        ToolStatus::Pending,
-    );
+    let mut call =
+        super::provider_fixtures::provider_tool("foreign", "Foreign tool", ToolStatus::Pending);
     call.output = (0..1000)
         .map(|index| text_output(format!("block {index}\n")))
         .collect();

@@ -1,4 +1,3 @@
-use super::audit::set_input;
 use super::*;
 use gpui_kit::px;
 use nocterm_ai::model::{
@@ -562,4 +561,111 @@ fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
         assert!(window.try_find(("slash-command", 0usize)).is_some());
     })
     .unwrap();
+}
+#[gpui_kit::test]
+fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| {
+        report_control(
+            &f,
+            thread,
+            SessionUpdate::Commands(vec![AdvertisedCommand::new("обзор", "Review")]),
+            cx,
+        );
+
+        cx.notify();
+    });
+    set_input(&f, "/обзор args", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.press("left", cx);
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("composer-command-token").is_some());
+    })
+    .unwrap();
+    thread.update(cx, |thread, cx| {
+        report_control(&f, thread, SessionUpdate::Commands(Vec::new()), cx);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор args");
+        assert!(window.try_find("composer-command-token").is_none());
+        window.input("界", cx);
+    })
+    .unwrap();
+    cx.update(|cx| assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/обзор ar界gs"));
+}
+#[gpui_kit::test]
+fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.current().unwrap().update(cx, |thread, cx| {
+                report_control(
+                    &f,
+                    thread,
+                    SessionUpdate::Commands(vec![
+                        nocterm_ai::model::notice::AdvertisedCommand::new(
+                            "review",
+                            "Review changes",
+                        ),
+                        nocterm_ai::model::notice::AdvertisedCommand::new("rename", "Rename chat"),
+                    ]),
+                    cx,
+                );
+                cx.notify();
+            });
+        });
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/", window, cx);
+
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_some());
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "escape");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("agent-slash-commands").is_none());
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/");
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "/r", window, cx);
+
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
+    cx.simulate_keystrokes(f.handle, "shift-tab");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/rename ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(f.handle, "tab enter");
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/review ");
+        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
+        window.input("these changes", cx);
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "/review these changes"
+        );
+    })
+    .unwrap();
+    assert!(f.commands.prompts.lock().unwrap().is_empty());
 }

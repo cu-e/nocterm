@@ -23,13 +23,13 @@ use nocterm_ai::tool_display::{self, ToolDisplay};
 
 fn verified_call(authority: &RetentionAuthority, tool: &str, input: Value) -> ToolRecord {
     let request = tool_display::parse(tool, input.clone()).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "verified",
         format!("mcp.nocterm-3.{tool}"),
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
     call.arguments = Some(
         OwnedJson::from_untracked(
             authority,
@@ -169,13 +169,13 @@ fn display_snapshot_takes_precedence_over_mutated_provider_inputs() {
 #[test]
 fn historical_nocterm_input_is_requested_data_without_a_guessed_destination() {
     let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "historical",
         "mcp.nocterm-3.run_command",
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    super::provider_fixtures::known_title(&mut call, 12..13, 14..end);
     call.arguments=Some(OwnedJson::from_untracked(&authority,json!({"server":"nocterm-3","tool":"run_command","arguments":{"terminal_id":"t1","command":"echo original","timeout_ms":10000,"idle_ms":1000}})).unwrap());
     wrapped_identity(&mut call, 8..9);
     let selected = source(&call).unwrap();
@@ -215,7 +215,7 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
         json!({"command":3,"script":literal,"code":"other"}),
         json!({"code":literal}),
     ] {
-        let mut call = super::provider_intersections::provider_tool(
+        let mut call = super::provider_fixtures::provider_tool(
             "call",
             "provider summary",
             ToolStatus::Pending,
@@ -229,8 +229,7 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
             Some(&input)
         );
     }
-    let mut call =
-        super::provider_intersections::provider_tool("call", "summary", ToolStatus::Pending);
+    let mut call = super::provider_fixtures::provider_tool("call", "summary", ToolStatus::Pending);
     call.arguments = Some(OwnedJson::from_untracked(&authority, json!(literal)).unwrap());
     let selected = source(&call).unwrap();
     assert_eq!(selected.label, "Tool input");
@@ -240,7 +239,7 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
         json!([1, "two"]),
         json!(false),
     ] {
-        let mut call = super::provider_intersections::provider_tool(
+        let mut call = super::provider_fixtures::provider_tool(
             "call",
             "summary\nwith lines",
             ToolStatus::Pending,
@@ -252,7 +251,7 @@ fn tool_source_preserves_literals_and_uses_explicit_fields() {
     }
     for input in [None, Some(Value::Null)] {
         let mut call =
-            super::provider_intersections::provider_tool("call", literal, ToolStatus::Pending);
+            super::provider_fixtures::provider_tool("call", literal, ToolStatus::Pending);
         call.arguments = input
             .clone()
             .map(|value| OwnedJson::from_untracked(&authority, value).unwrap());
@@ -284,7 +283,7 @@ fn tool_fixture(cx: &mut TestAppContext, title: &str, input: Option<Value>) -> F
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         let mut call =
-            super::provider_intersections::provider_tool("script", title, ToolStatus::Pending);
+            super::provider_fixtures::provider_tool("script", title, ToolStatus::Pending);
         call.status = ToolStatus::Succeeded;
         call.arguments =
             input.map(|value| OwnedJson::from_untracked(&f.installation.retention, value).unwrap());
@@ -653,17 +652,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
             thread.read(cx).registration().as_ref().unwrap().id
         )
     });
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "snapshot",
         format!("mcp.{server}.run_command"),
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(
-        &mut call,
-        12..4 + server.len(),
-        5 + server.len()..end,
-    );
+    super::provider_fixtures::known_title(&mut call, 12..4 + server.len(), 5 + server.len()..end);
     call.arguments=Some(OwnedJson::from_untracked(&f.installation.retention,json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo snapshot"}})).unwrap());
     wrapped_identity(&mut call, 8..server.len());
     cx.update(|cx| {
@@ -718,17 +713,13 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
         json!({"terminal_id":"t1","command":"echo ipv6"}),
     )
     .unwrap();
-    let mut call = super::provider_intersections::provider_tool(
+    let mut call = super::provider_fixtures::provider_tool(
         "ipv6",
         format!("mcp.{server}.run_command"),
         ToolStatus::Pending,
     );
     let end = call.title.len();
-    super::provider_intersections::known_title(
-        &mut call,
-        12..4 + server.len(),
-        5 + server.len()..end,
-    );
+    super::provider_fixtures::known_title(&mut call, 12..4 + server.len(), 5 + server.len()..end);
     call.arguments=Some(OwnedJson::from_untracked(&f.installation.retention,json!({"server":server,"tool":"run_command","arguments":{"terminal_id":"t1","command":"echo ipv6"}})).unwrap());
     wrapped_identity(&mut call, 8..server.len());
     cx.update(|cx| {

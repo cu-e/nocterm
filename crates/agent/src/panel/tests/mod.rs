@@ -506,7 +506,7 @@ mod labels;
 mod lifecycle;
 mod navigation;
 mod persistence;
-mod provider_intersections;
+mod provider_fixtures;
 mod provider_permissions;
 mod queue_remove;
 mod reconnect;
@@ -524,20 +524,17 @@ mod warm_start;
 
 mod flow;
 
+mod queue_edit;
 mod queue_layout;
-mod verification;
 
 mod commands;
 
-mod audit;
 mod execution;
 
 mod drafts;
 
-mod drafts_intersections;
 mod keep_alive;
 mod recovery;
-mod restoration_intersections;
 
 mod archive;
 
@@ -600,4 +597,12 @@ fn deliver(f: &Fixture, session: &SessionId, update: SessionUpdate, cx: &mut Tes
         }))
         .unwrap();
     cx.run_until_parked();
+}
+fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
+
+        window.render_frame(cx);
+    })
+    .unwrap();
 }
