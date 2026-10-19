@@ -7,7 +7,7 @@ use nocterm_ai::{
 use std::time::Duration;
 
 /// Opens `chat` without warm start, so it restores when work starts.
-fn adopt_saved(
+pub(super) fn adopt_saved(
     f: &mut Fixture,
     chat: SavedChat,
     cx: &mut TestAppContext,
@@ -27,7 +27,7 @@ fn adopt_saved(
     thread
 }
 
-fn empty_chat(f: &Fixture) -> SavedChat {
+pub(super) fn empty_chat(f: &Fixture) -> SavedChat {
     let mut chat = SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006f".into(),

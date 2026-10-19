@@ -383,3 +383,44 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
         );
     });
 }
+
+#[gpui_kit::test]
+fn a_restored_text_prompt_is_edited_with_its_own_context(cx: &mut TestAppContext) {
+    let mut f = fixture(cx);
+    let mut saved = super::restoration::empty_chat(&f);
+    saved.attachments = vec![SavedAttachment::Group("defaults".into())];
+    saved.queue.push(SavedPrompt {
+        id: 1,
+        text: "queued text".into(),
+        images: Vec::new(),
+        attachments: vec![SavedAttachment::Group("prompt context".into())],
+    });
+    let thread = super::restoration::adopt_saved(&mut f, saved, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel
+            .update(cx, |panel, cx| panel.edit_queued(1, window, cx))
+    })
+    .unwrap();
+    thread.update(cx, |thread, _| {
+        assert!(thread.composer().editing());
+        assert_eq!(
+            thread.composer().attachments().to_vec(),
+            [Attachment::Group("prompt context".into())]
+        );
+    });
+    type_draft(&f, "edited text", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    thread.update(cx, |thread, _| {
+        assert!(!thread.composer().editing());
+        assert_eq!(thread.composer().queue()[0].saved.text, "edited text");
+        assert_eq!(
+            thread.composer().attachments().to_vec(),
+            [Attachment::Group("defaults".into())]
+        );
+    });
+}
