@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_ai::thread::Entry;
+use nocterm_ai::history::physical::{RowBody, RowSlot};
 use nocterm_ui::IconName;
 
 #[derive(Default)]
@@ -31,7 +31,7 @@ impl MessageNavigation {
     }
 
     /// Inspect only appended rows and existing rows whose classification may have changed.
-    pub(super) fn observe(&mut self, owner: EntityId, entries: &[Entry], dirty: &[usize]) {
+    pub(super) fn observe(&mut self, owner: EntityId, entries: &[RowSlot], dirty: &[usize]) {
         if self.owner != Some(owner) || entries.len() < self.known_rows {
             self.clear();
             self.owner = Some(owner);
@@ -61,12 +61,12 @@ impl MessageNavigation {
         self.known_rows = entries.len();
     }
 
-    fn is_user_message(&mut self, entry: &Entry) -> bool {
+    fn is_user_message(&mut self, entry: &RowSlot) -> bool {
         #[cfg(test)]
         {
             self.inspections += 1;
         }
-        matches!(entry, Entry::User(_))
+        matches!(entry.view(), RowBody::User(_))
     }
 
     pub(super) fn previous(&self, top: ListOffset) -> Option<usize> {

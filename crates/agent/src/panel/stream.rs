@@ -1,5 +1,5 @@
 //! Display-only reveal visits changed rows and the live backlog, never the whole history.
-use nocterm_ai::thread::Entry;
+use nocterm_ai::history::physical::{RowBody, RowSlot};
 use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub(super) struct StreamReveal {
@@ -10,7 +10,7 @@ pub(super) struct StreamReveal {
 impl StreamReveal {
     pub(super) fn observe(
         &mut self,
-        entries: &[Entry],
+        entries: &[RowSlot],
         dirty: &[usize],
         live: bool,
         reduced: bool,
@@ -22,11 +22,12 @@ impl StreamReveal {
         self.known_rows = Some(entries.len());
         let mut changed = Vec::new();
         for &index in dirty {
-            let Some(Entry::Agent(text)) = entries.get(index) else {
+            let Some(RowBody::Agent(text)) = entries.get(index).map(RowSlot::view) else {
                 self.bytes.remove(&index);
                 self.backlog.remove(&index);
                 continue;
             };
+            let text = text.read();
             let shown = self
                 .bytes
                 .entry(index)
@@ -47,20 +48,21 @@ impl StreamReveal {
         }
         if reduced {
             for index in self.backlog.drain() {
-                if let Some(Entry::Agent(text)) = entries.get(index) {
-                    self.bytes.insert(index, text.len());
+                if let Some(RowBody::Agent(text)) = entries.get(index).map(RowSlot::view) {
+                    self.bytes.insert(index, text.read().len());
                     changed.push(index);
                 }
             }
         }
         changed
     }
-    pub(super) fn advance(&mut self, entries: &[Entry], reduced: bool) -> Vec<usize> {
+    pub(super) fn advance(&mut self, entries: &[RowSlot], reduced: bool) -> Vec<usize> {
         let mut changed = Vec::with_capacity(self.backlog.len());
         self.backlog.retain(|&index| {
-            let Some(Entry::Agent(text)) = entries.get(index) else {
+            let Some(RowBody::Agent(text)) = entries.get(index).map(RowSlot::view) else {
                 return false;
             };
+            let text = text.read();
             let shown = self
                 .bytes
                 .get_mut(&index)
@@ -102,30 +104,33 @@ impl StreamReveal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nocterm_ai::{testing::ManagedRows, thread::Entry};
     #[test]
     fn unicode_backlog_visits_only_dirty_rows_and_advances_only_on_ticks() {
         let mut reveal = StreamReveal::default();
         let mut entries = (0..2000)
             .map(|_| Entry::Agent("historical".into()))
             .collect::<Vec<_>>();
-        reveal.observe(&entries, &[], false, false);
+        let mut rows = ManagedRows::new(entries.clone()).unwrap();
+        reveal.observe(rows.rows(), &[], false, false);
         entries.push(Entry::Agent("Привет 👨‍👩‍👧‍👦 世界!".repeat(200)));
+        rows.replace(entries.clone()).unwrap();
         let Entry::Agent(full) = &entries[2000] else {
             unreachable!()
         };
-        reveal.observe(&entries, &[2000], true, false);
+        reveal.observe(rows.rows(), &[2000], true, false);
         assert_eq!(reveal.backlog_len(), 1);
         let initial = reveal.text(2000, full);
         for _ in 0..5000 {
-            reveal.observe(&entries, &[], false, false);
+            reveal.observe(rows.rows(), &[], false, false);
             assert!(reveal.pending());
         }
         assert_eq!(reveal.text(2000, full), initial);
-        reveal.advance(&entries, false);
+        reveal.advance(rows.rows(), false);
         assert!(!reveal.text(2000, full).is_empty());
         assert!(reveal.text(2000, full).len() < full.len());
         for _ in 0..100 {
-            reveal.advance(&entries, false);
+            reveal.advance(rows.rows(), false);
         }
         assert_eq!(reveal.text(2000, full), *full);
     }
@@ -133,10 +138,12 @@ mod tests {
     fn historical_and_reduced_motion_text_is_immediate() {
         let mut reveal = StreamReveal::default();
         let mut entries = vec![Entry::Agent("old".into())];
-        reveal.observe(&entries, &[], true, false);
+        let mut rows = ManagedRows::new(entries.clone()).unwrap();
+        reveal.observe(rows.rows(), &[], true, false);
         assert_eq!(reveal.text(0, "old"), "old");
         entries.push(Entry::Agent("new".into()));
-        reveal.observe(&entries, &[1], true, true);
+        rows.replace(entries).unwrap();
+        reveal.observe(rows.rows(), &[1], true, true);
         assert!(!reveal.pending());
         assert_eq!(reveal.text(1, "new"), "new");
     }

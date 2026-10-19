@@ -1,45 +1,13 @@
-use super::{resolution, strict_availability};
+//! The original bubblewrap argv, kept to exercise the real sandbox filesystem view.
+use super::resolution;
 use nocterm_ai::{
-    sandbox::{Availability, MountAccess, SandboxLaunchError, SandboxPolicy},
+    sandbox::{MountAccess, SandboxLaunchError, SandboxPolicy},
     workspace::WorkdirError,
 };
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
-pub(crate) struct SandboxCommand {
-    executable: PathBuf,
-    arguments: Vec<String>,
-}
-impl SandboxCommand {
-    pub(crate) fn into_parts(self) -> (PathBuf, Vec<String>) {
-        (self.executable, self.arguments)
-    }
-}
 pub(crate) struct SandboxLauncher;
 impl SandboxLauncher {
-    pub(crate) fn prepare(
-        policy: &SandboxPolicy,
-        workdir: &Path,
-        executable: &Path,
-        args: &[String],
-        env: &BTreeMap<String, String>,
-    ) -> Result<SandboxCommand, SandboxLaunchError> {
-        let arguments = Self::arguments(policy, workdir, executable, args)?;
-        let bwrap = match strict_availability(env, workdir)? {
-            Availability::Available(path) => path,
-            Availability::Missing => return Err(SandboxLaunchError::Missing),
-            Availability::Unsupported => return Err(SandboxLaunchError::Unsupported),
-        };
-        if !crate::process::executable(&bwrap) {
-            return Err(SandboxLaunchError::NotExecutable(bwrap));
-        }
-        Ok(SandboxCommand {
-            executable: bwrap,
-            arguments,
-        })
-    }
     pub(crate) fn arguments(
         policy: &SandboxPolicy,
         workdir: &Path,

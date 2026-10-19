@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write as _;
 
 #[test]
 fn binary_snapshot_round_trips_and_creates_parents() {
@@ -122,5 +123,96 @@ fn default_snapshots_and_streams_are_private_but_explicit_modes_are_retained() {
     assert_eq!(
         fs::metadata(shared).unwrap().permissions().mode() & 0o777,
         0o644
+    );
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("candidate rejected after prefix")]
+struct RejectedSnapshot;
+
+#[test]
+fn streaming_producer_rejection_keeps_old_bytes_and_concrete_cause() {
+    use std::error::Error as _;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshot");
+    fs::write(&path, b"old").unwrap();
+    let result = AtomicPublication::stage_private_with(&path, |writer| {
+        writer.write_all(b"partial candidate").unwrap();
+        Err(RejectedSnapshot)
+    });
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("rejected producer staged a candidate"),
+    };
+    assert!(matches!(error, StageError::Producer(_)));
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<RejectedSnapshot>()
+            .is_some()
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"old");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn streaming_stage_is_discardable_and_publishes_exact_chunks() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshot");
+    fs::write(&path, b"old").unwrap();
+    let stage = || {
+        AtomicPublication::stage_private_with(&path, |writer| {
+            writer.write_all(b"first")?;
+            writer.write_all(b"second")
+        })
+        .unwrap()
+    };
+    drop(stage());
+    assert_eq!(fs::read(&path).unwrap(), b"old");
+    stage().publish().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"firstsecond");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn streaming_stage_native_failure_preserves_native_classification() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("missing/snapshot");
+    let result = AtomicPublication::stage_private_with(&path, |_| Ok::<_, RejectedSnapshot>(()));
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("missing parent staged a candidate"),
+    };
+    assert!(
+        matches!(error, StageError::Native(ref error) if error.kind() == io::ErrorKind::NotFound)
+    );
+    assert!(!path.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn streamed_private_snapshot_replaces_link_and_keeps_mode_private() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let victim = directory.path().join("victim");
+    let path = directory.path().join("snapshot");
+    fs::write(&victim, b"old victim").unwrap();
+    std::os::unix::fs::symlink(&victim, &path).unwrap();
+    AtomicPublication::stage_private_with(&path, |writer| writer.write_all(b"stream"))
+        .unwrap()
+        .publish()
+        .unwrap();
+    assert_eq!(fs::read(&victim).unwrap(), b"old victim");
+    assert_eq!(fs::read(&path).unwrap(), b"stream");
+    assert!(
+        !fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o600
     );
 }

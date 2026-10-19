@@ -51,10 +51,11 @@ fn supplied_evidence_keeps_original_bytes_mime_and_exact_history_budget() {
         image.encoded_len(),
         crate::history::content_size(&image.content()).unwrap()
     );
-    let acp::ContentBlock::Image(content) = image.content() else {
+    let Content::Media(content) = image.content() else {
         panic!("expected image");
     };
-    assert_eq!(content.data, STANDARD.encode(bytes));
+    assert_eq!(content.kind, MediaKind::Image);
+    assert_eq!(content.encoded, STANDARD.encode(bytes));
     assert_eq!(
         validate_collection(&vec![image; 9]),
         Err(ImageCollectionError)

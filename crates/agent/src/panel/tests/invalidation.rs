@@ -38,8 +38,13 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         let session = thread.read(cx).session().clone().unwrap();
-        let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":"call","title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-        f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+        let request = super::provider_permissions::allow_once(session, "call", "Permission");
+        f.events
+            .try_send(AgentEvent::Permission {
+                request,
+                respond: send,
+            })
+            .unwrap();
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -101,8 +106,22 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         let (send, _receive) = nocterm_ai::PermissionResponder::channel();
         cx.update(|cx| {
             let session = owner.read(cx).session().clone().unwrap();
-            let request = serde_json::from_value(serde_json::json!({"sessionId":session,"toolCall":{"toolCallId":id,"title":"Permission"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]})).unwrap();
-            f.events.try_send(AgentEvent::Permission { request, respond: send }).unwrap();
+            let request = super::provider_permissions::permission(
+                session,
+                id,
+                "Permission",
+                vec![super::provider_permissions::choice(
+                    "allow",
+                    "Allow",
+                    nocterm_ai::model::auth::PermissionEffect::AllowOnce,
+                )],
+            );
+            f.events
+                .try_send(AgentEvent::Permission {
+                    request,
+                    respond: send,
+                })
+                .unwrap();
         });
         cx.run_until_parked();
         cx.update_window(f.handle, |_, window, cx| {
@@ -117,12 +136,13 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
         cx.update(|cx| {
             owner.update(cx, |t, cx| {
                 report_control(
+                    &f,
                     t,
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                        acp::ContentBlock::Text(acp::TextContent::new(
-                            "unchanged approval, more output",
-                        )),
-                    )),
+                    SessionUpdate::AgentChunk(Content::Text(Text {
+                        text: "unchanged approval, more output".into(),
+                        annotations: None,
+                        extensions: None,
+                    })),
                     cx,
                 );
             })
@@ -180,8 +200,8 @@ fn separate_installations_keep_original_runtime_and_policy_after_later_compositi
         );
     });
     new_chat(&first, cx);
-    assert_eq!(first.connector.connects.load(Ordering::SeqCst), 1);
-    assert_eq!(second.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(first.connector.connect_count(), 1);
+    assert_eq!(second.connector.connect_count(), 0);
 }
 
 #[gpui_kit::test]

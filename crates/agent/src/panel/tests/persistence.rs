@@ -56,10 +56,13 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
         1,
         "quit lost the writer-owned snapshot after its document was released"
     );
-    assert_eq!(chats[0].name.as_deref(), Some("pending extracted snapshot"));
+    assert_eq!(
+        chats[0].metadata().name.as_deref(),
+        Some("pending extracted snapshot")
+    );
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].metadata().name.as_deref(),
         Some("pending extracted snapshot")
     );
 }
@@ -73,7 +76,7 @@ fn shutdown_preserves_a_delete_extracted_by_the_writer_after_document_release(
     thread.update(cx, |thread, cx| thread.save(cx));
     cx.run_until_parked();
     assert_eq!(f.repository.chats().len(), 1);
-    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
     cx.update(|cx| f.installation.installed.runtime().delete_chat(id, cx));
     assert!(cx.background_executor.tick());
     assert_eq!(
@@ -108,30 +111,20 @@ fn shutdown_saves_the_replacement_when_the_old_document_is_retained_elsewhere(
     .unwrap();
     let replacement = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_ne!(old.entity_id(), replacement.entity_id());
-    cx.update(|cx| {
-        assert_eq!(
-            old.read(cx).document().chat_id().to_owned(),
-            replacement.read(cx).document().chat_id().to_owned()
-        )
-    });
     replacement.update(cx, |thread, cx| {
         thread.rename(Some("replacement wins".into()), cx)
     });
     shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
+    cx.update(|cx| assert_eq!(chats[0].id(), replacement.read(cx).chat_id_string()));
     assert_eq!(
-        chats[0].name.as_deref(),
+        chats[0].metadata().name.as_deref(),
         Some("replacement wins"),
         "an externally retained old document overwrote its replacement"
     );
     // Keep the stale entity alive through the assertion, as an outstanding callback can do.
-    cx.update(|cx| {
-        assert_eq!(
-            old.read(cx).document().name().map(str::to_owned).as_deref(),
-            Some("old document")
-        )
-    });
+    cx.update(|cx| assert!(old.read(cx).document().name().is_none()));
 }
 
 #[gpui_kit::test]
@@ -156,7 +149,7 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
     });
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].metadata().name.as_deref(),
         Some("replacement owner")
     );
     // An outstanding callback can retain the old Entity and eventually attempt to save it.
@@ -166,13 +159,13 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
     });
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].metadata().name.as_deref(),
         Some("replacement owner"),
         "a stale owner saved over the replacement outside shutdown"
     );
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].metadata().name.as_deref(),
         Some("replacement owner")
     );
 }
@@ -198,10 +191,13 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].name.as_deref(), Some("latest queued snapshot"));
+    assert_eq!(
+        chats[0].metadata().name.as_deref(),
+        Some("latest queued snapshot")
+    );
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].metadata().name.as_deref(),
         Some("latest queued snapshot")
     );
 }
@@ -215,16 +211,27 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
 ) {
     let f = fixture(cx);
     lazy_start(&f, cx);
-    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+    let saved = nocterm_ai::history::SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-000000000002".into(),
         40,
     );
-    saved.entries = vec![nocterm_ai::thread::Entry::Agent("old answer".into())];
-    saved.times = vec![39];
-    saved.pending_history = true;
+    let (id, metadata, mut resume, mut transcript, composer, _) = saved.into_parts();
+    transcript.entries = vec![nocterm_ai::thread::Entry::Agent("old answer".into())];
+    transcript.times = vec![39];
+    resume.pending_history = true;
+    let saved = nocterm_ai::history::SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     let thread = super::archive::archived(&f, &saved, cx);
-    let bytes = f.repository.encoded(&saved.id).unwrap();
+    let bytes = f.repository.encoded(saved.id()).unwrap();
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -238,23 +245,34 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
     });
     cx.run_until_parked();
     shutdown_runtime(&f.installation.installed, cx);
-    assert_eq!(save_count(&f, &saved.id), 0);
-    assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
+    assert_eq!(save_count(&f, saved.id()), 0);
+    assert_eq!(f.repository.encoded(saved.id()).unwrap(), bytes);
     cx.update(|cx| assert_eq!(thread.read(cx).updated_at(), 40));
 }
 #[gpui_kit::test]
 fn equal_warm_resume_does_not_rewrite_imported_session_metadata(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+    let saved = nocterm_ai::history::SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-000000000003".into(),
         40,
     );
-    saved.entries = vec![nocterm_ai::thread::Entry::Agent("old answer".into())];
-    saved.session_id = Some("resumed".into());
-    saved.workdir = Some("/tmp".into());
+    let (id, metadata, mut resume, mut transcript, composer, _) = saved.into_parts();
+    transcript.entries = vec![nocterm_ai::thread::Entry::Agent("old answer".into())];
+    resume.session_id = Some("resumed".into());
+    resume.workdir = Some("/tmp".into());
+    let saved = nocterm_ai::history::SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     let thread = super::archive::archived(&f, &saved, cx);
-    let bytes = f.repository.encoded(&saved.id).unwrap();
+    let bytes = f.repository.encoded(saved.id()).unwrap();
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -267,8 +285,8 @@ fn equal_warm_resume_does_not_rewrite_imported_session_metadata(cx: &mut TestApp
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     shutdown_runtime(&f.installation.installed, cx);
-    assert_eq!(save_count(&f, &saved.id), 0);
-    assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
+    assert_eq!(save_count(&f, saved.id()), 0);
+    assert_eq!(f.repository.encoded(saved.id()).unwrap(), bytes);
 }
 #[gpui_kit::test]
 fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
@@ -277,7 +295,7 @@ fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
     let f = fixture(cx);
     lazy_start(&f, cx);
     let thread = super::resources::draft(&f, cx);
-    let id = cx.update(|cx| thread.read(cx).chat_id().to_owned());
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
     let release = f
         .repository
         .block_next(nocterm_ai::testing::StorageOperation::Save(id.clone()));
@@ -295,37 +313,46 @@ fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
     cx.update(|cx| {
         assert!(thread.read(cx).document().persistence_error().is_none());
         assert!(!thread.read(cx).composer().paused());
-        assert_eq!(thread.read(cx).draft_text(), Some("latest literal draft"));
+        assert_eq!(
+            thread.read(cx).draft_text().as_deref(),
+            Some("latest literal draft")
+        );
     });
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
-        f.repository.transcript(&id).unwrap().draft.as_deref(),
+        f.repository
+            .transcript(&id)
+            .unwrap()
+            .composer()
+            .draft
+            .as_deref(),
         Some("latest literal draft")
     );
 }
 #[gpui_kit::test]
-fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
-    cx: &mut TestAppContext,
-) {
+fn shutdown_before_the_draft_timer_saves_the_draft(cx: &mut TestAppContext) {
     let f = fixture(cx);
     lazy_start(&f, cx);
     let thread = super::resources::draft(&f, cx);
     thread.update(cx, |thread, cx| {
         thread.set_draft("before 300 ms".into(), cx)
     });
-    let client = crate::thread::client(&thread);
-    let first = cx.update(|cx| client.capture(cx).unwrap());
-    let second = cx.update(|cx| client.capture(cx).unwrap());
-    assert_eq!(first.1, second.1);
-    assert!(Arc::ptr_eq(&first.0, &second.0));
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
+    cx.update(|cx| assert!(thread.read(cx).shared_snapshot(cx).is_some()));
+    // Repeated captures before the timer share one revision.
+    let first = thread.update(cx, |thread, cx| thread.capture_pending(cx).unwrap());
+    let second = thread.update(cx, |thread, cx| thread.capture_pending(cx).unwrap());
+    assert!(first.is_some());
+    assert_eq!(first, second);
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         f.repository
-            .transcript(&first.0.id)
+            .transcript(&id)
             .unwrap()
+            .composer()
             .draft
             .as_deref(),
         Some("before 300 ms")
     );
-    cx.update(|cx| assert_eq!(thread.read(cx).document().desired_revision(), first.1));
+    cx.update(|cx| assert_eq!(Some(thread.read(cx).document().desired_revision()), first));
 }

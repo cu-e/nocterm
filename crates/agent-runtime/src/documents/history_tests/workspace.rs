@@ -1,7 +1,6 @@
 //! Workspace port results reach startup without native filesystem work in Runtime.
 use super::*;
 use nocterm_ai::{
-    AgentError,
     testing::{ScriptedUsageSource, ScriptedWorkdirResolver},
     workspace::{PreparedWorkspace, WorkdirError},
 };
@@ -24,7 +23,7 @@ fn runtime_with_workspace(
     connector: Arc<ScriptedConnector>,
     resolver: Arc<ScriptedWorkdirResolver>,
 ) -> Entity<Runtime> {
-    let repository = Arc::new(InMemoryAgentRepository::default());
+    let repository = Arc::new(repository());
     let storage = AgentStorage::prepared(repository.clone(), repository, Ok(Default::default()));
     runtime_with_usage_source(
         cx,
@@ -62,15 +61,12 @@ fn prepared_canonical_root_is_forwarded_to_connector_and_resolver_refusal_stops_
             sandbox: None,
         }),
     );
-    connector.push(Err(AgentError::Exited {
-        code: Some(1),
-        stderr_tail: String::new(),
-    }));
+    connector.push_failed();
     let runtime = runtime_with_workspace(cx, connector.clone(), resolver.clone());
     connect(&runtime, cx);
     cx.run_until_parked();
-    assert_eq!(connector.requests().len(), 1);
-    assert_eq!(connector.requests()[0].working_directory, canonical());
+    assert_eq!(connector.working_directories().len(), 1);
+    assert_eq!(connector.working_directories()[0], canonical());
     assert_eq!(resolver.requests()[0].candidate, candidate().join("work"));
     let refusing_connector = Arc::new(ScriptedConnector::default());
     let refusing = Arc::new(ScriptedWorkdirResolver::default());
@@ -83,7 +79,7 @@ fn prepared_canonical_root_is_forwarded_to_connector_and_resolver_refusal_stops_
     let runtime = runtime_with_workspace(cx, refusing_connector.clone(), refusing);
     connect(&runtime, cx);
     cx.run_until_parked();
-    assert!(refusing_connector.requests().is_empty());
+    assert!(refusing_connector.working_directories().is_empty());
 }
 #[gpui::test]
 fn cancellation_after_pending_workspace_preparation_never_calls_connector(cx: &mut TestAppContext) {
@@ -102,5 +98,5 @@ fn cancellation_after_pending_workspace_preparation_never_calls_connector(cx: &m
         }))
         .unwrap();
     cx.run_until_parked();
-    assert!(connector.requests().is_empty());
+    assert!(connector.working_directories().is_empty());
 }

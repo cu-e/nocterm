@@ -5,20 +5,33 @@ use crate::{
 use futures::future::BoxFuture;
 use gpui::{App, AppContext as _, Entity, EntityId, Subscription, Task};
 use nocterm_ai::{
-    AgentLaunch, BridgeRegistration, acp,
-    history::{ChatSummary, SavedChat, SharedChat},
+    AgentLaunch, BridgeRegistration,
+    history::{ChatSummary, SavedChat},
+    model::{auth::TerminalSetup, controls::ConfigOption},
 };
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct RuntimeHandle {
     runtime: Entity<Runtime>,
+    documents: crate::DocumentWriter,
+    retention: nocterm_ai::model::retention::RetentionAuthority,
 }
 impl RuntimeHandle {
+    pub fn retention(&self, _cx: &App) -> &nocterm_ai::model::retention::RetentionAuthority {
+        &self.retention
+    }
     pub fn new(services: RuntimeServices, cx: &mut App) -> Self {
+        let retention = services.retention.clone();
+        let runtime = cx.new(|cx| Runtime::new(services, cx));
+        let documents = runtime.read(cx).chats.publication();
         Self {
-            runtime: cx.new(|cx| Runtime::new(services, cx)),
+            runtime,
+            documents,
+            retention,
         }
+    }
+    pub fn document_writer(&self) -> &crate::DocumentWriter {
+        &self.documents
     }
     pub fn observe(
         &self,
@@ -56,10 +69,13 @@ impl RuntimeHandle {
     pub fn terminal_auth_request(
         &self,
         key: u64,
-        method: &acp::AuthMethodTerminal,
+        method: &TerminalSetup,
+        label: &str,
         cx: &App,
     ) -> Option<TerminalAuthRequest> {
-        self.runtime.read(cx).terminal_auth_request(key, method)
+        self.runtime
+            .read(cx)
+            .terminal_auth_request(key, method, label)
     }
     pub fn take_history(&self, cx: &mut App) -> (Option<Vec<SavedChat>>, Option<Vec<ChatSummary>>) {
         self.runtime.update(cx, |runtime, _| {
@@ -71,12 +87,7 @@ impl RuntimeHandle {
             runtime.toggle_favorite(agent, option, value, cx)
         })
     }
-    pub fn remember_options(
-        &self,
-        agent: &str,
-        options: &[acp::SessionConfigOption],
-        cx: &mut App,
-    ) {
+    pub fn remember_options(&self, agent: &str, options: &[ConfigOption], cx: &mut App) {
         self.runtime.update(cx, |runtime, cx| {
             runtime.remember_options(agent, options, cx)
         })
@@ -84,7 +95,7 @@ impl RuntimeHandle {
     pub fn remember_choice(
         &self,
         agent: &str,
-        option: &acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &nocterm_ai::session_config::ConfigValue,
         cx: &mut App,
     ) {
@@ -127,14 +138,12 @@ impl RuntimeHandle {
     }
     pub fn save_chat(
         &self,
-        chat: Arc<SharedChat>,
+        chat: nocterm_ai::history::writing::CandidateOffer<'_>,
         owner: EntityId,
         revision: u64,
         cx: &mut App,
     ) -> Result<bool, AgentPersistenceError> {
-        self.runtime.update(cx, |runtime, cx| {
-            runtime.save_chat(chat, owner, revision, cx)
-        })
+        self.documents.save(chat, owner, revision, cx)
     }
     pub fn capture_and_detach_document(
         &self,

@@ -5,7 +5,7 @@ use gpui_kit::{
     App, Context, EntityId, Focusable as _, ListState, Window,
     component::input::{InlineToken, InputContent, RopeExt as _},
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::notice::AdvertisedCommand;
 impl ComposerView {
     pub(in crate::panel) fn select_command_token(
         &self,
@@ -26,7 +26,7 @@ impl ComposerView {
     }
     pub(in crate::panel) fn command_matches(
         &self,
-        commands: &[acp::AvailableCommand],
+        commands: &[AdvertisedCommand],
         cx: &App,
     ) -> Vec<usize> {
         self.commands.matches(self.text(cx).as_ref(), commands)
@@ -40,7 +40,7 @@ impl ComposerView {
     pub(in crate::panel) fn refresh_commands(
         &mut self,
         key: (EntityId, u64),
-        commands: &[acp::AvailableCommand],
+        commands: &[AdvertisedCommand],
         window: &mut Window,
         cx: &mut Context<AgentPanel>,
     ) -> bool {
@@ -77,7 +77,7 @@ impl ComposerView {
     }
     pub(in crate::panel) fn sync_command_token(
         &mut self,
-        commands: &[acp::AvailableCommand],
+        commands: &[AdvertisedCommand],
         window: &mut Window,
         cx: &mut Context<AgentPanel>,
     ) {

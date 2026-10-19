@@ -2,9 +2,61 @@
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
 use nocterm_ai::ApprovalPolicy;
+use nocterm_ai::model::{
+    ids::ToolId,
+    json::OwnedJson,
+    literal::{LiteralIdentity, TextRange},
+    tools::{Claim, ToolChanges, ToolOutput, ToolPatch, ToolRecord, ToolStatus},
+};
 use nocterm_ai::{ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display};
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::{Value, json};
+
+/// Actual neutral provider facts before any optional payload or bridge evidence is supplied.
+pub(super) fn provider_tool(
+    id: impl Into<String>,
+    title: impl Into<String>,
+    status: nocterm_ai::model::tools::ToolStatus,
+) -> nocterm_ai::model::tools::ToolRecord {
+    use nocterm_ai::model::{
+        ids::ToolId,
+        tools::{ToolKind, ToolRecord},
+    };
+    ToolRecord {
+        id: ToolId::new(id),
+        title: title.into(),
+        name: None,
+        kind: ToolKind::Other,
+        status,
+        output: Vec::new(),
+        locations: Vec::new(),
+        arguments: None,
+        result: None,
+        extensions: None,
+        claims: Default::default(),
+        literal: Default::default(),
+        client_display: None,
+    }
+}
+
+/// These fixtures supply known neutral facts and genuine ranges in their retained title.
+/// No wire parser or execution authority is created by this test constructor.
+pub(super) fn known_title(
+    call: &mut ToolRecord,
+    owner: std::ops::Range<usize>,
+    tool: std::ops::Range<usize>,
+) {
+    let registration = call.title[owner.clone()].to_owned();
+    let name = call.title[tool.clone()].to_owned();
+    call.literal.title = LiteralIdentity::Registered {
+        owner: TextRange::supplied(&call.title, &call.title[owner]).unwrap(),
+        tool: TextRange::supplied(&call.title, &call.title[tool]).unwrap(),
+    };
+    call.claims.title = Claim::Known {
+        registration,
+        tool: name,
+    };
+}
 
 #[derive(Default)]
 pub(super) struct Program {
@@ -53,15 +105,15 @@ pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -
 
 pub(super) fn update(
     f: &Fixture,
-    session: &acp::SessionId,
-    update: acp::SessionUpdate,
+    session: &SessionId,
+    update: SessionUpdate,
     cx: &mut TestAppContext,
 ) {
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
-            session.clone(),
+        .try_send(AgentEvent::Session(SessionNotice {
+            session: session.clone(),
             update,
-        )))
+        }))
         .unwrap();
     cx.run_until_parked();
 }
@@ -111,21 +163,19 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     assert_eq!(actual.program, "bash");
     assert_eq!(actual.args, args);
     assert_eq!(actual.stdin.as_deref(), Some(&b"input\r\n"[..]));
-    update(
-        &f,
-        &session,
-        acp::SessionUpdate::ToolCall(acp::ToolCall::new(
-            "provider-call",
-            "mcp__nocterm-17__exec_command",
-        )),
-        cx,
+    let authority = cx.update(|cx| f.installation.installed.runtime().retention(cx).clone());
+    let mut call = provider_tool(
+        "provider-call",
+        "mcp__nocterm-17__exec_command",
+        ToolStatus::Pending,
     );
+    let title_len = call.title.len();
+    known_title(&mut call, 13..15, 17..title_len);
+    update(&f, &session, SessionUpdate::ToolStarted(call), cx);
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-            unreachable!()
-        };
+        let call = thread.read(cx).tool_slot(0);
         assert!(
-            tool_display::ToolDisplay::from_call(call).is_none(),
+            tool_display::ToolDisplay::from_managed(call).is_none(),
             "name alone cannot establish the executed host"
         );
     });
@@ -151,41 +201,50 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
     );
     assert_eq!(result["state"], "exited");
     let wire = nocterm_ai::mcp::tool_result(json!(42), Ok(result.clone()));
-    update(
-        &f,
-        &session,
-        acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-            "provider-call",
-            acp::ToolCallUpdateFields::new()
-                .raw_input(serde_json::to_value(&request).unwrap())
-                .raw_output(wire["result"].clone())
-                .content(
-                    serde_json::from_value::<Vec<acp::ToolCallContent>>(
-                        json!([{"type":"content","content":{
-                            "type":"text","text":result.to_string()
-                        }}]),
-                    )
+    let patch = ToolPatch {
+        id: ToolId::new("provider-call"),
+        changes: ToolChanges {
+            arguments: Some(
+                OwnedJson::from_untracked(&authority, serde_json::to_value(&request).unwrap())
                     .unwrap(),
-                )
-                .status(acp::ToolCallStatus::Completed),
-        )),
-        cx,
-    );
+            ),
+            result: Some(OwnedJson::from_untracked(&authority, wire["result"].clone()).unwrap()),
+            output: Some(vec![ToolOutput::Content {
+                content: Box::new(Content::Text(Text {
+                    text: result.to_string(),
+                    annotations: None,
+                    extensions: None,
+                })),
+                extensions: None,
+            }]),
+            status: Some(ToolStatus::Succeeded),
+            ..Default::default()
+        },
+        extensions: None,
+        claims: Default::default(),
+        literal: Default::default(),
+    };
+    update(&f, &session, SessionUpdate::ToolChanged(patch), cx);
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-            unreachable!()
-        };
+        let call = thread.read(cx).tool_slot(0);
         assert_eq!(
-            tool_display::header(call),
+            tool_display::managed_header(call),
             "This computer · Execute program · Completed"
         );
-        let restored: acp::ToolCall =
-            serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
-        assert_eq!(tool_display::header(&restored), tool_display::header(call));
-        let input = tool_input::source(&restored).unwrap();
+        let snapshot = thread.read(cx).snapshot(cx).unwrap();
+        f.repository.seed_chat(&snapshot).unwrap();
+        let restored_chat = f.repository.transcript(snapshot.id()).unwrap();
+        let Entry::Tool(restored) = &restored_chat.transcript().entries[0] else {
+            panic!("restored tool row");
+        };
+        assert_eq!(
+            tool_display::header(restored),
+            tool_display::managed_header(call)
+        );
+        let input = tool_input::source(restored).unwrap();
         assert_eq!(input.text, script);
         assert_eq!(input.language, Some("bash"));
-        let output = tool_output::source(&restored, false).unwrap();
+        let output = tool_output::source(restored, false).unwrap();
         assert_eq!(
             output.sections.len(),
             2,
@@ -210,10 +269,15 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
     });
     cx.update(|cx| thread.update(cx, |thread, cx| thread.clear_composer_context(cx)));
-    update(&f, &session, acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-        "provider-call", acp::ToolCallUpdateFields::new().title("Different destination")
-            .raw_input(json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})),
-    )), cx);
+    update(&f, &session, SessionUpdate::ToolChanged(ToolPatch {
+        id: ToolId::new("provider-call"),
+        changes: ToolChanges {
+            title: Some("Different destination".into()),
+            arguments: Some(OwnedJson::from_untracked(&authority, json!({"terminal_id":"different","program":"bash","args":["-lc","echo forged"]})).unwrap()),
+            ..Default::default()
+        },
+        extensions: None, claims: Default::default(), literal: Default::default(),
+    }), cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(("tool-call", 0usize), cx);
@@ -252,11 +316,23 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     let (respond, mut receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
-            request: serde_json::from_value(json!({"sessionId":session,"toolCall":{
-            "toolCallId":"permission","title":"Provider action"
-        },"options":[{"optionId":"no","name":"Yes","kind":"reject_once"},
-            {"optionId":"yes","name":"No","kind":"allow_once"}]}))
-            .unwrap(),
+            request: super::provider_permissions::permission(
+                session,
+                "permission",
+                "Provider action",
+                vec![
+                    super::provider_permissions::choice(
+                        "no",
+                        "Yes",
+                        nocterm_ai::model::auth::PermissionEffect::DenyOnce,
+                    ),
+                    super::provider_permissions::choice(
+                        "yes",
+                        "No",
+                        nocterm_ai::model::auth::PermissionEffect::AllowOnce,
+                    ),
+                ],
+            ),
             respond,
         })
         .unwrap();
@@ -274,26 +350,44 @@ fn terminal_ask_switches_off_do_not_implicitly_approve_provider_requests(cx: &mu
     });
     cx.run_until_parked();
     assert!(
-        matches!(receive.try_recv().unwrap(), Some(acp::RequestPermissionOutcome::Selected(choice))
-        if choice.option_id == acp::PermissionOptionId::from("yes"))
+        matches!(receive.try_recv().unwrap(), Some(nocterm_ai::model::auth::PermissionOutcome::Selected(choice))
+        if choice == nocterm_ai::model::ids::PermissionOptionId::new("yes"))
     );
     cx.update(|cx| assert!(thread.read(cx).permission_cards().is_empty()));
 }
 
 #[test]
 fn a_call_the_bridge_rejected_shows_the_command_and_the_error() {
-    let mut call = acp::ToolCall::new("call-1", "mcp.nocterm-11.exec_command")
-        .raw_input(
-            json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
-                "terminal_id":"t1", "program":"/bin/sh",
-                "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"],
-                "timeout_ms":1_800_000, "yield_ms":1000,
+    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
+        nocterm_ai::history::MAX_RESIDENT_BYTES,
+    )
+    .unwrap();
+    let mut call = provider_tool("call-1", "mcp.nocterm-11.exec_command", ToolStatus::Failed);
+    let title_len = call.title.len();
+    known_title(&mut call, 12..14, 15..title_len);
+    call.arguments = Some(OwnedJson::from_untracked(&authority, json!({"server":"nocterm-11", "tool":"exec_command", "arguments":{
+        "terminal_id":"t1", "program":"/bin/sh", "args":["-c","cd ~/dev/NOUMMA && cargo build --release --locked -j 4"], "timeout_ms":1_800_000, "yield_ms":1000,
+    }})).unwrap());
+    let input = call.arguments.as_ref().unwrap();
+    let server = input["server"].as_str().unwrap();
+    let tool = input["tool"].as_str().unwrap();
+    call.literal.input = LiteralIdentity::Registered {
+        owner: TextRange::supplied(server, &server[8..]).unwrap(),
+        tool: TextRange::supplied(tool, tool).unwrap(),
+    };
+    call.claims.input = Claim::Known {
+        registration: "11".into(),
+        tool: "exec_command".into(),
+    };
+    call.result = Some(
+        OwnedJson::from_untracked(
+            &authority,
+            json!({"result":null, "error":{
+                "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
             }}),
         )
-        .raw_output(json!({"result":null, "error":{
-            "message":"tool call error: tool call failed for `nocterm-11/exec_command`"
-        }}));
-    call.status = acp::ToolCallStatus::Failed;
+        .unwrap(),
+    );
     assert_eq!(
         tool_display::header(&call),
         "Nocterm · Execute program · Failed"

@@ -1,8 +1,15 @@
 use super::*;
 use nocterm_ai::history::{SavedAttachment, SavedChat, SavedPrompt};
-use nocterm_ai::thread::Entry;
+use nocterm_ai::{
+    model::{
+        ids::ToolId,
+        notice::AdvertisedCommand,
+        tools::{ToolChanges, ToolPatch, ToolStatus},
+    },
+    thread::Entry,
+};
 
-fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+pub(super) fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
 
@@ -17,12 +24,11 @@ fn pending_permission(
 ) {
     let (send, _) = nocterm_ai::PermissionResponder::channel();
     thread.update(cx, |thread, _| {
-        let request = serde_json::from_value(serde_json::json!({
-            "sessionId":thread.session().as_ref().unwrap(),
-            "toolCall":{"toolCallId":"pending","title":"Needs approval"},
-            "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]
-        }))
-        .unwrap();
+        let request = super::provider_permissions::allow_once(
+            thread.session().as_ref().unwrap().clone(),
+            "pending",
+            "Needs approval",
+        );
         f.events
             .try_send(AgentEvent::Permission {
                 request,
@@ -67,7 +73,7 @@ fn approval_switch_restores_each_draft_and_queue_edit_defaults(cx: &mut TestAppC
         );
         assert!(!editing.read(cx).composer().editing_queue());
         assert_eq!(
-            editing.read(cx).composer().attachments(),
+            editing.read(cx).composer().attachments().to_vec(),
             vec![Attachment::Group("draft scope".into())]
         );
     });
@@ -130,21 +136,14 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
     new_chat(&f, cx);
     let old = cx.update(|cx| f.panel.read(cx).current().unwrap());
     old.update(cx, |thread, cx| {
-        let option = acp::SessionConfigOption::select(
+        let mut option = super::composer::select(
             "model",
             "Model",
             "saved",
-            vec![acp::SessionConfigSelectOption::new(
-                "saved",
-                "remembered model",
-            )],
-        )
-        .category(acp::SessionConfigOptionCategory::Model);
-        report_control(
-            thread,
-            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![option])),
-            cx,
+            vec![("saved", "remembered model")],
         );
+        option.category = Some(nocterm_ai::model::controls::ConfigCategory::Model);
+        report_control(&f, thread, SessionUpdate::Configuration(vec![option]), cx);
         thread.send("active".into(), cx);
         thread.replace_composer_context(vec![Attachment::Group("queued".into())], cx);
         thread.send("queued prompt".into(), cx);
@@ -175,7 +174,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
                 .any(|thread| thread.entity_id() == old.entity_id())
         );
         assert_eq!(
-            current.read(cx).composer().attachments(),
+            current.read(cx).composer().attachments().to_vec(),
             vec![Attachment::Group("default".into())]
         );
         assert_eq!(
@@ -183,7 +182,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
             Some("remembered model")
         );
         assert_eq!(
-            current.read(cx).composer().queue()[0].saved.text,
+            current.read(cx).composer().queued_rows()[0].text(),
             "queued prompt"
         );
     });
@@ -213,7 +212,7 @@ fn editing_future_context_keeps_saved_defaults_and_active_grants(cx: &mut TestAp
             "future queue context granted tools to active turn"
         );
         assert_eq!(
-            thread.snapshot(cx).unwrap().attachments,
+            thread.snapshot(cx).unwrap().composer().attachments,
             vec![SavedAttachment::Group("saved defaults".into())]
         );
     });
@@ -233,18 +232,29 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         SavedAttachment::LocalTerminal("old shell".into()),
         SavedAttachment::Connection("deleted remote".into()),
     ];
-    let mut saved = SavedChat::for_identity(
+    let saved = SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-000000000069".into(),
         1,
     );
-    saved.attachments = refs.clone();
-    saved.queue = vec![SavedPrompt {
+    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
+    composer.attachments = refs.clone();
+    composer.queue = vec![SavedPrompt {
         id: 1,
         text: "retained".into(),
         images: Vec::new(),
         attachments: refs.clone(),
     }];
+    let saved = SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     let thread = super::archive::archived(&f, &saved, cx);
     show_history(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
@@ -255,19 +265,22 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
         assert!(thread.resolved(cx).is_empty());
-        assert_eq!(thread.snapshot(cx).unwrap().queue[0].attachments, refs);
+        assert_eq!(
+            thread.snapshot(cx).unwrap().composer().queue[0].attachments,
+            refs
+        );
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
         assert!(
             labels
-                .label(&thread.read(cx).composer().queue()[0].attachments[0])
+                .label(&thread.read(cx).composer().queued_rows()[0].attachments()[0])
                 .contains("unavailable")
         );
         assert!(
             labels
-                .label(&thread.read(cx).composer().queue()[0].attachments[1])
+                .label(&thread.read(cx).composer().queued_rows()[0].attachments()[1])
                 .to_lowercase()
                 .contains("unavailable")
         );
@@ -280,11 +293,14 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
     .unwrap();
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        assert_eq!(thread.composer().queue()[0].saved.text, "edited");
-        assert_eq!(thread.snapshot(cx).unwrap().queue[0].attachments, refs);
+        assert_eq!(thread.composer().queued_rows()[0].text(), "edited");
+        assert_eq!(
+            thread.snapshot(cx).unwrap().composer().queue[0].attachments,
+            refs
+        );
     });
     let disk = f.repository.chats();
-    assert_eq!(disk[0].queue[0].attachments, refs);
+    assert_eq!(disk[0].composer().queue[0].attachments, refs);
 }
 
 #[gpui_kit::test]
@@ -306,10 +322,9 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
             );
             restore_pending_history(&f, thread, cx);
             report_control(
+                &f,
                 thread,
-                acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                    vec![acp::AvailableCommand::new("$skill:review", "Review")],
-                )),
+                SessionUpdate::Commands(vec![AdvertisedCommand::new("$skill:review", "Review")]),
                 cx,
             );
             thread.send(input.into(), cx);
@@ -318,17 +333,15 @@ fn unknown_slash_and_posix_paths_deliver_terminal_and_fallback_context(cx: &mut 
         let prompts = f.commands.prompts.lock().unwrap();
         let request = prompts.last().unwrap();
         if input.contains("$skill:review") {
-            assert_eq!(request.prompt.len(), 1);
-            assert!(
-                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text == input)
-            );
+            assert_eq!(request.content.len(), 1);
+            assert!(matches!(&request.content[0], Content::Text(text) if text.text == input));
         } else {
-            assert_eq!(request.prompt.len(), 3);
+            assert_eq!(request.content.len(), 3);
             assert!(
-                matches!(&request.prompt[0], acp::ContentBlock::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
+                matches!(&request.content[0], Content::Text(text) if text.text.contains(nocterm_ai::context::TERMINAL_RULES))
             );
             assert!(
-                matches!(&request.prompt[1], acp::ContentBlock::Text(text) if text.text.contains("Assistant: remember this context"))
+                matches!(&request.content[1], Content::Text(text) if text.text.contains("Assistant: remember this context"))
             );
         }
         drop(prompts);
@@ -350,12 +363,14 @@ fn copy_completed_message_uses_full_text_while_reveal_is_pending(cx: &mut TestAp
     let full = "Ответ 👨‍👩‍👧‍👦 世界 ".repeat(1000);
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice {
             session,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new(full.clone()),
-            ))),
-        )))
+            update: SessionUpdate::AgentChunk(Content::Text(Text {
+                text: full.clone(),
+                annotations: None,
+                extensions: None,
+            })),
+        }))
         .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
@@ -392,57 +407,78 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
-        thread
-            .accept_composer_images(vec![prompt_image()], cx)
-            .unwrap();
+        attach_image(thread, image_bytes(), image_codec(), cx);
         thread.send("queued\n\"\\界".into(), cx);
-        let first = thread.shared_snapshot(cx).unwrap();
-        let second = thread.shared_snapshot(cx).unwrap();
-        assert!(Arc::ptr_eq(&first.queue[0], &second.queue[0]));
-        assert!(Arc::ptr_eq(
-            &first.queue[0],
-            &thread.composer().queue()[0].saved
-        ));
-        assert_eq!(
-            thread.composer().queue()[0].encoded_len,
-            nocterm_ai::history::prompt_size(&thread.composer().queue()[0].saved).unwrap()
-        );
+        let saved = thread.snapshot(cx).unwrap();
+        let queued = &saved.composer().queue[0];
+        assert_eq!(queued.text, "queued\n\"\\界");
+        assert_eq!(queued.images.len(), 1);
+        assert_eq!(thread.composer().queue()[0].images().len(), 1);
+        assert_eq!(thread.composer().queue()[0].text().to_string(), queued.text);
     });
 }
 
-fn expanded_thought_and_tool(
-    f: &Fixture,
-    cx: &mut TestAppContext,
-) -> Entity<crate::thread::AgentThread> {
+/// A chat whose first row is an expanded thought that is still streaming.
+fn expanded_thought(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
     new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    deliver(f, &stream_session(&thread, cx), thought_chunk("short"), cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .unwrap();
+    thread
+}
+fn stream_session(
+    thread: &Entity<crate::thread::AgentThread>,
+    cx: &mut TestAppContext,
+) -> SessionId {
+    cx.update(|cx| thread.read(cx).session().clone().unwrap())
+}
+fn thought_chunk(text: &str) -> SessionUpdate {
+    SessionUpdate::ThoughtChunk(Content::Text(Text {
+        text: text.into(),
+        annotations: None,
+        extensions: None,
+    }))
+}
+/// Adds a pending tool and thirty answered questions after the thought, then expands the tool.
+fn add_tool_and_questions(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    cx: &mut TestAppContext,
+) {
+    let session = stream_session(thread, cx);
+    deliver(
+        f,
+        &session,
+        SessionUpdate::ToolStarted(super::provider_intersections::provider_tool(
+            "call",
+            "Tool",
+            ToolStatus::Pending,
+        )),
+        cx,
+    );
+    for i in 0..30 {
+        thread.update(cx, |thread, cx| thread.send(format!("question {i}"), cx));
+        cx.run_until_parked();
+        complete_active(f, cx);
+    }
     thread.update(cx, |thread, cx| {
-        let mut entries = vec![
-            Entry::Thought("short".into()),
-            Entry::Tool(acp::ToolCall::new("call", "Tool")),
-        ];
-        entries.extend((0..30).map(|i| {
-            Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                format!("question {i}"),
-            ))])
-        }));
-        restore_entries(f, thread, entries, cx);
-        for index in 0..thread.transcript().entries.len() {
+        for index in 0..thread.history_rows().len() {
             thread.mark_dirty(index);
         }
         cx.notify();
     });
     super::navigation::scroll_to(f, 0, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        window.click(("thought", 0usize), cx);
-        window.render_frame(cx);
         window.click(("tool-call", 1usize), cx);
         window.render_frame(cx);
     })
     .unwrap();
-    thread
 }
 
 fn assert_static_row(f: &Fixture, index: usize, cx: &mut TestAppContext) {
@@ -467,20 +503,25 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
-    let thread = expanded_thought_and_tool(&f, cx);
+    let thread = expanded_thought(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click(("thought", 0usize), cx)
+    })
+    .unwrap();
     let before = cx
         .update_window(f.handle, |_, window, cx| {
             window.render_frame(cx);
             window.find(("agent-entry", 0usize)).bounds().size.height
         })
         .unwrap();
-    thread.update(cx, |thread, cx| {
-        let mut entries = thread.history_entries().to_vec();
-        entries[0] = Entry::Thought("thought line\n\n".repeat(10));
-        restore_entries(&f, thread, entries, cx);
-        thread.mark_dirty(0);
-        cx.notify();
-    });
+    let session = stream_session(&thread, cx);
+    deliver(
+        &f,
+        &session,
+        thought_chunk(&"thought line\n\n".repeat(10)),
+        cx,
+    );
+    add_tool_and_questions(&f, &thread, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let thought = window.find(("agent-entry", 0usize)).bounds();
@@ -505,9 +546,23 @@ fn dirty_expanded_thought_and_offscreen_tool_remeasure_without_reveal_ticks(
     })
     .unwrap();
     thread.update(cx, |thread, cx| {
-        report_control(thread, acp::SessionUpdate::ToolCallUpdate(serde_json::from_value(serde_json::json!({
-            "toolCallId":"call", "content":[{"type":"content", "content":{"type":"text", "text":"tool line\n".repeat(12)}}]
-        })).unwrap()), cx);
+        report_control(
+            &f,
+            thread,
+            SessionUpdate::ToolChanged(ToolPatch {
+                id: ToolId::new("call"),
+                changes: ToolChanges {
+                    output: Some(vec![super::tool_output::text_output(
+                        "tool line\n".repeat(12),
+                    )]),
+                    ..Default::default()
+                },
+                extensions: None,
+                claims: Default::default(),
+                literal: Default::default(),
+            }),
+            cx,
+        );
         thread.mark_dirty(1);
         cx.notify();
     });
@@ -535,7 +590,7 @@ fn late_image_preparation_cannot_cross_chat_or_overwrite_its_draft(cx: &mut Test
         panel.prepare_images(
             async move {
                 receive.await.unwrap();
-                Ok(vec![prompt_image()])
+                Ok(vec![image_bytes()])
             },
             cx,
         )
@@ -579,10 +634,9 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         report_control(
+            &f,
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("обзор", "Review"),
-            ])),
+            SessionUpdate::Commands(vec![AdvertisedCommand::new("обзор", "Review")]),
             cx,
         );
 
@@ -597,13 +651,7 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
     })
     .unwrap();
     thread.update(cx, |thread, cx| {
-        report_control(
-            thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                Vec::new(),
-            )),
-            cx,
-        );
+        report_control(&f, thread, SessionUpdate::Commands(Vec::new()), cx);
         cx.notify();
     });
     cx.run_until_parked();
@@ -618,24 +666,23 @@ fn advertised_command_removal_preserves_raw_unicode_caret_and_arguments(cx: &mut
 }
 
 #[gpui_kit::test]
-fn deleting_owner_cancels_pending_queue_image_edit_before_async_completion(
+fn deleting_owner_ends_a_queue_image_edit_without_leaking_it_into_the_next_chat(
     cx: &mut TestAppContext,
 ) {
     let f = fixture(cx);
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    owner.update(cx, |thread, cx| thread.send("active".into(), cx));
+    cx.run_until_parked();
     owner.update(cx, |thread, cx| {
-        thread.send("active".into(), cx);
-        thread
-            .accept_composer_images(vec![prompt_image()], cx)
-            .unwrap();
+        attach_image(thread, image_bytes(), image_codec(), cx);
         thread.send("queued image".into(), cx);
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("queue-edit-first", cx);
-        assert!(f.panel.read(cx).preparing_queue_edit());
+        assert!(owner.read(cx).composer().editing_queue());
         f.panel.update(cx, |panel, cx| {
             panel.delete_thread(owner.entity_id(), window, cx);
             panel.new_thread("codex".into(), window, cx);
@@ -705,72 +752,6 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
         assert!(window.try_find("agent-transcript-area").is_none());
         assert!(panel.composer_text(cx).is_empty());
         assert!(!owner.read(cx).composer().editing_queue());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn thousand_skill_menu_virtualizes_and_wraps_to_visible_variable_height_row(
-    cx: &mut TestAppContext,
-) {
-    let f = fixture(cx);
-    new_chat(&f, cx);
-    f.panel.update(cx, |panel, cx| panel.current().unwrap().update(cx, |thread, cx| {
-        report_control(thread, acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new((0..1000).map(|index| {
-            let mut value = serde_json::json!({"name":format!("skill{index:04}"), "description":"description ".repeat(1000)});
-            if index % 2 == 1 { value["input"] = serde_json::json!({"hint":"Provide optional arguments"}); }
-            serde_json::from_value(value).unwrap()
-        }).collect())), cx);
-
-        cx.notify();
-    }));
-    set_input(&f, "", cx);
-    cx.update_window(f.handle, |_, window, cx| window.input("/", cx))
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find(("slash-command", 0usize)).is_some());
-        assert!(window.try_find(("slash-command", 999usize)).is_none());
-        let first = window.find(("slash-command", 0usize)).bounds();
-        let second = window.find(("slash-command", 1usize)).bounds();
-        assert!(
-            second.size.height > first.size.height,
-            "optional hint must change row height"
-        );
-        window.press("up", cx);
-        window.render_frame(cx);
-        assert_eq!(
-            window.find(("command-hover", 999usize)).selected(),
-            Some(true)
-        );
-        let row = window.find(("slash-command", 999usize)).bounds();
-        let viewport = window.find("agent-slash-commands").bounds();
-        assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
-        window.input("?", cx);
-        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/?");
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(f.handle, |_, window, cx| {
-        window.press("backspace", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(f.handle, |_, window, cx| {
-        window.press("up", cx);
-        window.render_frame(cx);
-        assert_eq!(
-            window.find(("command-hover", 999usize)).selected(),
-            Some(true)
-        );
-        assert!(f.panel.read(cx).composer_focus(cx).is_focused(window));
-        window.press("tab", cx);
-        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0999 ");
-        window.press("tab", cx);
-        window.render_frame(cx);
-        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "/skill0000 ");
-        assert!(window.try_find(("slash-command", 0usize)).is_some());
     })
     .unwrap();
 }

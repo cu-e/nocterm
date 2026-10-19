@@ -1,54 +1,88 @@
-//! Hydration returns its original local generation and delivery permit together.
+//! Hydration receipts surround a prepaid gate/native task without another future Box.
 use super::LoadId;
 use nocterm_ai::{
-    history::{HistoryPermit, SavedChat},
+    history::{HistoryPermit, PreparedReaderLoad, ReaderDelivery, ReaderSourceError},
+    model::json::deferred::NativeAllocationError,
     session::Ticket,
-    storage::AgentStorageError,
 };
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub(in crate::thread) enum ArchiveLoadError {
+    #[error(transparent)]
+    Document(#[from] super::super::document::DocumentError),
+    #[error(transparent)]
+    Admission(#[from] NativeAllocationError),
+    #[error(transparent)]
+    Reader(#[from] ReaderSourceError),
+}
 pub(in crate::thread) struct LoadOperation {
+    work: PreparedReaderLoad,
     id: LoadId,
     ticket: Ticket,
-    chat: String,
-    reader: crate::runtime::HistoryReader,
 }
 impl LoadOperation {
-    pub(in crate::thread) fn new(
+    pub(in crate::thread) fn prepare(
         id: LoadId,
         ticket: Ticket,
-        chat: String,
+        document: &mut super::super::document::ChatDocument,
         reader: crate::runtime::HistoryReader,
-    ) -> Self {
-        Self {
-            id,
-            ticket,
-            chat,
-            reader,
-        }
+    ) -> Result<Self, ArchiveLoadError> {
+        let source = document
+            .transcript()
+            .ok_or(super::super::document::DocumentError::Retired)?
+            .reader()
+            .clone();
+        let chat = document.prepare_reader_id()?;
+        let work = reader.load_managed(chat, source)?;
+        Ok(Self { work, id, ticket })
     }
-    pub(in crate::thread) async fn run(self) -> LoadCompletion {
-        let (result, permit) = self.reader.load(self.chat).await;
-        LoadCompletion {
-            id: self.id,
-            ticket: self.ticket,
+}
+impl Future for LoadOperation {
+    type Output = LoadCompletion;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let Poll::Ready(result) = Pin::new(&mut this.work).poll(cx) else {
+            return Poll::Pending;
+        };
+        let (result, permit) = match result {
+            Ok((delivery, permit)) => (Ok(delivery), Some(permit)),
+            Err(error) => (Err(error.into()), None),
+        };
+        Poll::Ready(LoadCompletion {
+            id: this.id,
+            ticket: this.ticket,
             result,
             permit,
-        }
+        })
     }
 }
 pub(in crate::thread) struct LoadCompletion {
     id: LoadId,
     ticket: Ticket,
-    result: Result<SavedChat, AgentStorageError>,
-    permit: HistoryPermit,
+    result: Result<ReaderDelivery, ArchiveLoadError>,
+    permit: Option<HistoryPermit>,
 }
 impl LoadCompletion {
+    pub(in crate::thread) fn refused(id: LoadId, ticket: Ticket, error: ArchiveLoadError) -> Self {
+        Self {
+            id,
+            ticket,
+            result: Err(error),
+            permit: None,
+        }
+    }
     pub(in crate::thread) fn into_parts(
         self,
     ) -> (
         LoadId,
         Ticket,
-        Result<SavedChat, AgentStorageError>,
-        HistoryPermit,
+        Result<ReaderDelivery, ArchiveLoadError>,
+        Option<HistoryPermit>,
     ) {
         (self.id, self.ticket, self.result, self.permit)
     }

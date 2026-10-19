@@ -3,20 +3,20 @@ use super::{AgentPanel, composer_view::ComposerBinding, images::ImageAttachError
 use crate::thread::AgentThread;
 use futures::future::BoxFuture;
 use gpui_kit::{Context, WeakEntity};
-use nocterm_ai::{images::PromptImage, session::Ticket};
+use nocterm_ai::session::Ticket;
 
 pub(super) struct ImagePreparation {
     binding: ComposerBinding,
     thread: WeakEntity<AgentThread>,
     ticket: Ticket,
-    work: BoxFuture<'static, Result<Vec<PromptImage>, ImageAttachError>>,
+    work: BoxFuture<'static, Result<Vec<Vec<u8>>, ImageAttachError>>,
 }
 impl ImagePreparation {
     pub(super) fn new(
         binding: ComposerBinding,
         thread: WeakEntity<AgentThread>,
         ticket: Ticket,
-        work: BoxFuture<'static, Result<Vec<PromptImage>, ImageAttachError>>,
+        work: BoxFuture<'static, Result<Vec<Vec<u8>>, ImageAttachError>>,
     ) -> Self {
         Self {
             binding,

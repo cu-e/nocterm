@@ -5,6 +5,7 @@
 //! session" or "failed but still accepting updates" cannot be built. The
 //! transitions only decide; the chat performs the side effects they ask for
 //! and drops async results whose [`Ticket`] is no longer current.
+#[cfg(test)]
 use crate::AgentError;
 
 /// Where a chat's agent session is.
@@ -294,14 +295,8 @@ pub enum RestoreFallback {
 /// How many times reopening a session is tried before starting a new one.
 pub const RESTORE_ATTEMPTS: u32 = 2;
 
-/// Decides what follows a failed resume, load or fork.
-///
-/// A session the agent no longer has is replaced by a new one that receives
-/// the saved conversation. A fork has no agent state of its own yet, so it
-/// starts over after any error. A chat's own session may hold more than its
-/// transcript, so a transient error does not discard it: the chat fails, the
-/// next message tries again, and [`SessionState::may_resume`] gives up on the
-/// session only after repeated failures.
+/// Test oracle for [`managed_restore_fallback`] over the legacy error vocabulary.
+#[cfg(test)]
 pub fn restore_fallback(error: &AgentError, attempt: u32, fork: bool) -> RestoreFallback {
     match error {
         AgentError::AuthRequired(_) => RestoreFallback::SignIn,
@@ -311,6 +306,35 @@ pub fn restore_fallback(error: &AgentError, attempt: u32, fork: bool) -> Restore
         _ => RestoreFallback::Fail,
     }
 }
+
+/// Decides what follows a failed managed resume, load or fork.
+///
+/// A session the agent no longer has is replaced by a new one that receives
+/// the saved conversation. A fork has no agent state of its own yet, so it
+/// starts over after any error. A chat's own session may hold more than its
+/// transcript, so a transient error does not discard it: the chat fails, the
+/// next message tries again, and [`SessionState::may_resume`] gives up on the
+/// session only after repeated failures.
+pub fn managed_restore_fallback(
+    error: &crate::history::source::ManagedCommandError,
+    attempt: u32,
+    fork: bool,
+) -> RestoreFallback {
+    if error.authentication_required() {
+        RestoreFallback::SignIn
+    } else if error.restore_unavailable() {
+        RestoreFallback::StartFresh
+    } else if attempt + 1 < RESTORE_ATTEMPTS {
+        RestoreFallback::Retry
+    } else if fork {
+        RestoreFallback::StartFresh
+    } else {
+        RestoreFallback::Fail
+    }
+}
+
+mod resume_context;
+pub use resume_context::history_context;
 
 #[cfg(test)]
 mod tests;

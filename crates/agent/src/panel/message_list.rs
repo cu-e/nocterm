@@ -10,8 +10,8 @@ use gpui_kit::{
     component::message_scroller::{MessageScroller, MessageScrollerState},
 };
 use nocterm_ai::{
+    history::physical::RowSlot,
     images::{ImageInspector, ImageThumbnailer},
-    thread::Entry,
 };
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
@@ -88,7 +88,7 @@ impl MessageList {
     pub(super) fn observe_rows(
         &mut self,
         chat: EntityId,
-        entries: &[Entry],
+        entries: &[RowSlot],
         dirty: &[usize],
         live: bool,
         reduced: bool,
@@ -120,7 +120,7 @@ impl MessageList {
     pub(super) fn advance_reveal(
         &mut self,
         binding: &ActiveListBinding,
-        entries: &[Entry],
+        entries: &[RowSlot],
         reduced: bool,
     ) -> Option<Vec<usize>> {
         if !self.current(binding) {

@@ -1,123 +1,116 @@
-use crate::{acp, registry::AgentLaunch, tools::TerminalCall};
-use futures::{channel::oneshot, future::BoxFuture};
+mod startup;
+pub use startup::{
+    ManagedConnectRequest, ManagedIsolationPaths, ManagedLaunch, ManagedStartup,
+    ManagedStartupFacts, ManagedStartupRequest,
+};
+mod managed;
+pub use crate::model::auth::PermissionResponder;
+pub use crate::model::session::RestoreSession as RestoreSessionRequest;
+use crate::model::{
+    auth::AuthMethod,
+    session::{AgentCapabilities, ExternalToolEndpoint},
+};
+#[cfg(any(test, feature = "test-support"))]
+use crate::model::{auth::ProviderPermission, diagnostic::RemoteFault, notice::SessionNotice};
+use crate::tools::TerminalCall;
+use futures::channel::oneshot;
+pub use managed::{
+    ManagedAgentCommands, ManagedAgentConnection, ManagedAgentEvent, ManagedCommandsHandle,
+    ManagedEventAcknowledgement, ManagedEventBarrier, ManagedEventReceiver, ManagedEventSource,
+    ManagedPreparedPrompt, ManagedProcessCleanup, ManagedShutdownResult, ManagedShutdownWaiter,
+    ManagedStartupHandle, ManagedWorkspaceHandle,
+};
 use std::{path::PathBuf, sync::Arc};
-#[derive(Clone, Debug)]
-pub struct ConnectRequest {
-    pub launch: AgentLaunch,
-    pub working_directory: PathBuf,
-    /// The host can open an interactive authentication command in a dedicated PTY.
-    pub terminal_auth: bool,
-    /// Run the agent isolated under this policy; `None` runs it directly.
-    pub sandbox: Option<crate::sandbox::SandboxPolicy>,
-    /// Limits for the complete agent process tree.
-    pub resources: crate::AgentResourceSettings,
-    /// Cancellation must return only after any startup process tree is stopped.
-    pub cancellation: ConnectionCancellation,
-}
-
 /// Shared startup cancellation. The connector acknowledges it by completing its future.
-#[derive(Clone, Default, Debug)]
-pub struct ConnectionCancellation(std::sync::Arc<CancellationState>);
+#[derive(Clone)]
+pub struct ConnectionCancellation(crate::model::json::lifetime::Shared<ManagedCancellationState>);
 #[derive(Default, Debug)]
 struct CancellationState {
     cancelled: std::sync::atomic::AtomicBool,
     waker: futures::task::AtomicWaker,
 }
+struct ManagedCancellationState {
+    state: CancellationState,
+    allocation: crate::history::source::NativeAllocation,
+}
+impl std::fmt::Debug for ConnectionCancellation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionCancellation")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
 impl ConnectionCancellation {
+    /// Mint the same cancellation state before native startup allocation begins.
+    pub fn managed(
+        context: &crate::history::source::SourceContext,
+    ) -> Result<Self, crate::model::json::deferred::JsonDecodeError> {
+        let allocation = context.reserve_native(
+            std::alloc::Layout::from_size_align(
+                crate::model::allocations::shared_inline_bytes::<ManagedCancellationState>(),
+                std::mem::align_of::<ManagedCancellationState>().max(std::mem::align_of::<usize>()),
+            )
+            .map_err(|_| crate::model::json::deferred::JsonDecodeError::Arithmetic)?,
+        )?;
+        Ok(Self(crate::model::json::lifetime::Shared::new(
+            ManagedCancellationState {
+                state: CancellationState::default(),
+                allocation,
+            },
+        )))
+    }
+    fn state(&self) -> &CancellationState {
+        &self.0.state
+    }
     pub fn cancel(&self) {
-        self.0
+        self.state()
             .cancelled
             .store(true, std::sync::atomic::Ordering::Release);
-        self.0.waker.wake();
+        self.state().waker.wake();
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.cancelled.load(std::sync::atomic::Ordering::Acquire)
+        self.state()
+            .cancelled
+            .load(std::sync::atomic::Ordering::Acquire)
     }
-    pub fn cancelled(&self) -> BoxFuture<'static, ()> {
+    pub fn cancelled_managed(
+        &self,
+    ) -> Result<
+        crate::history::source::ManagedFuture<()>,
+        crate::model::json::deferred::JsonDecodeError,
+    > {
         let token = self.clone();
-        Box::pin(futures::future::poll_fn(move |cx| {
-            token.0.waker.register(cx.waker());
-            if token.is_cancelled() {
-                std::task::Poll::Ready(())
-            } else {
-                std::task::Poll::Pending
-            }
-        }))
+        crate::history::source::ManagedFuture::new(
+            self.0.allocation.source(),
+            futures::future::poll_fn(move |cx| {
+                token.state().waker.register(cx.waker());
+                if token.is_cancelled() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            }),
+        )
     }
 }
 
 pub trait AgentConnector: Send + Sync + 'static {
-    fn connect(
+    fn connect_managed(
         &self,
-        request: ConnectRequest,
-    ) -> BoxFuture<'static, Result<AgentConnection, ConnectError>>;
+        request: ManagedConnectRequest,
+    ) -> Result<
+        crate::history::source::ManagedSourceFuture<
+            Result<ManagedAgentConnection, crate::history::source::ManagedCommandError>,
+        >,
+        crate::model::json::deferred::NativeAllocationError,
+    >;
 }
 #[derive(Clone, Debug)]
 pub struct AgentInfo {
     pub name: String,
     pub version: String,
-    pub capabilities: acp::AgentCapabilities,
-    pub auth_methods: Vec<acp::AuthMethod>,
-}
-pub struct AgentConnection {
-    pub info: AgentInfo,
-    pub commands: Arc<dyn AgentCommands>,
-    pub events: async_channel::Receiver<AgentEvent>,
-}
-pub trait AgentCommands: Send + Sync {
-    fn new_session(
-        &self,
-        request: acp::NewSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>>;
-    /// Reopens a session the agent held before, with `session/resume` or
-    /// `session/load`, whichever the agent offers, or opens a copy of it with
-    /// `session/fork` when `request.fork` is set. Agents offering none of
-    /// these answer with an error, and callers start a new session instead.
-    fn restore_session(
-        &self,
-        _request: RestoreSessionRequest,
-    ) -> BoxFuture<'static, Result<acp::NewSessionResponse, AgentError>> {
-        Box::pin(async {
-            Err(AgentError::RestoreUnavailable(
-                "The agent cannot reopen earlier chats.".into(),
-            ))
-        })
-    }
-    fn prompt(
-        &self,
-        request: acp::PromptRequest,
-    ) -> BoxFuture<'static, Result<acp::PromptResponse, AgentError>>;
-    fn cancel(&self, session: acp::SessionId);
-    fn set_mode(
-        &self,
-        request: acp::SetSessionModeRequest,
-    ) -> BoxFuture<'static, Result<(), AgentError>>;
-    fn set_config_option(
-        &self,
-        request: acp::SetSessionConfigOptionRequest,
-    ) -> BoxFuture<'static, Result<Vec<acp::SessionConfigOption>, AgentError>>;
-    fn authenticate(&self, method: acp::AuthMethodId)
-    -> BoxFuture<'static, Result<(), AgentError>>;
-    /// Completes only after the agent acknowledges close and earlier events are drained.
-    fn close_session(
-        &self,
-        session: acp::SessionId,
-    ) -> BoxFuture<'static, Result<CloseSessionOutcome, AgentError>>;
-    /// Stops the connection, awaiting bounded process-tree cleanup.
-    fn shutdown_gracefully(&self) -> BoxFuture<'static, Result<(), AgentError>> {
-        self.shutdown();
-        Box::pin(async { Ok(()) })
-    }
-    fn shutdown(&self);
-}
-/// A session to reopen.
-#[derive(Clone, Debug)]
-pub struct RestoreSessionRequest {
-    pub session_id: acp::SessionId,
-    pub cwd: PathBuf,
-    pub mcp_servers: Vec<acp::McpServer>,
-    /// Open a new session that starts with this one's history instead.
-    pub fork: bool,
+    pub capabilities: AgentCapabilities,
+    pub auth_methods: Vec<AuthMethod>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseSessionOutcome {
@@ -126,12 +119,14 @@ pub enum CloseSessionOutcome {
     TimedOut,
 }
 
+/// Test fixtures inject these legacy-shaped events; production uses `ManagedAgentEvent`.
+#[cfg(any(test, feature = "test-support"))]
 pub enum AgentEvent {
     /// FIFO fence: the foreground consumer acknowledges all earlier events.
     Barrier(oneshot::Sender<()>),
-    Session(acp::SessionNotification),
+    Session(SessionNotice),
     Permission {
-        request: acp::RequestPermissionRequest,
+        request: ProviderPermission,
         respond: PermissionResponder,
     },
     Exited {
@@ -140,37 +135,12 @@ pub enum AgentEvent {
     },
 }
 
-/// The answer to one permission request.
-///
-/// Dropping it unanswered answers `Cancelled`, so a request that nobody
-/// handles, or whose thread or dialog is closed, never leaves the agent
-/// waiting.
-#[derive(Debug)]
-pub struct PermissionResponder(Option<oneshot::Sender<acp::RequestPermissionOutcome>>);
-
-impl PermissionResponder {
-    /// A responder and the receiver its answer arrives on.
-    pub fn channel() -> (Self, oneshot::Receiver<acp::RequestPermissionOutcome>) {
-        let (sender, receiver) = oneshot::channel();
-        (Self(Some(sender)), receiver)
-    }
-
-    pub fn respond(mut self, outcome: acp::RequestPermissionOutcome) {
-        if let Some(sender) = self.0.take() {
-            let _ = sender.send(outcome);
-        }
-    }
-}
-
-impl Drop for PermissionResponder {
-    fn drop(&mut self) {
-        if let Some(sender) = self.0.take() {
-            let _ = sender.send(acp::RequestPermissionOutcome::Cancelled);
-        }
-    }
-}
+/// Oracle vocabulary for tests; production failures are `ManagedCommandError`.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
+    #[error("{0}")]
+    Model(#[from] crate::model::diagnostic::ModelError),
     #[error("{0}")]
     Workspace(#[from] crate::workspace::WorkdirError),
     #[error("{0}")]
@@ -181,8 +151,8 @@ pub enum AgentError {
     AuthRequired(String),
     #[error("{0}")]
     RestoreUnavailable(String),
-    #[error("ACP error: {0}")]
-    Rpc(acp::Error),
+    #[error("Agent error: {0}")]
+    Rpc(#[source] RemoteFault),
     #[error("Agent exited ({code:?}): {stderr_tail}")]
     Exited {
         code: Option<i32>,
@@ -191,7 +161,6 @@ pub enum AgentError {
     #[error("{0}")]
     Io(String),
 }
-pub type ConnectError = AgentError;
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeRegistrationError {
     #[error("AI is disabled.")]
@@ -234,18 +203,12 @@ impl BridgeRegistration {
     pub fn launch(&self) -> &BridgeLaunch {
         &self.launch
     }
-    /// The chat's terminal tools server, as the agent should start it.
-    pub fn mcp_server(&self) -> acp::McpServer {
-        let BridgeLaunch { program, args, env } = self.launch.clone();
-        acp::McpServer::Stdio(
-            acp::McpServerStdio::new(crate::tool_display::bridge_server_name(self.id), program)
-                .args(args)
-                .env(
-                    env.into_iter()
-                        .map(|(name, value)| acp::EnvVariable::new(name, value))
-                        .collect(),
-                ),
-        )
+    /// A neutral local endpoint; only the live adapter constructs transport objects.
+    pub fn endpoint(&self) -> ExternalToolEndpoint {
+        ExternalToolEndpoint::LocalCommand {
+            name: crate::tool_display::bridge_server_name(self.id),
+            launch: self.launch.clone(),
+        }
     }
     pub fn revoke(&mut self) {
         if let Some(revoke) = self.revoke.take() {
@@ -277,23 +240,20 @@ pub struct BridgeCall {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{auth::PermissionOutcome, ids::PermissionOptionId};
     use futures::executor::block_on;
 
     #[test]
     fn a_dropped_responder_answers_cancelled() {
         let (responder, answer) = PermissionResponder::channel();
         drop(responder);
-        assert_eq!(
-            block_on(answer).unwrap(),
-            acp::RequestPermissionOutcome::Cancelled
-        );
+        assert_eq!(block_on(answer).unwrap(), PermissionOutcome::Cancelled);
     }
 
     #[test]
     fn a_responder_sends_its_outcome_once() {
         let (responder, answer) = PermissionResponder::channel();
-        let outcome =
-            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new("allow"));
+        let outcome = PermissionOutcome::Selected(PermissionOptionId::new("allow"));
         responder.respond(outcome.clone());
         assert_eq!(block_on(answer).unwrap(), outcome);
     }

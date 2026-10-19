@@ -28,7 +28,7 @@ use super::{
         server_image,
     },
 };
-use crate::thread::{AgentThread, Attachment};
+use crate::thread::{AgentThread, Attachment, composer::AttachmentRef};
 
 /// Another of the chat's attachments that already gives the agent `summary`,
 /// named for a row shown selected through it. Such a row does not toggle: a
@@ -38,11 +38,11 @@ fn covering(thread: &AgentThread, summary: &ConnectionSummary, own: &Attachment)
         .composer()
         .attachments()
         .iter()
-        .filter(|attachment| *attachment != own && attachment.covers_server(summary))
+        .filter(|attachment| !attachment.matches(own) && attachment.covers_server(summary))
         .find_map(|attachment| match attachment {
-            Attachment::Group(group) => Some(format!("folder {group}")),
-            Attachment::Connection(_) => Some(summary.name.to_string()),
-            Attachment::Terminal(_) | Attachment::UnavailableLocal(_) => None,
+            AttachmentRef::Group(group) => Some(format!("folder {}", &*group)),
+            AttachmentRef::Connection(_) => Some(summary.name.to_string()),
+            AttachmentRef::Terminal(_) | AttachmentRef::UnavailableLocal(_) => None,
         })
 }
 

@@ -6,7 +6,7 @@ use nocterm_ai::{
 };
 
 fn with_source(cx: &mut TestAppContext, source: Arc<ScriptedUsageSource>) -> Entity<Runtime> {
-    let repository = Arc::new(InMemoryAgentRepository::default());
+    let repository = Arc::new(repository());
     let storage = AgentStorage::prepared(repository.clone(), repository, Ok(Default::default()));
     runtime_with_usage_source(
         cx,

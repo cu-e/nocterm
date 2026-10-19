@@ -8,7 +8,7 @@ use std::{
 };
 
 use nocterm_acp::{BridgeServer, RelayCommand};
-use nocterm_ai::{ToolBridge as _, acp};
+use nocterm_ai::{ToolBridge as _, model::session::ExternalToolEndpoint};
 use nocterm_core::Paths;
 
 #[test]
@@ -22,13 +22,13 @@ fn the_launched_server_answers_through_the_chat_bridge() {
         },
     );
     let registration = bridge.register().unwrap();
-    let acp::McpServer::Stdio(server) = registration.mcp_server() else {
+    let ExternalToolEndpoint::LocalCommand { launch: server, .. } = registration.endpoint() else {
         panic!("the relay is a stdio server");
     };
-    let mut relay = Command::new(&server.command)
+    let mut relay = Command::new(&server.program)
         .args(&server.args)
         .env_clear()
-        .envs(server.env.iter().map(|v| (&v.name, &v.value)))
+        .envs(server.env.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

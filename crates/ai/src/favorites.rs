@@ -1,5 +1,5 @@
 use crate::{
-    acp,
+    model::controls::ConfigOption,
     session_config::{self, Choices, ConfigValue, StoredOption},
 };
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ pub struct AgentStateFile {
 }
 impl AgentStateFile {
     /// Keeps the options `agent` reported. Returns whether they changed.
-    pub fn remember_options(&mut self, agent: &str, options: &[acp::SessionConfigOption]) -> bool {
+    pub fn remember_options(&mut self, agent: &str, options: &[ConfigOption]) -> bool {
         let stored = session_config::store(options);
         if stored.is_empty() || self.options.get(agent) == Some(&stored) {
             return false;
@@ -33,7 +33,7 @@ impl AgentStateFile {
     pub fn remember_choice(
         &mut self,
         agent: &str,
-        option: &acp::SessionConfigOption,
+        option: &ConfigOption,
         value: &ConfigValue,
     ) -> bool {
         if !session_config::remembered(option) {
@@ -52,7 +52,7 @@ impl AgentStateFile {
     }
     /// The options a chat of `agent` shows before its session opens: the
     /// last reported ones with the remembered choices.
-    pub fn preview(&self, agent: &str) -> Vec<acp::SessionConfigOption> {
+    pub fn preview(&self, agent: &str) -> Vec<ConfigOption> {
         session_config::with_choices(
             session_config::restore(self.options.get(agent).map_or(&[], Vec::as_slice)),
             &self.choices(agent),

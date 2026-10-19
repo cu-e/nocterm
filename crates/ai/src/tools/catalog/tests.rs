@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    acp,
     mcp::*,
+    model::{controls::Presence, ids::ToolId, tools::ToolRecord},
     tool_display::{self, ToolDisplay, ToolOutcome},
 };
 use std::collections::BTreeSet;
@@ -166,9 +166,6 @@ fn shape_parsing_remains_separate_from_execution_validation_and_identity_matchin
     let parsed = (get("read_terminal").unwrap().parse)(arguments.clone()).unwrap();
     assert!(parsed.validate().is_err());
     assert!(tool_display::parse("read_terminal", arguments.clone()).is_none());
-    let row = acp::ToolCall::new("row", "mcp.nocterm-7.read_terminal").raw_input(arguments.clone());
-    assert!(tool_display::requested_call(&row).is_some());
-    assert!(tool_display::envelope(&row, "nocterm-7").is_none());
     let McpStep::Rejected {
         id,
         tool,
@@ -186,15 +183,39 @@ fn shape_parsing_remains_separate_from_execution_validation_and_identity_matchin
 
 #[test]
 fn both_metadata_versions_use_the_same_shape_parser_without_losing_outcomes() {
+    let authority = crate::model::retention::RetentionAuthority::new(usize::MAX).unwrap();
     for fixture in fixtures() {
         for version in [1, 2] {
             let mut display = ToolDisplay::requested(
+                &authority,
                 fixture["name"].as_str().unwrap().into(),
                 fixture["arguments"].clone(),
-            );
+            )
+            .unwrap();
             display.version = version;
-            display.outcome = (version == 2).then(|| ToolOutcome::Ok(json!({"text":"ok"})));
-            let mut row = acp::ToolCall::new("row", "unrecognized provider");
+            display.outcome = if version == 2 {
+                Presence::Value(ToolOutcome::Succeeded(
+                    crate::model::json::OwnedJson::from_untracked(&authority, json!({"text":"ok"}))
+                        .unwrap(),
+                ))
+            } else {
+                Presence::Absent
+            };
+            let mut row = ToolRecord {
+                id: ToolId::new("row"),
+                title: "unrecognized provider".into(),
+                name: None,
+                kind: Default::default(),
+                status: Default::default(),
+                output: vec![],
+                locations: vec![],
+                arguments: None,
+                result: None,
+                extensions: None,
+                claims: Default::default(),
+                literal: Default::default(),
+                client_display: None,
+            };
             display.attach(&mut row);
             let restored = ToolDisplay::from_call(&row).unwrap();
             assert_eq!(restored.version, version);
@@ -203,7 +224,7 @@ fn both_metadata_versions_use_the_same_shape_parser_without_losing_outcomes() {
                 &restored.display_request().unwrap()
             ));
             assert_eq!(
-                serde_json::to_value(restored.outcome).unwrap(),
+                serde_json::to_value(&restored.outcome).unwrap(),
                 serde_json::to_value(display.outcome).unwrap()
             );
         }

@@ -7,65 +7,25 @@ use super::{
     execution::jobs,
 };
 use gpui_kit::{App, Context, EntityId, Task, WeakEntity};
-use nocterm_ai::history::{SavedAttachment, SavedPrompt};
-use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure, acp};
+use nocterm_ai::{
+    BridgeCall, PermissionResponder, TerminalCall, ToolFailure,
+    history::source::ManagedPermission,
+    model::{auth::ProviderPermission, ids::PermissionOptionId},
+};
 use nocterm_session::ExecRequest;
 
 use nocterm_workspace::{ExpectedSession, TerminalEntry, TerminalStatus};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
 
-use super::{AgentThread, Attachment};
+use super::{
+    AgentThread, Attachment,
+    approval_inbox::ApprovalToken,
+    attachments::{LocalFacts, StableAttachments},
+    composer::AttachmentSelection,
+    permissions::PermissionGate,
+};
 
 mod submit_error;
 pub(crate) use submit_error::SubmitError;
-
-#[derive(Clone)]
-pub(crate) struct QueuedPrompt {
-    pub saved: Arc<SavedPrompt>,
-    pub image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
-    pub attachments: Vec<Attachment>,
-    pub encoded_len: usize,
-    pub memory_len: usize,
-}
-
-impl QueuedPrompt {
-    #[cfg(test)]
-    pub(crate) fn new(saved: SavedPrompt, attachments: Vec<Attachment>) -> Self {
-        Self::prepared(saved, attachments, None)
-    }
-    pub(crate) fn prepared(
-        saved: SavedPrompt,
-        attachments: Vec<Attachment>,
-        encoded_len: Option<usize>,
-    ) -> Self {
-        static NEXT_IMAGE: AtomicUsize = AtomicUsize::new(1);
-        let encoded_len = encoded_len
-            .unwrap_or_else(|| nocterm_ai::history::prompt_size(&saved).unwrap_or(usize::MAX));
-        let image_keys = saved
-            .images
-            .iter()
-            .map(|block| match block {
-                nocterm_ai::acp::ContentBlock::Image(image) => Some((
-                    NEXT_IMAGE.fetch_add(1, Ordering::Relaxed),
-                    image.data.len(),
-                    true,
-                )),
-                _ => None,
-            })
-            .collect();
-        let memory_len = nocterm_ai::history::prompt_memory(&saved).unwrap_or(usize::MAX);
-        Self {
-            memory_len,
-            saved: Arc::new(saved),
-            attachments,
-            image_keys: Arc::new(image_keys),
-            encoded_len,
-        }
-    }
-}
 
 impl AgentThread {
     fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
@@ -262,7 +222,7 @@ impl AgentThread {
         let summary =
             match self
                 .tools
-                .prepare_open(&server, &input, self.composer.default_attachments(), cx)
+                .prepare_open(&server, &input, self.state.default_attachments(), cx)
             {
                 OpenSelection::Respond(payload) => return self.finish(call, Ok(payload)),
                 OpenSelection::Unknown => {
@@ -557,12 +517,22 @@ impl AgentThread {
             .detach();
     }
 
-    pub(super) fn start_prompt(
+    pub(super) fn dispatch_failed(
         &mut self,
-        text: String,
-        images: Vec<acp::ContentBlock>,
+        ticket: nocterm_ai::session::Ticket,
+        error: &impl std::fmt::Display,
         cx: &mut Context<Self>,
     ) {
+        self.session.finish_turn(ticket, false);
+        self.composer.pause();
+        self.notice
+            .present(nocterm_ai::redact::redact(&error.to_string()));
+        self.notice.mark_error();
+        cx.notify();
+    }
+
+    /// Stages the first queued prompt, serializes it natively and only then commits the turn.
+    pub(super) fn start_prompt(&mut self, cx: &mut Context<Self>) {
         let (Some(commands), Some(session)) = (self.commands().clone(), self.session().clone())
         else {
             return;
@@ -571,35 +541,49 @@ impl AgentThread {
         let Some(ticket) = self.session.begin_turn() else {
             return;
         };
+        let is_command = self.queued_command();
         // ACP adapters inspect the first block for slash commands; local
         // administrative commands may require a single text block.
-        let is_command = nocterm_ai::commands::invocation(&text, self.config.commands()).is_some();
-        let context = (!is_command).then(|| self.context(cx));
+        let context = (!is_command).then(|| {
+            format!(
+                "{}\n{}",
+                nocterm_ai::context::TERMINAL_RULES,
+                self.context(cx)
+            )
+        });
         let history = (self.state.pending_history() && !is_command)
-            .then(|| super::session::history_context(self.state.entries()));
-        let prepared = super::composer::prompt_preparation::PromptPreparation::new(
-            text, images, is_command, context, history,
-        );
-        if let Some(bytes) = prepared.context_bytes() {
-            self.tools.account_context(bytes);
+            .then(|| nocterm_ai::session::history_context(self.state.rows()));
+        if let Some(context) = &context {
+            self.tools.account_context(context.len());
         }
         self.config.bind_request(ticket);
-        self.config.prompt_started();
-        let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
-        let resume =
-            super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
-        let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
-        self.state
-            .append_user(prepared.visible().to_vec(), self.host.timestamp(), &input);
-        self.mark_dirty(self.state.entries().len() - 1);
+        let controls = super::controls::Controls::read(self.live_controls());
+        self.config.prompt_started(&controls);
+        let framing = super::document::DispatchRequest::new(
+            &session,
+            context.as_deref(),
+            history.as_deref(),
+            is_command,
+        );
+        let (native, active) = match self
+            .state
+            .dispatch(framing, self.host.timestamp(), &commands)
+        {
+            Ok(staged) => staged,
+            Err(error) => return self.dispatch_failed(ticket, &error, cx),
+        };
+        self.tools.capture_scope(active.scope());
+        // The chat records the model of its latest accepted prompt.
+        self.record_resume();
+        if let Some(row) = self.state.rows().len().checked_sub(1) {
+            self.mark_dirty(row);
+        }
         self.persist(cx);
         self.notice.present("Working…".into());
         self.notice.clear_error();
-        let is_command = prepared.is_command();
         let operation = super::session_driver::prompt_operation::PromptOperation::new(
             self.session.authority(),
-            commands,
-            prepared.request(session),
+            native.bind(active),
         );
         let future = cx.background_executor().spawn(operation.run());
         cx.spawn(async move |this, cx| {
@@ -612,6 +596,21 @@ impl AgentThread {
         cx.notify();
     }
 
+    /// Whether the first queued prompt invokes a command the agent advertised.
+    fn queued_command(&self) -> bool {
+        let Some(prompt) = self
+            .state
+            .composer()
+            .and_then(|composer| composer.queue().first())
+        else {
+            return false;
+        };
+        let text = prompt.text();
+        self.live_controls().is_some_and(|controls| {
+            nocterm_ai::commands::invocation_managed(&text, controls.commands()).is_some()
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
         if let Err(error) = self.submit(text, None, cx) {
@@ -622,55 +621,24 @@ impl AgentThread {
     }
 
     pub(crate) fn attach(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
-        if self.composer.toggle_attachment(attachment.clone()) && !self.composer.editing() {
-            self.tools.detach_attachment(&attachment);
-            self.tools.approval_revoke_scope();
-            self.cancel_pending();
-            self.revoke_executions(cx);
-            if !self.session.generating() {
-                self.prune_background(cx);
+        match self.edit_attachment(
+            nocterm_ai::history::live::AttachmentEdit::Toggle(attachment.live_ref()),
+            cx,
+        ) {
+            Ok(true) if !self.composer().editing() => {
+                self.tools.detach_attachment(&attachment);
+                self.tools.approval_revoke_scope();
+                self.cancel_pending();
+                self.revoke_executions(cx);
+                if !self.session.generating() {
+                    self.prune_background(cx);
+                }
             }
+            Ok(_) => {}
+            Err(error) => return self.composer_refused(error, cx),
         }
-        self.accept_document_inputs(cx, false);
         self.save(cx);
         cx.notify();
-    }
-
-    pub(crate) fn stable_attachments(
-        &self,
-        values: &[Attachment],
-        cx: &App,
-    ) -> Vec<SavedAttachment> {
-        let terminals = self
-            .host
-            .workspace()
-            .upgrade()
-            .map(|workspace| workspace.read(cx).terminals(cx))
-            .unwrap_or_default();
-        let mut saved = Vec::new();
-        for attachment in values {
-            let value = match attachment {
-                Attachment::Connection(id) => Some(SavedAttachment::Connection(id.clone())),
-                Attachment::Group(id) => Some(SavedAttachment::Group(id.clone())),
-                Attachment::UnavailableLocal(title) => {
-                    Some(SavedAttachment::LocalTerminal(title.clone()))
-                }
-                Attachment::Terminal(id) => terminals
-                    .iter()
-                    .find(|entry| entry.item == *id)
-                    .and_then(|entry| entry.capabilities.state().info(cx))
-                    .map(|info| match info.profile {
-                        Some(id) => SavedAttachment::Connection(id.to_string()),
-                        None => SavedAttachment::LocalTerminal(info.title.to_string()),
-                    }),
-            };
-            if let Some(value) = value
-                && !saved.contains(&value)
-            {
-                saved.push(value);
-            }
-        }
-        saved
     }
 
     pub(crate) fn submit(
@@ -685,28 +653,15 @@ impl AgentThread {
         if !self.host.enabled(cx) || self.session.sign_in_required() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.composer.images().is_empty() {
+        if text.trim().is_empty() && self.composer().images().is_empty() {
             return Ok(false);
         }
-        let candidate = self.composer.prepare_submission(
-            text,
-            replace,
-            self.stable_attachments(self.composer.attachments(), cx),
-        )?;
-        let queue = candidate.queue();
-        self.refresh_storage_budget()?;
-        let mut metadata = self.history_metadata(cx);
-        // Sending moves ordinary text into the queue: budget it once.
-        if replace.is_none() {
-            metadata.draft = None;
-        }
-        self.state.validate_candidate(
-            &metadata,
-            queue.iter().map(|prompt| prompt.encoded_len),
-            queue.iter().map(|prompt| prompt.memory_len),
-        )?;
-        self.composer.commit_prompt_change(candidate);
-        self.accept_document_inputs(cx, false);
+        let stable = self.stable_attachments(self.composer().attachments(), cx);
+        let stable = stable.refs();
+        let replaced =
+            self.state
+                .queue_text(self.composer.next_queue_id(), &text, &stable, replace)?;
+        self.composer.queued(replaced);
         if replace.is_none() {
             self.state.cancel_debounce();
         }
@@ -738,46 +693,88 @@ impl AgentThread {
         if self.session.phase() != nocterm_ai::session::SessionPhase::Ready {
             return;
         }
-        let Some(prompt) = self.composer.take_next() else {
-            return;
-        };
-        // Context is fixed for this turn, including terminal tool access.
-        self.tools.capture_scope(prompt.attachments);
-        let saved = Arc::unwrap_or_clone(prompt.saved);
-        self.start_prompt(saved.text, saved.images, cx);
+        self.start_prompt(cx);
     }
 }
 
-pub(crate) fn restore_attachments(values: &[SavedAttachment]) -> Vec<Attachment> {
-    values
-        .iter()
-        .map(|value| match value {
-            SavedAttachment::Connection(id) => Attachment::Connection(id.clone()),
-            SavedAttachment::Group(id) => Attachment::Group(id.clone()),
-            SavedAttachment::LocalTerminal(title) => Attachment::UnavailableLocal(title.clone()),
-        })
-        .collect()
-}
+impl AgentThread {
+    fn permission_gate(&self, cx: &App) -> PermissionGate {
+        PermissionGate::new(
+            self.host.enabled(cx),
+            self.session.accepts_updates(),
+            self.session.stopped(),
+            self.session().clone(),
+        )
+    }
+    pub(crate) fn permission(
+        &mut self,
+        request: ManagedPermission,
+        respond: PermissionResponder,
+        cx: &mut Context<Self>,
+    ) {
+        let request: ProviderPermission = request.permission().clone();
+        self.provider_permission(request, respond, cx);
+    }
+    pub(crate) fn provider_permission(
+        &mut self,
+        request: ProviderPermission,
+        respond: PermissionResponder,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        let policy = self.host.ai(cx).approval.agent_permissions;
+        if self
+            .tools
+            .approval_receive_provider(request, respond, &gate, policy)
+        {
+            cx.notify();
+        }
+    }
+    pub(crate) fn apply_permission_policy(&mut self, cx: &mut Context<Self>) {
+        let gate = self.permission_gate(cx);
+        let policy = self.host.ai(cx).approval.agent_permissions;
+        if self.tools.approval_apply_provider_policy(&gate, policy) {
+            cx.notify();
+        }
+    }
+    pub(crate) fn choose_permission_request(
+        &mut self,
+        token: ApprovalToken,
+        choice: Option<PermissionOptionId>,
+        cx: &mut Context<Self>,
+    ) {
+        let gate = self.permission_gate(cx);
+        if self.tools.approval_choose_provider(token, choice, &gate) {
+            cx.notify();
+        }
+    }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rendering_snapshot_shares_image_payload_and_precomputed_keys() {
-        let prompt = QueuedPrompt::new(
-            SavedPrompt {
-                id: 1,
-                text: "image".into(),
-                images: vec![nocterm_ai::acp::ContentBlock::Image(
-                    nocterm_ai::acp::ImageContent::new("a".repeat(2 * 1024 * 1024), "image/png"),
-                )],
-                attachments: Vec::new(),
-            },
-            Vec::new(),
-        );
-        let copy = prompt.clone();
-        assert!(Arc::ptr_eq(&prompt.saved, &copy.saved));
-        assert!(Arc::ptr_eq(&prompt.image_keys, &copy.image_keys));
-        assert_eq!(copy.image_keys[0].unwrap().1, 2 * 1024 * 1024);
+    pub(super) fn local_facts(&self, cx: &App) -> LocalFacts {
+        let terminals = self
+            .host
+            .workspace()
+            .upgrade()
+            .map(|workspace| workspace.read(cx).terminals(cx))
+            .unwrap_or_default();
+        LocalFacts::read(&terminals, cx)
+    }
+
+    pub(super) fn stable_attachments(
+        &self,
+        selection: AttachmentSelection<'_>,
+        cx: &App,
+    ) -> StableAttachments {
+        StableAttachments::select(selection, &self.local_facts(cx))
+    }
+
+    /// Edits the composer's future context; true when a value was removed.
+    pub(super) fn edit_attachment(
+        &mut self,
+        edit: nocterm_ai::history::live::AttachmentEdit<'_>,
+        cx: &App,
+    ) -> Result<bool, super::document::DocumentError> {
+        let facts = self.local_facts(cx);
+        self.state
+            .edit_attachments(edit, &facts.as_facts(), self.host.timestamp())
     }
 }

@@ -293,3 +293,90 @@ fn closed_clean_keys_release_payloads_but_failed_dirty_keys_survive_until_retry(
         assert!(entity.read(cx).error(&1).is_none());
     });
 }
+
+#[gpui::test]
+fn rejected_owned_intake_registers_no_new_key_and_preserves_previous_latest(
+    cx: &mut TestAppContext,
+) {
+    let writer: KeyedWriter<usize, usize> = Arc::new(|_, _| Box::pin(async { Ok(()) }));
+    let entity = cx.new(|_| KeyedPersisted::new(writer, NonZeroUsize::new(1).unwrap()));
+    entity.update(cx, |state, cx| {
+        assert!(
+            state
+                .update_latest_owned(41, 0, |_| Err(StoreError::PendingWrites), cx)
+                .is_err()
+        );
+        assert!(!state.forget_clean(&41));
+        let original = state.update_latest(42, 7, 1, cx).unwrap();
+        assert!(
+            state
+                .update_latest_owned(
+                    42,
+                    2,
+                    |previous| {
+                        assert_eq!(previous.map(|value| *value), Some(7));
+                        Err(StoreError::PendingWrites)
+                    },
+                    cx
+                )
+                .is_err()
+        );
+        let retry = state
+            .update_latest_owned(42, 3, |previous| Ok(*previous.unwrap() + 1), cx)
+            .unwrap();
+        assert_eq!(retry, original + 1);
+    });
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(*entity.read(cx).last_success(&42).unwrap().tag(), 3));
+}
+
+struct UniqueValue(usize);
+struct CaptureOnceRefused(std::sync::atomic::AtomicBool);
+impl KeyedValueOwnership<UniqueValue> for CaptureOnceRefused {
+    type Write = usize;
+    type Guard = ();
+    fn accept(&self, _: &mut UniqueValue, _: Option<&mut UniqueValue>) -> Result<(), StoreError> {
+        Ok(())
+    }
+    fn capture(&self, latest: &UniqueValue) -> Result<KeyedCapture<usize, ()>, StoreError> {
+        if self.0.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            Err(StoreError::PendingWrites)
+        } else {
+            Ok(KeyedCapture::new(latest.0, ()))
+        }
+    }
+}
+#[gpui::test]
+fn unique_latest_survives_failed_capture_and_explicit_retry(cx: &mut TestAppContext) {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let actual = writes.clone();
+    let writer: KeyedWriter<usize, usize> = Arc::new(move |key, value| {
+        actual.lock().unwrap().push((key, value));
+        Box::pin(async { Ok(()) })
+    });
+    let entity = cx.new(|_| {
+        KeyedPersisted::with_owned_values(
+            writer,
+            NonZeroUsize::new(1).unwrap(),
+            CaptureOnceRefused(std::sync::atomic::AtomicBool::new(true)),
+        )
+    });
+    let generation = entity.update(cx, |state, cx| {
+        state.update_latest(1, UniqueValue(73), 17, cx).unwrap()
+    });
+    cx.run_until_parked();
+    assert!(writes.lock().unwrap().is_empty());
+    cx.update(|cx| {
+        assert!(entity.read(cx).is_dirty(&1));
+        assert!(entity.read(cx).error(&1).is_some());
+    });
+    entity.update(cx, |state, cx| state.retry(&1, cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(*writes.lock().unwrap(), [(1, 73)]);
+    cx.update(|cx| {
+        assert!(!entity.read(cx).is_dirty(&1));
+        let stamp = entity.read(cx).last_success(&1).unwrap();
+        assert_eq!(stamp.generation(), generation);
+        assert_eq!(*stamp.tag(), 17);
+    });
+}

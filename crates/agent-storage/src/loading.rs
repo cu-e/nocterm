@@ -1,4 +1,7 @@
 //! Bounded reads and checked chat paths.
+mod held_file;
+pub(crate) mod reader_task;
+mod string_reader;
 use nocterm_ai::{
     history::{HistoryCodecError, MAX_FILE_BYTES},
     storage::AgentStorageError,
@@ -47,3 +50,18 @@ fn read_error(path: &Path, source: std::io::Error) -> AgentStorageError {
         source: Arc::new(source),
     }
 }
+
+#[cfg(test)]
+mod legacy_validation;
+
+mod literal_reader;
+
+mod json_fields;
+mod json_frames;
+#[cfg(test)]
+mod v2_plan;
+
+#[cfg(test)]
+mod v2_rows;
+
+pub(crate) mod native;

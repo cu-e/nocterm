@@ -1,15 +1,15 @@
 //! A thread's hold on an agent connection, released when it is dropped.
 use gpui::EntityId;
-use nocterm_ai::{AgentCommands, BridgeRegistration, acp};
-use std::{path::PathBuf, sync::Arc};
+use nocterm_ai::{BridgeRegistration, connection::ManagedCommandsHandle, model::ids::SessionId};
+use std::path::PathBuf;
 
 /// The connection, session and tool registration one thread is using.
 ///
 /// Dropping the lease releases them: every path that ends a thread's use of
 /// a connection, error branches included, closes it.
 pub struct SessionLease {
-    pub session: Option<acp::SessionId>,
-    pub commands: Option<Arc<dyn AgentCommands>>,
+    pub session: Option<SessionId>,
+    pub commands: Option<ManagedCommandsHandle>,
     pub registration: Option<BridgeRegistration>,
     pub connection_key: u64,
     pub workdir: Option<PathBuf>,
@@ -20,8 +20,8 @@ pub struct SessionLease {
 /// What the runtime needs to close the connection of a dropped lease.
 pub struct ReleasedLease {
     pub owner: EntityId,
-    pub session: Option<acp::SessionId>,
-    pub commands: Option<Arc<dyn AgentCommands>>,
+    pub session: Option<SessionId>,
+    pub commands: Option<ManagedCommandsHandle>,
     pub registration: Option<BridgeRegistration>,
     pub connection_key: u64,
 }

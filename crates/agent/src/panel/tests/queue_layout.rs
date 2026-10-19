@@ -74,9 +74,7 @@ fn wrapped_text_images_and_attachments_are_measured_then_capped(cx: &mut TestApp
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        thread
-            .accept_composer_images(vec![prompt_image()], cx)
-            .unwrap();
+        attach_image(thread, image_bytes(), image_codec(), cx);
         thread.replace_composer_context(vec![Attachment::Group("Production servers".into())], cx);
         thread.send(
             "A long queued instruction that must wrap on this narrow chat panel. ".repeat(80),
@@ -115,9 +113,7 @@ fn collapsed_queue_skips_hidden_row_and_image_rendering(cx: &mut TestAppContext)
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         thread.send("active".into(), cx);
-        thread
-            .accept_composer_images(vec![prompt_image()], cx)
-            .unwrap();
+        attach_image(thread, image_bytes(), image_codec(), cx);
         thread.send("hidden queue".into(), cx);
     });
     settle(&f, cx);

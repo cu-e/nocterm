@@ -2,10 +2,12 @@
 //!
 //! Owns: PNG/JPEG/GIF/WebP decoder limits, physical validation and preview encoding.
 //! Does not own: workers, filesystem access, prompt admission or UI/cache lifecycle.
-//! Ports provided: ImageInspector and ImageThumbnailer; ports used: none.
+//! Ports provided: ImageInspector and ImageThumbnailer; ports used: explicit AI
+//! native allocation scopes and preadmitted original native error owners.
 //! Settings section: none. Globals: none.
 //! Invariants: source preflight precedes allocation; decode is capped at 4096 and
 //! 64 MiB; PNG previews stay within requested dimensions, 640 pixels and 4 MiB.
+mod managed;
 use image::{GenericImageView as _, ImageEncoder as _};
 use nocterm_ai::images::{
     self, EncodedPreview, ImageCodecError, ImageFacts, ImageInspector, ImageThumbnailer,
@@ -57,6 +59,13 @@ impl NativeImageCodec {
     }
 }
 impl ImageInspector for NativeImageCodec {
+    fn inspect_managed(
+        &self,
+        bytes: &images::managed::ManagedImageBytes,
+        ledger: &nocterm_ai::model::json::deferred::DecodeLedger,
+    ) -> Result<ImageFacts, ImageCodecError> {
+        managed::inspect(bytes, ledger)
+    }
     fn inspect(&self, bytes: Arc<[u8]>) -> Result<InspectedImage, ImageCodecError> {
         let (_, facts) = Self::decode(&bytes)?;
         InspectedImage::new(bytes, facts)

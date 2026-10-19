@@ -8,8 +8,13 @@
 //! of one it no longer holds.
 use super::SessionLease;
 use gpui::{App, EntityId};
-use nocterm_ai::{AgentCommands, AgentInfo, BridgeCall, BridgeRejection, PermissionResponder, acp};
-use std::{path::PathBuf, rc::Rc, sync::Arc};
+use nocterm_ai::{
+    BridgeCall, BridgeRejection, PermissionResponder,
+    connection::ManagedCommandsHandle,
+    history::source::{ManagedAgentInfo, ManagedNotice, ManagedPermission},
+    model::ids::SessionId,
+};
+use std::{path::PathBuf, rc::Rc};
 
 /// What the runtime tells a chat.
 pub enum SessionEvent {
@@ -19,15 +24,15 @@ pub enum SessionEvent {
     /// the session.
     Connected {
         connection: u64,
-        commands: Arc<dyn AgentCommands>,
-        info: Box<AgentInfo>,
+        commands: ManagedCommandsHandle,
+        info: ManagedAgentInfo,
         workdir: PathBuf,
     },
     /// An update for the chat's connection; it may belong to another session.
-    Update(Rc<acp::SessionNotification>),
+    Update(ManagedNotice),
     /// The agent asks to use a tool. Dropping `respond` answers `Cancelled`.
     Permission {
-        request: Box<acp::RequestPermissionRequest>,
+        request: ManagedPermission,
         respond: PermissionResponder,
     },
     /// A call to one of the chat's terminal tools.
@@ -76,7 +81,7 @@ pub struct ClientState {
     /// Restored chat directory, resolved before process and sandbox launch.
     pub workdir: Option<PathBuf>,
     pub agent_id: String,
-    pub session: Option<acp::SessionId>,
+    pub session: Option<SessionId>,
     /// Whether the session is doing work that closing it would interrupt.
     pub busy: bool,
     /// Whether the chat holds a connection.
@@ -89,6 +94,29 @@ pub struct ClientState {
     pub shown: bool,
 }
 
+/// A failed immutable capture names the original semantic revision explicitly.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{error}")]
+pub struct CaptureError {
+    revision: u64,
+    #[source]
+    error: super::AgentPersistenceError,
+}
+impl CaptureError {
+    pub fn history(revision: u64, error: nocterm_ai::history::HistoryCodecError) -> Self {
+        Self {
+            revision,
+            error: nocterm_store::StoreError::backend(error).into(),
+        }
+    }
+    pub fn persistence(revision: u64, error: super::AgentPersistenceError) -> Self {
+        Self { revision, error }
+    }
+    pub fn into_failure(self) -> (u64, super::AgentPersistenceError) {
+        (self.revision, self.error)
+    }
+}
+
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.
 pub trait SessionClient {
     fn id(&self) -> EntityId;
@@ -96,10 +124,20 @@ pub trait SessionClient {
     fn alive(&self) -> bool;
     fn emit(&self, event: SessionEvent, cx: &mut App);
     fn state(&self, cx: &App) -> Option<ClientState>;
-    /// The chat's unsaved changes, without changing it.
-    fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>>;
-    /// The chat's unsaved changes and the revision they become.
-    fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)>;
+    /// Prepare copied launch facts using the current document's original Source
+    /// capability before scheduling native startup.
+    fn prepare_startup(
+        &self,
+        request: nocterm_ai::connection::ManagedStartupRequest<'_>,
+        cx: &mut App,
+    ) -> Result<nocterm_ai::connection::ManagedStartup, nocterm_ai::history::source::SourceError>;
+    /// Admit original document roles synchronously while the view still exists.
+    /// The supplied service capability preserves shutdown capture admission.
+    fn capture_into(
+        &self,
+        admission: &super::CaptureAdmission,
+        cx: &mut App,
+    ) -> Result<Option<u64>, CaptureError>;
 }
 
 pub type Client = Rc<dyn SessionClient>;

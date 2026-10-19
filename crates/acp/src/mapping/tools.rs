@@ -1,5 +1,6 @@
 use super::{content, identity};
 use agent_client_protocol_schema::v1 as wire;
+use nocterm_ai::model::retention::RetentionAuthority;
 use nocterm_ai::model::{
     diagnostic::ModelError,
     ids::{ProviderTerminalId, ToolId},
@@ -29,48 +30,63 @@ fn status(value: wire::ToolCallStatus) -> Result<ToolStatus, ModelError> {
         _ => return Err(ModelError::Unsupported("tool status")),
     })
 }
-fn output(value: wire::ToolCallContent) -> Result<ToolOutput, ModelError> {
+fn output(
+    authority: &RetentionAuthority,
+    value: wire::ToolCallContent,
+) -> Result<ToolOutput, ModelError> {
     Ok(match value {
         wire::ToolCallContent::Content(value) => ToolOutput::Content {
-            content: Box::new(content::inbound(value.content)?),
-            extensions: content::extensions(value.meta)?,
+            content: Box::new(content::inbound(authority, value.content)?),
+            extensions: content::extensions(authority, value.meta)?,
         },
         wire::ToolCallContent::Diff(value) => ToolOutput::FileDiff(FileDiff {
             path: value.path,
             previous: value.old_text,
             replacement: value.new_text,
-            extensions: content::extensions(value.meta)?,
+            extensions: content::extensions(authority, value.meta)?,
         }),
         wire::ToolCallContent::Terminal(value) => ToolOutput::TerminalReference {
-            id: ProviderTerminalId::new(value.terminal_id.to_string()),
-            extensions: content::extensions(value.meta)?,
+            id: ProviderTerminalId::supplied(authority, value.terminal_id.0.as_ref().to_owned()),
+            extensions: content::extensions(authority, value.meta)?,
         },
         _ => return Err(ModelError::Unsupported("tool output")),
     })
 }
-fn location(value: wire::ToolCallLocation) -> Result<Location, ModelError> {
+fn location(
+    authority: &RetentionAuthority,
+    value: wire::ToolCallLocation,
+) -> Result<Location, ModelError> {
     Ok(Location {
         path: value.path,
         line: value.line,
-        extensions: content::extensions(value.meta)?,
+        extensions: content::extensions(authority, value.meta)?,
     })
 }
 fn live_metadata(
+    authority: &RetentionAuthority,
     mut value: Option<wire::Meta>,
 ) -> Result<Option<nocterm_ai::model::extensions::Extensions>, ModelError> {
     if let Some(value) = &mut value {
         value.remove(nocterm_ai::tool_display::META_KEY);
     }
-    content::extensions(value)
+    content::extensions(authority, value)
 }
-pub(super) fn record(value: wire::ToolCall) -> Result<ToolRecord, ModelError> {
+pub(super) fn record(
+    authority: &RetentionAuthority,
+    value: wire::ToolCall,
+) -> Result<ToolRecord, ModelError> {
+    let literal = identity::literal(
+        value.name.as_deref(),
+        Some(&value.title),
+        value.raw_input.as_ref(),
+    );
     let claims = identity::claims(
         value.name.as_deref(),
         Some(&value.title),
         value.raw_input.as_ref(),
     );
     Ok(ToolRecord {
-        id: ToolId::new(value.tool_call_id.to_string()),
+        id: ToolId::supplied(authority, value.tool_call_id.0.as_ref().to_owned()),
         title: value.title,
         name: value.name,
         kind: kind(value.kind)?,
@@ -78,29 +94,44 @@ pub(super) fn record(value: wire::ToolCall) -> Result<ToolRecord, ModelError> {
         output: value
             .content
             .into_iter()
-            .map(output)
+            .map(|value| output(authority, value))
             .collect::<Result<_, _>>()?,
         locations: value
             .locations
             .into_iter()
-            .map(location)
+            .map(|value| location(authority, value))
             .collect::<Result<_, _>>()?,
-        arguments: value.raw_input,
-        result: value.raw_output,
-        extensions: live_metadata(value.meta)?,
+        arguments: value
+            .raw_input
+            .map(|value| nocterm_ai::model::json::OwnedJson::from_untracked(authority, value))
+            .transpose()?,
+        result: value
+            .raw_output
+            .map(|value| nocterm_ai::model::json::OwnedJson::from_untracked(authority, value))
+            .transpose()?,
+        extensions: live_metadata(authority, value.meta)?,
         claims,
+        literal,
         client_display: None,
     })
 }
-pub(super) fn patch(value: wire::ToolCallUpdate) -> Result<ToolPatch, ModelError> {
+pub(super) fn patch(
+    authority: &RetentionAuthority,
+    value: wire::ToolCallUpdate,
+) -> Result<ToolPatch, ModelError> {
     let fields = value.fields;
+    let literal = identity::literal(
+        fields.name.as_deref(),
+        fields.title.as_deref(),
+        fields.raw_input.as_ref(),
+    );
     let claims = identity::claims(
         fields.name.as_deref(),
         fields.title.as_deref(),
         fields.raw_input.as_ref(),
     );
     Ok(ToolPatch {
-        id: ToolId::new(value.tool_call_id.to_string()),
+        id: ToolId::supplied(authority, value.tool_call_id.0.as_ref().to_owned()),
         changes: ToolChanges {
             kind: fields.kind.map(kind).transpose()?,
             status: fields.status.map(status).transpose()?,
@@ -108,16 +139,33 @@ pub(super) fn patch(value: wire::ToolCallUpdate) -> Result<ToolPatch, ModelError
             name: fields.name,
             output: fields
                 .content
-                .map(|values| values.into_iter().map(output).collect::<Result<_, _>>())
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|value| output(authority, value))
+                        .collect::<Result<_, _>>()
+                })
                 .transpose()?,
             locations: fields
                 .locations
-                .map(|values| values.into_iter().map(location).collect::<Result<_, _>>())
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|value| location(authority, value))
+                        .collect::<Result<_, _>>()
+                })
                 .transpose()?,
-            arguments: fields.raw_input,
-            result: fields.raw_output,
+            arguments: fields
+                .raw_input
+                .map(|value| nocterm_ai::model::json::OwnedJson::from_untracked(authority, value))
+                .transpose()?,
+            result: fields
+                .raw_output
+                .map(|value| nocterm_ai::model::json::OwnedJson::from_untracked(authority, value))
+                .transpose()?,
         },
-        extensions: live_metadata(value.meta)?,
+        extensions: live_metadata(authority, value.meta)?,
         claims,
+        literal,
     })
 }

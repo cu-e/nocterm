@@ -4,7 +4,10 @@ use super::{
     tools::ToolPatch,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+mod environment;
+mod reply;
+pub use environment::{EnvironmentPair, TerminalEnvironment};
+pub use reply::{PermissionAnswer, PermissionAnswerClosed};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AuthMethod {
     pub id: AuthMethodId,
@@ -21,16 +24,16 @@ pub enum AuthFlow {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TerminalSetup {
     pub args: Vec<String>,
-    pub env: BTreeMap<String, String>,
+    pub env: TerminalEnvironment,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProviderPermission {
     pub session: SessionId,
     pub tool: ToolPatch,
     pub choices: Vec<PermissionChoice>,
     pub extensions: Option<Extensions>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PermissionChoice {
     pub id: PermissionOptionId,
     pub label: String,
@@ -54,25 +57,49 @@ pub enum PermissionOutcome {
 }
 /// Exactly one neutral reply; abandonment cancels, including a closed UI owner.
 #[derive(Debug)]
-pub struct PermissionResponder(Option<futures::channel::oneshot::Sender<PermissionOutcome>>);
+pub struct PermissionResponder(Option<ReplySender>);
+#[derive(Debug)]
+enum ReplySender {
+    Legacy(futures::channel::oneshot::Sender<PermissionOutcome>),
+    Managed(reply::Sender),
+}
+impl ReplySender {
+    fn send(self, outcome: PermissionOutcome) {
+        match self {
+            Self::Legacy(sender) => {
+                let _ = sender.send(outcome);
+            }
+            Self::Managed(sender) => sender.send(outcome),
+        }
+    }
+}
 impl PermissionResponder {
     pub fn channel() -> (Self, futures::channel::oneshot::Receiver<PermissionOutcome>) {
         let (sender, receiver) = futures::channel::oneshot::channel();
-        (Self(Some(sender)), receiver)
+        (Self(Some(ReplySender::Legacy(sender))), receiver)
+    }
+    /// Reserve the real shared channel block before allocating, retaining the
+    /// original source account through both endpoints' physical destruction.
+    pub fn managed_channel(
+        context: &crate::history::source::SourceContext,
+    ) -> Result<(Self, PermissionAnswer), super::json::deferred::JsonDecodeError> {
+        let (sender, receiver) = reply::channel(context)?;
+        Ok((Self(Some(ReplySender::Managed(sender))), receiver))
     }
     pub fn respond(mut self, outcome: PermissionOutcome) {
         if let Some(sender) = self.0.take() {
-            let _ = sender.send(outcome);
+            sender.send(outcome);
         }
     }
 }
 impl Drop for PermissionResponder {
     fn drop(&mut self) {
         if let Some(sender) = self.0.take() {
-            let _ = sender.send(PermissionOutcome::Cancelled);
+            sender.send(PermissionOutcome::Cancelled);
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

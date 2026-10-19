@@ -1,7 +1,6 @@
 //! The queue peeks from behind the composer and unfolds above it.
-use super::{AgentPanel, images::ImageAttachError};
+use super::AgentPanel;
 use crate::thread::AgentThread;
-use base64::Engine as _;
 use gpui_kit::{
     AnyElement, Context, Entity, EntityId, SharedString, TestSupportExt as _, Window,
     base::motion::{Transition, transition},
@@ -17,13 +16,6 @@ use gpui_kit::{
 };
 use nocterm_ui::IconName;
 use std::time::Duration;
-
-pub(super) fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError> {
-    if data.len() > nocterm_ai::images::MAX_IMAGE_BYTES.div_ceil(3) * 4 {
-        return Err(nocterm_ai::images::PromptImageError::TooLarge.into());
-    }
-    Ok(base64::engine::general_purpose::STANDARD.decode(data)?)
-}
 
 /// One immutable frame of the queue, without authoritative queued messages.
 pub(super) struct QueueFrame {
@@ -231,12 +223,12 @@ impl QueueRenderer {
     fn queue_row(
         composer: &super::composer_view::ComposerView,
         origin: EntityId,
-        prompt: &crate::thread::QueuedPrompt,
+        prompt: &crate::thread::composer::QueuedRow,
         previews: Vec<AnyElement>,
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let id = prompt.saved.id;
+        let id = prompt.id();
         let mut row = v_flex()
             .id(("queued-message", id))
             .test_support()
@@ -252,7 +244,7 @@ impl QueueRenderer {
                             .min_w_0()
                             .text_sm()
                             .whitespace_normal()
-                            .child(prompt.saved.text.clone()),
+                            .child(prompt.text().to_owned()),
                     )
                     .child(
                         Button::new(("queued-send-now", id))
@@ -288,7 +280,7 @@ impl QueueRenderer {
                             })),
                     ),
             );
-        for attachment in &prompt.attachments {
+        for attachment in prompt.attachments() {
             row = row.child(
                 div()
                     .text_xs()
@@ -310,7 +302,7 @@ impl QueueRenderer {
 impl QueueRenderer {
     pub(super) fn render_queue(
         composer: &super::composer_view::ComposerView,
-        prompts: Vec<crate::thread::QueuedPrompt>,
+        prompts: Vec<crate::thread::composer::QueuedRow>,
         previews: Vec<Vec<AnyElement>>,
         thread: &Entity<AgentThread>,
         labels: &super::attachments::AttachmentLabels,
@@ -322,7 +314,7 @@ impl QueueRenderer {
             return None;
         }
         let count = thread.read(cx).queued_prompt_ids().count();
-        let first = thread.read(cx).composer().queue()[0].saved.id;
+        let first = thread.read(cx).composer().queue()[0].id();
         let frame = QueueFrame {
             chat: thread.entity_id(),
             open: composer.queue_open(),

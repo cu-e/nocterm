@@ -1,7 +1,8 @@
 //! Session-scoped approval transitions. GPUI effects and tool execution stay in the coordinator.
 use super::permissions::{PermissionCard, PermissionGate, ProviderRequests};
 use super::{bound_call::BoundToolCall, session_grants::SessionGrants};
-use nocterm_ai::{ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, acp};
+use nocterm_ai::model::{auth::ProviderPermission, ids::PermissionOptionId};
+use nocterm_ai::{ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ApprovalToken(u64);
@@ -115,7 +116,7 @@ pub(super) struct ApprovalInbox {
 impl ApprovalInbox {
     pub(super) fn receive_provider(
         &mut self,
-        request: acp::RequestPermissionRequest,
+        request: ProviderPermission,
         respond: nocterm_ai::PermissionResponder,
         gate: &PermissionGate,
         policy: ApprovalPolicy,
@@ -145,7 +146,7 @@ impl ApprovalInbox {
     pub(super) fn choose_provider(
         &mut self,
         token: ApprovalToken,
-        choice: Option<acp::PermissionOptionId>,
+        choice: Option<PermissionOptionId>,
         gate: &PermissionGate,
     ) -> bool {
         self.providers.choose(token, choice, gate)

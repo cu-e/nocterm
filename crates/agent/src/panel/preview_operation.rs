@@ -92,11 +92,10 @@ impl PreviewOperation {
             .images()
             .iter()
             .map(|image| {
-                let key = (image.bytes().as_ptr() as usize, image.bytes().len(), false);
-                (
-                    key,
-                    (!messages.has_preview(&key)).then(|| image.bytes().to_vec()),
-                )
+                let binary = image.binary();
+                let bytes = binary.bytes();
+                let key = (bytes.as_ptr() as usize, bytes.len(), false);
+                (key, (!messages.has_preview(&key)).then(|| bytes.to_vec()))
             })
             .collect::<Vec<_>>();
         if previews.is_empty() {
@@ -112,32 +111,47 @@ impl PreviewOperation {
 }
 
 impl PreviewOperation {
-    pub(super) fn queued_previews(
+    /// The encoded bytes of each queued image whose thumbnail is not yet cached.
+    pub(super) fn queued_image_sources(
         messages: &mut MessageList,
-        prompts: &[crate::thread::QueuedPrompt],
-        cx: &mut Context<AgentPanel>,
-    ) -> Vec<Vec<gpui_kit::AnyElement>> {
-        prompts
+        queue: &[nocterm_ai::history::physical::PromptSlot],
+    ) -> Vec<Vec<(ImageKey, Option<Vec<u8>>)>> {
+        use nocterm_ai::{history::physical::ContentSlot, model::content::MediaKind};
+        queue
             .iter()
             .map(|prompt| {
                 prompt
-                    .saved
-                    .images
-                    .iter()
-                    .zip(prompt.image_keys.iter())
-                    .filter_map(|(block, key)| {
-                        let nocterm_ai::acp::ContentBlock::Image(image) = block else {
+                    .images()
+                    .filter_map(|block| {
+                        let ContentSlot::Media(image) = block else {
                             return None;
                         };
-                        let key = (*key)?;
-                        Some(Self::cached(
-                            messages,
+                        if image.kind() != MediaKind::Image {
+                            return None;
+                        }
+                        let encoded = image.encoded();
+                        let key = (encoded.as_ptr() as usize, encoded.len(), true);
+                        Some((
                             key,
-                            || image.data.as_bytes().to_vec(),
-                            true,
-                            None,
-                            cx,
+                            (!messages.has_preview(&key)).then(|| encoded.as_bytes().to_vec()),
                         ))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+    pub(super) fn queued_previews(
+        messages: &mut MessageList,
+        sources: Vec<Vec<(ImageKey, Option<Vec<u8>>)>>,
+        cx: &mut Context<AgentPanel>,
+    ) -> Vec<Vec<gpui_kit::AnyElement>> {
+        sources
+            .into_iter()
+            .map(|images| {
+                images
+                    .into_iter()
+                    .map(|(key, data)| {
+                        Self::cached(messages, key, || data.unwrap_or_default(), true, None, cx)
                     })
                     .collect()
             })

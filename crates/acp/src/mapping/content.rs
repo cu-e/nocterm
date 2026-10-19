@@ -1,9 +1,17 @@
 use agent_client_protocol_schema::v1 as wire;
+use nocterm_ai::model::retention::RetentionAuthority;
 use nocterm_ai::model::{content::*, diagnostic::ModelError, extensions::Extensions};
-pub(super) fn extensions(meta: Option<wire::Meta>) -> Result<Option<Extensions>, ModelError> {
-    meta.map(Extensions::checked).transpose()
+pub(super) fn extensions(
+    authority: &RetentionAuthority,
+    meta: Option<wire::Meta>,
+) -> Result<Option<Extensions>, ModelError> {
+    meta.map(|meta| Extensions::checked(authority, meta))
+        .transpose()
 }
-fn annotations(value: Option<wire::Annotations>) -> Result<Option<Annotations>, ModelError> {
+fn annotations(
+    authority: &RetentionAuthority,
+    value: Option<wire::Annotations>,
+) -> Result<Option<Annotations>, ModelError> {
     value
         .map(|value| {
             Ok(Annotations {
@@ -22,33 +30,36 @@ fn annotations(value: Option<wire::Annotations>) -> Result<Option<Annotations>, 
                     .transpose()?,
                 modified: value.last_modified,
                 priority: value.priority,
-                extensions: extensions(value.meta)?,
+                extensions: extensions(authority, value.meta)?,
             })
         })
         .transpose()
 }
-pub(super) fn inbound(value: wire::ContentBlock) -> Result<Content, ModelError> {
+pub(super) fn inbound(
+    authority: &RetentionAuthority,
+    value: wire::ContentBlock,
+) -> Result<Content, ModelError> {
     Ok(match value {
         wire::ContentBlock::Text(value) => Content::Text(Text {
             text: value.text,
-            annotations: annotations(value.annotations)?,
-            extensions: extensions(value.meta)?,
+            annotations: annotations(authority, value.annotations)?,
+            extensions: extensions(authority, value.meta)?,
         }),
         wire::ContentBlock::Image(value) => Content::Media(Media {
             kind: MediaKind::Image,
             encoded: value.data,
             mime: value.mime_type,
             uri: value.uri,
-            annotations: annotations(value.annotations)?,
-            extensions: extensions(value.meta)?,
+            annotations: annotations(authority, value.annotations)?,
+            extensions: extensions(authority, value.meta)?,
         }),
         wire::ContentBlock::Audio(value) => Content::Media(Media {
             kind: MediaKind::Audio,
             encoded: value.data,
             mime: value.mime_type,
             uri: None,
-            annotations: annotations(value.annotations)?,
-            extensions: extensions(value.meta)?,
+            annotations: annotations(authority, value.annotations)?,
+            extensions: extensions(authority, value.meta)?,
         }),
         wire::ContentBlock::ResourceLink(value) => Content::ResourceReference(ResourceReference {
             uri: value.uri,
@@ -57,8 +68,8 @@ pub(super) fn inbound(value: wire::ContentBlock) -> Result<Content, ModelError> 
             description: value.description,
             mime: value.mime_type,
             reported_size: value.size,
-            annotations: annotations(value.annotations)?,
-            extensions: extensions(value.meta)?,
+            annotations: annotations(authority, value.annotations)?,
+            extensions: extensions(authority, value.meta)?,
         }),
         wire::ContentBlock::Resource(value) => Content::EmbeddedResource(EmbeddedResource {
             body: match value.resource {
@@ -67,7 +78,7 @@ pub(super) fn inbound(value: wire::ContentBlock) -> Result<Content, ModelError> 
                         uri: value.uri,
                         text: value.text,
                         mime: value.mime_type,
-                        extensions: extensions(value.meta)?,
+                        extensions: extensions(authority, value.meta)?,
                     })
                 }
                 wire::EmbeddedResourceResource::BlobResourceContents(value) => {
@@ -75,19 +86,24 @@ pub(super) fn inbound(value: wire::ContentBlock) -> Result<Content, ModelError> 
                         uri: value.uri,
                         encoded: value.blob,
                         mime: value.mime_type,
-                        extensions: extensions(value.meta)?,
+                        extensions: extensions(authority, value.meta)?,
                     })
                 }
                 _ => return Err(ModelError::Unsupported("embedded resource")),
             },
-            annotations: annotations(value.annotations)?,
-            extensions: extensions(value.meta)?,
+            annotations: annotations(authority, value.annotations)?,
+            extensions: extensions(authority, value.meta)?,
         }),
         _ => return Err(ModelError::Unsupported("content")),
     })
 }
 fn metadata(value: Option<Extensions>) -> Option<wire::Meta> {
-    value.map(|value| value.as_map().clone())
+    value.map(|value| {
+        value
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    })
 }
 fn wire_annotations(value: Option<Annotations>) -> Option<wire::Annotations> {
     value.map(|value| {

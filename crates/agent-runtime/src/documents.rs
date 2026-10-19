@@ -3,15 +3,20 @@ use super::*;
 use futures::future::BoxFuture;
 use gpui::AppContext as _;
 use nocterm_ai::{
-    history::{ChatSummary, SavedChat, SharedChat},
+    history::{ChatSummary, SavedChat},
     storage::AgentStorageError,
 };
 use nocterm_store::{KeyedPersisted, KeyedRetention, KeyedStamp, StoreError};
 use std::{cell::RefCell, collections::HashSet, num::NonZeroUsize, rc::Rc};
 
-#[derive(Clone)]
+mod ownership;
+mod writer;
+use ownership::ChatValues;
+pub use writer::{CaptureAdmission, DocumentWriter};
+type ChatDriver = KeyedPersisted<String, ChatIntent, CandidateStamp, ChatValues>;
+
 enum ChatIntent {
-    Save(Arc<SharedChat>),
+    Managed(nocterm_ai::history::writing::ManagedLatest),
     Delete,
 }
 #[derive(Clone)]
@@ -104,62 +109,13 @@ impl DocumentRegistry {
 }
 pub(super) struct ChatStore {
     registry: Rc<RefCell<DocumentRegistry>>,
-    writer: Entity<KeyedPersisted<String, ChatIntent, CandidateStamp>>,
+    writer: DocumentWriter,
     catalog: crate::catalog::Catalog,
 }
 impl ChatStore {
     pub(super) fn new(storage: &mut AgentStorage, cx: &mut Context<Runtime>) -> Self {
         let registry = Rc::new(RefCell::new(DocumentRegistry::default()));
-        let owner = registry.clone();
-        let repository = storage.chats();
-        let backend = repository.clone();
-        let writer = cx.new(|_| {
-            KeyedPersisted::<String, ChatIntent, CandidateStamp>::new(
-                Arc::new(move |id, intent| {
-                    let backend = backend.clone();
-                    Box::pin(async move {
-                        match intent {
-                            ChatIntent::Save(chat) => backend.save(chat).await,
-                            ChatIntent::Delete => backend.delete(id).await,
-                        }
-                        .map_err(StoreError::backend)
-                    })
-                }),
-                NonZeroUsize::new(32).expect("nonzero constant"),
-            )
-            .with_completion_hook(move |stamp, result, cx| {
-                let succeeded = result.is_ok();
-                let retained = owner.borrow().target(stamp, succeeded).is_some();
-                let registry = owner.clone();
-                let stamp = stamp.clone();
-                // A client may synchronously reenter Runtime and its writer. Deliver only
-                // after the keyed entity borrow ends, and revalidate identity at delivery.
-                cx.defer(move |cx| {
-                    let target = registry.borrow().target(&stamp, succeeded);
-                    if let Some(client) = target
-                        && client
-                            .state(cx)
-                            .is_some_and(|state| state.chat_id == *stamp.key())
-                    {
-                        let event = match result {
-                            Ok(()) => SessionEvent::Saved {
-                                revision: stamp.tag().revision,
-                            },
-                            Err(error) => SessionEvent::SaveFailed {
-                                revision: stamp.tag().revision,
-                                error: error.into(),
-                            },
-                        };
-                        client.emit(event, cx);
-                    }
-                });
-                if retained {
-                    KeyedRetention::Retain
-                } else {
-                    KeyedRetention::ForgetClean
-                }
-            })
-        });
+        let writer = DocumentWriter::new(storage.chats(), registry.clone(), cx);
         Self {
             registry,
             writer,
@@ -173,7 +129,7 @@ impl ChatStore {
     }
     pub(super) fn retire(&mut self, id: EntityId, cx: &mut App) {
         let ids = self.registry.borrow_mut().retire(id);
-        self.writer.update(cx, |writer, _| {
+        self.writer.entity().update(cx, |writer, _| {
             for id in ids {
                 writer.forget_clean(&id);
             }
@@ -190,49 +146,15 @@ impl ChatStore {
     }
     pub(super) fn save(
         &mut self,
-        chat: Arc<SharedChat>,
+        chat: nocterm_ai::history::writing::CandidateOffer<'_>,
         owner: EntityId,
         revision: u64,
         cx: &mut App,
     ) -> Result<bool, AgentPersistenceError> {
-        if !self.registry.borrow().current(&chat.id, owner)
-            || !self
-                .registry
-                .borrow()
-                .accepts_revision(&chat.id, owner, revision)
-        {
-            return Ok(false);
-        }
-        let id = chat.id.clone();
-        self.submit(
-            id.clone(),
-            ChatIntent::Save(chat),
-            CandidateStamp {
-                owner: Some(owner),
-                revision,
-                deleted: false,
-            },
-            cx,
-        )?;
-        self.registry.borrow_mut().accepted(&id, owner, revision);
-        self.notify_admission(&id, owner, revision, cx);
-        Ok(true)
+        self.writer.save(chat, owner, revision, cx)
     }
-    fn notify_admission(&self, id: &str, owner: EntityId, revision: u64, cx: &mut App) {
-        let registry = self.registry.clone();
-        let id = id.to_owned();
-        cx.defer(move |cx| {
-            let target = {
-                let registry = registry.borrow();
-                registry
-                    .capture_current(&id, owner)
-                    .then(|| registry.client(owner))
-                    .flatten()
-            };
-            if let Some(client) = target {
-                client.emit(SessionEvent::SaveAdmitted { revision }, cx);
-            }
-        });
+    pub(super) fn delete(&mut self, id: String, cx: &mut App) {
+        self.writer.delete(id, cx);
     }
     fn notify_failed_admission(
         &self,
@@ -242,48 +164,11 @@ impl ChatStore {
         error: AgentPersistenceError,
         cx: &mut App,
     ) {
-        let registry = self.registry.clone();
-        cx.defer(move |cx| {
-            let target = {
-                let registry = registry.borrow();
-                registry
-                    .capture_current(&id, owner)
-                    .then(|| registry.client(owner))
-                    .flatten()
-            };
-            if let Some(client) = target {
-                client.emit(SessionEvent::SaveFailed { revision, error }, cx);
-            }
-        });
-    }
-    fn submit(
-        &mut self,
-        id: String,
-        intent: ChatIntent,
-        stamp: CandidateStamp,
-        cx: &mut App,
-    ) -> Result<(), StoreError> {
         self.writer
-            .update(cx, |writer, cx| writer.update_latest(id, intent, stamp, cx))
-            .map(|_| ())
+            .notify_failed_admission(id, owner, revision, error, cx);
     }
-    pub(super) fn delete(&mut self, id: String, cx: &mut App) {
-        if self.registry.borrow().closing {
-            return;
-        }
-        self.registry.borrow_mut().seal(id.clone());
-        if let Err(error) = self.submit(
-            id,
-            ChatIntent::Delete,
-            CandidateStamp {
-                owner: None,
-                revision: 0,
-                deleted: true,
-            },
-            cx,
-        ) {
-            tracing::warn!(%error, "agent deletion admission failed");
-        }
+    pub(super) fn publication(&self) -> DocumentWriter {
+        self.writer.clone()
     }
     fn capture_and_detach_document(
         &mut self,
@@ -293,19 +178,21 @@ impl ChatStore {
         let Some(client) = self.client(id) else {
             return Ok(false);
         };
-        if let Some((chat, revision)) = client.capture(cx) {
-            let key = chat.id.clone();
-            match self.save(chat, id, revision, cx) {
-                Ok(true) => {
-                    let target = client.clone();
-                    cx.defer(move |cx| target.emit(SessionEvent::SaveAdmitted { revision }, cx));
+        let captured = match client.capture_into(&self.writer.capture_for(client.id()), cx) {
+            Ok(captured) => captured,
+            Err(error) => {
+                let (revision, error) = error.into_failure();
+                if let Some(state) = client.state(cx) {
+                    self.notify_failed_admission(state.chat_id, id, revision, error.clone(), cx);
                 }
-                Ok(false) => {}
-                Err(error) => {
-                    self.notify_failed_admission(key, id, revision, error.clone(), cx);
-                    return Err(error);
-                }
+                return Err(error);
             }
+        };
+        if let Some(revision) = captured {
+            // The registry entry is retired below, so the admission is delivered to the
+            // detached client itself once the Runtime borrow ends.
+            let target = client.clone();
+            cx.defer(move |cx| target.emit(SessionEvent::SaveAdmitted { revision }, cx));
         }
         self.retire(id, cx);
         Ok(true)
@@ -359,31 +246,20 @@ impl ChatStore {
         {
             return Ok(());
         }
-        let Some((chat, revision)) = client.capture(cx) else {
-            return Ok(());
-        };
-        if !self
-            .registry
-            .borrow()
-            .accepts_revision(&chat.id, client.id(), revision)
-        {
-            return Ok(());
+        match client.capture_into(&self.writer.capture_for(client.id()), cx) {
+            Ok(_) => {}
+            Err(error) => {
+                let (revision, error) = error.into_failure();
+                self.notify_failed_admission(
+                    state.chat_id,
+                    client.id(),
+                    revision,
+                    error.clone(),
+                    cx,
+                );
+                return Err(StoreError::backend(error));
+            }
         }
-        let id = chat.id.clone();
-        self.submit(
-            id.clone(),
-            ChatIntent::Save(chat),
-            CandidateStamp {
-                owner: Some(client.id()),
-                revision,
-                deleted: false,
-            },
-            cx,
-        )?;
-        self.registry
-            .borrow_mut()
-            .accepted(&id, client.id(), revision);
-        self.notify_admission(&id, client.id(), revision, cx);
         Ok(())
     }
     pub(super) fn capture(&mut self, cx: &mut App) -> BoxFuture<'static, Result<(), StoreError>> {
@@ -395,7 +271,10 @@ impl ChatStore {
             .collect::<Vec<_>>();
         self.catalog.stop();
         self.registry.borrow_mut().stop();
-        let captured = self.writer.update(cx, |writer, _| writer.capture());
+        let captured = self
+            .writer
+            .entity()
+            .update(cx, |writer, _| writer.capture());
         Box::pin(async move {
             let failure = admission_errors
                 .into_iter()
@@ -434,7 +313,7 @@ impl Runtime {
     }
     pub fn save_chat(
         &mut self,
-        chat: Arc<SharedChat>,
+        chat: nocterm_ai::history::writing::CandidateOffer<'_>,
         owner: EntityId,
         revision: u64,
         cx: &mut Context<Self>,

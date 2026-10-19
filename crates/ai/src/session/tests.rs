@@ -149,3 +149,36 @@ fn a_missing_session_or_a_failed_fork_starts_over() {
         "a transient error keeps the chat's own session for the next try"
     );
 }
+
+#[test]
+fn bounded_resume_context_preserves_roles_and_counts_every_byte() {
+    use crate::{
+        history::live::LiveEpoch,
+        model::{ids::SessionId, retention::RetentionAuthority},
+        thread::ThreadState,
+    };
+    let authority = RetentionAuthority::new(usize::MAX).unwrap();
+    let mut state = ThreadState::new(
+        &authority,
+        "agent",
+        "33abddab-1ee2-4f92-8c2e-182cd401241a",
+        1,
+    )
+    .unwrap();
+    let source = state.source().capture().unwrap();
+    let context = source.context().unwrap();
+    let epoch = LiveEpoch::new(SessionState::default().ticket(), 1, SessionId::new("s"));
+    state.live_mut().accept_epoch(epoch.clone());
+    let admission = state.live().admission(&epoch).unwrap();
+    let notice = crate::model::native::notice::agent_chunk(
+        crate::model::retention::document::tests::user_text(
+            context.ledger(),
+            &"界".repeat(100 * 1024),
+        ),
+    );
+    let _ = state.live_mut().apply_owned(admission, notice, 2).unwrap();
+    let text = history_context(state.rows());
+    assert!(text.len() <= 128 * 1024);
+    assert!(text.contains("Assistant: [Earlier text omitted]\n"));
+    assert!(text.ends_with('界'));
+}

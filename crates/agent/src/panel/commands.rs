@@ -17,7 +17,10 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::{
+    controls::{ConfigCategory, ConfigKind, ConfigOption, SelectChoices},
+    notice::AdvertisedCommand,
+};
 
 pub(super) struct CommandState {
     selected: usize,
@@ -85,7 +88,7 @@ impl CommandState {
         self.token_prefix = None;
         true
     }
-    pub(super) fn matches(&self, value: &str, commands: &[acp::AvailableCommand]) -> Vec<usize> {
+    pub(super) fn matches(&self, value: &str, commands: &[AdvertisedCommand]) -> Vec<usize> {
         if self.dismissed.as_deref() == Some(value) {
             return Vec::new();
         }
@@ -207,8 +210,8 @@ pub(crate) fn init(cx: &mut App) {
 #[cfg(test)]
 pub(super) fn matches<'a>(
     text: &str,
-    commands: &'a [acp::AvailableCommand],
-) -> Vec<&'a acp::AvailableCommand> {
+    commands: &'a [AdvertisedCommand],
+) -> Vec<&'a AdvertisedCommand> {
     let Some(prefix) = nocterm_ai::commands::prefix(text) else {
         return Vec::new();
     };
@@ -246,29 +249,23 @@ fn summary(text: &str) -> String {
     result
 }
 
-fn input_hint(command: &acp::AvailableCommand) -> Option<&str> {
-    match command.input.as_ref()? {
-        acp::AvailableCommandInput::Unstructured(input) => Some(&input.hint),
-        _ => None,
-    }
+fn input_hint(command: &AdvertisedCommand) -> Option<&str> {
+    command.input_hint.as_deref()
 }
-pub(super) fn config_hint(option: &acp::SessionConfigOption) -> String {
-    if option.category != Some(acp::SessionConfigOptionCategory::Model) {
+pub(super) fn config_hint(option: &ConfigOption) -> String {
+    if option.category != Some(ConfigCategory::Model) {
         return option.name.clone();
     }
     let count = match &option.kind {
-        acp::SessionConfigKind::Select(select) => match &select.options {
-            acp::SessionConfigSelectOptions::Ungrouped(values) => values.len(),
-            acp::SessionConfigSelectOptions::Grouped(groups) => {
-                groups.iter().map(|group| group.options.len()).sum()
-            }
-            _ => 0,
+        ConfigKind::Select { choices, .. } => match choices {
+            SelectChoices::Flat(values) => values.len(),
+            SelectChoices::Groups(groups) => groups.iter().map(|group| group.choices.len()).sum(),
         },
         _ => 0,
     };
     format!("Choose model · {count} available · open to browse or search")
 }
-pub(super) fn details(command: &acp::AvailableCommand, cx: &App) -> AnyElement {
+pub(super) fn details(command: &AdvertisedCommand, cx: &App) -> AnyElement {
     v_flex()
         .id("command-details")
         .test_support()
@@ -328,7 +325,7 @@ pub(super) fn tooltip(name: String, panel: WeakEntity<AgentPanel>, cx: &mut App)
                 .read(cx)
                 .config_options()
                 .iter()
-                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
+                .find(|option| option.category == Some(ConfigCategory::Model))
                 .map(|option| option.id.to_string())
         });
     cx.new(|_| {
@@ -366,7 +363,7 @@ pub(super) struct CommandRenderer;
 impl CommandRenderer {
     fn row(
         index: usize,
-        command: &acp::AvailableCommand,
+        command: &AdvertisedCommand,
         selected: bool,
         origin: CommandOrigin,
         cx: &mut Context<AgentPanel>,
@@ -428,7 +425,7 @@ impl CommandRenderer {
 impl CommandRenderer {
     pub(super) fn list(
         scroll: gpui_kit::ListState,
-        rows: Vec<acp::AvailableCommand>,
+        rows: Vec<AdvertisedCommand>,
         selected: usize,
         origin: CommandOrigin,
         cx: &mut Context<AgentPanel>,

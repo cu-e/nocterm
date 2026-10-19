@@ -6,7 +6,6 @@ use super::{
 };
 use crate::thread::Attachment;
 use gpui_kit::{AnyElement, PathPromptOptions};
-use nocterm_ai::images::PromptImage;
 use std::path::PathBuf;
 
 impl AgentPanel {
@@ -72,7 +71,7 @@ impl AgentPanel {
             thread.entity_id(),
             thread.read(cx).configuration().commands_revision(),
         );
-        let commands = thread.read(cx).configuration().commands().to_vec();
+        let commands = thread.read(cx).configuration().commands();
         if self.composer.refresh_commands(key, &commands, window, cx) {
             cx.notify();
         }
@@ -81,14 +80,14 @@ impl AgentPanel {
         self.current()
             .map(|thread| {
                 self.composer
-                    .command_matches(thread.read(cx).configuration().commands(), cx)
+                    .command_matches(&thread.read(cx).configuration().commands(), cx)
             })
             .unwrap_or_default()
     }
     pub(super) fn sync_command_token(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let commands = self
             .current()
-            .map(|thread| thread.read(cx).configuration().commands().to_vec())
+            .map(|thread| thread.read(cx).configuration().commands())
             .unwrap_or_default();
         self.composer.sync_command_token(&commands, window, cx);
     }
@@ -168,7 +167,7 @@ impl AgentPanel {
     pub(super) fn render_composer(
         &mut self,
         thread: &Entity<AgentThread>,
-        usage: Option<&acp::UsageUpdate>,
+        usage: Option<&nocterm_ai::model::usage::ContextUsage>,
         labels: &attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -207,9 +206,7 @@ impl AgentPanel {
     }
     pub(super) fn prepare_images(
         &mut self,
-        work: impl std::future::Future<Output = Result<Vec<PromptImage>, ImageAttachError>>
-        + Send
-        + 'static,
+        work: impl std::future::Future<Output = Result<Vec<Vec<u8>>, ImageAttachError>> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.current() else {
@@ -219,7 +216,7 @@ impl AgentPanel {
             || !thread
                 .read(cx)
                 .agent_info()
-                .is_some_and(|info| info.capabilities.prompt_capabilities.image)
+                .is_some_and(|info| info.capabilities.content.image)
         {
             return;
         }
@@ -234,7 +231,7 @@ impl AgentPanel {
         binding: composer_view::ComposerBinding,
         owner: gpui_kit::WeakEntity<crate::thread::AgentThread>,
         ticket: nocterm_ai::session::Ticket,
-        result: Result<Vec<PromptImage>, ImageAttachError>,
+        result: Result<Vec<Vec<u8>>, ImageAttachError>,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = owner.upgrade() else {
@@ -248,37 +245,91 @@ impl AgentPanel {
         {
             return;
         }
-        thread.update(cx, |thread, cx| {
-            if !thread.session_request_current(ticket) {
+        let images = match result {
+            Ok(images) => images,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
                 return;
             }
-            match result {
-                Ok(images) => {
-                    let mut collection = thread.composer().images().to_vec();
-                    collection.extend(images);
-                    if let Err(error) = thread.accept_composer_images(collection, cx) {
-                        self.notices.set_error(Some(error.to_string()));
-                    }
-                }
-                Err(error) => self.notices.set_error(Some(error.to_string())),
-            }
-            cx.notify();
+        };
+        for bytes in images {
+            self.inspect_composer_image(&thread, ticket, &bytes, cx);
+        }
+        cx.notify();
+    }
+    /// Copies one image into the chat's own document ledger and inspects it off the UI thread.
+    fn inspect_composer_image(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        ticket: nocterm_ai::session::Ticket,
+        bytes: &[u8],
+        cx: &mut Context<Self>,
+    ) {
+        let request = thread.update(cx, |thread, _| thread.prepare_image(bytes));
+        let inspected = request.map_err(ImageAttachError::from).and_then(|request| {
+            request
+                .inspect(self.messages.inspector())
+                .map_err(ImageAttachError::from)
         });
+        let work = match inspected {
+            Ok(work) => work,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                return;
+            }
+        };
+        let future = cx.background_executor().spawn(work);
+        let owner = thread.downgrade();
+        cx.spawn(async move |panel, cx| {
+            let result = future.await;
+            let _ = panel.update(cx, |panel, cx| {
+                panel.on_composer_image_inspected(owner, ticket, result, cx)
+            });
+        })
+        .detach();
+    }
+    fn on_composer_image_inspected(
+        &mut self,
+        owner: gpui_kit::WeakEntity<AgentThread>,
+        ticket: nocterm_ai::session::Ticket,
+        result: Result<
+            nocterm_ai::model::native::NativeOwned<
+                nocterm_ai::images::managed::PreparedPromptImage,
+            >,
+            nocterm_ai::images::managed::ImageOperationError,
+        >,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = owner.upgrade() else {
+            return;
+        };
+        if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
+            || self
+                .current()
+                .is_none_or(|current| current.entity_id() != thread.entity_id())
+        {
+            return;
+        }
+        let outcome = thread.update(cx, |thread, cx| {
+            if !thread.session_request_current(ticket) {
+                return Ok(());
+            }
+            let image = result.map_err(ImageAttachError::from)?;
+            thread
+                .accept_composer_image(image, cx)
+                .map_err(ImageAttachError::from)
+        });
+        if let Err(error) = outcome {
+            self.notices.set_error(Some(error.to_string()));
+        }
         cx.notify();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        let inspector = self.messages.inspector();
-        self.prepare_images(
-            async move { Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?]) },
-            cx,
-        );
+        self.prepare_images(async move { Ok(vec![bytes]) }, cx);
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let inspector = self.messages.inspector();
-        self.prepare_images(
-            async move { images::read_images(paths, inspector.as_ref()) },
-            cx,
-        );
+        self.prepare_images(async move { images::read_images(paths) }, cx);
     }
     pub(super) fn on_image_paths_picked(
         &mut self,
@@ -370,7 +421,7 @@ impl AgentPanel {
         let value = self.composer_text(cx).to_string();
         if self.composer.waiting_for_draft(&value) {
             self.current()
-                .and_then(|thread| thread.read(cx).draft_text().map(str::to_owned))
+                .and_then(|thread| thread.read(cx).draft_text().map(|text| text.to_string()))
                 .unwrap_or_default()
         } else {
             value
@@ -454,7 +505,7 @@ impl AgentPanel {
                 .read(cx)
                 .composer()
                 .draft()
-                .cloned()
+                .map(|draft| draft.to_string())
                 .unwrap_or_default()
         };
         self.composer
@@ -467,82 +518,31 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        let Some(prompt) = thread
+        let Some(text) = thread
             .read(cx)
             .composer()
             .queue()
             .iter()
-            .find(|prompt| prompt.saved.id == id)
-            .cloned()
+            .find(|prompt| prompt.id() == id)
+            .map(|prompt| prompt.text().to_string())
         else {
             return;
         };
         let draft = self.original_composer_text(cx);
-        let ready = prompt.saved.images.is_empty();
-        let binding = self
-            .composer
-            .begin_edit(thread.entity_id(), id, draft.clone(), ready);
-        thread.update(cx, |thread, cx| {
-            thread.set_draft(draft, cx);
-            thread.begin_composer_edit(Vec::new(), prompt.attachments, cx);
-            cx.notify();
-        });
-        if !ready {
-            self.prepare_queue_images(&thread, id, binding, prompt.saved.clone(), cx);
-        }
-        self.reset_commands();
-        self.composer
-            .set_text(prompt.saved.text.clone(), window, cx);
-        self.composer.open_queue();
-        self.focus_composer(window, cx);
-        cx.notify();
-    }
-    pub(super) fn prepare_queue_images(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        id: u64,
-        binding: composer_view::ComposerBinding,
-        saved: std::sync::Arc<nocterm_ai::history::SavedPrompt>,
-        cx: &mut Context<Self>,
-    ) {
-        let task = queue_image_preparation::QueueImagePreparation::new(
-            binding.clone(),
-            thread.downgrade(),
-            thread.read(cx).session_ticket(),
-            id,
-            saved,
-            self.messages.inspector(),
-        )
-        .launch(cx);
-        self.composer.install_edit_preparation(&binding, id, task);
-    }
-    pub(super) fn on_queue_image_prepared(
-        &mut self,
-        binding: composer_view::ComposerBinding,
-        id: u64,
-        owner: gpui_kit::WeakEntity<AgentThread>,
-        ticket: nocterm_ai::session::Ticket,
-        result: Result<Vec<PromptImage>, ImageAttachError>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.composer.edit_preparation_current(&binding, id)
-            || !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
-        {
+        let began = thread.update(cx, |thread, cx| thread.begin_composer_edit(id, cx));
+        if !began {
             return;
         }
-        let _ = owner.update(cx, |thread, cx| {
-            if !thread.session_request_current(ticket) {
-                return;
-            }
-            match result {
-                Ok(images) => match thread.accept_composer_images(images, cx) {
-                    Ok(()) => self.composer.edit_images_accepted(&binding, id),
-                    Err(error) => self.notices.set_error(Some(error.to_string())),
-                },
-                Err(error) => self.notices.set_error(Some(error.to_string())),
-            }
+        self.composer
+            .begin_edit(thread.entity_id(), id, draft.clone(), true);
+        thread.update(cx, |thread, cx| {
+            thread.set_draft(draft, cx);
             cx.notify();
         });
+        self.reset_commands();
+        self.composer.set_text(text, window, cx);
+        self.composer.open_queue();
+        self.focus_composer(window, cx);
         cx.notify();
     }
     pub(super) fn remove_queued(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -646,7 +646,7 @@ impl AgentPanel {
     pub(super) fn on_authenticate_clicked(
         &mut self,
         chat: gpui_kit::EntityId,
-        id: acp::AuthMethodId,
+        id: nocterm_ai::model::ids::AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -1,8 +1,11 @@
 use super::*;
 use gpui_kit::px;
-use nocterm_ai::thread::Entry;
+use nocterm_ai::{
+    model::{json::OwnedJson, tools::ToolStatus},
+    thread::Entry,
+};
 
-use crate::panel::widgets::single_line_label;
+use crate::panel::widgets::{short_hover_label, single_line_label};
 
 #[test]
 fn labels_collapse_unicode_whitespace_without_changing_words() {
@@ -64,16 +67,17 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     cx.update(|cx| {
         let thread = thread.read(cx);
         assert_eq!(thread.title(), prompt);
-        assert!(matches!(&thread.transcript().entries[0], Entry::User(parts)
-            if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+        assert!(matches!(&thread.row_facts()[0], RowFacts::User(text) if text == prompt));
     });
 
     let agent_title = "Agent\r\n  title\u{2028}with\tspaces";
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice {
             session,
-            acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().title(agent_title)),
-        )))
+            update: SessionUpdate::Info(nocterm_ai::model::controls::Change::Set(
+                agent_title.into(),
+            )),
+        }))
         .unwrap();
     cx.run_until_parked();
     assert_eq!(chat_label_heights(&f, agent_title, cx), baseline);
@@ -87,15 +91,20 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     assert_eq!(chat_label_heights(&f, &long, cx), baseline);
     cx.update(|cx| {
         let thread = thread.read(cx);
-        assert_eq!(thread.document().name(), Some(long.as_str()));
-        assert_eq!(thread.transcript().title.as_deref(), Some(agent_title));
+        assert_eq!(thread.document().name().as_deref(), Some(long.as_str()));
+        assert_eq!(
+            thread.transcript().unwrap().title().as_deref(),
+            Some(agent_title)
+        );
     });
     cx.run_until_parked();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
-    assert_eq!(saved[0].title.as_deref(), Some(agent_title));
-    assert!(matches!(&saved[0].entries[0], Entry::User(parts)
-        if matches!(&parts[0], acp::ContentBlock::Text(text) if text.text == prompt)));
+    assert_eq!(saved[0].metadata().name.as_deref(), Some(long.as_str()));
+    assert_eq!(saved[0].metadata().title.as_deref(), Some(agent_title));
+    assert!(
+        matches!(&saved[0].transcript().entries[0], Entry::User(parts)
+        if matches!(&parts[0], Content::Text(text) if text.text == prompt))
+    );
 
     // The existing single-line rename editor still receives the original title,
     // applying its own newline filtering. Cancelling it keeps the stored title.
@@ -119,7 +128,10 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
                 .try_find(("history-thread", thread.entity_id().as_u64()))
                 .is_some()
         );
-        assert_eq!(thread.read(cx).document().name(), Some(long.as_str()));
+        assert_eq!(
+            thread.read(cx).document().name().as_deref(),
+            Some(long.as_str())
+        );
     })
     .unwrap();
 }
@@ -128,33 +140,39 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
 fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mut TestAppContext) {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let script = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/probe.txt').write_text('nocterm-ui-test-artifacts')\nPY";
     // Exercise both animated glyphs and reduced-motion live rendering.
     for reduced_motion in [false, true] {
         cx.update(|cx| cx.set_reduce_motion(reduced_motion));
         for (status, live) in [
-            (acp::ToolCallStatus::Completed, false),
-            (acp::ToolCallStatus::Failed, false),
-            (acp::ToolCallStatus::Pending, true),
-            (acp::ToolCallStatus::InProgress, true),
+            (ToolStatus::Succeeded, false),
+            (ToolStatus::Failed, false),
+            (ToolStatus::Pending, true),
+            (ToolStatus::Running, true),
         ] {
             let mut heights = Vec::new();
             for title in [single_line_label(script), script.into()] {
                 if f.commands.pending.lock().unwrap().is_some() {
                     complete_active(&f, cx);
                 }
+                // A tool row keeps the title it started with, so each title gets its own chat.
+                new_chat(&f, cx);
+                thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
                 thread.update(cx, |thread, cx| {
-                    let mut call = acp::ToolCall::new("script", title.clone());
-                    call.status = status;
-                    call.raw_input = Some(serde_json::json!({"command": script}));
-                    call.content = vec![
-                        serde_json::from_value(serde_json::json!({
-                            "type": "content",
-                            "content": {"type": "text", "text": script},
-                        }))
+                    let mut call = super::provider_intersections::provider_tool(
+                        "script",
+                        title.clone(),
+                        status,
+                    );
+                    call.arguments = Some(
+                        OwnedJson::from_untracked(
+                            &f.installation.retention,
+                            serde_json::json!({"command":script}),
+                        )
                         .unwrap(),
-                    ];
+                    );
+                    call.output = vec![super::tool_output::text_output(script.into())];
                     restore_entries(&f, thread, vec![Entry::Tool(call)], cx);
                     thread.mark_dirty(0);
                     cx.notify();
@@ -165,15 +183,14 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
                         let header = window.find(("tool-call", 0usize));
                         assert_eq!(
                             header.label(),
-                            Some(format!("{title} · {status:?}").as_str())
+                            Some(format!("{title} · {}", status.label()).as_str())
                         );
                         let entry = window.find(("agent-entry", 0usize)).bounds();
                         assert!(header.bounds().right() <= entry.right() + px(1.));
-                        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-                            panic!("expected tool call");
-                        };
+                        let facts = thread.read(cx).tool_facts();
+                        let call = &facts[0];
                         assert_eq!(call.title, title);
-                        assert_eq!(call.raw_input.as_ref().unwrap()["command"], script);
+                        assert_eq!(call.arguments.as_ref().unwrap()["command"], script);
                         header.bounds().size.height
                     })
                     .unwrap(),
@@ -187,18 +204,29 @@ fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mu
             cx.update_window(f.handle, |_, window, cx| {
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_some());
-                let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-                    panic!("expected tool call");
-                };
-                let acp::ToolCallContent::Content(output) = &call.content[0] else {
-                    panic!("expected text output");
-                };
-                assert!(matches!(&output.content, acp::ContentBlock::Text(text)
-                    if text.text == script));
+                thread.read(cx).with_tool(0, |call| {
+                    let nocterm_ai::history::physical::OutputSlot::Content { content, .. } =
+                        &call.output()[0]
+                    else {
+                        panic!("expected text output");
+                    };
+                    assert!(matches!(content.as_ref(), nocterm_ai::history::physical::ContentSlot::Text(text)
+                        if &*text.text() == script));
+                });
                 window.click(("tool-call", 0usize), cx);
                 assert!(window.try_find(("tool-output", 0usize)).is_none());
             })
             .unwrap();
         }
     }
+}
+
+#[test]
+fn hover_summary_is_short_and_unicode_safe() {
+    assert_eq!(short_hover_label("short\n title"), "short title");
+    let long = "界🚀".repeat(100);
+    let shortened = short_hover_label(&long);
+    assert_eq!(shortened.chars().count(), 161);
+    assert_eq!(shortened, format!("{}…", "界🚀".repeat(80)));
+    assert_eq!(short_hover_label(&"界".repeat(160)), "界".repeat(160));
 }

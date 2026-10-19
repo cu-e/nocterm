@@ -10,5 +10,7 @@ layer = "adapter"
 [dependencies]
 nocterm-ai.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+png = "=0.18.1"
+thiserror.workspace = true
 [lints]
 workspace = true

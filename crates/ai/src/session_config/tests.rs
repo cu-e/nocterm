@@ -1,50 +1,73 @@
 use super::*;
 
-fn options() -> Vec<acp::SessionConfigOption> {
+fn choice(id: &str, name: &str) -> ConfigChoice {
+    ConfigChoice {
+        id: ConfigChoiceId::new(id),
+        name: name.into(),
+        description: None,
+        extensions: None,
+    }
+}
+fn option(id: &str, name: &str, category: ConfigCategory, kind: ConfigKind) -> ConfigOption {
+    ConfigOption {
+        id: ConfigId::new(id),
+        name: name.into(),
+        description: None,
+        category: Some(category),
+        kind,
+        extensions: None,
+    }
+}
+fn options() -> Vec<ConfigOption> {
+    let mut opus = choice("opus", "Opus");
+    opus.description = Some("Slower".into());
     vec![
-        acp::SessionConfigOption::select(
+        option(
             "model",
             "Model",
-            "sonnet",
-            vec![
-                acp::SessionConfigSelectGroup::new(
-                    "fast",
-                    "Fast",
-                    vec![acp::SessionConfigSelectOption::new("sonnet", "Sonnet")],
-                ),
-                acp::SessionConfigSelectGroup::new(
-                    "deep",
-                    "Deep",
-                    vec![
-                        acp::SessionConfigSelectOption::new("opus", "Opus")
-                            .description("Slower".to_string()),
-                    ],
-                ),
-            ],
-        )
-        .category(acp::SessionConfigOptionCategory::Model),
-        acp::SessionConfigOption::select(
+            ConfigCategory::Model,
+            ConfigKind::Select {
+                current: ConfigChoiceId::new("sonnet"),
+                choices: SelectChoices::Groups(vec![
+                    ConfigGroup {
+                        id: ConfigGroupId::new("fast"),
+                        name: "Fast".into(),
+                        choices: vec![choice("sonnet", "Sonnet")],
+                        extensions: None,
+                    },
+                    ConfigGroup {
+                        id: ConfigGroupId::new("deep"),
+                        name: "Deep".into(),
+                        choices: vec![opus],
+                        extensions: None,
+                    },
+                ]),
+            },
+        ),
+        option(
             "effort",
             "Effort",
-            "low",
-            vec![
-                acp::SessionConfigSelectOption::new("low", "Low"),
-                acp::SessionConfigSelectOption::new("high", "High"),
-            ],
-        )
-        .category(acp::SessionConfigOptionCategory::ThoughtLevel),
-        acp::SessionConfigOption::select(
+            ConfigCategory::ThoughtLevel,
+            ConfigKind::Select {
+                current: ConfigChoiceId::new("low"),
+                choices: SelectChoices::Flat(vec![choice("low", "Low"), choice("high", "High")]),
+            },
+        ),
+        option(
             "mode",
             "Mode",
-            "ask",
-            vec![
-                acp::SessionConfigSelectOption::new("ask", "Ask"),
-                acp::SessionConfigSelectOption::new("auto", "Auto"),
-            ],
-        )
-        .category(acp::SessionConfigOptionCategory::Mode),
-        acp::SessionConfigOption::boolean("web", "Web search", false)
-            .category(acp::SessionConfigOptionCategory::Other("_tools".into())),
+            ConfigCategory::Mode,
+            ConfigKind::Select {
+                current: ConfigChoiceId::new("ask"),
+                choices: SelectChoices::Flat(vec![choice("ask", "Ask"), choice("auto", "Auto")]),
+            },
+        ),
+        option(
+            "web",
+            "Web search",
+            ConfigCategory::Other("_tools".into()),
+            ConfigKind::Boolean(false),
+        ),
     ]
 }
 
@@ -96,13 +119,13 @@ fn an_open_session_receives_only_the_choices_it_lacks_in_option_order() {
     assert_eq!(
         requests,
         [
-            (acp::SessionConfigId::new("model"), value("opus")),
-            (acp::SessionConfigId::new("effort"), value("high")),
+            (ConfigId::new("model"), value("opus")),
+            (ConfigId::new("effort"), value("high")),
         ]
     );
     let mut applied = options();
     for (id, value) in &requests {
-        choose(&mut applied, &id.0, value);
+        choose(&mut applied, id.as_str(), value);
     }
     assert!(super::requests(&applied, &choices).is_empty());
 }
@@ -118,9 +141,12 @@ fn only_model_and_effort_carry_over_to_new_chats() {
 }
 
 #[test]
-fn values_round_trip_through_the_protocol() {
+fn values_round_trip_through_unchanged_preference_grammar() {
     for value in [value("opus"), ConfigValue::Flag(true)] {
-        assert_eq!(ConfigValue::from_acp(&value.to_acp()), Some(value));
+        assert_eq!(
+            serde_json::from_slice::<ConfigValue>(&serde_json::to_vec(&value).unwrap()).unwrap(),
+            value
+        );
     }
 }
 

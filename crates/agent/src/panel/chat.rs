@@ -178,7 +178,7 @@ impl AgentPanel {
         let reduced = cx.reduce_motion();
         let changed =
             self.messages
-                .advance_reveal(&binding, thread.read(cx).history_entries(), reduced);
+                .advance_reveal(&binding, thread.read(cx).history_rows(), reduced);
         if let Some(changed) = changed {
             self.messages.apply_reveal(changed, cx);
             cx.notify();
@@ -239,8 +239,14 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut body = v_flex().size_full().min_w_0().min_h_0();
-        let plan = thread.read(cx).transcript().plan.clone();
-        let usage = thread.read(cx).transcript().usage.clone();
+        let plan = thread.read(cx).transcript().and_then(|state| state.plan());
+        let plan = plan.map(|plan| plan.to_vec());
+        let usage = thread
+            .read(cx)
+            .transcript()
+            .and_then(|state| state.usage())
+            .map(|context| (*context).clone());
+        let plan = plan.map(|plan| TranscriptView::plan(&plan, cx));
         let dirty = thread
             .update(cx, |thread, _| thread.take_changed_rows())
             .into_iter()
@@ -248,7 +254,7 @@ impl AgentPanel {
         self.messages.bind_chat(thread.entity_id(), cx);
         let rows = self.messages.observe_rows(
             thread.entity_id(),
-            thread.read(cx).history_entries(),
+            thread.read(cx).history_rows(),
             &dirty,
             thread.read(cx).session_generating(),
             cx.reduce_motion(),
@@ -261,8 +267,8 @@ impl AgentPanel {
             .is_open(&MenuKind::Usage)
             .then(|| self.render_usage(cx));
         body = body.child(TranscriptView::area(scroller, navigation, overlay, cx));
-        if let Some(plan) = &plan {
-            body = body.child(TranscriptView::plan(plan, cx));
+        if let Some(plan) = plan {
+            body = body.child(plan);
         }
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
@@ -286,7 +292,7 @@ impl AgentPanel {
             return div().into_any_element();
         };
         let state = thread.read(cx);
-        let Some(entry) = state.history_entries().get(index) else {
+        let Some(entry) = state.history_rows().get(index) else {
             return div().into_any_element();
         };
         let frame = RowPresentation::new(
@@ -295,12 +301,12 @@ impl AgentPanel {
             index,
             self.messages.expanded(index),
             entry_is_live(
-                state.history_entries(),
+                state.history_rows(),
                 index,
                 state.session_generating() && state.session_accepts_updates(),
             ),
             state.session_generating(),
-            state.transcript().time(index),
+            state.transcript().and_then(|state| state.time(index)),
             self.settings
                 .setting::<nocterm_ai::AiSettings>(cx)
                 .approval
@@ -355,29 +361,41 @@ impl AgentPanel {
     }
     pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
         if let Some(thread) = self.current() {
-            let agent = thread.read(cx).document().agent_id().to_owned();
+            let Some(agent) = thread
+                .read(cx)
+                .document()
+                .agent_id()
+                .map(|id| id.to_string())
+            else {
+                return;
+            };
             self.host.runtime().refresh_limits(&agent, cx);
         }
     }
     pub(super) fn usage_report(&self, cx: &App) -> Option<Report> {
         let thread = self.current()?;
         let thread = thread.read(cx);
-        let context = thread
-            .transcript()
-            .usage
-            .clone()
+        let state = thread.transcript();
+        let context = state
+            .and_then(|state| state.usage())
+            .map(|context| (*context).clone())
             .filter(|usage| usage.size > 0);
         let breakdown = context
             .as_ref()
-            .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
+            .and_then(|usage| Breakdown::estimate_managed(thread.history_rows(), usage.used).ok())
+            .unwrap_or_default();
+        let agent = thread
+            .document()
+            .agent_id()
+            .map(|id| id.to_string())
             .unwrap_or_default();
         let limits: Vec<RateLimit> = self
             .host
             .runtime()
-            .limits(thread.document().agent_id(), cx)
+            .limits(&agent, cx)
             .map(|limits| limits.iter().cloned().collect())
             .unwrap_or_default();
-        let limits_hint = match thread.document().agent_id() {
+        let limits_hint = match agent.as_str() {
             "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
             "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
             _ => None,
@@ -385,7 +403,7 @@ impl AgentPanel {
         Some(Report::new(
             context,
             breakdown,
-            thread.transcript().tokens.clone(),
+            state.and_then(|state| state.tokens().cloned()),
             limits,
             limits_hint,
         ))
@@ -421,13 +439,25 @@ impl AgentPanel {
             return None;
         }
         let height = queue::QueueRenderer::visible_height(&self.composer, thread, window, cx);
-        let prompts = if self.composer.queue_open() || height > gpui_kit::px(0.) {
-            thread.read(cx).composer().queue().to_vec()
+        let (prompts, previews) = if self.composer.queue_open() || height > gpui_kit::px(0.) {
+            let thread_ref = thread.read(cx);
+            let queue = thread_ref.composer();
+            let prompts = queue.queued_rows();
+            let previews = preview_operation::PreviewOperation::queued_image_sources(
+                &mut self.messages,
+                queue.queue(),
+            );
+            (
+                prompts,
+                preview_operation::PreviewOperation::queued_previews(
+                    &mut self.messages,
+                    previews,
+                    cx,
+                ),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
-        let previews =
-            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
         queue::QueueRenderer::render_queue(
             &self.composer,
             prompts,

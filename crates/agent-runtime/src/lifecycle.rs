@@ -151,16 +151,18 @@ impl Runtime {
             drop(registration);
         }
         self.admission.released(key);
-        let Some((mut connection, commands)) =
-            self.connections.release(key, id, lease.commands.take())
+        let Some((mut connection, cleanup)) =
+            self.connections
+                .release(key, id, lease.commands.take(), cx.background_executor())
         else {
             return;
         };
         let chat_id = connection.chat_id.clone();
         let connecting = connection._connecting.take();
+        let pump = connection._events.take();
         let startup_completion = connection.startup_completion.take();
         cx.spawn(async move |this, cx| {
-            if commands.is_none()
+            if cleanup.is_none()
                 && let Some(connecting) = connecting
             {
                 connecting.await;
@@ -175,26 +177,36 @@ impl Runtime {
                     }
                 }
             }
-            if let Some(cleanup) = commands {
-                let commands = cleanup.commands();
-                if let Some(session) = lease.session.take() {
-                    commands.cancel(session.clone());
-                    let close = commands.close_session(session);
-                    let bounded = futures::future::select(
-                        close,
-                        Box::pin(cx.background_executor().timer(Duration::from_secs(6))),
-                    )
-                    .await;
-                    if let futures::future::Either::Left((Err(error), _)) = bounded {
-                        tracing::warn!(%error, "agent session close failed");
+            if let Some(cleanup) = cleanup {
+                let cleanup = match cleanup {
+                    Ok(cleanup) => cleanup,
+                    Err(error) => {
+                        let _ = this.update(cx, |this, cx| {
+                            this.admission.failed_close(key);
+                            this.cleanup_failed(&chat_id, &error.to_string(), cx)
+                        });
+                        return; // Keep Closing counted: the process may still be alive.
                     }
+                };
+                let commands = cleanup.commands().clone();
+                if let Some(session) = lease.session.take() {
+                    close_session_bounded(&commands, &session, cx.background_executor()).await;
                 }
-                if let Err(error) = cleanup.join().await {
+                let closed = match cleanup.join() {
+                    Ok(completion) => completion.await,
+                    Err(error) => Err(error),
+                };
+                if let Err(error) = closed {
                     let _ = this.update(cx, |this, cx| {
                         this.admission.failed_close(key);
                         this.cleanup_failed(&chat_id, &error.to_string(), cx)
                     });
                     return; // Keep Closing counted: the process may still be alive.
+                }
+                drop(commands);
+                drop(cleanup);
+                if let Some(pump) = pump {
+                    pump.stop().await;
                 }
             }
             drop(connection);
@@ -272,15 +284,19 @@ impl Runtime {
     /// The fixture injects one event stream; production has a separate stream per connection.
     pub fn inject_events(
         &mut self,
-        events: async_channel::Receiver<AgentEvent>,
+        events: async_channel::Receiver<nocterm_ai::AgentEvent>,
         cx: &mut Context<Self>,
     ) {
         let task = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let _ = this.update(cx, |this, cx| {
                     let session = match &event {
-                        AgentEvent::Session(notification) => Some(&notification.session_id),
-                        AgentEvent::Permission { request, .. } => Some(&request.session_id),
+                        nocterm_ai::AgentEvent::Session(notification) => {
+                            Some(&notification.session)
+                        }
+                        nocterm_ai::AgentEvent::Permission { request, .. } => {
+                            Some(&request.session)
+                        }
                         _ => None,
                     };
                     let owner = this
@@ -295,19 +311,45 @@ impl Runtime {
                                 })
                             })
                         })
-                        .map(|(key, connection)| (*key, connection.serial))
-                        .or_else(|| {
-                            this.connections
-                                .iter()
-                                .next()
-                                .map(|(key, connection)| (*key, connection.serial))
+                        .or_else(|| this.connections.iter().next())
+                        .map(|(key, connection)| {
+                            (*key, connection.serial, connection.source.clone())
                         });
-                    if let Some((key, serial)) = owner {
+                    if let Some((key, serial, source)) = owner {
+                        let event = nocterm_ai::testing::managed_event(source.context_ref(), event)
+                            .unwrap_or_else(ManagedAgentEvent::Failed);
                         this.event(key, serial, event, cx);
                     }
                 });
             }
         });
         self.bridge.install_test_events(task);
+    }
+}
+
+/// Cancels and closes `session`, waiting at most six seconds for the close.
+async fn close_session_bounded(
+    commands: &nocterm_ai::connection::ManagedCommandsHandle,
+    session: &nocterm_ai::model::ids::SessionId,
+    executor: &gpui::BackgroundExecutor,
+) {
+    if let Err(error) = commands.cancel(session) {
+        tracing::warn!(%error, "agent session cancel failed");
+    }
+    match commands.close_session(session) {
+        Ok(close) => bounded_close(close, executor).await,
+        Err(error) => tracing::warn!(%error, "agent session close failed"),
+    }
+}
+
+/// A close that outlives its timeout is abandoned without an error.
+async fn bounded_close<T, E: std::fmt::Display>(
+    close: impl std::future::Future<Output = Result<T, E>>,
+    executor: &gpui::BackgroundExecutor,
+) {
+    let timer = Box::pin(executor.timer(Duration::from_secs(6)));
+    let bounded = futures::future::select(Box::pin(close), timer).await;
+    if let futures::future::Either::Left((Err(error), _)) = bounded {
+        tracing::warn!(%error, "agent session close failed");
     }
 }

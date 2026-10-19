@@ -30,8 +30,4 @@ impl RestartData {
     ) {
         (self.document, self.config, self.composer, self.restore)
     }
-
-    pub(crate) fn agent_id(&self) -> &str {
-        self.document.agent_id()
-    }
 }

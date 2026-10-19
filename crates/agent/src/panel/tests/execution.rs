@@ -364,11 +364,22 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     let (respond, mut permission) = nocterm_ai::PermissionResponder::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            let request = serde_json::from_value(serde_json::json!({
-                "sessionId": thread.session(), "toolCall":{"toolCallId":"late-provider-tool"},
-                "options":[{"optionId":"once", "name":"Allow once", "kind":"allow_once"}]
-            }))
-            .unwrap();
+            let request = nocterm_ai::model::auth::ProviderPermission {
+                session: thread.session().clone().unwrap(),
+                tool: nocterm_ai::model::tools::ToolPatch {
+                    id: nocterm_ai::model::ids::ToolId::new("late-provider-tool"),
+                    changes: Default::default(),
+                    extensions: None,
+                    claims: Default::default(),
+                    literal: Default::default(),
+                },
+                choices: vec![super::provider_permissions::choice(
+                    "once",
+                    "Allow once",
+                    nocterm_ai::model::auth::PermissionEffect::AllowOnce,
+                )],
+                extensions: None,
+            };
             f.events
                 .try_send(AgentEvent::Permission { request, respond })
                 .unwrap();
@@ -377,7 +388,7 @@ fn stop_cancels_owned_programs_even_when_no_prompt_is_generating(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(
         permission.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(nocterm_ai::model::auth::PermissionOutcome::Cancelled)
     );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],

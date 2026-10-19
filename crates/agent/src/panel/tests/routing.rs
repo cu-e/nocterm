@@ -13,7 +13,7 @@ fn server_names(f: &Fixture) -> Vec<String> {
         .map(|servers| {
             assert_eq!(servers.len(), 1);
             match &servers[0] {
-                acp::McpServer::Stdio(server) => server.name.clone(),
+                ExternalToolEndpoint::LocalCommand { name, .. } => name.clone(),
                 other => panic!("unexpected server {other:?}"),
             }
         })
@@ -59,7 +59,7 @@ fn each_chat_gives_its_agent_a_server_of_its_own(cx: &mut TestAppContext) {
     new_chat(&f, cx);
     let second = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_eq!(
-        f.connector.connects.load(Ordering::SeqCst),
+        f.connector.connect_count(),
         2,
         "each chat owns an independent agent process"
     );
@@ -155,8 +155,9 @@ fn prompts_tell_the_agent_to_report_unreachable_servers(cx: &mut TestAppContext)
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "check the server", "ok", cx);
-    let prompt = f.commands.prompts.lock().unwrap()[0].clone();
-    let acp::ContentBlock::Text(context) = &prompt.prompt[0] else {
+    let requests = f.commands.prompts.lock().unwrap();
+    let prompt = &requests[0];
+    let Content::Text(context) = &prompt.content[0] else {
         panic!("the prompt starts with its context");
     };
     assert!(

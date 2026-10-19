@@ -57,10 +57,11 @@ fn usage_escape_precedes_slash_suggestions(cx: &mut TestAppContext) {
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
                 report_control(
+                    &f,
                     thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        vec![acp::AvailableCommand::new("review", "Review")],
-                    )),
+                    SessionUpdate::Commands(vec![
+                        nocterm_ai::model::notice::AdvertisedCommand::new("review", "Review"),
+                    ]),
                     cx,
                 );
                 cx.notify();

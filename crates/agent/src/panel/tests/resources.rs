@@ -20,11 +20,11 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
     lazy_start(&f, cx);
     let first = draft(&f, cx);
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     first.update(cx, |thread, cx| thread.send("question".into(), cx));
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     complete_active(&f, cx);
     first.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
@@ -37,10 +37,10 @@ fn drafts_history_and_forks_launch_only_after_a_persisted_submission(cx: &mut Te
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(!first.read(cx).is_leased());
-        assert_eq!(first.read(cx).transcript().entries.len(), 1);
+        assert_eq!(first.read(cx).history_rows().len(), 1);
         assert!(!f.panel.read(cx).current().unwrap().read(cx).is_leased());
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
         assert!(f.access.sent().borrow().is_empty());
@@ -63,9 +63,8 @@ async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppCon
     let second = draft(&f, cx);
     second.update(cx, |thread, cx| thread.send("second".into(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
-    let (close, gate) = oneshot::channel();
-    *f.commands.close_gate.lock().unwrap() = Some(gate);
+    assert_eq!(f.connector.connect_count(), 1);
+    let close = f.script.gate_close();
     complete_active(&f, cx);
     tick(cx, 1);
     cx.update(|cx| {
@@ -73,11 +72,11 @@ async fn admission_counts_closing_until_acknowledged_cleanup(cx: &mut TestAppCon
         assert!(!second.read(cx).is_leased());
         assert_eq!(second.read(cx).composer().queue().len(), 1);
     });
-    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 0);
+    assert_eq!(f.script.shutdowns(), 0);
     close.send(()).unwrap();
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
-    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 2);
+    assert_eq!(f.script.shutdowns(), 1);
     cx.update(|cx| assert!(second.read(cx).session_generating()));
     complete_active(&f, cx);
 }
@@ -105,10 +104,8 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
     cx.update(|cx| assert!(thread.read(cx).is_leased()));
     drop(guard);
     thread.update(cx, |thread, cx| {
-        thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
         thread.submit("paused".into(), None, cx).unwrap();
         thread.pause_queue(cx);
-        thread.end_composer_edit(false, cx);
         thread.save(cx);
     });
     tick(cx, 1);
@@ -136,11 +133,8 @@ fn deletion_during_session_creation_closes_the_orphan_result(cx: &mut TestAppCon
     cx.run_until_parked();
     start.send(()).unwrap();
     cx.run_until_parked();
-    assert_eq!(
-        *f.commands.closed.lock().unwrap(),
-        vec![acp::SessionId::new("s0")]
-    );
-    assert!(f.commands.shutdowns.load(Ordering::SeqCst) >= 1);
+    assert_eq!(f.script.closed_sessions(), vec![SessionId::new("s0")]);
+    assert!(f.script.shutdowns() >= 1);
     assert!(f.bridge.revoked.lock().unwrap().contains(&1));
 }
 #[gpui_kit::test]
@@ -157,14 +151,14 @@ async fn cleanup_failure_preserves_the_slot_and_queued_document(cx: &mut TestApp
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());
     first.update(cx, |thread, cx| thread.rename(Some("keep".into()), cx));
-    f.commands.shutdown_failure.store(true, Ordering::SeqCst);
+    f.script.fail_shutdown();
     first.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     let second = draft(&f, cx);
     second.update(cx, |thread, cx| thread.send("wait".into(), cx));
     cx.run_until_parked();
     tick(cx, 3);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(first.read(cx).status().contains("could not be confirmed"));
         assert_eq!(second.read(cx).composer().queue().len(), 1);
@@ -180,29 +174,28 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
     thread.update(cx, |thread, cx| thread.send("first".into(), cx));
     cx.run_until_parked();
     complete_active(&f, cx);
-    let (close, gate) = oneshot::channel();
-    *f.commands.close_gate.lock().unwrap() = Some(gate);
+    let close = f.script.gate_close();
     thread.update(cx, |thread, cx| {
         thread.release_resources(cx);
         thread.send("resume".into(), cx);
     });
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(thread.read(cx).session_closing());
         assert!(!thread.read(cx).is_leased());
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "resume");
+        assert_eq!(thread.read(cx).composer().queued_rows()[0].text(), "resume");
     });
     close.send(()).unwrap();
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
+    assert_eq!(f.connector.connect_count(), 2);
     cx.update(|cx| {
         assert!(!thread.read(cx).session_closing());
         assert!(thread.read(cx).session_generating());
     });
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
-        vec![(acp::SessionId::new("s0"), false)]
+        vec![(SessionId::new("s0"), false)]
     );
     complete_active(&f, cx);
 }
@@ -211,7 +204,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     let f = fixture(cx);
     lazy_start(&f, cx);
     let thread = draft(&f, cx);
-    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
     f.repository.fail_next(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Read {
@@ -221,22 +214,22 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     );
     thread.update(cx, |thread, cx| thread.send("retain me".into(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     cx.update(|cx| {
         assert!(thread.read(cx).document().persistence_error().is_some());
         assert!(thread.read(cx).composer().paused());
         assert_eq!(
-            thread.read(cx).composer().queue()[0].saved.text,
+            thread.read(cx).composer().queued_rows()[0].text(),
             "retain me"
         );
         assert_eq!(thread.read(cx).document().published_revision(), 0);
     });
     thread.update(cx, |thread, cx| thread.send("next".into(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(thread.read(cx).document().persistence_error().is_none());
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "next");
+        assert_eq!(thread.read(cx).composer().queued_rows()[0].text(), "next");
     });
     complete_active(&f, cx);
     complete_active(&f, cx);
@@ -253,8 +246,11 @@ fn quit_flushes_documents_that_have_no_live_session(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].draft.as_deref(), Some("unsaved dormant edit"));
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        chats[0].composer().draft.as_deref(),
+        Some("unsaved dormant edit")
+    );
+    assert_eq!(f.connector.connect_count(), 0);
 }
 #[gpui_kit::test]
 async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestAppContext) {
@@ -304,11 +300,11 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
         .unwrap();
     second.update(cx, |thread, cx| thread.send("window two".into(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| assert_eq!(second.read(cx).composer().queue().len(), 1));
     complete_active(&f, cx);
     tick(cx, 1);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
+    assert_eq!(f.connector.connect_count(), 2);
     cx.update(|cx| {
         assert!(!first.read(cx).is_leased());
         assert!(second.read(cx).session_generating());
@@ -352,11 +348,8 @@ async fn warm_idle_limit_evicts_the_oldest_idle_session_and_keeps_documents(
         assert_eq!(f.panel.read(cx).chat_documents().len(), 3);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
-    assert_eq!(
-        *f.commands.closed.lock().unwrap(),
-        vec![acp::SessionId::new("s0")]
-    );
-    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+    assert_eq!(f.script.closed_sessions(), vec![SessionId::new("s0")]);
+    assert_eq!(f.script.shutdowns(), 1);
     assert!(f.access.sent().borrow().is_empty());
 }
 
@@ -385,7 +378,7 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
     second.update(cx, |thread, cx| thread.send("second".into(), cx));
     cx.run_until_parked();
     tick(cx, 5);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(first.read(cx).session_opening());
         assert!(first.read(cx).is_leased());
@@ -396,7 +389,7 @@ async fn starting_sessions_occupy_admission_slots_and_cannot_be_idle_evicted(
     cx.run_until_parked();
     complete_active(&f, cx);
     tick(cx, 1);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
+    assert_eq!(f.connector.connect_count(), 2);
     cx.update(|cx| assert!(second.read(cx).session_generating()));
     complete_active(&f, cx);
 }
@@ -408,18 +401,18 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
     thread.update(cx, |thread, cx| thread.send("work".into(), cx));
     cx.run_until_parked();
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
-    for status in ["pending", "in_progress", "completed"] {
-        let call = serde_json::from_value(serde_json::json!({
-            "toolCallId": status,
-            "title": "Provider tool",
-            "status": status
-        }))
-        .unwrap();
+    use nocterm_ai::model::tools::ToolStatus;
+    for (id, status) in [
+        ("pending", ToolStatus::Pending),
+        ("in_progress", ToolStatus::Running),
+        ("completed", ToolStatus::Succeeded),
+    ] {
+        let call = super::provider_intersections::provider_tool(id, "Provider tool", status);
         f.events
-            .try_send(AgentEvent::Session(acp::SessionNotification::new(
-                session.clone(),
-                acp::SessionUpdate::ToolCall(call),
-            )))
+            .try_send(AgentEvent::Session(SessionNotice {
+                session: session.clone(),
+                update: SessionUpdate::ToolStarted(call),
+            }))
             .unwrap();
     }
     cx.run_until_parked();
@@ -430,20 +423,16 @@ fn releasing_an_idle_session_finalizes_unfinished_provider_tools(cx: &mut TestAp
         assert!(!thread.read(cx).is_leased());
         let tools = thread
             .read(cx)
-            .transcript()
-            .entries
+            .tool_facts()
             .iter()
-            .filter_map(|entry| match entry {
-                nocterm_ai::thread::Entry::Tool(call) => Some(call.status),
-                _ => None,
-            })
+            .map(|call| call.status)
             .collect::<Vec<_>>();
         assert_eq!(
             tools,
             vec![
-                acp::ToolCallStatus::Failed,
-                acp::ToolCallStatus::Failed,
-                acp::ToolCallStatus::Completed
+                nocterm_ai::model::tools::ToolStatus::Failed,
+                nocterm_ai::model::tools::ToolStatus::Failed,
+                nocterm_ai::model::tools::ToolStatus::Succeeded
             ]
         );
     });
@@ -467,8 +456,8 @@ fn quit_orders_queued_atomic_writes_before_the_latest_document_snapshot(cx: &mut
     cx.run_until_parked();
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].name.as_deref(), Some("latest document"));
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(chats[0].metadata().name.as_deref(), Some("latest document"));
+    assert_eq!(f.connector.connect_count(), 0);
 }
 
 #[gpui_kit::test]
@@ -520,11 +509,18 @@ fn releasing_acp_while_generating_does_not_interrupt_the_live_shell(cx: &mut Tes
 #[gpui_kit::test]
 fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut TestAppContext) {
     let f = fixture(cx);
+    let lease_held = || {
+        f.access
+            .lease()
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .load(Ordering::Acquire)
+    };
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     f.access.at_prompt().set(false);
-    let (close, gate) = oneshot::channel();
-    *f.commands.close_gate.lock().unwrap() = Some(gate);
+    let close = f.script.gate_close();
     thread.update(cx, |thread, cx| {
         thread.send("work".into(), cx);
         let terminal_id = thread.resolved(cx)[0].0.clone();
@@ -551,46 +547,31 @@ fn manual_release_while_generating_preserves_live_command_ownership(cx: &mut Tes
         if !thread.tool_cards().is_empty() {
             thread.approve_tool(thread.tool_cards()[0].token(), true, false, cx);
         }
-        assert!(
-            f.access
-                .lease()
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .load(Ordering::Acquire)
-        );
+        assert!(lease_held());
         thread.release_resources(cx);
-        assert!(
-            f.access
-                .lease()
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .load(Ordering::Acquire)
-        );
+        assert!(lease_held());
         assert!(!thread.is_leased());
     });
     cx.run_until_parked();
     tick(cx, 1);
-    assert!(
-        f.access
-            .lease()
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .load(Ordering::Acquire)
-    );
-    let late = AgentEvent::Session(acp::SessionNotification::new(
-        acp::SessionId::new("s0"),
-        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-            acp::TextContent::new("late abandoned response"),
-        ))),
-    ));
-    f.connector.event_senders.lock().unwrap()[0]
-        .try_send(late)
-        .unwrap();
+    assert!(lease_held());
+    let late = AgentEvent::Session(SessionNotice {
+        session: SessionId::new("s0"),
+        update: SessionUpdate::AgentChunk(Content::Text(Text {
+            text: "late abandoned response".into(),
+            annotations: None,
+            extensions: None,
+        })),
+    });
+    f.connector.process_events(0).try_send(late).unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert!(!thread.read(cx).transcript().entries.iter().any(|entry| matches!(entry, nocterm_ai::thread::Entry::Agent(text) if text == "late abandoned response"))));
+    cx.update(|cx| {
+        assert!(
+            !thread.read(cx).row_facts().iter().any(
+                |row| matches!(row, RowFacts::Agent(text) if text == "late abandoned response")
+            )
+        )
+    });
     close.send(()).unwrap();
     cx.run_until_parked();
     assert_eq!(
@@ -634,7 +615,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
     assert_ne!(old.entity_id(), replacement.entity_id());
     replacement.update(cx, |thread, cx| thread.send("new unsaved queue".into(), cx));
     // Reject the replacement's physical publication while the old successful ACK is queued.
-    let replacement_id = cx.update(|cx| replacement.read(cx).document().chat_id().to_owned());
+    let replacement_id = cx.update(|cx| replacement.read(cx).chat_id_string());
     f.repository.fail_next(
         nocterm_ai::testing::StorageOperation::Save(replacement_id),
         nocterm_ai::storage::AgentStorageError::Read {
@@ -651,7 +632,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
             );
         });
     }
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     cx.update(|cx| {
         assert!(
             replacement
@@ -661,7 +642,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
                 .is_some()
         );
         assert_eq!(
-            replacement.read(cx).composer().queue()[0].saved.text,
+            replacement.read(cx).composer().queued_rows()[0].text(),
             "new unsaved queue"
         );
     });
@@ -674,41 +655,35 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
     old.update(cx, |thread, cx| thread.send("first turn".into(), cx));
     cx.run_until_parked();
     complete_active(&f, cx);
-    let (close, gate) = oneshot::channel();
-    *f.commands.close_gate.lock().unwrap() = Some(gate);
+    let close = f.script.gate_close();
     old.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
-    let chat_id = cx.update(|cx| old.read(cx).document().chat_id().to_owned());
+    let chat_id = cx.update(|cx| old.read(cx).chat_id_string());
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
     })
     .unwrap();
     let replacement = cx.update(|cx| f.panel.read(cx).current().unwrap());
     assert_ne!(old.entity_id(), replacement.entity_id());
-    cx.update(|cx| {
-        assert_eq!(
-            replacement.read(cx).document().chat_id().to_owned(),
-            chat_id
-        )
-    });
+    cx.update(|cx| assert_eq!(replacement.read(cx).chat_id_string(), chat_id));
     drop(old);
     replacement.update(cx, |thread, cx| thread.send("second turn".into(), cx));
     cx.run_until_parked();
     tick(cx, 1);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert!(!replacement.read(cx).is_leased());
         assert_eq!(
-            replacement.read(cx).composer().queue()[0].saved.text,
+            replacement.read(cx).composer().queued_rows()[0].text(),
             "second turn"
         );
     });
     close.send(()).unwrap();
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 2);
+    assert_eq!(f.connector.connect_count(), 2);
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
-        vec![(acp::SessionId::new("s0"), false)]
+        vec![(SessionId::new("s0"), false)]
     );
     cx.update(|cx| assert!(replacement.read(cx).session_generating()));
     complete_active(&f, cx);
@@ -739,9 +714,9 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     })
     .unwrap();
     tick(cx, 1);
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     assert_eq!(
-        f.repository.chats()[0].draft.as_deref(),
+        f.repository.chats()[0].composer().draft.as_deref(),
         Some("draft before activation")
     );
     cx.update_window(f.handle, |_, window, cx| {
@@ -749,7 +724,7 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     complete_active(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
         replace_composer_value(
@@ -767,20 +742,20 @@ async fn saved_drafts_do_not_launch_or_keep_an_idle_agent_alive(cx: &mut TestApp
     cx.update(|cx| {
         assert!(!thread.read(cx).is_leased());
         assert_eq!(
-            thread.read(cx).composer().draft().map(String::as_str),
+            thread.read(cx).composer().draft().as_deref(),
             Some("draft retained after idle")
         );
-        assert_eq!(thread.read(cx).transcript().entries.len(), 1);
+        assert_eq!(thread.read(cx).history_rows().len(), 1);
         assert_eq!(f.workspace.read(cx).terminals(cx).len(), 1);
     });
     assert_eq!(
-        f.repository.chats()[0].draft.as_deref(),
+        f.repository.chats()[0].composer().draft.as_deref(),
         Some("draft retained after idle")
     );
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(f.connector.connect_count(), 1);
     cx.update(|cx| {
         assert_eq!(
             f.panel.read(cx).composer_text(cx).as_ref(),

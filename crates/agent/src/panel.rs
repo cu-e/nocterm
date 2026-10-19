@@ -6,7 +6,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::controls::ConfigCategory;
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
 
@@ -37,11 +37,12 @@ mod navigation;
 mod notices;
 mod preview_operation;
 mod queue;
-mod queue_image_preparation;
 mod servers;
 mod shell;
 mod sign_in;
 mod stream;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 mod transcript;
 mod usage;
 mod widgets;
@@ -308,7 +309,7 @@ impl AgentPanel {
                 .read(cx)
                 .config_options()
                 .iter()
-                .find(|option| option.category == Some(acp::SessionConfigOptionCategory::Model))
+                .find(|option| option.category == Some(ConfigCategory::Model))
         {
             self.toggle_menu(MenuKind::Config(option.id.to_string()), cx);
         }
@@ -379,9 +380,13 @@ impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         self.history.set_visible(self.history_is_visible(cx), cx);
-        let agent = current
-            .as_ref()
-            .map(|thread| thread.read(cx).document().agent_id().to_owned());
+        let agent = current.as_ref().and_then(|thread| {
+            thread
+                .read(cx)
+                .document()
+                .agent_id()
+                .map(|id| id.to_string())
+        });
         let header = shell::ShellRenderer::header(
             agent,
             self.title(cx),

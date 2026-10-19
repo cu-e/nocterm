@@ -1,6 +1,8 @@
 //! Native sandbox facts and launch projection; policy remains in AI.
+#[cfg(test)]
 mod launch;
 pub(crate) mod resolution;
+#[cfg(test)]
 pub(crate) use launch::SandboxLauncher;
 #[cfg(test)]
 mod tests;
@@ -18,24 +20,11 @@ impl SandboxProbe for NativeSandboxProbe {
     }
 }
 pub(crate) fn availability(env: &BTreeMap<String, String>, cwd: Option<&Path>) -> Availability {
-    lookup(env, cwd, false).unwrap_or(Availability::Missing)
-}
-pub(crate) fn strict_availability(
-    env: &BTreeMap<String, String>,
-    cwd: &Path,
-) -> Result<Availability, nocterm_ai::workspace::WorkdirError> {
-    lookup(env, Some(cwd), true)
-}
-fn lookup(
-    env: &BTreeMap<String, String>,
-    cwd: Option<&Path>,
-    strict: bool,
-) -> Result<Availability, nocterm_ai::workspace::WorkdirError> {
     if !cfg!(target_os = "linux") {
-        return Ok(Availability::Unsupported);
+        return Availability::Unsupported;
     }
     let Some(path) = env.get("PATH") else {
-        return Ok(Availability::Missing);
+        return Availability::Missing;
     };
     for directory in std::env::split_paths(path) {
         if directory.as_os_str().is_empty() {
@@ -47,21 +36,9 @@ fn lookup(
             cwd.map_or(directory.clone(), |cwd| cwd.join(directory))
         };
         let candidate = directory.join("bwrap");
-        match std::fs::metadata(&candidate) {
-            Ok(metadata) if metadata.is_file() => return Ok(Availability::Available(candidate)),
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) => {}
-            Err(source) if strict => {
-                return Err(nocterm_ai::workspace::WorkdirError::resolve(
-                    candidate, source,
-                ));
-            }
-            Err(_) => {}
+        if std::fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file()) {
+            return Availability::Available(candidate);
         }
     }
-    Ok(Availability::Missing)
+    Availability::Missing
 }

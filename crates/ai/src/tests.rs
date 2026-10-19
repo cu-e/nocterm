@@ -1,7 +1,12 @@
+use crate::model::{
+    content::Content,
+    ids::ToolId,
+    tools::{ToolKind, ToolRecord, ToolStatus},
+};
 use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
 use crate::{
-    acp, approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*,
-    thread::*, tools::*,
+    approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*, thread::*,
+    tools::*,
 };
 use serde_json::json;
 #[test]
@@ -66,54 +71,7 @@ fn environment_blocks_sensitive_and_injection_vars_even_if_requested() {
     assert!(!env.values().any(|v| v == "marker"));
     assert!(!valid_name("bad=name"));
 }
-fn update(value: serde_json::Value) -> acp::SessionUpdate {
-    serde_json::from_value(value).unwrap()
-}
-#[test]
-fn reducer_merges_chunks_and_keeps_message_boundaries() {
-    let mut s = ThreadState::default();
-    for text in ["hello ", "world"] {
-        s.apply(update(
-            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}),
-        ), 1);
-    }
-    assert!(matches!(&s.entries[0],Entry::Agent(v) if v=="hello world"));
-    s.push_user(
-        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
-        1,
-    );
-    s.apply(update(
-        json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}),
-    ), 1);
-    s.apply(update(
-        json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"response"}}),
-    ), 1);
-    assert_eq!(s.entries.len(), 4);
-}
-#[test]
-fn reducer_handles_transcript_metadata_usage_and_tool_replacement() {
-    let mut s = ThreadState::default();
-    for value in [
-        json!({"sessionUpdate":"tool_call","toolCallId":"1","title":"read","kind":"read","status":"pending"}),
-        json!({"sessionUpdate":"tool_call_update","toolCallId":"1","status":"completed","title":"done","rawOutput":{"text":"ok"}}),
-        json!({"sessionUpdate":"plan","entries":[]}),
-        json!({"sessionUpdate":"session_info_update","title":"A title"}),
-        json!({"sessionUpdate":"usage_update","used":50,"size":100}),
-        json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"user"}}),
-    ] {
-        assert_ne!(s.apply(update(value), 1), ThreadChange::Ignored);
-    }
-    assert!(
-        matches!(&s.entries[0],Entry::Tool(v) if v.title=="done"&&v.status==acp::ToolCallStatus::Completed)
-    );
-    assert_eq!(s.title.as_deref(), Some("A title"));
-    assert_eq!(s.usage.as_ref().unwrap().used, 50);
-    s.apply(
-        update(json!({"sessionUpdate":"session_info_update","title":null})),
-        1,
-    );
-    assert!(s.title.is_none());
-}
+
 #[test]
 fn mcp_requires_initialization_validates_input_and_never_echoes_bad_payload() {
     let mut m = McpSession::default();
@@ -302,16 +260,6 @@ fn redacts_quoted_credential_assignments() {
 }
 
 #[test]
-fn image_chunks_are_retained() {
-    let mut state = ThreadState::default();
-    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"AA==","mimeType":"image/png"}})), 1);
-    assert!(matches!(
-        state.entries.last(),
-        Some(Entry::Content(acp::ContentBlock::Image(_)))
-    ));
-}
-
-#[test]
 fn capabilities_do_not_share_execution_input_or_connection_grants() {
     let settings = ApprovalSettings::default();
     let mut grants = ApprovalGrants::default();
@@ -480,24 +428,120 @@ fn tool_failures_carry_text_and_are_redacted_in_the_result_payload() {
 }
 
 #[test]
-fn reducer_uses_supplied_timestamps_and_preserves_the_first_chunk_time() {
-    let mut state = ThreadState::default();
-    state.apply(
-        update(
-            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"first"}}),
-        ),
-        10,
-    );
-    state.apply(update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"second"}})), 20);
-    state.push_user(
-        vec![acp::ContentBlock::Text(acp::TextContent::new("next"))],
-        30,
-    );
-    assert_eq!(state.time(0), Some(10));
-    assert_eq!(state.time(1), Some(30));
-    state.apply(
-        update(json!({"sessionUpdate":"session_info_update","title":"Title"})),
-        40,
-    );
-    assert_eq!(state.times, [10, 30]);
+fn history_admission_rejects_reserved_string_image_vector_and_identifier_capacity() {
+    let authority = crate::model::retention::RetentionAuthority::new(usize::MAX).unwrap();
+    use crate::history::{
+        self, ChatMetadata, ComposerData, HistoryCodecError, ResumeDescriptor, SavedChat,
+        TranscriptData,
+    };
+    let metadata = || ChatMetadata {
+        agent_id: "agent".into(),
+        title: None,
+        name: None,
+        pinned: false,
+        updated: 1,
+        model: None,
+    };
+    let chat = |entry| {
+        SavedChat::from_parts(
+            &authority,
+            "00000000-0000-4000-8000-000000000001".into(),
+            metadata(),
+            ResumeDescriptor::default(),
+            TranscriptData {
+                entries: vec![entry],
+                times: vec![],
+            },
+            ComposerData::default(),
+        )
+        .unwrap()
+    };
+    // Encoded text is empty; the actual retained reserve alone exceeds64MiB.
+    let reserve = String::with_capacity(history::MAX_RESIDENT_BYTES + 1);
+    assert!(matches!(
+        history::prepare(chat(Entry::Agent(reserve))),
+        Err(HistoryCodecError::StructuralLimit)
+    ));
+    // Literal ID length is tiny; moved shared String retains the caller reserve.
+    let mut reserve = String::with_capacity(history::MAX_RESIDENT_BYTES + 1);
+    reserve.push_str(" 001 ");
+    let id = ToolId::new(reserve);
+    assert_eq!(id.as_str(), " 001 ");
+    assert!(matches!(
+        history::prepare(chat(Entry::Tool(ToolRecord {
+            id,
+            title: "Tool".into(),
+            name: None,
+            kind: ToolKind::Other,
+            status: ToolStatus::Pending,
+            output: vec![],
+            locations: vec![],
+            arguments: None,
+            result: None,
+            extensions: None,
+            claims: Default::default(),
+            literal: Default::default(),
+            client_display: None,
+        }))),
+        Err(HistoryCodecError::StructuralLimit)
+    ));
+    // Empty user media likewise preserves vector capacity, independently of len.
+    let slots = history::MAX_RESIDENT_BYTES / std::mem::size_of::<Content>() + 1;
+    let reserve = Vec::<Content>::with_capacity(slots);
+    assert!(matches!(
+        history::prepare(chat(Entry::User(reserve))),
+        Err(HistoryCodecError::StructuralLimit)
+    ));
 }
+
+#[test]
+fn borrowed_environment_fields_preserve_parent_filtering_and_explicit_precedence() {
+    for name in ["nocterm_private", "Ld_PrElOaD", "ssH_aUTh_sock"] {
+        assert!(blocked(name));
+    }
+    for name in [
+        "api_kEy",
+        "toKen",
+        "my_SECRET_value",
+        "épasswordé",
+        "x_passwd",
+    ] {
+        assert!(credential_override(name));
+    }
+    for name in ["", "x", "é", "token_suffix", "ld_preload_suffix"] {
+        assert!(!blocked(name));
+        assert!(!credential_override(name));
+    }
+    assert!(allowed("SystemRoot"));
+    assert!(!allowed("systemroot"));
+    let inherited = vec!["TOKEN".to_owned(), "CUSTOM".to_owned()];
+    let actual = sanitized_environment_fields(
+        &inherited,
+        [
+            ("HOME", "explicit home"),
+            ("TOKEN", "forbidden override"),
+            ("PLAIN", "explicit value"),
+            ("NOCTERM_PRIVATE", "blocked"),
+        ],
+        [
+            ("HOME", "parent home"),
+            ("TOKEN", "inherited token"),
+            ("CUSTOM", "inherited custom"),
+            ("UNRELATED", "excluded"),
+            ("LD_PRELOAD", "excluded"),
+        ]
+        .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    );
+    assert_eq!(
+        actual,
+        [
+            ("HOME", "explicit home"),
+            ("TOKEN", "inherited token"),
+            ("CUSTOM", "inherited custom"),
+            ("PLAIN", "explicit value")
+        ]
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .into()
+    );
+}
+mod thread;

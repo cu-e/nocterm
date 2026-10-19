@@ -3,11 +3,29 @@
 use super::provider_intersections::{Program, bridge, update};
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
-use nocterm_ai::{
-    ApprovalPolicy, ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display,
+use nocterm_ai::model::{
+    ids::ToolId,
+    json::OwnedJson,
+    retention::RetentionAuthority,
+    tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus},
 };
+use nocterm_ai::{ApprovalPolicy, ExecCommand, ReadCommand, TerminalCall, tool_display};
 use nocterm_session::ExecExit;
 use serde_json::{Value, json};
+fn hermes_row(
+    authority: &RetentionAuthority,
+    id: &str,
+    title: &str,
+    input: Option<Value>,
+    output: Option<Value>,
+) -> ToolRecord {
+    let mut call = super::provider_intersections::provider_tool(id, title, ToolStatus::Pending);
+    let end = call.title.len();
+    super::provider_intersections::known_title(&mut call, 12..13, 14..end);
+    call.arguments = input.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
+    call.result = output.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
+    call
+}
 
 /// The text Hermes reports for an MCP result, as `tool_dispatch_helpers` builds it.
 fn fenced(tool: &str, result: &str) -> String {
@@ -20,21 +38,21 @@ fn fenced(tool: &str, result: &str) -> String {
     )
 }
 
-fn completed(id: &str, text: String) -> acp::SessionUpdate {
-    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-        id.to_owned(),
-        acp::ToolCallUpdateFields::new()
-            .raw_output(Value::String(text.clone()))
-            .content(vec![acp::ToolCallContent::from(text)])
-            .status(acp::ToolCallStatus::Completed),
-    ))
-}
-
-fn row(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) -> acp::ToolCall {
-    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
-        panic!("tool row expected");
-    };
-    call.clone()
+fn completed(authority: &RetentionAuthority, id: &str, text: String) -> SessionUpdate {
+    SessionUpdate::ToolChanged(ToolPatch {
+        id: ToolId::new(id),
+        changes: ToolChanges {
+            result: Some(
+                OwnedJson::from_untracked(authority, Value::String(text.clone())).unwrap(),
+            ),
+            output: Some(vec![super::tool_output::text_output(text)]),
+            status: Some(ToolStatus::Succeeded),
+            ..Default::default()
+        },
+        extensions: None,
+        claims: Default::default(),
+        literal: Default::default(),
+    })
 }
 
 #[gpui_kit::test]
@@ -66,7 +84,7 @@ fn hermes_rows_show_the_host_the_command_and_the_decoded_result(cx: &mut TestApp
 fn assert_terminal_listing(
     f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
-    session: &acp::SessionId,
+    session: &SessionId,
     terminal_id: &str,
     cx: &mut TestAppContext,
 ) {
@@ -74,9 +92,12 @@ fn assert_terminal_listing(
     update(
         f,
         session,
-        acp::SessionUpdate::ToolCall(acp::ToolCall::new(
+        SessionUpdate::ToolStarted(hermes_row(
+            &f.installation.retention,
             "tc-list",
             "mcp_nocterm_3_list_terminals",
+            None,
+            None,
         )),
         cx,
     );
@@ -85,31 +106,36 @@ fn assert_terminal_listing(
     update(
         f,
         session,
-        completed("tc-list", fenced("mcp_nocterm_3_list_terminals", &result)),
+        completed(
+            &f.installation.retention,
+            "tc-list",
+            fenced("mcp_nocterm_3_list_terminals", &result),
+        ),
         cx,
     );
     cx.update(|cx| {
-        let call = row(thread, 0, cx);
-        assert!(tool_display::ToolDisplay::from_call(&call).is_some());
-        assert_eq!(
-            tool_display::header(&call),
-            "Nocterm · List terminals · Completed"
-        );
-        let output = tool_output::source(&call, false).unwrap();
-        assert_eq!(
-            output.sections.len(),
-            1,
-            "content and rawOutput are one result"
-        );
-        assert_eq!(output.sections[0].label, "Context");
-        assert!(output.sections[0].text.contains(terminal_id));
+        thread.read(cx).with_tool(0, |call| {
+            assert!(tool_display::ToolDisplay::from_managed(call).is_some());
+            assert_eq!(
+                tool_display::managed_header(call),
+                "Nocterm · List terminals · Completed"
+            );
+            let output = tool_output::source_managed(call, false).unwrap();
+            assert_eq!(
+                output.sections.len(),
+                1,
+                "content and rawOutput are one result"
+            );
+            assert_eq!(output.sections[0].label, "Context");
+            assert!(output.sections[0].text.contains(terminal_id));
+        })
     });
 }
 
 fn assert_completed_command(
     f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
-    session: &acp::SessionId,
+    session: &SessionId,
     terminal_id: String,
     program: &Program,
     cx: &mut TestAppContext,
@@ -126,10 +152,13 @@ fn assert_completed_command(
     update(
         f,
         session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("tc-exec", "mcp_nocterm_3_exec_command")
-                .raw_input(serde_json::to_value(&request).unwrap()),
-        ),
+        SessionUpdate::ToolStarted(hermes_row(
+            &f.installation.retention,
+            "tc-exec",
+            "mcp_nocterm_3_exec_command",
+            Some(serde_json::to_value(&request).unwrap()),
+            None,
+        )),
         cx,
     );
     let started = bridge(f, TerminalCall::ExecCommand(request), cx);
@@ -156,7 +185,11 @@ fn assert_completed_command(
     update(
         f,
         session,
-        completed("tc-exec", fenced("mcp_nocterm_3_exec_command", &result)),
+        completed(
+            &f.installation.retention,
+            "tc-exec",
+            fenced("mcp_nocterm_3_exec_command", &result),
+        ),
         cx,
     );
     assert_command_row(thread, script, &started, cx);
@@ -169,35 +202,37 @@ fn assert_command_row(
     cx: &mut TestAppContext,
 ) {
     cx.update(|cx| {
-        let call = row(thread, 1, cx);
-        assert_eq!(
-            tool_display::header(&call),
-            "This computer · Execute program · Completed",
-            "the row names the host the bridge ran the command on"
-        );
-        let input = tool_input::source(&call).unwrap();
-        assert_eq!(input.label, "Command");
-        assert_eq!(input.text, script);
-        let output = tool_output::source(&call, false).unwrap();
-        assert_eq!(output.sections[0].label, "Standard output");
-        assert_eq!(output.sections[0].text, started["stdout"].as_str().unwrap());
-        assert!(
-            output
-                .parameters
-                .iter()
-                .any(|text| text == "Exit status: unknown")
-        );
-        assert!(
-            !output
-                .sections
-                .iter()
-                .any(|section| section.text.contains("untrusted_tool_result"))
-        );
+        thread.read(cx).with_tool(1, |call| {
+            assert_eq!(
+                tool_display::managed_header(call),
+                "This computer · Execute program · Completed",
+                "the row names the host the bridge ran the command on"
+            );
+            let input = tool_input::source_managed(call).unwrap();
+            assert_eq!(input.label, "Command");
+            assert_eq!(input.text, script);
+            let output = tool_output::source_managed(call, false).unwrap();
+            assert_eq!(output.sections[0].label, "Standard output");
+            assert_eq!(output.sections[0].text, started["stdout"].as_str().unwrap());
+            assert!(
+                output
+                    .parameters
+                    .iter()
+                    .any(|text| text == "Exit status: unknown")
+            );
+            assert!(
+                !output
+                    .sections
+                    .iter()
+                    .any(|section| section.text.contains("untrusted_tool_result"))
+            );
+        })
     });
 }
 
 #[test]
 fn a_saved_hermes_row_is_readable_without_its_bridge() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let result = json!({"result": json!({
         "text":"Last login\n➜  ~", "first_line":1, "next_line":15,
         "cursor_semantics":"inclusive snapshot; replace overlapping lines",
@@ -205,11 +240,15 @@ fn a_saved_hermes_row_is_readable_without_its_bridge() {
     }).to_string()})
     .to_string();
     let text = fenced("mcp_nocterm_1_read_terminal", &result);
-    let mut call = acp::ToolCall::new("tc-ec26dc3e6086", "mcp_nocterm_1_read_terminal")
-        .raw_input(json!({"lines": 50, "terminal_id": "t1"}))
-        .raw_output(Value::String(text.clone()))
-        .content(vec![acp::ToolCallContent::from(text)]);
-    call.status = acp::ToolCallStatus::Completed;
+    let mut call = hermes_row(
+        &authority,
+        "tc-ec26dc3e6086",
+        "mcp_nocterm_1_read_terminal",
+        Some(json!({"lines":50,"terminal_id":"t1"})),
+        Some(Value::String(text.clone())),
+    );
+    call.output = vec![super::tool_output::text_output(text)];
+    call.status = ToolStatus::Succeeded;
     assert_eq!(
         tool_display::header(&call),
         "Nocterm · Read terminal · Completed"
@@ -225,14 +264,19 @@ fn a_saved_hermes_row_is_readable_without_its_bridge() {
 
 #[test]
 fn a_failed_hermes_call_shows_the_error() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let text = fenced(
         "mcp_nocterm_3_read_command",
         &json!({"error": "Unknown command handle c9"}).to_string(),
     );
-    let mut call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_read_command")
-        .raw_input(json!({"terminal_id":"t1", "command_id":"c9"}))
-        .raw_output(Value::String(text));
-    call.status = acp::ToolCallStatus::Failed;
+    let mut call = hermes_row(
+        &authority,
+        "tc-1",
+        "mcp_nocterm_3_read_command",
+        Some(json!({"terminal_id":"t1","command_id":"c9"})),
+        Some(Value::String(text)),
+    );
+    call.status = ToolStatus::Failed;
     let output = tool_output::source(&call, false).unwrap();
     assert_eq!(output.sections.len(), 1);
     assert_eq!(output.sections[0].label, "Error");
@@ -241,17 +285,23 @@ fn a_failed_hermes_call_shows_the_error() {
 
 #[test]
 fn a_short_hermes_result_is_not_fenced() {
-    let call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_send_input")
-        .raw_input(json!({"terminal_id":"t1", "text":"y", "press_enter":true}))
-        .raw_output(json!(
-            json!({"result": json!({"accepted":true}).to_string()}).to_string()
-        ));
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
+    let call = hermes_row(
+        &authority,
+        "tc-1",
+        "mcp_nocterm_3_send_input",
+        Some(json!({"terminal_id":"t1","text":"y","press_enter":true})),
+        Some(json!(
+            json!({"result":json!({"accepted":true}).to_string()}).to_string()
+        )),
+    );
     let output = tool_output::source(&call, false).unwrap();
     assert_eq!(output.sections[0].text, "Input accepted");
 }
 
 #[test]
 fn a_fence_with_extra_text_stays_literal() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let result = json!({"result": exec("exited").to_string()}).to_string();
     for text in [
         fenced("mcp_nocterm_3_exec_command", &result).replace("\n\n", "\ninjected\n\n"),
@@ -261,9 +311,13 @@ fn a_fence_with_extra_text_stays_literal() {
         ),
         fenced("mcp_nocterm_3_exec_command\" other=\"", &result),
     ] {
-        let call = acp::ToolCall::new("tc-1", "mcp_nocterm_3_exec_command")
-            .raw_input(json!({"terminal_id":"t1", "program":"true"}))
-            .raw_output(Value::String(text.clone()));
+        let call = hermes_row(
+            &authority,
+            "tc-1",
+            "mcp_nocterm_3_exec_command",
+            Some(json!({"terminal_id":"t1","program":"true"})),
+            Some(Value::String(text.clone())),
+        );
         let output = tool_output::source(&call, false).unwrap();
         assert_eq!(output.sections[0].label, "Tool output");
         assert_eq!(output.sections[0].text, text);

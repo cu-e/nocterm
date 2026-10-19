@@ -12,7 +12,7 @@ use gpui_kit::{
     prelude::*,
     px, relative,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 use nocterm_ui::IconName;
 
 use super::AgentPanel;
@@ -20,9 +20,9 @@ use nocterm_ai::usage::{Breakdown, RateLimit};
 
 /// The card's sections, gathered before anything is laid out.
 pub(super) struct Report {
-    context: Option<acp::UsageUpdate>,
+    context: Option<ContextUsage>,
     breakdown: Breakdown,
-    tokens: Option<acp::Usage>,
+    tokens: Option<TokenTotals>,
     limits: Vec<RateLimit>,
     /// Shown when no limits are known yet.
     limits_hint: Option<&'static str>,
@@ -149,12 +149,12 @@ impl UsageCard {
     fn tokens(report: &Report, cx: &App) -> Option<gpui_kit::Div> {
         if let Some(tokens) = &report.tokens {
             let rows = [
-                ("Input", Some(tokens.input_tokens)),
-                ("Cache read", tokens.cached_read_tokens),
-                ("Cache write", tokens.cached_write_tokens),
-                ("Output", Some(tokens.output_tokens)),
-                ("Reasoning", tokens.thought_tokens),
-                ("Total", Some(tokens.total_tokens)),
+                ("Input", Some(tokens.input)),
+                ("Cache read", tokens.cache_read),
+                ("Cache write", tokens.cache_write),
+                ("Output", Some(tokens.output)),
+                ("Reasoning", tokens.thought),
+                ("Total", Some(tokens.total)),
             ];
             return Some(
                 section("Session tokens", cx).children(
@@ -311,7 +311,7 @@ fn until(seconds: u64) -> String {
     }
 }
 
-pub(super) fn usage_fraction(usage: Option<&acp::UsageUpdate>) -> f32 {
+pub(super) fn usage_fraction(usage: Option<&ContextUsage>) -> f32 {
     usage
         .filter(|usage| usage.size > 0)
         .map(|usage| (usage.used as f64 / usage.size as f64).clamp(0., 1.) as f32)
@@ -319,7 +319,7 @@ pub(super) fn usage_fraction(usage: Option<&acp::UsageUpdate>) -> f32 {
 }
 
 /// The ring that shows how full the context window is and opens the card.
-pub(super) fn context_ring(usage: Option<&acp::UsageUpdate>, cx: &App) -> Button {
+pub(super) fn context_ring(usage: Option<&ContextUsage>, cx: &App) -> Button {
     let fraction = usage_fraction(usage);
     let background = cx.theme().muted.blend(cx.theme().foreground.opacity(0.10));
     let foreground = if fraction >= 0.85 {
@@ -382,7 +382,7 @@ pub(super) fn context_ring(usage: Option<&acp::UsageUpdate>, cx: &App) -> Button
 impl UsageCard {
     pub(super) fn usage_button(
         open: bool,
-        usage: Option<&acp::UsageUpdate>,
+        usage: Option<&ContextUsage>,
         cx: &mut Context<AgentPanel>,
     ) -> Button {
         // Match native popovers: toggle on mouse-down, using the rendered state.
@@ -405,9 +405,9 @@ impl UsageCard {
 
 impl Report {
     pub(super) fn new(
-        context: Option<acp::UsageUpdate>,
+        context: Option<ContextUsage>,
         breakdown: Breakdown,
-        tokens: Option<acp::Usage>,
+        tokens: Option<TokenTotals>,
         limits: Vec<RateLimit>,
         limits_hint: Option<&'static str>,
     ) -> Self {

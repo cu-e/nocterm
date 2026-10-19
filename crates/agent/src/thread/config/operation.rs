@@ -1,14 +1,25 @@
 //! A configuration request retains its original ticket and operation lifetime.
 use super::super::session_driver::OperationGuard;
-use nocterm_ai::{AgentCommands, AgentError, acp, session::Ticket};
-use std::sync::Arc;
+use futures::FutureExt as _;
+use nocterm_ai::{
+    connection::ManagedCommandsHandle,
+    history::source::ManagedCommandError,
+    model::{
+        controls::ConfigOption,
+        ids::{ConfigId, ModeId, SessionId},
+        native::NativeOwned,
+        session::{ConfigurationSelection, ModeSelection},
+    },
+    session::Ticket,
+    session_config::ConfigValue,
+};
 pub(in crate::thread) enum ConfigurationRequest {
-    Option(acp::SessionConfigId, acp::SessionConfigOptionValue),
-    Mode(acp::SessionModeId),
+    Option(ConfigId, ConfigValue),
+    Mode(ModeId),
 }
 pub(in crate::thread) enum ConfigurationResult {
-    Option(Result<Vec<acp::SessionConfigOption>, AgentError>),
-    Mode(acp::SessionModeId, Result<(), AgentError>),
+    Option(Result<NativeOwned<Vec<ConfigOption>>, ManagedCommandError>),
+    Mode(ModeId, Result<(), ManagedCommandError>),
 }
 pub(in crate::thread) struct ConfigurationOperation {
     ticket: Ticket,
@@ -21,25 +32,31 @@ impl ConfigurationOperation {
         ticket: Ticket,
         reconciling: bool,
         guard: OperationGuard,
-        commands: Arc<dyn AgentCommands>,
-        session: acp::SessionId,
+        commands: ManagedCommandsHandle,
+        session: SessionId,
         request: ConfigurationRequest,
     ) -> Self {
-        let future = Box::pin(async move {
-            match request {
-                ConfigurationRequest::Option(id, value) => ConfigurationResult::Option(
-                    commands
-                        .set_config_option(acp::SetSessionConfigOptionRequest::new(
-                            session, id, value,
-                        ))
-                        .await,
-                ),
-                ConfigurationRequest::Mode(id) => {
-                    let result = commands
-                        .set_mode(acp::SetSessionModeRequest::new(session, id.clone()))
-                        .await;
-                    ConfigurationResult::Mode(id, result)
+        let future = Box::pin(match request {
+            ConfigurationRequest::Option(id, value) => {
+                let work = commands.set_config_option(&ConfigurationSelection {
+                    session,
+                    option: id,
+                    value,
+                });
+                async move {
+                    ConfigurationResult::Option(super::super::session_driver::settle(work).await)
                 }
+                .boxed()
+            }
+            ConfigurationRequest::Mode(id) => {
+                let work = commands.set_mode(&ModeSelection {
+                    session,
+                    mode: id.clone(),
+                });
+                async move {
+                    ConfigurationResult::Mode(id, super::super::session_driver::settle(work).await)
+                }
+                .boxed()
             }
         });
         Self {

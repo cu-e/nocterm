@@ -1,7 +1,10 @@
-//! Agent contracts, bounded context rules and legacy version-one history formats.
+//! Neutral agent contracts, bounded context rules and version-two history formats.
 //!
 //! Owns: configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
 //! bounded history codecs and capability/storage ports.
+//! Authentic retention graphs deduplicate real allocation identities. DocumentRetention
+//! admits fixed producer roles and pending construction credit under a short scope lock.
+//! Native reader/writer envelopes retain original capabilities through physical retirement.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,
@@ -19,10 +22,8 @@
 //! Invariants: saved records validate identity/version and encoded/structural limits.
 //! Snapshot framing and transcript timestamps accept supplied identity/time.
 //! Native chat allocation and wall-clock facts are provided by ChatMetadataSource.
-//! Existing ACP-backed DTOs are explicit
-//! migration debt; storage ports add no new protocol-specific types.
+//! Tool and history ports use neutral records; protocol SDK decoding belongs to adapters.
 //! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
-pub use agent_client_protocol_schema::v1 as acp;
 pub mod approval;
 pub mod commands;
 pub mod connection;

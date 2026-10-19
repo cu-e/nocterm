@@ -18,6 +18,7 @@ use crate::{AGENT_BRIDGE, agent_auth, bootstrap};
 
 pub(crate) struct PreparedApp {
     paths: Paths,
+    retention: nocterm_ai::model::retention::RetentionAuthority,
     executable: PathBuf,
     tokens: DesignTokens,
     settings: SettingsConfig,
@@ -25,12 +26,21 @@ pub(crate) struct PreparedApp {
     transport: SshTransport,
     files: nocterm_files::Deps,
     local: nocterm_terminal::LocalSessions,
+    connector: Arc<nocterm_acp::AcpConnector>,
 }
 impl PreparedApp {
     pub(crate) fn load() -> anyhow::Result<Self> {
         // Linux reports a replaced running binary as "<path> (deleted)".
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
+        let retention = nocterm_ai::model::retention::RetentionAuthority::new(
+            nocterm_ai::history::MAX_RESIDENT_BYTES,
+        )
+        .context("creating retained history authority")?;
+        let connector = Arc::new(
+            nocterm_acp::AcpConnector::try_managed(executable.clone())
+                .context("agent diagnostics")?,
+        );
         let tokens = load_tokens(&paths);
         let settings = load_settings(&paths);
         let dirs = nocterm_themes::ThemeDirs {
@@ -49,6 +59,7 @@ impl PreparedApp {
             SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
         Ok(Self {
             paths,
+            retention,
             executable,
             tokens,
             settings,
@@ -60,6 +71,7 @@ impl PreparedApp {
             transport,
             files: files_dependencies()?,
             local: local_sessions(),
+            connector,
         })
     }
 
@@ -89,7 +101,13 @@ impl PreparedApp {
         connections: nocterm_connections::PreparedConnections,
         cx: &mut App,
     ) {
-        let agent = agent_services(&self.paths, self.executable, storage);
+        let agent = agent_services(
+            &self.paths,
+            self.executable,
+            self.connector,
+            storage,
+            self.retention,
+        );
         let vault = Some(bootstrap::VaultSetup {
             file: self.paths.config_dir().join("vault.bin"),
             device_unlock: true,
@@ -177,13 +195,15 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
 fn agent_services(
     paths: &Paths,
     executable: std::path::PathBuf,
+    connector: Arc<nocterm_acp::AcpConnector>,
     storage: nocterm_agent_runtime::AgentStorage,
+    retention: nocterm_ai::model::retention::RetentionAuthority,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
         sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
 
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
-        connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
+        connector,
         terminal_auth: None,
         bridge: Arc::new(nocterm_acp::BridgeServer::new(
             paths.clone(),
@@ -193,6 +213,7 @@ fn agent_services(
             },
         )),
         storage,
+        retention,
         workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
         usage_source: Arc::new(nocterm_agent_storage::CodexUsageReader::new(codex_home())),
         workdir: paths.state_dir().join("agent-workspace"),

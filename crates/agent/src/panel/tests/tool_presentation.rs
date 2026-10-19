@@ -6,10 +6,15 @@ use serde_json::json;
 
 #[test]
 fn only_explicit_supported_shell_command_flags_promote_the_script() {
+    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
+        nocterm_ai::history::MAX_RESIDENT_BYTES,
+    )
+    .unwrap();
     let script = "printf '%s\\n' 'literal'\r\n\tprintf '```'\n";
     for program in ["bash", "sh", "/bin/bash", "/usr/bin/sh"] {
         for flag in ["-c", "-lc"] {
             let call = call(
+                &authority,
                 "exec_command",
                 json!({"terminal_id":"t1", "program":program, "args":[flag,script,"", "a b"], "stdin":"\tinput\r\n"}),
                 exec_result("running"),
@@ -35,6 +40,7 @@ fn only_explicit_supported_shell_command_flags_promote_the_script() {
         ("env", json!(["bash", "-lc", script])),
     ] {
         let call = call(
+            &authority,
             "exec_command",
             json!({"terminal_id":"t1", "program":program, "args":args}),
             exec_result("running"),
@@ -55,15 +61,18 @@ fn screenshot_doubleunderscore_shell_command_copies_literal_script_and_full_argv
     let args = json!(["-lc", script, "", "a b"]);
     let payload = exec_result("running");
     let output = json!({"content":[{"type":"text","text":payload.to_string()}]});
-    let call = call(
-        "exec_command",
-        json!({"terminal_id":"t1", "program":"bash", "args":args,"stdin":"input\r\n"}),
-        output,
-        true,
+    let f = expanded_fixture(
+        |authority| {
+            call(
+                authority,
+                "exec_command",
+                json!({"terminal_id":"t1", "program":"bash", "args":args,"stdin":"input\r\n"}),
+                output,
+                true,
+            )
+        },
+        cx,
     );
-    // A restored read-only history keeps the frozen bridge destination.
-    let call = serde_json::from_value(serde_json::to_value(call).unwrap()).unwrap();
-    let f = expanded_fixture(call, cx);
     for mode in [
         gpui_kit::component::ThemeMode::Dark,
         gpui_kit::component::ThemeMode::Light,
@@ -103,7 +112,12 @@ fn screenshot_doubleunderscore_shell_command_copies_literal_script_and_full_argv
 
 #[test]
 fn unmatched_historical_command_is_readable_without_current_attachment_host() {
+    let authority = nocterm_ai::model::retention::RetentionAuthority::new(
+        nocterm_ai::history::MAX_RESIDENT_BYTES,
+    )
+    .unwrap();
     let call = call(
+        &authority,
         "exec_command",
         json!({"terminal_id":"t1", "program":"sh", "args":["-c","echo history"]}),
         exec_result("running"),

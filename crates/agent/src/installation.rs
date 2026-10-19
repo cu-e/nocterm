@@ -40,9 +40,8 @@ impl Installed {
     pub(crate) fn timestamp(&self) -> u64 {
         self.inner.metadata.timestamp()
     }
-    pub(crate) fn new_chat(&self, agent: String) -> nocterm_ai::history::SavedChat {
-        let identity = self.inner.metadata.new_identity();
-        nocterm_ai::history::SavedChat::for_identity(agent, identity.id, identity.created)
+    pub(crate) fn new_identity(&self) -> nocterm_ai::metadata::ChatIdentity {
+        self.inner.metadata.new_identity()
     }
 }
 pub(crate) fn install(
@@ -56,6 +55,7 @@ pub(crate) fn install(
     let settings = ready.settings().clone();
     let runtime = runtime::RuntimeHandle::new(
         runtime::RuntimeServices {
+            retention: services.retention,
             settings: settings.clone(),
             connector: services.connector,
             bridge: services.bridge,

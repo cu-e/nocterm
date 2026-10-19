@@ -17,6 +17,7 @@ struct Script {
     inspections: HashMap<Vec<u8>, Result<ImageFacts, ImageCodecError>>,
     previews: HashMap<Vec<u8>, Result<EncodedPreview, ImageCodecError>>,
     requests: Vec<ImageRequest>,
+    managed_requests: Vec<(usize, usize)>,
     replaced: HashSet<Vec<u8>>,
 }
 #[derive(Clone, Default)]
@@ -48,8 +49,41 @@ impl ScriptedImageCodec {
     pub fn requests(&self) -> Vec<ImageRequest> {
         self.script.lock().expect("image script").requests.clone()
     }
+    /// Observation only; these scalars cannot resurrect or authorize an image.
+    pub fn managed_requests(&self) -> Vec<(usize, usize)> {
+        self.script
+            .lock()
+            .expect("image script")
+            .managed_requests
+            .clone()
+    }
+    pub fn clear_managed_requests(&self) {
+        self.script
+            .lock()
+            .expect("image script")
+            .managed_requests
+            .clear();
+    }
 }
 impl ImageInspector for ScriptedImageCodec {
+    fn inspect_managed(
+        &self,
+        bytes: &crate::images::managed::ManagedImageBytes,
+        _ledger: &crate::model::json::deferred::DecodeLedger,
+    ) -> Result<ImageFacts, ImageCodecError> {
+        let mut script = self.script.lock().expect("image script");
+        script
+            .managed_requests
+            .push((bytes.bytes().as_ptr() as usize, bytes.bytes().len()));
+        if script.replaced.contains(bytes.bytes()) {
+            return Err(ImageCodecError::InvalidEvidence);
+        }
+        script
+            .inspections
+            .get(bytes.bytes())
+            .cloned()
+            .unwrap_or(Err(ImageCodecError::InvalidEvidence))
+    }
     fn inspect(&self, bytes: Arc<[u8]>) -> Result<InspectedImage, ImageCodecError> {
         let (result, replaced) = {
             let mut script = self.script.lock().expect("image script");

@@ -261,8 +261,13 @@ impl HistoryProjection {
                 let thread = thread.read(cx);
                 query.is_empty()
                     || thread.title().to_lowercase().contains(&query)
-                    || thread.transcript().mentions(&query)
-                    || history.matches(thread.document().chat_id())
+                    || thread
+                        .transcript()
+                        .is_some_and(|state| state.mentions(&query).unwrap_or(false))
+                    || thread
+                        .document()
+                        .chat_id()
+                        .is_some_and(|id| history.matches(&id))
             })
             .cloned()
             .collect()
@@ -335,7 +340,7 @@ impl HistoryProjection {
         let id = thread.entity_id();
         let chat = thread.read(cx);
         let when = if chat.archive_summary().is_none_or(|row| !row.has_content)
-            && chat.history_entries().is_empty()
+            && chat.history_rows().is_empty()
             && chat.draft_text().is_none()
         {
             "No requests yet".to_owned()
@@ -354,7 +359,10 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: chat.document().agent_id().to_owned(),
+            agent: match chat.document().agent_id() {
+                Some(id) => id.to_string(),
+                None => return div().into_any_element(),
+            },
             rename: history.rename_input(id),
         };
         HistoryRowRenderer::render(row, cx)

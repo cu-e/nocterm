@@ -39,7 +39,9 @@ fn token(registration: &BridgeRegistration) -> String {
 fn launches_the_relay_under_the_chat_server_name() {
     let dir = tempfile::tempdir().unwrap();
     let registration = bridge(&dir).register().unwrap();
-    let nocterm_ai::acp::McpServer::Stdio(server) = registration.mcp_server() else {
+    let agent_client_protocol_schema::v1::McpServer::Stdio(server) =
+        crate::mapping::outbound::endpoint(registration.endpoint())
+    else {
         panic!("stdio relay");
     };
     assert_eq!(server.name, format!("nocterm-{}", registration.id));

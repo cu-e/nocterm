@@ -3,33 +3,98 @@ use super::*;
 use gpui_kit::{ListOffset, point, px};
 use nocterm_ai::thread::Entry;
 
+pub(super) fn content(text: impl Into<String>) -> Content {
+    Content::Text(Text {
+        text: text.into(),
+        annotations: None,
+        extensions: None,
+    })
+}
+fn tool(id: &str, title: &str) -> nocterm_ai::model::tools::ToolRecord {
+    use nocterm_ai::model::{
+        ids::ToolId,
+        tools::{ToolKind, ToolRecord, ToolStatus},
+    };
+    ToolRecord {
+        id: ToolId::new(id),
+        title: title.into(),
+        name: None,
+        kind: ToolKind::Other,
+        status: ToolStatus::Pending,
+        output: Vec::new(),
+        locations: Vec::new(),
+        arguments: None,
+        result: None,
+        extensions: None,
+        claims: Default::default(),
+        literal: Default::default(),
+        client_display: None,
+    }
+}
+
 fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
+    conversation(f, true, cx)
+}
+/// Nine rows: user, thought, tool, agent, thought, user, thought, tall agent, tool. Without a
+/// first question, a leading tool stands in for the first user row.
+fn conversation(
+    f: &Fixture,
+    first_question: bool,
+    cx: &mut TestAppContext,
+) -> Entity<crate::thread::AgentThread> {
     new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| {
-        restore_entries(
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    if first_question {
+        thread.update(cx, |thread, cx| thread.send("First question".into(), cx));
+        cx.run_until_parked();
+    } else {
+        deliver(
             f,
-            thread,
-            vec![
-                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    "First question",
-                ))]),
-                Entry::Thought("Reasoning before answer".into()),
-                Entry::Tool(acp::ToolCall::new("one", "Inspect terminal")),
-                Entry::Agent("A tall first answer with wrapped text.\n\n".repeat(80)),
-                Entry::Thought("Reasoning between messages".into()),
-                Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    "Second question with several paragraphs.\n\n".repeat(80),
-                ))]),
-                Entry::Content(acp::ContentBlock::Text(acp::TextContent::new(
-                    "Additional content",
-                ))),
-                Entry::Agent("A tall second answer with wrapped text.\n\n".repeat(80)),
-                Entry::Agent("A tall final answer with wrapped text.\n\n".repeat(80)),
-            ],
+            &session,
+            SessionUpdate::ToolStarted(tool("leading", "Leading tool")),
             cx,
         );
-        for index in 0..thread.transcript().entries.len() {
+    }
+    let text = |text: String| {
+        Content::Text(Text {
+            text,
+            annotations: None,
+            extensions: None,
+        })
+    };
+    for update in [
+        SessionUpdate::ThoughtChunk(text("Reasoning before answer".into())),
+        SessionUpdate::ToolStarted(tool("one", "Inspect terminal")),
+        SessionUpdate::AgentChunk(text(
+            "A tall first answer with wrapped text.\n\n".repeat(80),
+        )),
+        SessionUpdate::ThoughtChunk(text("Reasoning between messages".into())),
+    ] {
+        deliver(f, &session, update, cx);
+    }
+    if first_question {
+        complete_active(f, cx);
+    }
+    thread.update(cx, |thread, cx| {
+        thread.send(
+            "Second question with several paragraphs.\n\n".repeat(80),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    for update in [
+        SessionUpdate::ThoughtChunk(text("Additional reasoning".into())),
+        SessionUpdate::AgentChunk(text(
+            "A tall second answer with wrapped text.\n\n".repeat(80),
+        )),
+        SessionUpdate::ToolStarted(tool("two", "Inspect again")),
+    ] {
+        deliver(f, &session, update, cx);
+    }
+    complete_active(f, cx);
+    thread.update(cx, |thread, cx| {
+        for index in 0..thread.history_rows().len() {
             thread.mark_dirty(index);
         }
         cx.notify();
@@ -94,8 +159,7 @@ pub(super) fn scroll_to(f: &Fixture, index: usize, cx: &mut TestAppContext) {
                     .current()
                     .unwrap()
                     .read(cx)
-                    .transcript()
-                    .entries
+                    .history_rows()
                     .len();
                 let rows: Vec<_> = (0..count)
                     .filter_map(|row| {
@@ -155,8 +219,7 @@ fn top(f: &Fixture, cx: &mut TestAppContext) -> ListOffset {
             .current()
             .unwrap()
             .read(cx)
-            .transcript()
-            .entries
+            .history_rows()
             .len();
         (0..count)
             .find_map(|index| {
@@ -281,18 +344,15 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
     cx.run_until_parked();
     click(&f, "agent-previous-message", cx);
     let before = top(&f, cx);
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    deliver(
+        &f,
+        &session,
+        SessionUpdate::AgentChunk(content("New streamed text. ".repeat(50))),
+        cx,
+    );
     thread.update(cx, |thread, cx| {
-        let mut entries = thread.history_entries().to_vec();
-        if let Entry::Agent(text) = &mut entries[8] {
-            text.push_str(&"New streamed text. ".repeat(50));
-        }
-        thread.mark_dirty(8);
-        entries.push(Entry::User(vec![acp::ContentBlock::Text(
-            acp::TextContent::new("Third question"),
-        )]));
-        restore_entries(&f, thread, entries, cx);
-        thread.mark_dirty(9);
-        cx.notify();
+        thread.send("Third question".into(), cx);
     });
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
@@ -322,8 +382,14 @@ fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &m
     let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver(), image_deps());
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
-        let mut entries = thread.history_entries().to_vec();
-        entries.extend((0..500).map(|i| Entry::Agent(format!("Additional message {i}"))));
+        let entries = (0..500)
+            .map(|i| {
+                Entry::Tool(tool(
+                    &format!("extra-{i}"),
+                    &format!("Additional message {i}"),
+                ))
+            })
+            .collect();
         restore_entries(&f, thread, entries, cx);
         cx.notify();
     });
@@ -389,15 +455,7 @@ fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &m
 #[gpui_kit::test]
 fn top_of_chat_includes_leading_tools_before_the_first_user_message(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    let thread = transcript(&f, cx);
-    thread.update(cx, |thread, cx| {
-        let mut entries = thread.history_entries().to_vec();
-        entries[0] = Entry::Tool(acp::ToolCall::new("leading", "Leading tool"));
-        restore_entries(&f, thread, entries, cx);
-        thread.mark_dirty(0);
-        cx.notify();
-    });
-    cx.run_until_parked();
+    conversation(&f, false, cx);
     scroll_to(&f, 7, cx);
     click(&f, "agent-previous-message", cx);
     assert_eq!(top(&f, cx).item_ix, 5);

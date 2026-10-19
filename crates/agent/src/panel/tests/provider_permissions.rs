@@ -1,33 +1,66 @@
 use super::*;
 use nocterm_ai::ApprovalPolicy;
 
-fn options() -> Vec<acp::PermissionOption> {
+use nocterm_ai::model::{
+    auth::{PermissionChoice, PermissionEffect, PermissionOutcome, ProviderPermission},
+    ids::{PermissionOptionId, ToolId},
+    tools::{ToolChanges, ToolPatch},
+};
+pub(super) fn choice(id: &str, label: &str, effect: PermissionEffect) -> PermissionChoice {
+    PermissionChoice {
+        id: PermissionOptionId::new(id),
+        label: label.into(),
+        effect,
+        extensions: None,
+    }
+}
+fn options() -> Vec<PermissionChoice> {
     vec![
-        acp::PermissionOption::new(
-            "reject",
-            "Allow once",
-            acp::PermissionOptionKind::RejectOnce,
-        ),
-        acp::PermissionOption::new("always", "Allow", acp::PermissionOptionKind::AllowAlways),
-        acp::PermissionOption::new("once", "Continue", acp::PermissionOptionKind::AllowOnce),
+        choice("reject", "Allow once", PermissionEffect::DenyOnce),
+        choice("always", "Allow", PermissionEffect::AllowRemembered),
+        choice("once", "Continue", PermissionEffect::AllowOnce),
     ]
 }
-
-fn request(
-    session: acp::SessionId,
-    options: Vec<acp::PermissionOption>,
-) -> acp::RequestPermissionRequest {
-    serde_json::from_value(serde_json::json!({
-        "sessionId":session, "toolCall":{"toolCallId":"provider-tool", "title":"Use agent files"}, "options":options
-    })).unwrap()
+pub(super) fn permission(
+    session: SessionId,
+    id: &str,
+    title: &str,
+    choices: Vec<PermissionChoice>,
+) -> ProviderPermission {
+    ProviderPermission {
+        session,
+        tool: ToolPatch {
+            id: ToolId::new(id),
+            changes: ToolChanges {
+                title: Some(title.into()),
+                ..Default::default()
+            },
+            extensions: None,
+            claims: Default::default(),
+            literal: Default::default(),
+        },
+        choices,
+        extensions: None,
+    }
 }
-
+/// One call with a single "Allow" once choice.
+pub(super) fn allow_once(session: SessionId, id: &str, title: &str) -> ProviderPermission {
+    permission(
+        session,
+        id,
+        title,
+        vec![choice("allow", "Allow", PermissionEffect::AllowOnce)],
+    )
+}
+fn request(session: SessionId, options: Vec<PermissionChoice>) -> ProviderPermission {
+    permission(session, "provider-tool", "Use agent files", options)
+}
 fn submit(
     f: &Fixture,
     cx: &mut TestAppContext,
-    session: acp::SessionId,
-    options: Vec<acp::PermissionOption>,
-) -> oneshot::Receiver<acp::RequestPermissionOutcome> {
+    session: SessionId,
+    options: Vec<PermissionChoice>,
+) -> oneshot::Receiver<PermissionOutcome> {
     let (respond, receive) = nocterm_ai::PermissionResponder::channel();
     f.events
         .try_send(AgentEvent::Permission {
@@ -52,9 +85,9 @@ fn set_policy(f: &Fixture, cx: &mut TestAppContext, policy: ApprovalPolicy) {
     cx.run_until_parked();
 }
 
-fn selected_once(receive: &mut oneshot::Receiver<acp::RequestPermissionOutcome>) {
+fn selected_once(receive: &mut oneshot::Receiver<PermissionOutcome>) {
     assert!(
-        matches!(receive.try_recv().unwrap(), Some(acp::RequestPermissionOutcome::Selected(selected)) if selected.option_id == acp::PermissionOptionId::from("once"))
+        matches!(receive.try_recv().unwrap(), Some(PermissionOutcome::Selected(selected)) if selected == PermissionOptionId::new("once"))
     );
 }
 
@@ -152,10 +185,10 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
         &f,
         cx,
         session,
-        vec![acp::PermissionOption::new(
+        vec![choice(
             "always",
             "Allow once",
-            acp::PermissionOptionKind::AllowAlways,
+            PermissionEffect::AllowRemembered,
         )],
     );
     assert!(receive.try_recv().unwrap().is_none());
@@ -168,7 +201,7 @@ fn no_one_time_choice_stays_visible_with_an_explanation_and_can_be_cancelled(
     .unwrap();
     assert_eq!(
         receive.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -184,31 +217,31 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
         &f,
         cx,
         session.clone(),
-        vec![acp::PermissionOption::new(
-            "shared",
-            "Allow once",
-            acp::PermissionOptionKind::AllowOnce,
-        )],
+        vec![choice("shared", "Allow once", PermissionEffect::AllowOnce)],
     );
     let old_generation = cx.update(|cx| thread.read(cx).permission_cards()[0].token());
     let mut always = submit(
         &f,
         cx,
         session,
-        vec![acp::PermissionOption::new(
+        vec![choice(
             "shared",
             "Remember",
-            acp::PermissionOptionKind::AllowAlways,
+            PermissionEffect::AllowRemembered,
         )],
     );
     set_policy(&f, cx, ApprovalPolicy::Allow);
     assert!(matches!(
         once.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Selected(_))
+        Some(PermissionOutcome::Selected(_))
     ));
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.choose_permission_request(old_generation, Some("shared".into()), cx)
+            thread.choose_permission_request(
+                old_generation,
+                Some(PermissionOptionId::new("shared")),
+                cx,
+            )
         })
     });
     assert!(always.try_recv().unwrap().is_none());
@@ -221,7 +254,7 @@ fn stale_card_choice_cannot_grant_a_different_request_after_queue_compaction(
     });
     assert_eq!(
         always.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -238,14 +271,14 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
         thread.update(cx, |thread, cx| {
             thread.choose_permission_request(
                 thread.permission_cards()[0].token(),
-                Some("foreign-id".into()),
+                Some(PermissionOptionId::new("foreign-id")),
                 cx,
             )
         })
     });
     assert_eq!(
         invalid.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     let mut obsolete = submit(&f, cx, session.clone(), options());
     cx.update(|cx| thread.update(cx, |thread, cx| thread.detach_session(cx)));
@@ -253,12 +286,12 @@ fn invalid_manual_ids_and_foreign_or_replaced_sessions_cancel_even_in_automatic_
     set_policy(&f, cx, ApprovalPolicy::Allow);
     assert_eq!(
         obsolete.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
     let mut foreign = submit(&f, cx, session.clone(), options());
     assert_eq!(
         foreign.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
 }
 
@@ -283,14 +316,11 @@ fn stop_blocks_late_provider_requests_in_idle_and_active_chats(cx: &mut TestAppC
         });
         assert_eq!(
             queued.try_recv().unwrap(),
-            Some(acp::RequestPermissionOutcome::Cancelled)
+            Some(PermissionOutcome::Cancelled)
         );
         set_policy(&f, cx, ApprovalPolicy::Allow);
         let mut late = submit(&f, cx, session, options());
-        assert_eq!(
-            late.try_recv().unwrap(),
-            Some(acp::RequestPermissionOutcome::Cancelled)
-        );
+        assert_eq!(late.try_recv().unwrap(), Some(PermissionOutcome::Cancelled));
     }
 }
 
@@ -325,7 +355,7 @@ async fn disabling_ai_before_enabling_automatic_permissions_cancels_queued_reque
     cx.run_until_parked();
     assert_eq!(
         queued.try_recv().unwrap(),
-        Some(acp::RequestPermissionOutcome::Cancelled)
+        Some(PermissionOutcome::Cancelled)
     );
-    assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
+    assert_eq!(f.script.shutdowns(), 1);
 }

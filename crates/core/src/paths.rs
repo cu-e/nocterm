@@ -160,6 +160,17 @@ impl Paths {
 /// another user cannot plant a directory where sockets and tokens will go. A
 /// directory of ours with looser permissions is tightened.
 pub fn ensure_private_dir(path: &Path) -> io::Result<()> {
+    ensure_private_dir_checked(path).map_err(|error| match error {
+        crate::fs::PrivateDirectoryCheckError::Native(source) => source,
+        crate::fs::PrivateDirectoryCheckError::Policy(reason) => reason.compatibility_error(path),
+    })
+}
+
+/// Same native private-directory operation, with allocation-free policy facts.
+/// Callers may admit the original dynamic diagnostic before constructing it.
+pub fn ensure_private_dir_checked(
+    path: &Path,
+) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -183,20 +194,18 @@ fn create_private(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn verify_private(path: &Path) -> io::Result<()> {
+fn verify_private(path: &Path) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} is not a plain directory", path.display()),
+        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
+            crate::fs::PrivateDirectoryReason::NotPlain,
         ));
     }
     if metadata.uid() != nix::unistd::Uid::effective().as_raw() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("{} belongs to another user", path.display()),
+        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
+            crate::fs::PrivateDirectoryReason::ForeignOwner,
         ));
     }
     if metadata.permissions().mode() & 0o077 != 0 {
@@ -206,12 +215,11 @@ fn verify_private(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn verify_private(path: &Path) -> io::Result<()> {
+fn verify_private(path: &Path) -> Result<(), crate::fs::PrivateDirectoryCheckError> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} is not a plain directory", path.display()),
+        return Err(crate::fs::PrivateDirectoryCheckError::Policy(
+            crate::fs::PrivateDirectoryReason::NotPlain,
         ));
     }
     Ok(())

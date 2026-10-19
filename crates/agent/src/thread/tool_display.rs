@@ -1,12 +1,39 @@
-//! Reconciles the ACP activity stream with the requests our bridge executed.
+//! Reconciles the provider activity stream with the requests our bridge executed.
 //! Neither provider titles nor today's attachment list establishes a destination.
 #[cfg(test)]
 use nocterm_ai::TerminalCall;
 use nocterm_ai::{
-    ToolFailure, acp,
-    thread::Entry,
+    ToolFailure,
+    history::physical::{RowBody, RowSlot, ToolSlot},
+    model::{controls::Presence, ids::ToolId},
     tool_display::{self, ToolDisplay},
 };
+
+/// A client display which must be copied into one retained tool row.
+pub(super) struct DisplayPatch {
+    row: usize,
+    display: ToolDisplay,
+}
+impl DisplayPatch {
+    pub(super) fn row(&self) -> usize {
+        self.row
+    }
+    pub(super) fn display(&self) -> &ToolDisplay {
+        &self.display
+    }
+}
+fn tool(row: &RowSlot) -> Option<&ToolSlot> {
+    match row.view() {
+        RowBody::Tool(slot) => Some(slot),
+        _ => None,
+    }
+}
+
+/// The row of the tool call `id`, when the document retains it.
+pub(super) fn tool_row(rows: &[RowSlot], id: &str) -> Option<usize> {
+    rows.iter()
+        .position(|row| tool(row).is_some_and(|call| call.id().as_str() == id))
+}
 
 #[derive(Default)]
 pub(super) struct ToolDisplays {
@@ -21,21 +48,21 @@ struct Record {
     id: u64,
     request: (String, serde_json::Value),
     display: ToolDisplay,
-    row: Option<acp::ToolCallId>,
+    row: Option<ToolId>,
     ambiguous: bool,
 }
 
 impl Record {
-    fn matches(&self, call: &acp::ToolCall) -> bool {
-        self.row.as_ref() == Some(&call.tool_call_id)
-            || tool_display::raw_envelope(call, &self.server)
+    fn matches(&self, call: &ToolSlot) -> bool {
+        self.row.as_ref().is_some_and(|row| *row == *call.id())
+            || tool_display::raw_envelope_managed(call, &self.server)
                 .is_some_and(|request| request == self.request)
     }
 
     fn revoke_destination(&mut self) {
         self.ambiguous = true;
-        self.display.destination = None;
-        self.display.outcome = None;
+        self.display.destination = Presence::Null;
+        self.display.outcome = Presence::Absent;
     }
 }
 
@@ -55,8 +82,11 @@ impl ToolDisplays {
             .records
             .iter_mut()
             .find(|record| record.id == id && !record.ambiguous)
+            && let Err(error) = record.display.finish(result)
         {
-            record.display.finish(result);
+            tracing::warn!(%error, "tool display result could not be retained");
+            record.display.outcome =
+                Presence::Value(tool_display::ToolOutcome::Failed(error.to_string()));
         }
     }
     pub(super) fn finalize(&mut self, turn: u64) {
@@ -66,9 +96,12 @@ impl ToolDisplays {
         for record in &mut self.records {
             if matches!(
                 record.display.outcome,
-                Some(tool_display::ToolOutcome::Pending)
+                Presence::Value(tool_display::ToolOutcome::Pending)
             ) {
-                record.display.finish(Err("Request cancelled.".into()));
+                // Cancellation has no JSON conversion or retained payload allocation.
+                record.display.outcome = Presence::Value(tool_display::ToolOutcome::Failed(
+                    "Request cancelled.".into(),
+                ));
             }
         }
     }
@@ -81,20 +114,18 @@ impl ToolDisplays {
         }
     }
 
-    pub(super) fn normalize(
-        &mut self,
-        entries: &[Entry],
-    ) -> Vec<super::document::ToolMetadataPatch> {
-        self.revoke_ambiguous_destinations(entries);
+    pub(super) fn normalize(&mut self, rows: &[RowSlot]) -> Vec<DisplayPatch> {
+        self.revoke_ambiguous_destinations(rows);
         let mut changed = Vec::new();
-        for index in self.start..entries.len() {
-            let Entry::Tool(call) = &entries[index] else {
+        for index in self.start..rows.len() {
+            let Some(call) = tool(&rows[index]) else {
                 continue;
             };
+            let id = call.id();
             let bound = self
                 .records
                 .iter()
-                .position(|record| record.row.as_ref() == Some(&call.tool_call_id));
+                .position(|record| record.row.as_ref() == Some(&*id));
             let candidate = bound.or_else(|| {
                 let matches: Vec<_> = self
                     .records
@@ -103,7 +134,7 @@ impl ToolDisplays {
                     .filter(|(_, record)| {
                         !record.ambiguous
                             && record.row.is_none()
-                            && tool_display::raw_envelope(call, &record.server)
+                            && tool_display::raw_envelope_managed(call, &record.server)
                                 .is_some_and(|request| request == record.request)
                     })
                     .map(|(index, _)| index)
@@ -112,41 +143,36 @@ impl ToolDisplays {
                     return None;
                 }
                 let record = &self.records[matches[0]];
-                let rows = entries[self.start..]
+                let candidates = rows[self.start..]
                     .iter()
-                    .filter(|entry| {
-                        let Entry::Tool(other) = entry else {
-                            return false;
-                        };
-                        ToolDisplay::from_call(other).is_none()
-                            && tool_display::raw_envelope(other, &record.server)
+                    .filter_map(tool)
+                    .filter(|other| {
+                        ToolDisplay::from_managed(other).is_none()
+                            && tool_display::raw_envelope_managed(other, &record.server)
                                 .is_some_and(|request| request == record.request)
                     })
                     .count();
-                (rows == 1).then_some(matches[0])
+                (candidates == 1).then_some(matches[0])
             });
             let Some(candidate) = candidate else {
                 continue;
             };
             let record = &mut self.records[candidate];
-            let Entry::Tool(call) = &entries[index] else {
-                continue;
-            };
-            record.row = Some(call.tool_call_id.clone());
-            if let Ok(value) = serde_json::to_value(&record.display)
-                && call
-                    .meta
-                    .as_ref()
-                    .and_then(|meta| meta.get(tool_display::META_KEY))
-                    != Some(&value)
+            record.row = Some((*id).clone());
+            if call
+                .client_display()
+                .is_none_or(|display| **display != record.display)
             {
-                changed.push(super::document::ToolMetadataPatch::new(index, value));
+                changed.push(DisplayPatch {
+                    row: index,
+                    display: record.display.clone(),
+                });
             }
         }
         changed
     }
 
-    fn revoke_ambiguous_destinations(&mut self, entries: &[Entry]) {
+    fn revoke_ambiguous_destinations(&mut self, rows: &[RowSlot]) {
         let ambiguous: Vec<_> = self
             .records
             .iter()
@@ -161,9 +187,10 @@ impl ToolDisplays {
                         })
                         .count()
                         > 1
-                    || entries[self.start..]
+                    || rows[self.start..]
                         .iter()
-                        .filter(|entry| matches!(entry, Entry::Tool(call) if record.matches(call)))
+                        .filter_map(tool)
+                        .filter(|call| record.matches(call))
                         .count()
                         > 1
             })

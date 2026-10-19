@@ -1,6 +1,8 @@
 //! A running turn's fixed attachments and opaque identities are separate from Composer.
-use super::super::Attachment;
+use super::super::{Attachment, composer::AttachmentSelection};
+use super::turn_scope::{TurnAttachments, TurnScope};
 use gpui_kit::App;
+use nocterm_ai::history::dispatch::ActivePromptScope;
 use nocterm_ai::{
     TerminalCall,
     context::{ConnectionDescriptor, OpaqueIds, ServerDescriptor, TerminalDescriptor},
@@ -12,7 +14,7 @@ struct TurnUsage {
     outcomes: usize,
 }
 pub(super) struct TurnContext {
-    scope: Option<Vec<Attachment>>,
+    scope: Option<TurnScope>,
     terminals: OpaqueIds,
     servers: OpaqueIds,
     usage: TurnUsage,
@@ -31,7 +33,7 @@ impl TurnContext {
     fn attached_servers(
         &self,
         input: &super::resolution::Resolution,
-        defaults: &[Attachment],
+        defaults: AttachmentSelection<'_>,
     ) -> Vec<ConnectionSummary> {
         input
             .summaries()
@@ -41,18 +43,25 @@ impl TurnContext {
             .collect()
     }
 
-    pub(super) fn capture_scope(&mut self, scope: Vec<Attachment>) {
-        self.scope = Some(scope);
+    pub(super) fn capture_scope(&mut self, scope: ActivePromptScope) {
+        self.scope = Some(TurnScope::new(scope));
     }
     pub(super) fn clear_scope(&mut self) {
         self.scope = None;
     }
-    pub(super) fn prompt_scope(&self) -> Option<&[Attachment]> {
-        self.scope.as_deref()
+    pub(super) fn prompt_scope(&self) -> Option<TurnAttachments<'_>> {
+        self.scope.as_ref().map(TurnScope::attachments)
+    }
+    pub(super) fn attachments<'a>(
+        &'a self,
+        defaults: AttachmentSelection<'a>,
+    ) -> TurnAttachments<'a> {
+        self.prompt_scope()
+            .unwrap_or_else(|| TurnAttachments::defaults(defaults))
     }
     pub(super) fn detach_attachment(&mut self, attachment: &Attachment) {
         if let Some(scope) = &mut self.scope {
-            scope.retain(|value| value != attachment);
+            scope.detach(attachment);
         }
     }
     pub(super) fn terminal_id(&mut self, key: &str) -> String {
@@ -76,11 +85,12 @@ impl TurnContext {
 }
 
 impl TurnContext {
-    fn attaches_server(&self, summary: &ConnectionSummary, defaults: &[Attachment]) -> bool {
-        self.scope
-            .as_deref()
-            .unwrap_or(defaults)
-            .iter()
+    fn attaches_server(
+        &self,
+        summary: &ConnectionSummary,
+        defaults: AttachmentSelection<'_>,
+    ) -> bool {
+        self.attachments(defaults)
             .any(|attachment| attachment.covers_server(summary))
     }
     /// The terminals this chat may use: attached tabs, and every open
@@ -88,7 +98,7 @@ impl TurnContext {
     pub(super) fn resolved(
         &mut self,
         input: &super::resolution::Resolution,
-        defaults: &[Attachment],
+        defaults: AttachmentSelection<'_>,
         cx: &App,
     ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
         let summaries = input.summaries();
@@ -103,9 +113,7 @@ impl TurnContext {
                     .as_ref()
                     .and_then(|profile| summaries.iter().find(|summary| summary.id == *profile));
                 let attached = self
-                    .scope
-                    .as_deref()
-                    .unwrap_or(defaults)
+                    .attachments(defaults)
                     .contains(&Attachment::Terminal(entry.item))
                     || summary.is_some_and(|summary| self.attaches_server(summary, defaults));
                 if !attached {
@@ -159,7 +167,7 @@ impl TurnContext {
     pub(super) fn offline_servers(
         &mut self,
         input: &super::resolution::Resolution,
-        defaults: &[Attachment],
+        defaults: AttachmentSelection<'_>,
         cx: &App,
     ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
         let live: Vec<String> = self
@@ -195,7 +203,7 @@ impl TurnContext {
     pub(super) fn context(
         &mut self,
         input: &super::resolution::Resolution,
-        defaults: &[Attachment],
+        defaults: AttachmentSelection<'_>,
         cx: &App,
     ) -> String {
         let terminals: Vec<_> = self
@@ -215,7 +223,7 @@ impl TurnContext {
         &mut self,
         call: &TerminalCall,
         input: &super::resolution::Resolution,
-        defaults: &[Attachment],
+        defaults: AttachmentSelection<'_>,
         cx: &App,
     ) -> String {
         if let Some(server) = call.server_id() {

@@ -132,16 +132,16 @@ impl ApprovalCardsRenderer {
         let generation = permission.token();
         let title = permission
             .request()
-            .tool_call
-            .fields
+            .tool
+            .changes
             .title
             .clone()
             .unwrap_or_else(|| "Agent permission request".into());
         let options: Vec<_> = permission
             .request()
-            .options
+            .choices
             .iter()
-            .map(|option| (option.option_id.clone(), option.name.clone()))
+            .map(|option| (option.id.clone(), option.label.clone()))
             .collect();
         let mut actions = h_flex().w_full().min_w_0().flex_wrap().gap_1();
         for (id, name) in options {

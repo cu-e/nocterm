@@ -1,10 +1,10 @@
+use super::json::OwnedJson;
 use super::{
     content::Content,
     extensions::Extensions,
     ids::{ProviderTerminalId, ToolId},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::PathBuf;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,7 +30,17 @@ pub enum ToolStatus {
     Succeeded,
     Failed,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl ToolStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Pending",
+            Self::Running => "InProgress",
+            Self::Succeeded => "Completed",
+            Self::Failed => "Failed",
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ToolRecord {
     pub id: ToolId,
     pub title: String,
@@ -40,23 +50,30 @@ pub struct ToolRecord {
     pub output: Vec<ToolOutput>,
     pub locations: Vec<Location>,
     #[serde(with = "json_presence")]
-    pub arguments: Option<Value>,
+    pub arguments: Option<OwnedJson>,
     #[serde(with = "json_presence")]
-    pub result: Option<Value>,
+    pub result: Option<OwnedJson>,
     pub extensions: Option<Extensions>,
+    #[serde(skip)]
     pub claims: BridgeClaims,
-    pub client_display: Option<ClientDisplay>,
+    #[serde(skip)]
+    pub literal: super::literal::LiteralEvidence,
+    #[serde(with = "shared_display")]
+    pub client_display: Option<super::shared_display::SharedDisplay>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ToolPatch {
     pub id: ToolId,
     pub changes: ToolChanges,
     pub extensions: Option<Extensions>,
+    #[serde(skip)]
     pub claims: BridgeClaims,
+    #[serde(skip)]
+    pub literal: super::literal::LiteralEvidence,
 }
 /// None keeps the previous value; Some(empty) clears a collection. JSON null in
 /// raw input/output decodes as absent under the current wire optional-field rules.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ToolChanges {
     pub kind: Option<ToolKind>,
     pub status: Option<ToolStatus>,
@@ -65,16 +82,35 @@ pub struct ToolChanges {
     pub output: Option<Vec<ToolOutput>>,
     pub locations: Option<Vec<Location>>,
     #[serde(with = "json_presence")]
-    pub arguments: Option<Value>,
+    pub arguments: Option<OwnedJson>,
     #[serde(with = "json_presence")]
-    pub result: Option<Value>,
+    pub result: Option<OwnedJson>,
 }
 impl ToolRecord {
+    pub(crate) fn adopt_retention(
+        &self,
+        authority: &super::retention::RetentionAuthority,
+    ) -> Result<(), super::retention::RetentionError> {
+        self.id.adopt_retention(authority)?;
+        for output in &self.output {
+            if let ToolOutput::TerminalReference { id, .. } = output {
+                id.adopt_retention(authority)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn apply(&mut self, patch: ToolPatch) -> bool {
         if self.id != patch.id {
             return false;
         }
         let changes = patch.changes;
+        self.literal.apply(
+            patch.literal,
+            changes.name.is_some(),
+            changes.title.is_some(),
+            changes.arguments.is_some(),
+        );
         if let Some(value) = changes.kind {
             self.kind = value;
         }
@@ -103,7 +139,7 @@ impl ToolRecord {
         true
     }
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ToolOutput {
     Content {
@@ -116,14 +152,14 @@ pub enum ToolOutput {
         extensions: Option<Extensions>,
     },
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct FileDiff {
     pub path: PathBuf,
     pub previous: Option<String>,
     pub replacement: String,
     pub extensions: Option<Extensions>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Location {
     pub path: PathBuf,
     pub line: Option<u32>,
@@ -187,20 +223,21 @@ impl BridgeClaims {
 }
 
 /// Durable presentation supplied by the client, never a restored capability.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ClientDisplay {
     pub version: u8,
     pub tool: String,
-    pub arguments: Value,
-    pub destination: Option<String>,
-    pub redacted: bool,
-    pub outcome: Option<DisplayOutcome>,
+    pub arguments: OwnedJson,
+    pub destination: super::controls::Presence<String>,
+    pub redacted: super::controls::Presence<bool>,
+    pub outcome: super::controls::Presence<DisplayOutcome>,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum DisplayOutcome {
     Pending,
-    Succeeded(Value),
+    #[serde(rename = "Ok")]
+    Succeeded(OwnedJson),
+    #[serde(rename = "Err")]
     Failed(String),
 }
 
@@ -208,23 +245,17 @@ pub enum DisplayOutcome {
 /// it with a missing optional field. Live adapter patches still follow the SDK's
 /// optional-field decoding; this representation does not invent wire clears.
 mod json_presence {
-    use serde::{Deserialize, Serialize};
-    use serde_json::Value;
-    #[derive(Serialize, Deserialize)]
-    #[serde(tag = "presence", content = "value", rename_all = "snake_case")]
-    enum Presence {
-        Absent,
-        Supplied(Value),
-    }
+    use super::super::json::OwnedJson;
+    use serde::Serialize;
     pub(super) fn serialize<S: serde::Serializer>(
-        value: &Option<Value>,
+        value: &Option<OwnedJson>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         #[derive(Serialize)]
         #[serde(tag = "presence", content = "value", rename_all = "snake_case")]
         enum BorrowedPresence<'a> {
             Absent,
-            Supplied(&'a Value),
+            Supplied(&'a OwnedJson),
         }
         match value {
             None => BorrowedPresence::Absent,
@@ -232,31 +263,41 @@ mod json_presence {
         }
         .serialize(serializer)
     }
-    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
-        decoder: D,
-    ) -> Result<Option<Value>, D::Error> {
-        Ok(match Presence::deserialize(decoder)? {
-            Presence::Absent => None,
-            Presence::Supplied(value) => Some(value),
-        })
-    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn owned_optional_json_roundtrips_literal_null_and_absence_separately() {
+        let authority = crate::model::retention::RetentionAuthority::new(usize::MAX).unwrap();
         let absent = ToolChanges::default();
         let supplied = ToolChanges {
-            arguments: Some(Value::Null),
+            arguments: Some(
+                OwnedJson::from_untracked(&authority, serde_json::Value::Null).unwrap(),
+            ),
             ..ToolChanges::default()
         };
         for original in [absent, supplied] {
             let encoded = serde_json::to_vec(&original).unwrap();
             assert_eq!(
-                serde_json::from_slice::<ToolChanges>(&encoded).unwrap(),
+                <ToolChanges as crate::model::decode::Decode>::decode(
+                    &authority,
+                    &mut serde_json::Deserializer::from_slice(&encoded)
+                )
+                .unwrap(),
                 original
             );
         }
+    }
+}
+
+mod shared_display {
+    use crate::model::shared_display::SharedDisplay;
+    use serde::Serialize;
+    pub(super) fn serialize<S: serde::Serializer>(
+        value: &Option<SharedDisplay>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.as_deref().serialize(serializer)
     }
 }

@@ -2,8 +2,38 @@
 use super::provider_intersections::update;
 use super::*;
 use crate::panel::entries::{tool_input, tool_output};
-use nocterm_ai::{TerminalCall, thread::Entry, tool_display};
+use nocterm_ai::model::{
+    controls::Presence,
+    json::OwnedJson,
+    retention::RetentionAuthority,
+    tools::{ToolRecord, ToolStatus},
+};
+use nocterm_ai::{TerminalCall, tool_display};
 use serde_json::{Value, json};
+fn provider_row(
+    authority: &RetentionAuthority,
+    id: &str,
+    provider: &str,
+    tool: &str,
+    arguments: Value,
+    result: Option<Value>,
+) -> ToolRecord {
+    let mut row = super::provider_intersections::provider_tool(
+        id,
+        title(provider, tool),
+        ToolStatus::Pending,
+    );
+    let (owner, start) = match provider {
+        "codex" => (12..14, 15),
+        "claude" => (13..15, 17),
+        _ => (12..14, 15),
+    };
+    let end = row.title.len();
+    super::provider_intersections::known_title(&mut row, owner, start..end);
+    row.arguments = Some(OwnedJson::from_untracked(authority, arguments).unwrap());
+    row.result = result.map(|value| OwnedJson::from_untracked(authority, value).unwrap());
+    row
+}
 
 fn title(provider: &str, tool: &str) -> String {
     match provider {
@@ -34,12 +64,13 @@ fn send(
 }
 
 fn assert_error(thread: &Entity<crate::thread::AgentThread>, index: usize, cx: &App) {
-    let Entry::Tool(call) = &thread.read(cx).transcript().entries[index] else {
-        panic!("tool row");
-    };
-    assert!(tool_display::header(call).contains("Execute program"));
-    assert_eq!(tool_input::source(call).unwrap().label, "Requested command");
-    let output = tool_output::source(call, false).unwrap();
+    let call = thread.read(cx).tool_slot(index);
+    assert!(tool_display::managed_header(call).contains("Execute program"));
+    assert_eq!(
+        tool_input::source_managed(call).unwrap().label,
+        "Requested command"
+    );
+    let output = tool_output::source_managed(call, false).unwrap();
     assert_eq!(output.sections.len(), 1);
     assert_eq!(output.sections[0].label, "Error");
     assert!(!output.sections[0].text.contains("provider garbage"));
@@ -77,10 +108,15 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
             json!({"terminal_id":terminal,"program":"sh","args":["-c","echo requested"]}),
         ),
     ] {
-        let row = acp::ToolCall::new(id, title(provider, tool))
-            .raw_input(args.clone())
-            .raw_output(json!({"new_provider_wrapper":"provider garbage"}));
-        update(&f, &session, acp::SessionUpdate::ToolCall(row), cx);
+        let row = provider_row(
+            &f.installation.retention,
+            id,
+            provider,
+            tool,
+            args.clone(),
+            Some(json!({"new_provider_wrapper":"provider garbage"})),
+        );
+        update(&f, &session, SessionUpdate::ToolStarted(row), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
             mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
@@ -115,10 +151,8 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
         }
     }
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-            panic!("tool row");
-        };
-        let output = tool_output::source(call, false).unwrap();
+        let call = thread.read(cx).tool_slot(0);
+        let output = tool_output::source_managed(call, false).unwrap();
         assert_eq!(output.sections[0].label, "Context");
         assert!(!output.sections[0].text.contains("provider garbage"));
         for index in 1..4 {
@@ -154,10 +188,14 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("active", title("codex", "exec_command"))
-                .raw_input(arguments.clone()),
-        ),
+        SessionUpdate::ToolStarted(provider_row(
+            &f.installation.retention,
+            "active",
+            "codex",
+            "exec_command",
+            arguments.clone(),
+            None,
+        )),
         cx,
     );
     let mut pending = send(
@@ -170,9 +208,14 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("complete", title("codex", "list_terminals")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolStarted(provider_row(
+            &f.installation.retention,
+            "complete",
+            "codex",
+            "list_terminals",
+            json!({}),
+            None,
+        )),
         cx,
     );
     assert!(
@@ -184,23 +227,19 @@ fn stopping_an_active_request_persists_an_error_without_overwriting_completed_re
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
             thread.stop(cx);
-            let Entry::Tool(active) = &thread.transcript().entries[0] else {
-                panic!("tool row");
-            };
+            let active = thread.tool_slot(0);
             assert!(matches!(
-                tool_display::ToolDisplay::from_call(active)
+                tool_display::ToolDisplay::from_managed(active)
                     .unwrap()
                     .outcome,
-                Some(tool_display::ToolOutcome::Err(_))
+                Presence::Value(tool_display::ToolOutcome::Failed(_))
             ));
-            let Entry::Tool(complete) = &thread.transcript().entries[1] else {
-                panic!("tool row");
-            };
+            let complete = thread.tool_slot(1);
             assert!(matches!(
-                tool_display::ToolDisplay::from_call(complete)
+                tool_display::ToolDisplay::from_managed(complete)
                     .unwrap()
                     .outcome,
-                Some(tool_display::ToolOutcome::Ok(_))
+                Presence::Value(tool_display::ToolOutcome::Succeeded(_))
             ));
         })
     });
@@ -216,9 +255,14 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
     update(
         &f,
         &session,
-        acp::SessionUpdate::ToolCall(
-            acp::ToolCall::new("late", title("codex", "typo")).raw_input(json!({})),
-        ),
+        SessionUpdate::ToolStarted(provider_row(
+            &f.installation.retention,
+            "late",
+            "codex",
+            "typo",
+            json!({}),
+            None,
+        )),
         cx,
     );
     cx.update(|cx| thread.update(cx, |thread, cx| thread.stop(cx)));
@@ -232,24 +276,31 @@ fn queued_rejections_cannot_attach_after_the_chat_stops(cx: &mut TestAppContext)
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-            panic!("tool row");
-        };
-        assert!(tool_display::ToolDisplay::from_call(call).is_none());
+        let call = thread.read(cx).tool_slot(0);
+        assert!(tool_display::ToolDisplay::from_managed(call).is_none());
     });
 }
 
 #[test]
 fn bridge_error_metadata_stays_sanitized_when_display_redaction_is_disabled() {
-    let mut call = acp::ToolCall::new("error", title("codex", "list_terminals"));
-    let mut display = tool_display::ToolDisplay::requested("list_terminals".into(), json!({}));
-    display.finish(Err("password=private-value".into()));
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
+    let mut call = super::provider_intersections::provider_tool(
+        "error",
+        title("codex", "list_terminals"),
+        ToolStatus::Pending,
+    );
+    let mut display =
+        tool_display::ToolDisplay::requested(&authority, "list_terminals".into(), json!({}))
+            .unwrap();
+    display
+        .finish(Err("password=private-value".into()))
+        .unwrap();
     display.attach(&mut call);
     let output = tool_output::source(&call, false).unwrap();
     assert_eq!(output.sections[0].label, "Error");
     assert!(!output.sections[0].text.contains("private-value"));
     assert!(
-        !serde_json::to_string(&call.meta)
+        !serde_json::to_string(&call.client_display)
             .unwrap()
             .contains("private-value")
     );

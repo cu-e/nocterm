@@ -37,6 +37,7 @@
 //! Session operations carry their original ticket, connection, session and registration
 //! authority. Tool work retains fixed prompt scope, original executor identities and
 //! workspace receipts; cancellation preserves readable job outcomes.
+//! Feature `test-support` exposes pure formatter diagnostics for app-owned tests.
 //! Joined reconnect calls retain their original busy guards and dispatch in acceptance
 //! order after validating original session, registration, workspace and window authority.
 //! Ordering releases after synchronous launch; direct calls after connection retain
@@ -49,6 +50,8 @@ pub use installation::Installed;
 mod panel;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
+#[cfg(feature = "test-support")]
+pub use panel::test_support;
 mod thread;
 pub use runtime::TerminalAuthRequest;
 
@@ -85,6 +88,7 @@ pub type TerminalAuthOpener = Arc<
 
 /// What the host provides to the agents.
 pub struct AgentServices {
+    pub retention: nocterm_ai::model::retention::RetentionAuthority,
     pub sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,

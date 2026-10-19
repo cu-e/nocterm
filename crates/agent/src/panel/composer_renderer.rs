@@ -12,7 +12,7 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_ai::acp;
+use nocterm_ai::model::auth::AuthFlow;
 use nocterm_ui::IconName;
 
 use super::{
@@ -81,7 +81,14 @@ impl ComposerRenderer {
             .gap_1()
             .flex_wrap()
             .items_start();
-        for attachment in thread.read(cx).composer().attachments() {
+        let attachments = thread
+            .read(cx)
+            .composer()
+            .attachments()
+            .iter()
+            .map(|attachment| attachment.to_attachment())
+            .collect::<Vec<_>>();
+        for attachment in &attachments {
             let value = attachment.clone();
             let label = labels.label(attachment);
             let running = labels.connected(attachment);
@@ -210,7 +217,7 @@ impl ComposerRenderer {
                     .ghost()
                     .small()
                     .max_w_full()
-                    .label(mode_label(thread.read(cx).configuration()))
+                    .label(mode_label(&thread.read(cx).configuration()))
                     .dropdown_caret(true)
                     .disabled(generating),
                 Anchor::BottomLeft,
@@ -224,7 +231,7 @@ impl ComposerRenderer {
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
         thread: &Entity<AgentThread>,
-        usage: Option<&acp::UsageUpdate>,
+        usage: Option<&nocterm_ai::model::usage::ContextUsage>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let context_tooltip = format!(
@@ -236,7 +243,7 @@ impl ComposerRenderer {
         let images_supported = thread
             .read(cx)
             .agent_info()
-            .is_some_and(|info| info.capabilities.prompt_capabilities.image);
+            .is_some_and(|info| info.capabilities.content.image);
         let controls = Self::render_config_controls(composer, menus, thread, cx);
         h_flex()
             .gap_1()
@@ -347,15 +354,15 @@ impl ComposerRenderer {
             && let Some(info) = &thread.read(cx).agent_info()
         {
             for method in &info.auth_methods {
-                if matches!(method, acp::AuthMethod::Terminal(_)) && !terminal {
+                if matches!(method.flow, AuthFlow::TerminalSetup(_)) && !terminal {
                     continue;
                 }
-                let id = method.id().clone();
+                let id = method.id.clone();
                 notices.push(
                     Button::new(SharedString::from(format!("authenticate-{id}")))
                         .ghost()
                         .small()
-                        .label(format!("Sign in: {}", method.name()))
+                        .label(format!("Sign in: {}", method.label))
                         .disabled(thread.read(cx).session_signing_in())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.on_authenticate_clicked(origin, id.clone(), window, cx)

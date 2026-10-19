@@ -1,7 +1,8 @@
 //! Pure prompt admission and injected image inspection/preview contracts.
 mod codec;
 mod header;
-use crate::acp;
+pub mod managed;
+use crate::model::content::{Content, Media, MediaKind};
 use base64::{Engine, engine::general_purpose::STANDARD};
 pub use codec::*;
 pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
@@ -34,8 +35,8 @@ pub struct PromptImage {
     data: std::sync::Arc<[u8]>,
     width: u32,
     height: u32,
-    content: std::sync::Arc<acp::ContentBlock>,
-    encoded_len: usize,
+    content: std::sync::Arc<Content>,
+    size: crate::history::FormatSize,
 }
 impl PromptImage {
     pub fn validate(
@@ -51,19 +52,26 @@ impl PromptImage {
             return Err(PromptImageError::Decode(ImageCodecError::InvalidEvidence));
         }
         let mime = facts.format().mime();
-        let content =
-            acp::ContentBlock::Image(acp::ImageContent::new(STANDARD.encode(&data), mime));
-        let encoded_len = crate::history::content_size(&content)?;
+        let content = Content::Media(Media {
+            kind: MediaKind::Image,
+            encoded: STANDARD.encode(&data),
+            mime: mime.into(),
+            uri: None,
+            annotations: None,
+            extensions: None,
+        });
+        let size = crate::history::measure_json(&content)
+            .map_err(crate::history::HistoryCodecError::from)?;
         Ok(Self {
             mime_type: mime.into(),
             data,
             width: facts.width(),
             height: facts.height(),
             content: std::sync::Arc::new(content),
-            encoded_len,
+            size,
         })
     }
-    pub fn content(&self) -> acp::ContentBlock {
+    pub fn content(&self) -> Content {
         (*self.content).clone()
     }
     pub fn bytes(&self) -> &[u8] {
@@ -76,7 +84,7 @@ impl PromptImage {
         (self.width, self.height)
     }
     pub fn encoded_len(&self) -> usize {
-        self.encoded_len
+        self.size.encoded_bytes
     }
 }
 pub fn validate_collection(images: &[PromptImage]) -> Result<(), ImageCollectionError> {
@@ -94,7 +102,8 @@ impl From<ImageCodecError> for PromptImageError {
             ImageCodecError::SourceSize => Self::TooLarge,
             ImageCodecError::UnsupportedFormat => Self::Unsupported,
             ImageCodecError::PixelLimit => Self::Dimensions,
-            ImageCodecError::InvalidHeader { .. } => Self::Header(error),
+            ImageCodecError::InvalidHeader { .. }
+            | ImageCodecError::ManagedInvalidHeader { .. } => Self::Header(error),
             _ => Self::Decode(error),
         }
     }

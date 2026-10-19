@@ -152,8 +152,9 @@ unexecutable bubblewrap. It projects ordered policy mounts into native flags whi
 process grouping and cleanup retain their existing owner.
 
 ACP native taskkill diagnostics retain their original I/O error through foundation
-SharedError, including native classification and shared allocation identity. The public
-process shutdown port retains its existing stringified AgentError diagnostic.
+SharedError, including native classification and shared allocation identity. Managed
+shutdown reports an unconfirmed cleanup as `ManagedCommandError::CleanupUnconfirmed`,
+which keeps that typed native failure instead of a string.
 
 ## Connection files and native values
 

@@ -3,8 +3,8 @@
 use super::*;
 use std::time::Duration;
 
-fn overloaded() -> AgentError {
-    AgentError::Rpc(acp::Error::internal_error().data("Service temporarily overloaded"))
+fn overloaded() -> RestoreFailure {
+    RestoreFailure::Rpc(-32603, "Internal error: Service temporarily overloaded")
 }
 
 fn last_prompt_text(f: &Fixture) -> Vec<String> {
@@ -14,10 +14,10 @@ fn last_prompt_text(f: &Fixture) -> Vec<String> {
         .unwrap()
         .last()
         .unwrap()
-        .prompt
+        .content
         .iter()
         .filter_map(|block| match block {
-            acp::ContentBlock::Text(text) => Some(text.text.clone()),
+            Content::Text(text) => Some(text.text.clone()),
             _ => None,
         })
         .collect()

@@ -1,4 +1,6 @@
 //! Typed prompt admission refusals shared with panel presentation.
+use super::super::document::DocumentError;
+use nocterm_ai::history::{live::LiveError, physical::PhysicalError};
 /// Why a message was not queued; shown in the composer.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SubmitError {
@@ -9,5 +11,16 @@ pub(crate) enum SubmitError {
     #[error("Too many queued messages, images or attachments in this chat.")]
     TooMany,
     #[error(transparent)]
-    Storage(#[from] nocterm_ai::history::HistoryCodecError),
+    Document(DocumentError),
+}
+impl From<DocumentError> for SubmitError {
+    fn from(error: DocumentError) -> Self {
+        match error {
+            DocumentError::Live(LiveError::Physical(PhysicalError::QueuedPromptMissing)) => {
+                Self::AlreadySent
+            }
+            DocumentError::Live(LiveError::Physical(PhysicalError::QueueLimit)) => Self::TooMany,
+            other => Self::Document(other),
+        }
+    }
 }

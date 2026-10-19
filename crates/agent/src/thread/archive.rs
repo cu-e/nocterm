@@ -3,9 +3,8 @@ pub(in crate::thread) mod load_operation;
 use crate::panel::AgentPanel;
 use gpui_kit::{AnyWindowHandle, EntityId, WeakEntity};
 use nocterm_ai::{
-    history::{ChatSummary, HistoryPermit, SavedChat},
+    history::{ChatSummary, HistoryPermit, ReaderDelivery},
     session::Ticket,
-    storage::AgentStorageError,
 };
 
 pub(crate) enum ArchiveIntent {
@@ -54,17 +53,14 @@ impl DraftOverlay {
 pub(super) enum RequestOutcome {
     RunNow(ArchiveIntent),
     AlreadyLoading,
-    Start {
-        load_id: LoadId,
-        chat_id: String,
-        ticket: Ticket,
-    },
+    Start { load_id: LoadId, ticket: Ticket },
 }
 pub(super) enum LoadOutcome {
     Stale,
-    Failed(AgentStorageError),
+    Failed(ReaderDelivery),
+    Refused(load_operation::ArchiveLoadError),
     Hydrate {
-        chat: Box<SavedChat>,
+        delivery: ReaderDelivery,
         overlay: Option<DraftOverlay>,
         intents: Vec<ArchiveIntent>,
     },
@@ -144,7 +140,7 @@ impl Archive {
         self.summary().is_some()
     }
     pub(super) fn request(&mut self, intent: ArchiveIntent, ticket: Ticket) -> RequestOutcome {
-        let ArchivePhase::Archived { summary, loading } = &mut self.phase else {
+        let ArchivePhase::Archived { loading, .. } = &mut self.phase else {
             return RequestOutcome::RunNow(intent);
         };
         self.pending.push(intent);
@@ -154,11 +150,7 @@ impl Archive {
         self.next_load += 1;
         let load_id = LoadId(self.next_load);
         *loading = Some(load_id);
-        RequestOutcome::Start {
-            load_id,
-            chat_id: summary.id.clone(),
-            ticket,
-        }
+        RequestOutcome::Start { load_id, ticket }
     }
     pub(super) fn edit_draft(&mut self, text: String, updated: u64) -> bool {
         if self
@@ -171,23 +163,28 @@ impl Archive {
         self.draft_overlay = Some(DraftOverlay::new(text, updated));
         true
     }
-    pub(super) fn draft_patch(&self, id: &str, agent: &str) -> Option<SavedChat> {
+    #[cfg(test)]
+    pub(super) fn draft_patch(
+        &self,
+        id: &str,
+        agent: &str,
+    ) -> Option<nocterm_ai::history::ArchivedDraftPatch> {
         self.is_archived().then_some(())?;
-        self.draft_overlay.as_ref().map(|overlay| {
-            SavedChat::archive_draft(
-                id.to_owned(),
-                agent.to_owned(),
-                overlay.text.clone(),
-                overlay.updated,
-            )
-        })
+        self.draft_overlay
+            .as_ref()
+            .map(|overlay| nocterm_ai::history::ArchivedDraftPatch {
+                id: id.into(),
+                agent_id: agent.into(),
+                text: (!overlay.text.is_empty()).then(|| overlay.text.clone()),
+                updated: overlay.updated,
+            })
     }
     pub(super) fn accept(
         &mut self,
         load_id: LoadId,
         current: bool,
-        result: Result<SavedChat, AgentStorageError>,
-        permit: HistoryPermit,
+        result: Result<ReaderDelivery, load_operation::ArchiveLoadError>,
+        permit: Option<HistoryPermit>,
     ) -> LoadOutcome {
         let ArchivePhase::Archived { loading, .. } = &mut self.phase else {
             return LoadOutcome::Stale;
@@ -197,17 +194,21 @@ impl Archive {
         }
         *loading = None;
         match result {
-            Ok(chat) => {
-                self.permit = Some(permit);
+            Ok(delivery) if delivery.error().is_some() => {
+                self.pending.clear();
+                LoadOutcome::Failed(delivery)
+            }
+            Ok(delivery) => {
+                self.permit = permit;
                 LoadOutcome::Hydrate {
-                    chat: Box::new(chat),
+                    delivery,
                     overlay: self.draft_overlay.take(),
                     intents: std::mem::take(&mut self.pending),
                 }
             }
             Err(error) => {
                 self.pending.clear();
-                LoadOutcome::Failed(error)
+                LoadOutcome::Refused(error)
             }
         }
     }

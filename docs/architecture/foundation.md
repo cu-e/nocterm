@@ -11,7 +11,11 @@ Foundation crates depend only on each other and on no GUI:
 comment-preserving TOML persistence. `fs::create_private` refuses existing paths,
 including symlinks; `fs::write_private_atomic` replaces the final path using a
 private synced staging file. Owners with revision or cancellation checks stage an
-`AtomicPublication`, validate while retaining their lock, then publish. SSH trust
+`AtomicPublication`, validate while retaining their lock, then publish. Borrowed
+serializers use `AtomicPublication::stage_private_with`; producer failure retains its
+typed cause and drops the partial stage. Byte and streaming stages share permissions,
+sync and rename behavior. Publication owners check their own candidate bounds and
+actual byte counts before the stage can be published. SSH trust
 replacement preserves explicitly supplied original permissions. Parent directories
 must be trusted; these helpers do not pin ancestors against mutation. Publication
 commits at rename; a later directory-sync failure is best effort and cannot report
@@ -47,7 +51,7 @@ traversal; semantic invalid-token diagnostics have no native source.
 `nocterm-core::SharedError<E>` retains one immutable Arc of a concrete error.
 Its manual Clone shares that allocation without requiring E to implement Clone.
 SharedCause erases the static type while preserving immutable downcasts. Both
-holders expose the original error as their next `Error::source()` frame, followed
+holders expose the original error as their next standard error-source frame, followed
 by that error's own causes; Display delegates to the original error. They perform
 no I/O, serialization or text conversion and expose no mutable access.
 

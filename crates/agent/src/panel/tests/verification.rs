@@ -25,7 +25,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             .unwrap()
             .update(cx, |thread, cx| {
                 assert_eq!(thread.composer().queue().len(), 2);
-                let retained = thread.composer().queue()[0].saved.id;
+                let retained = thread.composer().queue()[0].id();
                 thread.send_now(retained, cx);
                 thread.send("new first".into(), cx);
                 thread.send("new second".into(), cx);
@@ -34,7 +34,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
                     .composer()
                     .queue()
                     .iter()
-                    .map(|prompt| prompt.saved.id)
+                    .map(|prompt| prompt.id())
                     .collect::<Vec<_>>();
                 let unique = ids
                     .iter()
@@ -82,7 +82,7 @@ fn edit_pauses_dispatch_until_save_after_active_response_finishes(cx: &mut TestA
     let requests = f.commands.prompts.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert!(
-        matches!(requests[1].prompt.last().unwrap(), acp::ContentBlock::Text(text) if text.text == "edited after completion")
+        matches!(requests[1].content.last().unwrap(), Content::Text(text) if text.text == "edited after completion")
     );
     drop(requests);
     complete_active(&f, cx);
@@ -96,13 +96,15 @@ fn slash_escape_and_tab_work_through_real_keyboard_events(cx: &mut TestAppContex
         f.panel.update(cx, |panel, cx| {
             panel.current().unwrap().update(cx, |thread, cx| {
                 report_control(
+                    &f,
                     thread,
-                    acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(
-                        vec![
-                            acp::AvailableCommand::new("review", "Review changes"),
-                            acp::AvailableCommand::new("rename", "Rename chat"),
-                        ],
-                    )),
+                    SessionUpdate::Commands(vec![
+                        nocterm_ai::model::notice::AdvertisedCommand::new(
+                            "review",
+                            "Review changes",
+                        ),
+                        nocterm_ai::model::notice::AdvertisedCommand::new("rename", "Rename chat"),
+                    ]),
                     cx,
                 );
                 cx.notify();
@@ -173,17 +175,17 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     thread.update(cx, |thread, _| {
         assert!(thread.ended());
         assert!(thread.composer().paused());
-        assert_eq!(thread.composer().queue()[0].saved.text, "retained");
+        assert_eq!(thread.composer().queued_rows()[0].text(), "retained");
     });
     // Nothing reconnects by itself.
     cx.run_until_parked();
     assert_eq!(f.commands.prompts.lock().unwrap().len(), 1);
     let saved = f.repository.chats();
-    assert_eq!(saved[0].queue[0].text, "retained");
+    assert_eq!(saved[0].composer().queue[0].text, "retained");
 
     // Sending reconnects the chat and goes on with its queue.
     thread.update(cx, |thread, cx| {
-        thread.send_now(thread.composer().queue()[0].saved.id, cx);
+        thread.send_now(thread.composer().queue()[0].id(), cx);
         assert!(thread.submit("another".into(), None, cx).unwrap());
     });
     cx.run_until_parked();
@@ -191,13 +193,13 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
         assert!(!thread.ended());
         assert!(thread.session_generating());
         assert_eq!(thread.composer().queue().len(), 1);
-        assert_eq!(thread.composer().queue()[0].saved.text, "another");
+        assert_eq!(thread.composer().queued_rows()[0].text(), "another");
     });
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].prompt.iter().any(|block| matches!(
+    assert!(prompts[1].content.iter().any(|block| matches!(
         block,
-        acp::ContentBlock::Text(text) if text.text == "retained"
+        Content::Text(text) if text.text == "retained"
     )));
 }
 
@@ -234,12 +236,14 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice {
             session,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("new streamed answer".repeat(100)),
-            ))),
-        )))
+            update: SessionUpdate::AgentChunk(Content::Text(Text {
+                text: "new streamed answer".repeat(100),
+                annotations: None,
+                extensions: None,
+            })),
+        }))
         .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
@@ -276,7 +280,7 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
         window.click("queue-edit-first", cx);
     })
     .unwrap();
-    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
     f.repository.reject(
         nocterm_ai::testing::StorageOperation::Save(id),
         nocterm_ai::storage::AgentStorageError::Directory {
@@ -289,10 +293,13 @@ fn cancelling_queue_edit_does_not_resume_after_storage_failure(cx: &mut TestAppC
     );
     thread.update(cx, |thread, cx| {
         report_control(
+            &f,
             thread,
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
-                acp::TextContent::new("durable response before completion"),
-            ))),
+            SessionUpdate::AgentChunk(Content::Text(Text {
+                text: "durable response before completion".into(),
+                annotations: None,
+                extensions: None,
+            })),
             cx,
         );
     });
@@ -353,7 +360,7 @@ fn disk_chat(f: &Fixture, id: &str) -> nocterm_ai::history::SavedChat {
     f.repository
         .chats()
         .into_iter()
-        .find(|chat| chat.id == id)
+        .find(|chat| chat.id() == id)
         .unwrap()
 }
 
@@ -362,22 +369,19 @@ fn reopen(
     saved: nocterm_ai::history::SavedChat,
     cx: &mut TestAppContext,
 ) -> Entity<crate::thread::AgentThread> {
-    f.panel.update(cx, |panel, cx| {
-        for thread in panel.chat_documents() {
-            if thread.read(cx).document().chat_id() == saved.id {
-                thread.update(cx, |thread, cx| thread.release_resources(cx));
-            }
-        }
+    let thread = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .chat_documents()
+            .find(|thread| thread.read(cx).chat_id_string() == saved.id())
+            .unwrap()
+            .clone()
     });
+    thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
-    let thread = cx.new(|cx| {
-        crate::thread::AgentThread::restored(
-            saved,
-            f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone()),
-            cx,
-        )
-    });
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
+    cx.run_until_parked();
     cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
     cx.run_until_parked();
     thread
@@ -392,18 +396,16 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         let thread = f.panel.read(cx).current().unwrap();
         thread.read(cx).snapshot(cx).unwrap()
     });
-    let id = saved.id.clone();
+    let id = saved.id().to_owned();
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(AgentError::RestoreUnavailable(
-            "Original session is gone".into(),
-        ));
+        .push_back(RestoreFailure::Unavailable("Original session is gone"));
     let first = reopen(&f, saved, cx);
     let fresh = disk_chat(&f, &id);
-    assert!(fresh.pending_history);
-    assert_ne!(fresh.session_id.as_deref(), Some("s0"));
+    assert!(fresh.resume().pending_history);
+    assert_ne!(fresh.resume().session_id.as_deref(), Some("s0"));
     drop(first);
     cx.run_until_parked();
 
@@ -412,10 +414,12 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.update(|cx| assert!(second.read(cx).document().pending_history()));
     second.update(cx, |thread, cx| {
         report_control(
+            &f,
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("help", "Show help"),
-            ])),
+            SessionUpdate::Commands(vec![nocterm_ai::model::notice::AdvertisedCommand::new(
+                "help",
+                "Show help",
+            )]),
             cx,
         );
         thread.send("/help".into(), cx);
@@ -423,7 +427,7 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.run_until_parked();
     complete_active(&f, cx);
     let after_slash = disk_chat(&f, &id);
-    assert!(after_slash.pending_history);
+    assert!(after_slash.resume().pending_history);
     drop(second);
     cx.run_until_parked();
 
@@ -434,12 +438,10 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         let prompts = f.commands.prompts.lock().unwrap();
         let request = prompts.last().unwrap();
         let history = request
-            .prompt
+            .content
             .iter()
             .filter_map(|block| match block {
-                acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") => {
-                    Some(&text.text)
-                }
+                Content::Text(text) if text.text.contains("Saved conversation") => Some(&text.text),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -448,12 +450,12 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         assert!(history[0].contains("Assistant: the first disk is full"));
     }
     assert!(
-        disk_chat(&f, &id).pending_history,
+        disk_chat(&f, &id).resume().pending_history,
         "delivery has not finished"
     );
     complete_active(&f, cx);
     let delivered = disk_chat(&f, &id);
-    assert!(!delivered.pending_history);
+    assert!(!delivered.resume().pending_history);
     drop(third);
     cx.run_until_parked();
 
@@ -461,8 +463,8 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
     cx.update(|cx| assert!(!fourth.read(cx).document().pending_history()));
     fourth.update(cx, |thread, cx| thread.send("next question".into(), cx));
     cx.run_until_parked();
-    assert!(!f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation"))
+    assert!(!f.commands.prompts.lock().unwrap().last().unwrap().content.iter().any(
+        |block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation"))
     ));
     complete_active(&f, cx);
 }
@@ -482,18 +484,20 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     let fork = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| fork.read(cx).document().chat_id().to_owned());
-    assert!(disk_chat(&f, &id).pending_history);
+    let id = cx.update(|cx| fork.read(cx).chat_id_string());
+    assert!(disk_chat(&f, &id).resume().pending_history);
     assert!(
         f.commands.restores.lock().unwrap().is_empty(),
         "partial fork needs a fresh session"
     );
     fork.update(cx, |thread, cx| {
         report_control(
+            &f,
             thread,
-            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
-                acp::AvailableCommand::new("help", "Show help"),
-            ])),
+            SessionUpdate::Commands(vec![nocterm_ai::model::notice::AdvertisedCommand::new(
+                "help",
+                "Show help",
+            )]),
             cx,
         );
         thread.send("/help".into(), cx);
@@ -509,12 +513,10 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     let history = prompts
         .last()
         .unwrap()
-        .prompt
+        .content
         .iter()
         .find_map(|block| match block {
-            acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") => {
-                Some(&text.text)
-            }
+            Content::Text(text) if text.text.contains("Saved conversation") => Some(&text.text),
             _ => None,
         })
         .unwrap();
@@ -522,7 +524,7 @@ fn partial_fork_keeps_pending_context_until_an_ordinary_prompt(cx: &mut TestAppC
     assert!(!history.contains("later question") && !history.contains("later answer"));
     drop(prompts);
     complete_active(&f, cx);
-    assert!(!disk_chat(&f, &id).pending_history);
+    assert!(!disk_chat(&f, &id).resume().pending_history);
 }
 
 #[gpui_kit::test]
@@ -530,7 +532,7 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = cx.update(|cx| thread.read(cx).document().chat_id().to_owned());
+    let id = cx.update(|cx| thread.read(cx).chat_id_string());
     thread.update(cx, |thread, cx| {
         restore_entries(
             &f,
@@ -552,10 +554,13 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
         .unwrap()
         .take()
         .unwrap()
-        .send(acp::PromptResponse::new(acp::StopReason::Cancelled))
+        .send(PromptOutcome {
+            ending: EndOfTurn::Cancelled,
+            tokens: None,
+        })
         .unwrap();
     cx.run_until_parked();
-    assert!(disk_chat(&f, &id).pending_history);
+    assert!(disk_chat(&f, &id).resume().pending_history);
     thread.update(cx, |thread, cx| thread.fail("restart needed", cx));
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| panel.restart(window, cx));
@@ -566,9 +571,9 @@ fn cancelled_fallback_delivery_keeps_history_across_restart(cx: &mut TestAppCont
     cx.update(|cx| assert!(restarted.read(cx).document().pending_history()));
     restarted.update(cx, |thread, cx| thread.send("try again".into(), cx));
     cx.run_until_parked();
-    assert!(f.commands.prompts.lock().unwrap().last().unwrap().prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation") && text.text.contains("old answer"))
+    assert!(f.commands.prompts.lock().unwrap().last().unwrap().content.iter().any(
+        |block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation") && text.text.contains("old answer"))
     ));
     complete_active(&f, cx);
-    assert!(!disk_chat(&f, &id).pending_history);
+    assert!(!disk_chat(&f, &id).resume().pending_history);
 }

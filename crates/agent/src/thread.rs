@@ -2,27 +2,35 @@ use crate::runtime::SessionLease;
 use approval_inbox::ToolGate;
 use futures::FutureExt as _;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, EntityId, Window};
+use nocterm_ai::connection::ManagedCommandsHandle;
 use nocterm_ai::context::{ServerDescriptor, TerminalDescriptor};
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeRegistration, TerminalCall, acp, session::SessionPhase,
+    AgentInfo, BridgeRegistration, TerminalCall,
+    model::{
+        auth::AuthFlow,
+        controls::ConfigOption,
+        ids::{AuthMethodId, SessionId},
+    },
+    session::SessionPhase,
     thread::ThreadState,
 };
 
 use nocterm_workspace::{ConnectionSummary, ExpectedSession, TerminalEntry};
-use session_driver::OperationGuard;
-use std::{path::PathBuf, sync::Arc};
+use session_driver::{OperationGuard, authentication_operation::AuthenticationError};
+use std::path::PathBuf;
 
 pub(crate) mod archive;
 mod attachments;
 mod bindings;
 mod client;
 mod client_port;
-mod composer;
+pub(crate) mod composer;
 mod config;
+pub(crate) use config::config_label;
+pub(crate) mod controls;
 mod notice;
 pub(crate) use client_port::client;
 pub(crate) use composer::Composer;
-pub(crate) use config::ChatConfig;
 mod approval_inbox;
 mod background_open;
 mod bound_call;
@@ -33,22 +41,31 @@ mod reconnects;
 mod session_grants;
 pub(crate) use approval_inbox::ToolApprovalCard;
 pub(crate) use permissions::PermissionCard;
-mod queue;
-mod tool_display;
-pub(crate) use queue::QueuedPrompt;
 mod live;
+mod queue;
 mod restart;
 mod session_driver;
+mod tool_display;
 mod tool_runtime;
 pub(crate) use restart::RestartData;
-mod document;
+pub(crate) mod document;
 mod saved;
 mod sign_in_wait;
 pub(crate) use sign_in_wait::SignInWait;
-mod session;
-mod tools;
 #[cfg(test)]
-pub(crate) use saved::chat_title;
+pub(crate) mod test_views;
+mod tools;
+
+/// Why a configuration request did not change the retained controls.
+#[derive(Debug, thiserror::Error)]
+enum ConfigurationFailure {
+    #[error(transparent)]
+    Agent(#[from] nocterm_ai::history::source::ManagedCommandError),
+    #[error(transparent)]
+    Document(#[from] document::DocumentError),
+    #[error("The agent session ended before the setting changed.")]
+    Detached,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Attachment {
@@ -60,16 +77,19 @@ pub(crate) enum Attachment {
 /// An agent session from a saved chat, to reopen on the next connection.
 #[derive(Clone, Debug)]
 pub(crate) struct Restore {
-    pub session: acp::SessionId,
+    pub session: SessionId,
     pub workdir: PathBuf,
     /// Open a copy of the session rather than the session itself.
     pub fork: bool,
 }
 /// What a forked chat starts from.
 pub(crate) struct Fork {
-    chat: nocterm_ai::history::SavedChat,
+    state: ThreadState,
     restore: Option<Restore>,
     attachments: Vec<Attachment>,
+    choices: nocterm_ai::session_config::Choices,
+    mode: Option<nocterm_ai::model::ids::ModeId>,
+    model: Option<String>,
 }
 
 pub(crate) struct AgentThread {
@@ -171,13 +191,13 @@ impl AgentThread {
     pub(crate) fn describe_target(&mut self, call: &TerminalCall, cx: &App) -> String {
         let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
         self.tools
-            .describe_target(call, &input, self.composer.default_attachments(), cx)
+            .describe_target(call, &input, self.state.default_attachments(), cx)
     }
 
     pub(crate) fn context(&mut self, cx: &App) -> String {
         let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
         self.tools
-            .context(&input, self.composer.default_attachments(), cx)
+            .context(&input, self.state.default_attachments(), cx)
     }
 
     pub(crate) fn offline_servers(
@@ -186,7 +206,7 @@ impl AgentThread {
     ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
         let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
         self.tools
-            .offline_servers(&input, self.composer.default_attachments(), cx)
+            .offline_servers(&input, self.state.default_attachments(), cx)
     }
 
     pub(crate) fn resolved(
@@ -195,7 +215,7 @@ impl AgentThread {
     ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
         let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
         self.tools
-            .resolved(&input, self.composer.default_attachments(), cx)
+            .resolved(&input, self.state.default_attachments(), cx)
     }
 
     pub(super) fn server_is_attached(&self, profile: &str, cx: &App) -> bool {
@@ -204,7 +224,6 @@ impl AgentThread {
             summary.id.as_ref() == profile
                 && self
                     .attachment_scope()
-                    .iter()
                     .any(|attachment| attachment.covers_server(summary))
         })
     }
@@ -264,7 +283,7 @@ impl AgentThread {
         self.session.set_shown(shown);
         if shown {
             self.warm(cx);
-        } else if !self.composer.dispatchable() && self.session.withdraw_if_idle() {
+        } else if !self.composer().dispatchable() && self.session.withdraw_if_idle() {
             self.notice.clear_text();
             cx.notify();
         }
@@ -286,7 +305,7 @@ impl AgentThread {
     }
 
     pub(crate) fn session_busy(&self) -> bool {
-        self.session.busy() || self.tools.busy() || self.composer.dispatchable()
+        self.session.busy() || self.tools.busy() || self.composer().dispatchable()
     }
 
     pub(crate) fn hold_operation(&self) -> OperationGuard {
@@ -305,11 +324,11 @@ impl AgentThread {
         self.session.registration()
     }
 
-    pub(crate) fn commands(&self) -> &Option<Arc<dyn AgentCommands>> {
+    pub(crate) fn commands(&self) -> &Option<ManagedCommandsHandle> {
         self.session.commands()
     }
 
-    pub(crate) fn session(&self) -> &Option<acp::SessionId> {
+    pub(crate) fn session(&self) -> &Option<SessionId> {
         self.session.session()
     }
 
@@ -320,19 +339,33 @@ impl AgentThread {
             .host
             .enabled(cx)
             .then(|| self.capture_pending(cx))
+            .transpose()
+            .map_err(|error| tracing::warn!(%error, "released chat snapshot failed"))
+            .ok()
+            .flatten()
             .flatten();
         self.cancel_execution();
         // The lease releases its connection when it is dropped.
         self.session.release_lease();
         let runtime = self.host.runtime().clone();
-        cx.defer(move |cx| {
-            if let Some((chat, revision)) = snapshot
-                && let Err(error) = runtime.save_chat(chat, id, revision, cx)
-            {
+        if let Some(revision) = snapshot {
+            let intent = if self.is_archived() {
+                nocterm_ai::history::writing::ManagedWriteIntent::ArchiveDraft {
+                    updated: self.state.updated(),
+                }
+            } else {
+                nocterm_ai::history::writing::ManagedWriteIntent::Snapshot
+            };
+            let result = self
+                .state
+                .offer(intent)
+                .map_err(|error| nocterm_store::StoreError::backend(error).into())
+                .and_then(|offer| runtime.save_chat(offer, id, revision, cx));
+            if let Err(error) = result {
                 tracing::warn!(%error,"released chat admission failed");
             }
-            runtime.unregister_document(id, cx);
-        });
+        }
+        cx.defer(move |cx| runtime.unregister_document(id, cx));
         if let Some(window) = self.bindings.window() {
             let workspace = self.host.workspace().clone();
             let background = self.tools.take_close_effects();
@@ -375,29 +408,41 @@ impl AgentThread {
             bindings: bindings::ThreadBindings::new(release, authority),
         }
     }
+    pub(crate) fn prepare_new(
+        agent_id: &str,
+        host: &crate::chat_host::ChatHost,
+        cx: &App,
+    ) -> Result<document::ChatDocument, document::DocumentError> {
+        let identity = host.new_identity();
+        document::ChatDocument::new(host.retention(cx), agent_id, &identity.id, identity.created)
+    }
     pub(crate) fn new(
-        agent_id: String,
+        state: document::ChatDocument,
         host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let chat = host.new_chat(agent_id);
-        Self::from_document(
-            document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
-            host,
-            cx,
-        )
+        Self::from_document(state, host, cx)
+    }
+    pub(crate) fn prepare_archived(
+        summary: &nocterm_ai::history::ChatSummary,
+        host: &crate::chat_host::ChatHost,
+        cx: &App,
+    ) -> Result<document::ChatDocument, document::DocumentError> {
+        let mut state = document::ChatDocument::new(
+            host.retention(cx),
+            &summary.agent_id,
+            &summary.id,
+            summary.updated,
+        )?;
+        state.archived_clean(summary)?;
+        Ok(state)
     }
     pub(crate) fn archived(
         summary: nocterm_ai::history::ChatSummary,
+        state: document::ChatDocument,
         host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut state = document::ChatDocument::new(
-            summary.agent_id.clone(),
-            summary.id.clone(),
-            summary.updated,
-        );
-        state.archived_clean(&summary);
         let mut thread = Self::from_document(state, host, cx);
         thread.config.saved_model(summary.model.clone());
         thread.notice.present("Saved chat".into());
@@ -410,11 +455,11 @@ impl AgentThread {
     pub(crate) fn archive_summary(&self) -> Option<&nocterm_ai::history::ChatSummary> {
         self.archive.summary()
     }
-    pub(crate) fn chat_id(&self) -> &str {
+    pub(crate) fn chat_id(&self) -> Option<nocterm_ai::history::physical::TextGuard<'_>> {
         self.state.chat_id()
     }
-    pub(crate) fn history_entries(&self) -> &[nocterm_ai::thread::Entry] {
-        self.state.entries()
+    pub(crate) fn history_rows(&self) -> &[nocterm_ai::history::physical::RowSlot] {
+        self.state.rows()
     }
     pub(crate) fn take_changed_rows(&mut self) -> std::collections::HashSet<usize> {
         self.state.take_changed_rows()
@@ -422,26 +467,36 @@ impl AgentThread {
     pub(crate) fn document(&self) -> &document::ChatDocument {
         &self.state
     }
-    pub(crate) fn transcript(&self) -> &ThreadState {
+    pub(crate) fn prepare_search(&mut self) -> Option<document::SearchJob> {
+        self.state.prepare_search()
+    }
+    pub(crate) fn transcript(&self) -> Option<&ThreadState> {
         self.state.transcript()
     }
-    pub(crate) fn composer(&self) -> &Composer {
-        &self.composer
+    pub(crate) fn composer(&self) -> composer::ComposerView<'_> {
+        composer::ComposerView::new(&self.composer, self.state.snapshot())
     }
-    pub(crate) fn configuration(&self) -> &config::ChatConfig {
-        &self.config
+    pub(crate) fn configuration(&self) -> controls::ControlsView<'_> {
+        controls::ControlsView::new(self.state.controls(), &self.config)
     }
-    pub(crate) fn config_options(&self) -> Vec<acp::SessionConfigOption> {
-        self.config.preview_options(self.session.opening())
+    pub(crate) fn config_options(&self) -> Vec<ConfigOption> {
+        self.configuration().options()
     }
-    pub(crate) fn draft_text(&self) -> Option<&str> {
-        self.composer.draft().map(String::as_str)
+    fn live_controls(&self) -> Option<&nocterm_ai::history::physical::LiveControls> {
+        self.state.controls()
+    }
+    pub(crate) fn draft_text(&self) -> Option<nocterm_ai::history::physical::TextGuard<'_>> {
+        self.composer().draft()
     }
     pub(crate) fn queued_prompt_ids(&self) -> impl ExactSizeIterator<Item = u64> + '_ {
-        self.composer.queue().iter().map(|prompt| prompt.saved.id)
+        self.state
+            .composer()
+            .map_or(&[][..], |composer| composer.queue())
+            .iter()
+            .map(|prompt| prompt.id())
     }
     pub(crate) fn queue_dispatchable(&self) -> bool {
-        self.composer.dispatchable()
+        self.composer().dispatchable()
     }
     pub(crate) fn session_phase(&self) -> SessionPhase {
         self.session.phase()
@@ -466,8 +521,10 @@ impl AgentThread {
     pub(crate) fn is_leased(&self) -> bool {
         self.session.leased()
     }
-    pub(crate) fn agent_info(&self) -> Option<&AgentInfo> {
-        self.session.info()
+    pub(crate) fn agent_info(
+        &self,
+    ) -> Option<nocterm_ai::history::physical::PayloadGuard<'_, AgentInfo>> {
+        self.state.snapshot()?.presentation()?.controls()?.info()
     }
     #[cfg(test)]
     pub(crate) fn pending_restore(&self) -> &Option<Restore> {
@@ -479,10 +536,6 @@ impl AgentThread {
     }
     pub(crate) fn sign_in_waits(&self) -> &[SignInWait] {
         self.tools.sign_ins()
-    }
-    #[cfg(test)]
-    pub(crate) fn prompt_scope(&self) -> Option<&[Attachment]> {
-        self.tools.prompt_scope()
     }
     pub(crate) fn context_bytes(&self) -> usize {
         self.tools.usage().0
@@ -540,8 +593,8 @@ impl AgentThread {
     pub(crate) fn is_draft(&self) -> bool {
         !self.is_archived()
             && !self.state.pinned()
-            && self.state.entries().is_empty()
-            && self.composer.is_empty()
+            && self.state.rows().is_empty()
+            && self.composer().is_empty()
             && self.state.name().is_none()
             && !self.session.generating()
             && !self.tools.approval_pending()
@@ -575,7 +628,7 @@ impl AgentThread {
     }
     pub(crate) fn authenticate(
         &mut self,
-        method: acp::AuthMethodId,
+        method: AuthMethodId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -585,28 +638,33 @@ impl AgentThread {
         let Some(commands) = self.commands().clone() else {
             return;
         };
-        let Some(method) = self
-            .session
-            .info()
-            .and_then(|info| {
-                info.auth_methods
-                    .iter()
-                    .find(|available| available.id() == &method)
-            })
-            .cloned()
-        else {
+        let Some(method) = self.agent_info().and_then(|info| {
+            info.auth_methods
+                .iter()
+                .find(|available| available.id == method)
+                .cloned()
+        }) else {
             return;
         };
-        let auth = match method {
-            acp::AuthMethod::Agent(method) => commands.authenticate(method.id),
-            acp::AuthMethod::Terminal(method) => {
+        let label = method.label;
+        let auth = match method.flow {
+            AuthFlow::AgentManaged => {
+                let work = commands.authenticate(&method.id);
+                async move {
+                    session_driver::settle(work)
+                        .await
+                        .map_err(AuthenticationError::from)
+                }
+                .boxed()
+            }
+            AuthFlow::TerminalSetup(method) => {
                 let runtime = self.host.runtime();
                 let Some(opener) = self.host.auth() else {
                     return;
                 };
                 let Some(request) = self
                     .connection_key()
-                    .and_then(|key| runtime.terminal_auth_request(key, &method, cx))
+                    .and_then(|key| runtime.terminal_auth_request(key, &method, &label, cx))
                 else {
                     return;
                 };
@@ -614,12 +672,11 @@ impl AgentThread {
                 async move {
                     completion
                         .await
-                        .map_err(|_| nocterm_ai::AgentError::Io("Sign-in cancelled".into()))?
-                        .map_err(|e| nocterm_ai::AgentError::Io(e.to_string()))
+                        .map_err(|_| AuthenticationError::Cancelled)?
+                        .map_err(|e| AuthenticationError::Terminal(e.to_string()))
                 }
                 .boxed()
             }
-            _ => return,
         };
         self.session.begin_sign_in();
         self.notice.present("Signing in…".into());
@@ -643,8 +700,8 @@ impl AgentThread {
     fn on_authentication_complete(
         &mut self,
         authority: session_driver::SessionAuthority,
-        commands: Arc<dyn nocterm_ai::AgentCommands>,
-        result: Result<(), nocterm_ai::AgentError>,
+        commands: ManagedCommandsHandle,
+        result: Result<(), AuthenticationError>,
         cx: &mut Context<Self>,
     ) {
         if !self.session.accepts_authority(&authority) || !self.host.enabled(cx) {
@@ -658,10 +715,8 @@ impl AgentThread {
                 if has_session {
                     self.notice.present("Ready".into());
                     cx.notify();
-                } else if let (Some(info), Some(workdir)) =
-                    (self.session.info().cloned(), self.session_workdir().clone())
-                {
-                    self.create_session(commands, info, workdir, cx);
+                } else if let Some(workdir) = self.session_workdir().clone() {
+                    self.create_session(commands, workdir, cx);
                 }
             }
             Err(error) => {
@@ -675,14 +730,11 @@ impl AgentThread {
     pub(crate) fn mark_dirty(&mut self, index: usize) {
         self.state.mark_row(index);
     }
-    pub(super) fn refresh_storage_budget(
-        &mut self,
-    ) -> Result<(), nocterm_ai::history::HistoryCodecError> {
-        self.state.refresh_budget()
-    }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();
-        self.state.finish_pending_tools(self.host.timestamp());
+        if let Err(error) = self.state.finish_pending_tools(self.host.timestamp()) {
+            tracing::warn!(%error, "pending tool rows were not finished");
+        }
     }
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.
@@ -701,8 +753,10 @@ impl AgentThread {
             cx.notify();
             return;
         }
-        if let (Some(commands), Some(session)) = (&self.commands(), &self.session()) {
-            commands.cancel(session.clone());
+        if let (Some(commands), Some(session)) = (self.commands(), self.session())
+            && let Err(error) = commands.cancel(session)
+        {
+            tracing::warn!(%error, "agent cancellation was not admitted");
         }
         self.notice.present("Stopping…".into());
         let operation =
@@ -728,35 +782,5 @@ impl AgentThread {
                 cx,
             );
         }
-    }
-}
-
-pub(crate) fn config_label(option: &acp::SessionConfigOption) -> String {
-    match &option.kind {
-        acp::SessionConfigKind::Select(select) => {
-            let options = match &select.options {
-                acp::SessionConfigSelectOptions::Ungrouped(values) => {
-                    values.iter().collect::<Vec<_>>()
-                }
-                acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                    .iter()
-                    .flat_map(|group| group.options.iter())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            options
-                .iter()
-                .find(|value| value.value == select.current_value)
-                .map(|value| value.name.clone())
-                .unwrap_or_else(|| select.current_value.to_string())
-        }
-        acp::SessionConfigKind::Boolean(value) => {
-            if value.current_value {
-                "On".into()
-            } else {
-                "Off".into()
-            }
-        }
-        _ => String::new(),
     }
 }

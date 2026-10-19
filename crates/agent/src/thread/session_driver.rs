@@ -2,10 +2,16 @@
 use super::Restore;
 use crate::runtime::SessionLease;
 use nocterm_ai::{
-    AgentCommands, AgentInfo, BridgeRegistration, acp,
+    BridgeRegistration,
+    connection::ManagedCommandsHandle,
+    history::{
+        live::LiveEpoch,
+        source::{ManagedCommandError, ManagedSourceFuture},
+    },
+    model::{ids::SessionId, json::deferred::NativeAllocationError},
     session::{SessionPhase, SessionState, Ticket},
 };
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 pub(in crate::thread) mod authentication_operation;
 pub(in crate::thread) mod cancel_operation;
 pub(in crate::thread) mod open_operation;
@@ -14,6 +20,16 @@ pub(in crate::thread) mod prompt_operation;
 use operation_counter::OperationCounter;
 pub(crate) use operation_counter::OperationGuard;
 
+/// Awaits one admitted native command, mapping a refused admission to its typed error.
+pub(super) async fn settle<T>(
+    operation: Result<ManagedSourceFuture<Result<T, ManagedCommandError>>, NativeAllocationError>,
+) -> Result<T, ManagedCommandError> {
+    match operation {
+        Ok(work) => work.await,
+        Err(error) => Err(ManagedCommandError::Admission(error)),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct SessionDriver {
     lease: Option<SessionLease>,
@@ -21,13 +37,13 @@ pub(super) struct SessionDriver {
     shown: bool,
     operations: OperationCounter,
     restore: Option<Restore>,
-    info: Option<AgentInfo>,
+    epoch: Option<LiveEpoch>,
 }
 #[derive(Clone)]
 pub(super) struct SessionAuthority {
     ticket: Ticket,
     connection: Option<u64>,
-    session: Option<acp::SessionId>,
+    session: Option<SessionId>,
     registration: Option<u64>,
 }
 impl SessionAuthority {
@@ -40,7 +56,7 @@ impl SessionAuthority {
     pub(super) fn registration(&self) -> Option<u64> {
         self.registration
     }
-    pub(super) fn session(&self) -> &Option<acp::SessionId> {
+    pub(super) fn session(&self) -> &Option<SessionId> {
         &self.session
     }
 }
@@ -59,10 +75,10 @@ impl SessionDriver {
             && self.session() == authority.session()
             && self.registration().as_ref().map(|r| r.id) == authority.registration()
     }
-    pub(super) fn session(&self) -> &Option<acp::SessionId> {
+    pub(super) fn session(&self) -> &Option<SessionId> {
         self.lease.as_ref().map_or(&None, |lease| &lease.session)
     }
-    pub(super) fn commands(&self) -> &Option<Arc<dyn AgentCommands>> {
+    pub(super) fn commands(&self) -> &Option<ManagedCommandsHandle> {
         self.lease.as_ref().map_or(&None, |lease| &lease.commands)
     }
     pub(super) fn registration(&self) -> &Option<BridgeRegistration> {
@@ -96,6 +112,7 @@ impl SessionDriver {
         self.phase.leased();
     }
     pub(super) fn release_lease(&mut self) -> bool {
+        self.epoch = None;
         self.lease.take().is_some()
     }
     pub(super) fn restore(&self) -> &Option<Restore> {
@@ -121,15 +138,10 @@ impl SessionDriver {
             self.restore = None;
         }
     }
-    pub(super) fn info(&self) -> Option<&AgentInfo> {
-        self.info.as_ref()
+    pub(super) fn epoch(&self) -> Option<&LiveEpoch> {
+        self.epoch.as_ref()
     }
-    pub(super) fn begin_open(
-        &mut self,
-        commands: Arc<dyn AgentCommands>,
-        info: AgentInfo,
-        workdir: PathBuf,
-    ) -> bool {
+    pub(super) fn begin_open(&mut self, commands: ManagedCommandsHandle, workdir: PathBuf) -> bool {
         if !self.phase.opening() {
             return false;
         }
@@ -138,7 +150,7 @@ impl SessionDriver {
         };
         lease.commands = Some(commands);
         lease.workdir = Some(workdir);
-        self.info = Some(info);
+        self.epoch = None;
         true
     }
     pub(super) fn retain_failed_restore(
@@ -155,7 +167,7 @@ impl SessionDriver {
     pub(super) fn accept_open(
         &mut self,
         ticket: Ticket,
-        session: acp::SessionId,
+        session: SessionId,
         fresh_workdir: Option<PathBuf>,
     ) -> bool {
         if !self.phase.session_current(ticket) {
@@ -167,6 +179,11 @@ impl SessionDriver {
         if let Some(workdir) = fresh_workdir {
             lease.workdir = Some(workdir);
         }
+        self.epoch = Some(LiveEpoch::new(
+            ticket,
+            lease.connection_key,
+            session.clone(),
+        ));
         lease.session = Some(session);
         self.restore = None;
         true

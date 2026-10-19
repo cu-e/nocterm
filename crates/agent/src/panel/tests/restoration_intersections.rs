@@ -25,26 +25,38 @@ fn adopt_json(
 }
 
 fn saved_chat(f: &Fixture, history: bool) -> SavedChat {
-    let mut chat = SavedChat::for_identity(
+    let chat = SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-000000000070".into(),
         1,
     );
-    chat.session_id = Some("unpersisted-rollout".into());
-    chat.workdir = Some(f._directory.path().join("work"));
-    chat.draft = Some("new submission".into());
-    chat.queue = vec![SavedPrompt {
+    let (id, metadata, mut resume, mut transcript, mut composer, _) = chat.into_parts();
+    resume.session_id = Some("unpersisted-rollout".into());
+    resume.workdir = Some(f._directory.path().join("work"));
+    composer.draft = Some("new submission".into());
+    composer.queue = vec![SavedPrompt {
         id: 1,
         text: "previous queued message".into(),
         images: Vec::new(),
         attachments: Vec::new(),
     }];
     if history {
-        chat.entries = vec![nocterm_ai::thread::Entry::User(vec![
-            acp::ContentBlock::Text(acp::TextContent::new("prior real message")),
-        ])];
+        transcript.entries = vec![nocterm_ai::thread::Entry::User(vec![Content::Text(Text {
+            text: "prior real message".into(),
+            annotations: None,
+            extensions: None,
+        })])];
     }
-    chat
+    SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap()
 }
 
 fn send_composer(f: &Fixture, cx: &mut TestAppContext) {
@@ -64,7 +76,7 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
     let saved = saved_chat(&f, false);
     let thread = adopt_json(&mut f, saved, cx);
     cx.run_until_parked();
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
     send_composer(&f, cx);
     assert!(
         f.commands.restores.lock().unwrap().is_empty(),
@@ -75,16 +87,16 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
         assert!(thread.read(cx).session_generating());
         assert!(!thread.read(cx).has_status_error());
         assert_eq!(
-            thread.read(cx).composer().queue()[0].saved.text,
+            thread.read(cx).composer().queued_rows()[0].text(),
             "new submission"
         );
     });
     let text = |index: usize| {
         f.commands.prompts.lock().unwrap()[index]
-            .prompt
+            .content
             .iter()
             .filter_map(|block| match block {
-                acp::ContentBlock::Text(text) => Some(text.text.clone()),
+                Content::Text(text) => Some(text.text.clone()),
                 _ => None,
             })
             .next_back()
@@ -102,15 +114,18 @@ fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
     cx: &mut TestAppContext,
 ) {
     let mut f = fixture(cx);
+    lazy_start(&f, cx);
     let saved = saved_chat(&f, true);
     let thread = adopt_json(&mut f, saved, cx);
+    cx.run_until_parked();
     for _ in 0..2 {
         f.commands
             .restore_errors
             .lock()
             .unwrap()
-            .push_back(AgentError::Rpc(
-                acp::Error::internal_error().data("Service temporarily overloaded"),
+            .push_back(RestoreFailure::Rpc(
+                -32603,
+                "Internal error: Service temporarily overloaded",
             ));
     }
     send_composer(&f, cx);
@@ -128,6 +143,6 @@ fn a_nonmissing_rpc_failure_does_not_replace_real_history_or_dispatch_its_queue(
         assert!(thread.read(cx).has_status_error());
         assert!(thread.read(cx).composer().paused());
         assert_eq!(thread.read(cx).composer().queue().len(), 2);
-        assert_eq!(thread.read(cx).transcript().entries.len(), 1);
+        assert_eq!(thread.read(cx).history_rows().len(), 1);
     });
 }

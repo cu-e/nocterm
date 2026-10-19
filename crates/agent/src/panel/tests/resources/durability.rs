@@ -25,7 +25,10 @@ fn native_quit_preserves_the_latest_document_after_destroying_its_window(cx: &mu
     );
     let chats = repository.chats();
     assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].draft.as_deref(), Some("latest dormant document"));
+    assert_eq!(
+        chats[0].composer().draft.as_deref(),
+        Some("latest dormant document")
+    );
 }
 
 #[gpui_kit::test]
@@ -48,12 +51,15 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     shutdown_runtime(&f.installation.installed, cx);
     let read = || f.repository.chats();
     assert_eq!(read().len(), 1);
-    assert_eq!(read()[0].name.as_deref(), Some("latest unsaved document"));
+    assert_eq!(
+        read()[0].metadata().name.as_deref(),
+        Some("latest unsaved document")
+    );
     cx.run_until_parked();
     assert_eq!(
-        read()[0].name.as_deref(),
+        read()[0].metadata().name.as_deref(),
         Some("latest unsaved document"),
         "a stale background snapshot overwrote synchronous quit persistence"
     );
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
 }

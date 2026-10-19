@@ -5,7 +5,7 @@ use super::*;
 async fn delayed_preferences_are_loaded_once_and_unedited_quit_never_rewrites_them(
     cx: &mut TestAppContext,
 ) {
-    let repository = Arc::new(InMemoryAgentRepository::default());
+    let repository = Arc::new(repository());
     let saved = nocterm_ai::favorites::AgentStateFile {
         last_agent: Some("claude".into()),
         ..Default::default()
@@ -54,7 +54,7 @@ async fn delayed_preferences_are_loaded_once_and_unedited_quit_never_rewrites_th
 async fn failed_preference_hydration_reports_its_typed_error_and_quit_preserves_prior_data(
     cx: &mut TestAppContext,
 ) {
-    let repository = Arc::new(InMemoryAgentRepository::default());
+    let repository = Arc::new(repository());
     let saved = nocterm_ai::favorites::AgentStateFile {
         last_agent: Some("previously-saved-agent".into()),
         ..Default::default()
@@ -99,15 +99,14 @@ async fn captured_chat_failures_preserve_original_primary_and_independent_diagno
     use std::error::Error as _;
     let (runtime, _directory, repository) = fixture(cx);
     let first = snapshot();
-    let mut metadata = first.metadata.clone();
-    metadata.id = "00000000-0000-0000-0000-000000000002".into();
-    let second = Arc::new(SharedChat {
-        metadata,
-        queue: Vec::new(),
-    });
+    let second = revise(
+        &first,
+        Some("00000000-0000-0000-0000-000000000002"),
+        &draft(&first).unwrap(),
+    );
     for chat in [&first, &second] {
         repository.reject(
-            StorageOperation::Save(chat.id.clone()),
+            StorageOperation::Save(chat.id().to_owned()),
             AgentStorageError::Interrupted,
         );
         let client = ProbeClient::new(cx, chat.clone());
@@ -157,6 +156,6 @@ async fn captured_chat_failures_preserve_original_primary_and_independent_diagno
         panic!("expected aggregate clone")
     };
     assert!(Arc::ptr_eq(diagnostic, cloned_diagnostic));
-    assert!(repository.encoded(&first.id).is_none());
-    assert!(repository.encoded(&second.id).is_none());
+    assert!(repository.encoded(first.id()).is_none());
+    assert!(repository.encoded(second.id()).is_none());
 }

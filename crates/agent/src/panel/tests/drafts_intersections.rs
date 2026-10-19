@@ -2,7 +2,7 @@
 use super::*;
 use std::time::Duration;
 
-fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+pub(super) fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         replace_composer_value(f.panel.read(cx).composer_focus(cx), text, window, cx);
     })
@@ -14,8 +14,7 @@ fn disk_value(
     repository: &nocterm_ai::testing::InMemoryAgentRepository,
     id: &str,
 ) -> serde_json::Value {
-    let bytes = repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    super::drafts::flat_document(&repository.encoded(id).unwrap())
 }
 
 #[gpui_kit::test]
@@ -27,10 +26,7 @@ fn closing_the_window_saves_a_draft_without_waiting_for_its_timer(cx: &mut TestA
     type_draft(&f, "window's final text\n界", cx);
     let (id, thread) = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
-        (
-            thread.read(cx).document().chat_id().to_owned(),
-            thread.downgrade(),
-        )
+        (thread.read(cx).chat_id_string(), thread.downgrade())
     });
     let panel = f.panel.downgrade();
     cx.update_window(f.handle, |_, window, _| window.remove_window())
@@ -56,7 +52,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     new_chat(&f, cx);
     type_draft(&f, "draft before disabling AI", cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
+    let id = thread.read_with(cx, |thread, _| thread.chat_id_string());
     cx.update(|cx| {
         f.installation
             .ready
@@ -76,7 +72,7 @@ async fn disabling_ai_saves_unsent_text_before_clearing_the_panel(cx: &mut TestA
     // A retained entity must not replace the saved text with its cleared UI state at quit.
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
-        thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned()),
+        thread.read_with(cx, |thread, _| thread.chat_id_string()),
         id
     );
     assert_eq!(disk_value(&f.repository, &id), value);
@@ -95,13 +91,23 @@ fn adopt(f: &mut Fixture, saved: nocterm_ai::history::SavedChat, cx: &mut TestAp
 #[gpui_kit::test]
 fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+    let saved = nocterm_ai::history::SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-00000000006b".into(),
         1,
     );
-    let id = saved.id.clone();
-    saved.draft = Some("saved text".into());
+    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
+    composer.draft = Some("saved text".into());
+    let saved = nocterm_ai::history::SavedChat::from_parts(
+        &f.installation.retention,
+        id.clone(),
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     adopt(&mut f, saved, cx);
     let shutdown = cx.update(|cx| {
         let thread = f.panel.read(cx).chat_documents().next().unwrap().clone();
@@ -117,19 +123,29 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
         disk_value(&f.repository, &id)["draft"],
         "latest dormant text"
     );
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
 }
 
 #[gpui_kit::test]
 fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = nocterm_ai::history::SavedChat::for_identity(
+    let saved = nocterm_ai::history::SavedChat::for_identity(
+        &f.installation.retention,
         "removed-provider".into(),
         "00000000-0000-4000-8000-00000000006c".into(),
         1,
     );
-    let id = saved.id.clone();
-    saved.draft = Some("previous text".into());
+    let (id, metadata, resume, transcript, mut composer, _) = saved.into_parts();
+    composer.draft = Some("previous text".into());
+    let saved = nocterm_ai::history::SavedChat::from_parts(
+        &f.installation.retention,
+        id.clone(),
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     adopt(&mut f, saved, cx);
     let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
     cx.update(|cx| assert!(!thread.read(cx).has_status_error()));
@@ -148,7 +164,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
         disk_value(&f.repository, &id)["draft"],
         "latest text after provider failure"
     );
-    assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+    assert_eq!(f.connector.connect_count(), 0);
 }
 
 #[gpui_kit::test]
@@ -170,7 +186,7 @@ fn queued_message_edit_keeps_the_original_draft_on_disk(cx: &mut TestAppContext)
     type_draft(&f, "replacement being edited", cx);
     cx.background_executor.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
-    let id = thread.read_with(cx, |thread, _| thread.document().chat_id().to_owned());
+    let id = thread.read_with(cx, |thread, _| thread.chat_id_string());
     let before = disk_value(&f.repository, &id);
     assert_eq!(before["draft"], "separate unsent draft");
     assert_eq!(before["queue"][0]["text"], "queued original");

@@ -1,28 +1,66 @@
 use super::*;
 use crate::panel::entries::tool_output::source;
 use gpui_kit::px;
+use nocterm_ai::model::{
+    ids::ToolId,
+    json::OwnedJson,
+    retention::RetentionAuthority,
+    tools::{ToolChanges, ToolOutput, ToolPatch, ToolRecord, ToolStatus},
+};
 use nocterm_ai::{
     thread::Entry,
     tool_display::{self, ToolDisplay},
 };
 use serde_json::{Value, json};
+pub(super) fn text_output(text: String) -> ToolOutput {
+    ToolOutput::Content {
+        content: Box::new(Content::Text(Text {
+            text,
+            annotations: None,
+            extensions: None,
+        })),
+        extensions: None,
+    }
+}
 
 pub(super) fn exec_result(state: &str) -> Value {
     json!({"command_id":"c7", "state":state, "stdout":"line\r\n\t```literal```\n界\n", "stderr":"warning\n",
         "exit_status":null, "total_bytes":27, "truncated":false, "error":null})
 }
 
-pub(super) fn call(tool: &str, args: Value, output: Value, verified: bool) -> acp::ToolCall {
+pub(super) fn call(
+    authority: &nocterm_ai::model::retention::RetentionAuthority,
+    tool: &str,
+    args: Value,
+    output: Value,
+    verified: bool,
+) -> nocterm_ai::model::tools::ToolRecord {
+    use nocterm_ai::model::{
+        json::OwnedJson,
+        literal::{LiteralIdentity, TextRange},
+        tools::ToolStatus,
+    };
     let request = tool_display::parse(tool, args.clone()).unwrap();
-    let mut call =
-        acp::ToolCall::new("screenshot", format!("mcp__nocterm-17__{tool}")).raw_input(args);
-    call.status = acp::ToolCallStatus::Completed;
-    call.raw_output = Some(output);
+    let mut call = super::provider_intersections::provider_tool(
+        "screenshot",
+        format!("mcp__nocterm-17__{tool}"),
+        ToolStatus::Succeeded,
+    );
+    call.literal.title = LiteralIdentity::Registered {
+        owner: TextRange::supplied(&call.title, &call.title[13..15]).unwrap(),
+        tool: TextRange::supplied(&call.title, &call.title[17..]).unwrap(),
+    };
+    call.arguments = Some(OwnedJson::from_untracked(authority, args).unwrap());
+    call.result = Some(OwnedJson::from_untracked(authority, output).unwrap());
     if verified {
-        let mut display =
-            ToolDisplay::new(&request, Some("Production · root@actual.example:22".into()));
+        let mut display = ToolDisplay::new(
+            authority,
+            &request,
+            Some("Production · root@actual.example:22".into()),
+        )
+        .unwrap();
         display.version = 1;
-        display.outcome = None;
+        display.outcome = nocterm_ai::model::controls::Presence::Absent;
         display.attach(&mut call);
     }
     call
@@ -36,7 +74,7 @@ pub(super) fn settle(f: &Fixture, cx: &mut TestAppContext) {
     }
 }
 
-pub(super) fn set_call(f: &Fixture, call: acp::ToolCall, cx: &mut TestAppContext) {
+pub(super) fn set_call(f: &Fixture, call: ToolRecord, cx: &mut TestAppContext) {
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| {
         restore_entries(f, thread, vec![Entry::Tool(call)], cx);
@@ -46,10 +84,14 @@ pub(super) fn set_call(f: &Fixture, call: acp::ToolCall, cx: &mut TestAppContext
     settle(f, cx);
 }
 
-pub(super) fn expanded_fixture(call: acp::ToolCall, cx: &mut TestAppContext) -> Fixture {
+pub(super) fn expanded_fixture(
+    build: impl FnOnce(&RetentionAuthority) -> ToolRecord,
+    cx: &mut TestAppContext,
+) -> Fixture {
     let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
+    let call = build(&f.installation.retention);
     set_call(&f, call, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.click(("tool-call", 0usize), cx)
@@ -61,6 +103,7 @@ pub(super) fn expanded_fixture(call: acp::ToolCall, cx: &mut TestAppContext) -> 
 
 #[test]
 fn known_result_decodes_direct_mcp_text_and_escaped_raw_output() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let payload = exec_result("running");
     let mcp = json!({"content":[{"type":"text","text":payload.to_string()}]});
     for output in [
@@ -72,6 +115,7 @@ fn known_result_decodes_direct_mcp_text_and_escaped_raw_output() {
         json!(json!({"jsonrpc":"2.0","id":1,"result":mcp}).to_string()),
     ] {
         let call = call(
+            &authority,
             "exec_command",
             json!({"terminal_id":"t1","program":"bash","args":["-lc","echo hello"]}),
             output,
@@ -84,12 +128,13 @@ fn known_result_decodes_direct_mcp_text_and_escaped_raw_output() {
         assert!(decoded.parameters.contains(&"Process: Running".into()));
         assert!(decoded.parameters.contains(&"Exit status: unknown".into()));
         assert!(decoded.parameters.contains(&"Command handle: c7".into()));
-        assert_eq!(call.status, acp::ToolCallStatus::Completed);
+        assert_eq!(call.status, ToolStatus::Succeeded);
     }
 }
 
 #[test]
 fn process_states_exit_failure_and_truncation_remain_explicit() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     for (state, label) in [
         ("starting", "Starting"),
         ("running", "Running"),
@@ -105,6 +150,7 @@ fn process_states_exit_failure_and_truncation_remain_explicit() {
         payload["exit_status"] = json!(7);
         payload["error"] = json!("transport error\n");
         let call = call(
+            &authority,
             "read_command",
             json!({"terminal_id":"t1","command_id":"c7"}),
             payload,
@@ -121,6 +167,7 @@ fn process_states_exit_failure_and_truncation_remain_explicit() {
 
 #[test]
 fn live_observation_does_not_invent_an_exit_from_acp_completion_or_idle() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     for (reason, completed) in [
         ("prompt_returned", true),
         ("output_idle", false),
@@ -128,6 +175,7 @@ fn live_observation_does_not_invent_an_exit_from_acp_completion_or_idle() {
     ] {
         let payload = json!({"text":"literal output\n", "first_line":4, "next_line":8, "cursor_semantics":"inclusive snapshot; replace overlapping lines", "truncated":false, "alt_screen":false, "completion":reason, "completed":completed, "exit_status":null});
         let call = call(
+            &authority,
             "run_command",
             json!({"terminal_id":"t1","command":"echo hello"}),
             payload,
@@ -155,14 +203,23 @@ fn live_observation_does_not_invent_an_exit_from_acp_completion_or_idle() {
 
 #[test]
 fn future_fields_malformed_payloads_and_mixed_blocks_remain_readable() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let args = json!({"terminal_id":"t1","program":"true"});
     let mut future = exec_result("exited");
     future["future_field"] = json!("keep me");
-    let output = source(&call("exec_command", args.clone(), future, false), false).unwrap();
+    let output = source(
+        &call(&authority, "exec_command", args.clone(), future, false),
+        false,
+    )
+    .unwrap();
     assert_eq!(output.sections[0].label, "Standard output");
     assert!(output.parameters.contains(&"future_field: keep me".into()));
     let mixed = json!({"content":[{"type":"text","text":exec_result("running").to_string()},{"type":"image","data":"AA==","mimeType":"image/png"}]});
-    let output = source(&call("exec_command", args.clone(), mixed, false), false).unwrap();
+    let output = source(
+        &call(&authority, "exec_command", args.clone(), mixed, false),
+        false,
+    )
+    .unwrap();
     assert_eq!(output.sections[0].label, "Standard output");
     assert!(
         output
@@ -175,15 +232,25 @@ fn future_fields_malformed_payloads_and_mixed_blocks_remain_readable() {
         (json!({"arbitrary":"keep me"}), "arbitrary: keep me"),
     ] {
         assert_eq!(
-            source(&call("exec_command", args.clone(), payload, false), false)
-                .unwrap()
-                .sections[0]
+            source(
+                &call(&authority, "exec_command", args.clone(), payload, false),
+                false
+            )
+            .unwrap()
+            .sections[0]
                 .text,
             expected
         );
     }
-    let mut foreign = call("exec_command", args, exec_result("running"), false);
+    let mut foreign = call(
+        &authority,
+        "exec_command",
+        args,
+        exec_result("running"),
+        false,
+    );
     foreign.title = "mcp__foreign__exec_command".into();
+    foreign.literal.title = nocterm_ai::model::literal::LiteralIdentity::Invalid;
     assert_eq!(
         source(&foreign, false).unwrap().sections[0].label,
         "Tool output"
@@ -197,35 +264,36 @@ fn future_fields_malformed_payloads_and_mixed_blocks_remain_readable() {
 
 #[test]
 fn duplicate_raw_result_does_not_hide_additional_content() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let payload = exec_result("running");
     let mut call = call(
+        &authority,
         "exec_command",
         json!({"terminal_id":"t1","program":"true"}),
         payload.clone(),
         false,
     );
-    call.content = serde_json::from_value(
-        json!([{"type":"content","content":{"type":"text","text":payload.to_string()}}]),
-    )
-    .unwrap();
+    call.output = vec![text_output(payload.to_string())];
     assert_eq!(source(&call, false).unwrap().sections.len(), 2);
-    call.raw_output =
-        Some(nocterm_ai::mcp::tool_result(json!(1), Ok(payload.clone()))["result"].clone());
+    call.result = Some(
+        OwnedJson::from_untracked(
+            &authority,
+            nocterm_ai::mcp::tool_result(json!(1), Ok(payload.clone()))["result"].clone(),
+        )
+        .unwrap(),
+    );
     assert_eq!(source(&call, false).unwrap().sections.len(), 2);
-    call.raw_output.as_mut().unwrap()["unknown"] = json!("provider metadata");
+    let mut result = call.result.as_ref().unwrap().as_value().clone();
+    result["unknown"] = json!("provider metadata");
+    call.result = Some(OwnedJson::from_untracked(&authority, result).unwrap());
     assert_eq!(
         source(&call, false).unwrap().sections.len(),
         2,
         "unknown envelope metadata does not duplicate a payload"
     );
-    call.raw_output = Some(payload);
+    call.result = Some(OwnedJson::from_untracked(&authority, payload).unwrap());
 
-    call.content.push(
-        serde_json::from_value(
-            json!({"type":"content","content":{"type":"text","text":"extra literal text"}}),
-        )
-        .unwrap(),
-    );
+    call.output.push(text_output("extra literal text".into()));
     let decoded = source(&call, false).unwrap();
     assert!(
         decoded
@@ -237,11 +305,13 @@ fn duplicate_raw_result_does_not_hide_additional_content() {
 
 #[test]
 fn errors_and_redaction_preserve_literal_result_boundaries() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let mut payload = exec_result("failed");
     payload["stdout"] = json!("password=secret\r\n");
     payload["stderr"] = json!("ghp_abcdefghijklmnop\t\n");
     payload["error"] = json!("token=hidden\n");
     let call = call(
+        &authority,
         "exec_command",
         json!({"terminal_id":"t1","program":"true"}),
         payload,
@@ -253,8 +323,13 @@ fn errors_and_redaction_preserve_literal_result_boundaries() {
         assert!(!section.text.contains("secret") && !section.text.contains("abcdefghijklmnop"));
     }
     let mut error = call;
-    error.raw_output =
-        Some(json!({"isError":true,"content":[{"type":"text","text":"permission denied\n"}]}));
+    error.result = Some(
+        OwnedJson::from_untracked(
+            &authority,
+            json!({"isError":true,"content":[{"type":"text","text":"permission denied\n"}]}),
+        )
+        .unwrap(),
+    );
     let output = source(&error, false).unwrap();
     assert_eq!(output.sections[0].label, "Error");
     assert_eq!(output.sections[0].text, "permission denied\n");
@@ -270,12 +345,15 @@ fn literal_output_copy_updates_with_late_results_and_stays_bounded(cx: &mut Test
     );
     payload["stdout"] = json!(literal);
     let f = expanded_fixture(
-        call(
-            "exec_command",
-            json!({"terminal_id":"t1","program":"true"}),
-            payload,
-            true,
-        ),
+        |authority| {
+            call(
+                authority,
+                "exec_command",
+                json!({"terminal_id":"t1","program":"true"}),
+                payload,
+                true,
+            )
+        },
         cx,
     );
     cx.update_window(f.handle, |_, window, cx| {
@@ -311,13 +389,22 @@ fn literal_output_copy_updates_with_late_results_and_stays_bounded(cx: &mut Test
     });
     let payload = exec_result("exited");
     f.events
-        .try_send(AgentEvent::Session(acp::SessionNotification::new(
+        .try_send(AgentEvent::Session(SessionNotice {
             session,
-            acp::SessionUpdate::ToolCallUpdate(
-                serde_json::from_value(json!({"toolCallId":"screenshot", "rawOutput":payload}))
-                    .unwrap(),
-            ),
-        )))
+            update: SessionUpdate::ToolChanged(ToolPatch {
+                id: ToolId::new("screenshot"),
+                changes: ToolChanges {
+                    result: Some(
+                        OwnedJson::from_untracked(&f.installation.retention, payload.clone())
+                            .unwrap(),
+                    ),
+                    ..Default::default()
+                },
+                extensions: None,
+                claims: Default::default(),
+                literal: Default::default(),
+            }),
+        }))
         .unwrap();
     cx.run_until_parked();
     settle(&f, cx);
@@ -337,12 +424,15 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
     let original = "password=secret\r\n```literal```\n";
     payload["stdout"] = json!(original);
     let f = expanded_fixture(
-        call(
-            "exec_command",
-            json!({"terminal_id":"t1","program":"true"}),
-            payload,
-            true,
-        ),
+        |authority| {
+            call(
+                authority,
+                "exec_command",
+                json!({"terminal_id":"t1","program":"true"}),
+                payload,
+                true,
+            )
+        },
         cx,
     );
     for redacts in [true, false] {
@@ -369,10 +459,8 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
                 }
             );
             let thread = f.panel.read(cx).current().unwrap();
-            let Entry::Tool(call) = &thread.read(cx).transcript().entries[0] else {
-                unreachable!()
-            };
-            assert_eq!(call.raw_output.as_ref().unwrap()["stdout"], original);
+            let facts = thread.read(cx).tool_facts();
+            assert_eq!(facts[0].result.as_ref().unwrap()["stdout"], original);
         })
         .unwrap();
     }
@@ -380,8 +468,14 @@ fn displayed_and_copied_output_follow_redaction_policy(cx: &mut TestAppContext) 
 
 #[test]
 fn many_generic_blocks_share_one_literal_preview_and_keep_every_block() {
-    let mut call = acp::ToolCall::new("foreign", "Foreign tool");
-    call.content = (0..1000).map(|index| serde_json::from_value(json!({"type":"content","content":{"type":"text","text":format!("block {index}\n")}})).unwrap()).collect();
+    let mut call = super::provider_intersections::provider_tool(
+        "foreign",
+        "Foreign tool",
+        ToolStatus::Pending,
+    );
+    call.output = (0..1000)
+        .map(|index| text_output(format!("block {index}\n")))
+        .collect();
     let output = source(&call, false).unwrap();
     assert_eq!(output.sections.len(), 1);
     assert!(output.sections[0].text.contains("block 0\n"));
@@ -398,12 +492,15 @@ fn all_output_sections_share_the_preview_budget_but_copy_keeps_the_full_result(
     payload["stdout"] = json!(stdout);
     payload["stderr"] = json!(stderr);
     let f = expanded_fixture(
-        call(
-            "exec_command",
-            json!({"terminal_id":"t1","program":"true"}),
-            payload,
-            true,
-        ),
+        |authority| {
+            call(
+                authority,
+                "exec_command",
+                json!({"terminal_id":"t1","program":"true"}),
+                payload,
+                true,
+            )
+        },
         cx,
     );
     cx.update_window(f.handle, |_, window, cx| {
@@ -421,9 +518,11 @@ fn all_output_sections_share_the_preview_budget_but_copy_keeps_the_full_result(
 
 #[test]
 fn windows_process_exit_status_keeps_its_unsigned_value() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let mut payload = exec_result("exited");
     payload["exit_status"] = json!(0xC0000005u32);
     let call = call(
+        &authority,
         "exec_command",
         json!({"terminal_id":"t1", "program":"cmd"}),
         payload,
@@ -440,9 +539,11 @@ fn windows_process_exit_status_keeps_its_unsigned_value() {
 
 #[test]
 fn unexpected_large_metadata_stays_inside_generic_bounded_output() {
+    let authority = RetentionAuthority::new(nocterm_ai::history::MAX_RESIDENT_BYTES).unwrap();
     let mut payload = exec_result("running");
     payload["command_id"] = json!("large".repeat(10000));
     let call = call(
+        &authority,
         "read_command",
         json!({"terminal_id":"t1", "command_id":"c7"}),
         payload,
@@ -453,6 +554,7 @@ fn unexpected_large_metadata_stays_inside_generic_bounded_output() {
     assert_eq!(output.sections[0].label, "Tool output");
     assert!(output.sections[0].text.contains("largelarge"));
     let call = self::call(
+        &authority,
         "read_terminal",
         json!({"terminal_id":"t1"}),
         json!({"text":"literal", "first_line":0, "next_line":1, "cursor_semantics":"large".repeat(10000), "truncated":false, "alt_screen":false}),

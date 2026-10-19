@@ -27,15 +27,25 @@ fn adopt_saved(
 }
 
 fn empty_chat(f: &Fixture) -> SavedChat {
-    let mut chat = SavedChat::for_identity(
+    let chat = SavedChat::for_identity(
+        &f.installation.retention,
         "codex".into(),
         "00000000-0000-4000-8000-00000000006f".into(),
         1,
     );
-    chat.session_id = Some("never-persisted-provider-session".into());
-    chat.workdir = Some(f._directory.path().join("work"));
-    chat.draft = Some("literal unsent text".into());
-    chat
+    let (id, metadata, mut resume, transcript, mut composer, _) = chat.into_parts();
+    resume.session_id = Some("never-persisted-provider-session".into());
+    resume.workdir = Some(f._directory.path().join("work"));
+    composer.draft = Some("literal unsent text".into());
+    SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -47,9 +57,12 @@ fn draft_only_history_starts_one_fresh_session_without_restoring(cx: &mut TestAp
     assert!(f.commands.restores.lock().unwrap().is_empty());
     cx.update(|cx| {
         let snapshot = thread.read(cx).snapshot(cx).unwrap();
-        assert!(snapshot.session_id.is_none());
-        assert!(snapshot.workdir.is_none());
-        assert_eq!(snapshot.draft.as_deref(), Some("literal unsent text"));
+        assert!(snapshot.resume().session_id.is_none());
+        assert!(snapshot.resume().workdir.is_none());
+        assert_eq!(
+            snapshot.composer().draft.as_deref(),
+            Some("literal unsent text")
+        );
     });
     thread.update(cx, |thread, cx| {
         thread.send("first actual request".into(), cx)
@@ -90,35 +103,49 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].prompt.iter().any(
-        |block| matches!(block, acp::ContentBlock::Text(text) if text.text == "waiting request")
-    ));
+    assert!(
+        prompts[0]
+            .content
+            .iter()
+            .any(|block| matches!(block, Content::Text(text) if text.text == "waiting request"))
+    );
     cx.update(|cx| assert!(!thread.read(cx).document().pending_history()));
 }
 
 #[gpui_kit::test]
 fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let mut saved = empty_chat(&f);
-    saved.entries = vec![
-        Entry::User(vec![acp::ContentBlock::Text(acp::TextContent::new(
-            "remember this",
-        ))]),
+    let (id, metadata, resume, mut transcript, mut composer, _) = empty_chat(&f).into_parts();
+    transcript.entries = vec![
+        Entry::User(vec![Content::Text(Text {
+            text: "remember this".into(),
+            annotations: None,
+            extensions: None,
+        })]),
         Entry::Agent("previous answer".into()),
     ];
-    saved.queue.push(SavedPrompt {
+    composer.queue.push(SavedPrompt {
         id: 1,
         text: "continue conversation".into(),
         images: Vec::new(),
         attachments: Vec::new(),
     });
+    let saved = SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
     let thread = adopt_saved(&mut f, saved, cx);
     f.commands
         .restore_errors
         .lock()
         .unwrap()
-        .push_back(AgentError::RestoreUnavailable(
-            "no rollout found for thread id previous".into(),
+        .push_back(RestoreFailure::Unavailable(
+            "no rollout found for thread id previous",
         ));
     thread.update(cx, |thread, cx| thread.send_now(1, cx));
     cx.run_until_parked();
@@ -126,15 +153,73 @@ fn missing_rollout_falls_back_once_and_preserves_history_and_queue(cx: &mut Test
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 1);
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("User: remember this") && text.text.contains("Assistant: previous answer"))));
-    assert!(prompts[0].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text == "continue conversation")));
+    assert!(prompts[0].content.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("User: remember this") && text.text.contains("Assistant: previous answer"))));
+    assert!(
+        prompts[0].content.iter().any(
+            |block| matches!(block, Content::Text(text) if text.text == "continue conversation")
+        )
+    );
     drop(prompts);
-    cx.update(|cx| assert_eq!(thread.read(cx).transcript().entries.len(), 3));
+    cx.update(|cx| assert_eq!(thread.read(cx).history_rows().len(), 3));
     complete_active(&f, cx);
     thread.update(cx, |thread, cx| thread.send("next message".into(), cx));
     cx.run_until_parked();
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);
-    assert!(!prompts[1].prompt.iter().any(|block| matches!(block, acp::ContentBlock::Text(text) if text.text.contains("Saved conversation (context"))));
+    assert!(!prompts[1].content.iter().any(|block| matches!(block, Content::Text(text) if text.text.contains("Saved conversation (context"))));
     assert_eq!(f.commands.restores.lock().unwrap().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_restored_text_prompt_is_edited_with_its_own_context(cx: &mut TestAppContext) {
+    use nocterm_ai::history::SavedAttachment;
+    let mut f = fixture(cx);
+    let (id, metadata, resume, transcript, mut composer, _) = empty_chat(&f).into_parts();
+    composer.attachments = vec![SavedAttachment::Group("defaults".into())];
+    composer.queue.push(SavedPrompt {
+        id: 1,
+        text: "queued text".into(),
+        images: Vec::new(),
+        attachments: vec![SavedAttachment::Group("prompt context".into())],
+    });
+    let saved = SavedChat::from_parts(
+        &f.installation.retention,
+        id,
+        metadata,
+        resume,
+        transcript,
+        composer,
+    )
+    .unwrap();
+    let thread = adopt_saved(&mut f, saved, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel
+            .update(cx, |panel, cx| panel.edit_queued(1, window, cx))
+    })
+    .unwrap();
+    thread.update(cx, |thread, _| {
+        assert!(thread.composer().editing());
+        assert_eq!(
+            thread.composer().attachments().to_vec(),
+            [Attachment::Group("prompt context".into())]
+        );
+    });
+    super::drafts_intersections::type_draft(&f, "edited text", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    thread.update(cx, |thread, _| {
+        assert!(!thread.composer().editing());
+        assert_eq!(
+            thread.composer().queue()[0].text().to_string(),
+            "edited text"
+        );
+        assert_eq!(
+            thread.composer().attachments().to_vec(),
+            [Attachment::Group("defaults".into())]
+        );
+    });
 }

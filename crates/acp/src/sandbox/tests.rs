@@ -1,43 +1,19 @@
-use super::launch::SandboxLauncher;
 use super::*;
-use nocterm_ai::sandbox::{SandboxLaunchError, SandboxPolicy};
 mod native;
 
-#[test]
-fn launch_uses_its_fresh_environment_instead_of_probe_evidence() {
-    let temp = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(temp.path()).unwrap();
-    let policy = SandboxPolicy::new(&root, None, &[], &[]);
-    let env = BTreeMap::from([("PATH".into(), "/nonexistent".into())]);
-    let result = SandboxLauncher::prepare(&policy, &root, Path::new("/bin/true"), &[], &env);
-    assert!(matches!(
-        result,
-        Err(SandboxLaunchError::Missing | SandboxLaunchError::Unsupported)
-    ));
-}
 #[cfg(target_os = "linux")]
 #[test]
-fn removed_or_unexecutable_bubblewrap_never_falls_back_to_plain_agent() {
-    use std::os::unix::fs::PermissionsExt;
+fn availability_finds_only_a_bubblewrap_file_on_path() {
     let temp = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(temp.path()).unwrap();
-    let bwrap = root.join("bwrap");
-    std::fs::write(&bwrap, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o700)).unwrap();
     let env = BTreeMap::from([("PATH".into(), root.to_string_lossy().into_owned())]);
+    assert_eq!(availability(&env, Some(&root)), Availability::Missing);
+    std::fs::create_dir(root.join("bwrap")).unwrap();
+    assert_eq!(availability(&env, Some(&root)), Availability::Missing);
+    std::fs::remove_dir(root.join("bwrap")).unwrap();
+    std::fs::write(root.join("bwrap"), "#!/bin/sh\nexit 0\n").unwrap();
     assert_eq!(
         availability(&env, Some(&root)),
-        Availability::Available(bwrap.clone())
+        Availability::Available(root.join("bwrap"))
     );
-    let policy = SandboxPolicy::new(&root, None, &[], &[]);
-    std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(matches!(
-        SandboxLauncher::prepare(&policy, &root, Path::new("/bin/true"), &[], &env),
-        Err(SandboxLaunchError::NotExecutable(_))
-    ));
-    std::fs::remove_file(&bwrap).unwrap();
-    assert!(matches!(
-        SandboxLauncher::prepare(&policy, &root, Path::new("/bin/true"), &[], &env),
-        Err(SandboxLaunchError::Missing)
-    ));
 }

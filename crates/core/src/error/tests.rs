@@ -74,3 +74,34 @@ fn construction_from_arc_reuses_the_existing_allocation() {
         erased.downcast_ref().unwrap()
     ));
 }
+
+#[test]
+fn consuming_typed_and_erased_holders_preserves_payload_and_surviving_sources() {
+    let typed = SharedError::from_error(io::Error::from(io::ErrorKind::PermissionDenied));
+    let held = typed.clone();
+    let payload = typed.into_arc();
+    assert!(std::ptr::eq(payload.as_ref(), held.as_ref()));
+    assert!(std::ptr::eq(
+        payload.as_ref(),
+        held.source().unwrap().downcast_ref::<io::Error>().unwrap()
+    ));
+    drop(payload);
+    assert_eq!(held.as_ref().kind(), io::ErrorKind::PermissionDenied);
+
+    let erased = SharedCause::new(io::Error::from(io::ErrorKind::StorageFull));
+    let held = erased.clone();
+    let payload = erased.into_arc();
+    assert!(std::ptr::eq(
+        payload.downcast_ref::<io::Error>().unwrap(),
+        held.downcast_ref::<io::Error>().unwrap()
+    ));
+    assert!(std::ptr::eq(
+        payload.downcast_ref::<io::Error>().unwrap(),
+        held.source().unwrap().downcast_ref::<io::Error>().unwrap()
+    ));
+    drop(payload);
+    assert_eq!(
+        held.downcast_ref::<io::Error>().unwrap().kind(),
+        io::ErrorKind::StorageFull
+    );
+}

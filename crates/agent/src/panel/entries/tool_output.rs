@@ -5,8 +5,14 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+#[cfg(any(test, feature = "test-support"))]
+use nocterm_ai::model::{
+    content::Content,
+    tools::{ToolOutput, ToolRecord},
+};
 use nocterm_ai::{
-    acp,
+    history::physical::{ContentSlot, OutputSlot, ToolSlot},
+    model::controls::Presence,
     tool_display::{self, ToolDisplay, ToolOutcome},
 };
 use serde_json::Value;
@@ -62,48 +68,89 @@ fn text(value: &Value) -> String {
         .unwrap_or_else(|| serde_json::to_string_pretty(value).unwrap_or_default())
 }
 
-fn content_value(item: &acp::ToolCallContent) -> Value {
+#[cfg(any(test, feature = "test-support"))]
+fn content_value(item: &ToolOutput) -> Value {
     match item {
-        acp::ToolCallContent::Content(content) => match &content.content {
-            acp::ContentBlock::Text(content) => Value::String(content.text.clone()),
+        ToolOutput::Content { content, .. } => match content.as_ref() {
+            Content::Text(content) => Value::String(content.text.clone()),
             block => serde_json::to_value(block).unwrap_or_default(),
         },
         item => serde_json::to_value(item).unwrap_or_default(),
     }
 }
 
-pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Output> {
+#[cfg(any(test, feature = "test-support"))]
+pub(in crate::panel) fn source(call: &ToolRecord, redact: bool) -> Option<Output> {
     let display = ToolDisplay::from_call(call);
+    let tool = display
+        .map(|display| display.tool.as_str())
+        .or_else(|| tool_display::requested_arguments(call).map(|(tool, _)| tool));
+    source_fields(
+        display,
+        tool,
+        call.output.iter().map(content_value),
+        call.result.as_ref().map(|v| v.as_value()),
+        redact,
+    )
+}
+
+pub(in crate::panel) fn source_managed(call: &ToolSlot, redact: bool) -> Option<Output> {
+    let display = ToolDisplay::from_managed(call);
+    let requested = display
+        .is_none()
+        .then(|| tool_display::requested_arguments_managed(call))
+        .flatten();
+    let tool = display
+        .as_ref()
+        .map(|display| display.tool.as_str())
+        .or_else(|| requested.as_ref().map(|(tool, _)| tool.as_str()));
+    let raw = call.result();
+    source_fields(
+        display.as_deref().map(|v| &**v),
+        tool,
+        call.output().iter().map(managed_content_value),
+        raw.as_ref().map(|v| v.as_value()),
+        redact,
+    )
+}
+
+fn managed_content_value(item: &OutputSlot) -> Value {
+    match item {
+        OutputSlot::Content { content, .. } => match content.as_ref() {
+            ContentSlot::Text(content) => Value::String(content.text().to_string()),
+            block => serde_json::to_value(block.wire()).unwrap_or_default(),
+        },
+        item => serde_json::to_value(item.wire()).unwrap_or_default(),
+    }
+}
+
+fn source_fields(
+    display: Option<&ToolDisplay>,
+    tool: Option<&str>,
+    values: impl Iterator<Item = Value>,
+    raw: Option<&Value>,
+    redact: bool,
+) -> Option<Output> {
     if let Some(display) = &display
-        && let Some(outcome) = &display.outcome
+        && let Presence::Value(outcome) = &display.outcome
     {
         let mut output = match outcome {
             ToolOutcome::Pending => return None,
-            ToolOutcome::Ok(value) => decode::bridge(&display.tool, value),
-            ToolOutcome::Err(error) => Output::plain("Error", error.clone()),
+            ToolOutcome::Succeeded(value) => decode::bridge(&display.tool, value.as_value()),
+            ToolOutcome::Failed(error) => Output::plain("Error", error.clone()),
         };
         if redact {
             output.redact();
         }
         return Some(output);
     }
-    let tool = display
-        .as_ref()
-        .map(|display| display.tool.as_str())
-        .or_else(|| tool_display::requested_arguments(call).map(|(tool, _)| tool));
     let mut output = Output {
         sections: Vec::new(),
         parameters: Vec::new(),
     };
     let mut content_values = Vec::new();
-    for item in &call.content {
-        let value = content_value(item);
-        if tool.is_some()
-            && call
-                .raw_output
-                .as_ref()
-                .is_some_and(|raw| decode::truncated_preview(&value, raw))
-        {
+    for value in values {
+        if tool.is_some() && raw.is_some_and(|raw| decode::truncated_preview(&value, raw)) {
             continue;
         }
         content_values.push(value);
@@ -130,7 +177,7 @@ pub(in crate::panel) fn source(call: &acp::ToolCall, redact: bool) -> Option<Out
             ));
         }
     }
-    if let Some(raw) = call.raw_output.as_ref().filter(|raw| !raw.is_null()) {
+    if let Some(raw) = raw.filter(|raw| !raw.is_null()) {
         // Providers often repeat the same result as both content and rawOutput.
         // Suppress only exact text/JSON equivalence, never an unknown extra block.
         let duplicate = match content_values.as_slice() {
@@ -200,3 +247,6 @@ pub(super) fn render(index: usize, output: Output, cx: &App) -> impl IntoElement
     }
     container
 }
+
+#[cfg(test)]
+mod managed;

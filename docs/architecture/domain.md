@@ -181,11 +181,17 @@ survives later failure or cancellation without advancing file or byte counters.
 
 ## Agent history
 
-`nocterm-ai` owns pure version-one transcript codecs, structural/collection
+`nocterm-ai` owns neutral version-two transcript codecs, structural/collection
 validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
 contracts. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
-Existing SavedChat/SharedChat ACP payloads remain protocol migration debt.
+Historical version-one grammar stays in the storage adapter; domain records contain
+no protocol SDK values. Authentic retention graphs share allocation marks across
+JSON, identifiers, display, prepared caches and physical transcript components.
+`DocumentRetention` supplies fixed linear producer capabilities and admits actual
+pending construction credit alongside registered retained owners. `ReaderSource`
+and `WriterProducer` loan the original capabilities and return them after physical
+payload retirement; they do not locate scopes by serialized chat ID.
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
 ([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records without adding protocol-specific fields.
@@ -207,14 +213,13 @@ a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapte
 `nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
 usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing
-`session_config` helpers retain pure choice and category rules; protocol-backed
-version-one values remain migration debt at their established seams.
+`session_config` helpers retain pure neutral choice and category rules.
 
-Version-one `SavedChat::for_identity` constructs framing from supplied values without
+`SavedChat::for_identity` constructs framing from supplied values without
 allocating a replacement UUID or querying time. Its saved-window boundary is shared
 with feature semantic comparisons. Genuine new/fork allocation uses the injected
 native ChatMetadataSource. The transcript reducer receives the same timestamp as the accepted document transition;
-the history wire format and protocol-backed records retain their current representation.
+the canonical history projection uses neutral version-two records.
 
 ## Agent image contracts
 

@@ -5,30 +5,7 @@ use serde::{
 };
 use std::marker::PhantomData;
 
-pub(super) fn entries<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<crate::thread::Entry>, D::Error> {
-    bounded::<_, _, 2000>(d)
-}
-pub(super) fn prompts<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<super::SavedPrompt>, D::Error> {
-    bounded::<_, _, 1024>(d)
-}
-pub(super) fn attachments<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<super::SavedAttachment>, D::Error> {
-    bounded::<_, _, 1024>(d)
-}
-pub(super) fn images<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<crate::acp::ContentBlock>, D::Error> {
-    bounded::<_, _, 128>(d)
-}
-pub(super) fn times<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u64>, D::Error> {
-    bounded::<_, _, 2000>(d)
-}
-fn bounded<'de, D, T, const LIMIT: usize>(d: D) -> Result<Vec<T>, D::Error>
+pub fn bounded<'de, D, T, const LIMIT: usize>(d: D) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,

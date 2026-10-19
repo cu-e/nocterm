@@ -1,237 +1,418 @@
-//! Exact row and payload budgets are prepared once and reused on the UI thread.
-use super::{HistoryCodecError, MAX_SAVED_ENTRIES, SavedChat, check_size, prompt_size, size, wire};
+//! Scalar caches retain format labels, full payload costs and original grammar identity.
+use super::{
+    CompatibilityReason, EncodingDecision, FormatSize, HistoryCodecError, HistoryOrigin,
+    HistoryView, LegacySizingError, PreparedHistory, SavedChat, SavedPrompt, size, wire,
+};
+use crate::model::{
+    json::{deferred::DecodeLedger, lifetime::Shared},
+    retention::RetentionAuthority,
+};
 use crate::thread::Entry;
 use std::sync::Arc;
-#[derive(Clone, Debug)]
-pub struct PreparedBudget {
-    pub(super) resident_bytes: usize,
-    entries: Arc<Vec<usize>>,
-    memory: Arc<Vec<usize>>,
-    prompts: Arc<Vec<usize>>,
+mod measurements;
+use measurements::Measurements;
+#[derive(Clone)]
+struct LegacyCost {
+    retention: super::retention::LegacyIdentity,
+    size: Result<FormatSize, CompatibilityReason>,
 }
-impl PreparedBudget {
-    pub(super) fn new(chat: &SavedChat) -> Result<Self, HistoryCodecError> {
+#[derive(Clone)]
+struct Measurement {
+    version2: FormatSize,
+    resident: usize,
+    legacy: Option<LegacyCost>,
+}
+fn legacy_result(
+    result: Result<FormatSize, LegacySizingError>,
+) -> Result<Result<FormatSize, CompatibilityReason>, HistoryCodecError> {
+    match result {
+        Ok(size) => Ok(Ok(size)),
+        Err(LegacySizingError::UnsupportedRecord(reason)) => Ok(Err(reason)),
+        Err(LegacySizingError::Json(error)) => Err(error.into()),
+        Err(LegacySizingError::Formatting(error)) => Err(HistoryCodecError::Formatting(error)),
+        Err(LegacySizingError::ArithmeticOverflow) => Err(HistoryCodecError::ArithmeticOverflow),
+        Err(LegacySizingError::Retention(error)) => Err(HistoryCodecError::Retention(
+            nocterm_core::SharedError::from_error(error),
+        )),
+    }
+}
+impl Measurement {
+    fn row(
+        row: &Entry,
+        grammar: Option<&super::retention::LegacyFormat>,
+    ) -> Result<Self, HistoryCodecError> {
         Ok(Self {
-            resident_bytes: 0,
-            memory: Arc::new(
-                chat.entries
-                    .iter()
-                    .map(wire::entry_memory)
-                    .collect::<Result<_, _>>()
-                    .map_err(HistoryCodecError::from)?,
-            ),
-            entries: Arc::new(
-                chat.entries
-                    .iter()
-                    .map(wire::entry_size)
-                    .collect::<Result<_, _>>()
-                    .map_err(HistoryCodecError::from)?,
-            ),
-            prompts: Arc::new(
-                chat.queue
-                    .iter()
-                    .map(prompt_size)
-                    .collect::<Result<_, _>>()?,
-            ),
+            version2: wire::entry_measure(row)?,
+            resident: size::retained(row)?.max(super::allocations::row(row)?),
+            legacy: grammar
+                .map(|grammar| {
+                    Ok::<LegacyCost, HistoryCodecError>(LegacyCost {
+                        retention: grammar
+                            .retention()
+                            .ok_or(crate::model::retention::RetentionError::MissingAuthority)
+                            .map_err(|error| {
+                                HistoryCodecError::Retention(nocterm_core::SharedError::from_error(
+                                    error,
+                                ))
+                            })?
+                            .clone(),
+                        size: legacy_result(grammar.entry(row))?,
+                    })
+                })
+                .transpose()?,
         })
     }
-    pub fn prompt_sizes(&self) -> &[usize] {
-        &self.prompts
+    fn prompt(
+        prompt: &SavedPrompt,
+        grammar: Option<&super::retention::LegacyFormat>,
+    ) -> Result<Self, HistoryCodecError> {
+        Ok(Self {
+            version2: size::measure(prompt)?,
+            resident: size::retained(prompt)?.max(super::allocations::prompt(prompt)?),
+            legacy: grammar
+                .map(|grammar| {
+                    Ok::<LegacyCost, HistoryCodecError>(LegacyCost {
+                        retention: grammar
+                            .retention()
+                            .ok_or(crate::model::retention::RetentionError::MissingAuthority)
+                            .map_err(|error| {
+                                HistoryCodecError::Retention(nocterm_core::SharedError::from_error(
+                                    error,
+                                ))
+                            })?
+                            .clone(),
+                        size: legacy_result(grammar.prompt(prompt))?,
+                    })
+                })
+                .transpose()?,
+        })
+    }
+    fn legacy(
+        &self,
+        grammar: &super::retention::LegacyFormat,
+    ) -> Result<FormatSize, HistoryCodecError> {
+        let measured = self
+            .legacy
+            .as_ref()
+            .filter(|cost| {
+                grammar
+                    .retention()
+                    .is_some_and(|identity| cost.retention.matches(identity))
+            })
+            .ok_or(HistoryCodecError::CandidateMismatch)?;
+        measured.size.map_err(HistoryCodecError::Compatibility)
     }
 }
-#[derive(Default)]
+#[derive(Clone)]
+pub struct PreparedBudget {
+    pub(super) resident_bytes: usize,
+    entries: Shared<Measurements>,
+    prompts: Shared<Measurements>,
+    pub(super) decision: Option<EncodingDecision>,
+}
+impl std::fmt::Debug for PreparedBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedBudget")
+            .field("resident_bytes", &self.resident_bytes)
+            .field("rows", &self.entries.len())
+            .field("prompts", &self.prompts.len())
+            .finish_non_exhaustive()
+    }
+}
+/// Preserve the policy sum of per-row/prompt maxima. Unique physical graph A
+/// is measured separately; taking max(sum(P),sum(H)) here loses mixed shapes.
+fn component_resident(chat: &SavedChat) -> Result<usize, HistoryCodecError> {
+    let mut shell = super::allocations::chat(chat)?;
+    let mut components = 0usize;
+    for row in &chat.transcript().entries {
+        let physical = super::allocations::row(row)?;
+        shell = shell
+            .checked_sub(physical)
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+        components = components
+            .checked_add(size::retained(row)?.max(physical))
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+    }
+    for prompt in &chat.composer().queue {
+        let physical = super::allocations::prompt(prompt)?;
+        shell = shell
+            .checked_sub(physical)
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+        components = components
+            .checked_add(size::retained(prompt)?.max(physical))
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+    }
+    let view = chat.view()?;
+    let framing = wire::Wire::framing(view.framing(), view.shape());
+    components
+        .checked_add(size::retained(&framing)?.max(shell))
+        .ok_or(HistoryCodecError::ArithmeticOverflow)
+}
+impl PreparedBudget {
+    pub(super) fn new(
+        chat: &SavedChat,
+        grammar: Option<&super::retention::LegacyFormat>,
+    ) -> Result<Self, HistoryCodecError> {
+        Self::build(chat, grammar, None)
+    }
+    pub(super) fn new_in_ledger(
+        chat: &SavedChat,
+        grammar: Option<&super::retention::LegacyFormat>,
+        ledger: &DecodeLedger,
+    ) -> Result<Self, HistoryCodecError> {
+        Self::build(chat, grammar, Some(ledger))
+    }
+    fn build(
+        chat: &SavedChat,
+        grammar: Option<&super::retention::LegacyFormat>,
+        ledger: Option<&DecodeLedger>,
+    ) -> Result<Self, HistoryCodecError> {
+        let resident_bytes = component_resident(chat)?;
+        super::check_memory(resident_bytes)?;
+        Ok(Self {
+            resident_bytes,
+            entries: Measurements::rows(
+                chat.retention(),
+                &chat.transcript().entries,
+                grammar,
+                ledger,
+            )?,
+            decision: None,
+            prompts: Measurements::prompts(
+                chat.retention(),
+                &chat.composer().queue,
+                grammar,
+                ledger,
+            )?,
+        })
+    }
+}
+/// The original immutable payload is retained solely to bind cached values to it.
+#[derive(Clone)]
+pub struct PromptBudget {
+    prompt: Arc<SavedPrompt>,
+    measurement: Measurement,
+}
+impl PromptBudget {
+    pub fn prepare(
+        prompt: Arc<SavedPrompt>,
+        grammar: Option<&super::retention::LegacyFormat>,
+    ) -> Result<Self, HistoryCodecError> {
+        let measurement = Measurement::prompt(&prompt, grammar)?;
+        Ok(Self {
+            prompt,
+            measurement,
+        })
+    }
+    pub fn matches(&self, prompt: &SavedPrompt) -> bool {
+        std::ptr::eq(self.prompt.as_ref(), prompt)
+    }
+    pub fn version2(&self) -> FormatSize {
+        self.measurement.version2
+    }
+    pub fn resident_bytes(&self) -> usize {
+        self.measurement.resident
+    }
+}
+#[derive(Clone)]
 pub struct HistoryBudget {
-    memory: Vec<usize>,
-    entries: Vec<usize>,
+    retention: RetentionAuthority,
+    entries: Vec<Measurement>,
+    context: BudgetContext,
+}
+#[derive(Clone)]
+struct BudgetContext {
+    origin: HistoryOrigin,
+    grammar: Option<super::retention::LegacyFormat>,
+}
+
+fn add(left: FormatSize, right: FormatSize) -> Result<FormatSize, HistoryCodecError> {
+    Ok(FormatSize {
+        encoded_bytes: left
+            .encoded_bytes
+            .checked_add(right.encoded_bytes)
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?,
+        structural_bytes: left
+            .structural_bytes
+            .checked_add(right.structural_bytes)
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?,
+    })
+}
+fn compose(
+    mut frame: FormatSize,
+    rows: impl ExactSizeIterator<Item = Result<FormatSize, HistoryCodecError>>,
+    queued: impl ExactSizeIterator<Item = Result<FormatSize, HistoryCodecError>>,
+) -> Result<FormatSize, HistoryCodecError> {
+    let commas = rows
+        .len()
+        .saturating_sub(1)
+        .checked_add(queued.len().saturating_sub(1))
+        .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+    frame.encoded_bytes = frame
+        .encoded_bytes
+        .checked_add(commas)
+        .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+    for value in rows.chain(queued) {
+        frame = add(frame, value?)?;
+    }
+    Ok(frame)
 }
 impl HistoryBudget {
-    pub fn resident_bytes(&self) -> usize {
-        self.memory.iter().sum()
-    }
-    pub fn restored(prepared: Option<&PreparedBudget>) -> Self {
+    pub fn new(retention: &RetentionAuthority) -> Self {
         Self {
-            memory: prepared.map_or_else(Vec::new, |prepared| (*prepared.memory).clone()),
-            entries: prepared.map_or_else(Vec::new, |prepared| (*prepared.entries).clone()),
+            retention: retention.clone(),
+            entries: Vec::new(),
+            context: BudgetContext {
+                origin: HistoryOrigin::New,
+                grammar: None,
+            },
         }
+    }
+    pub fn retention(&self) -> &RetentionAuthority {
+        &self.retention
+    }
+    pub fn restored(retention: &RetentionAuthority, prepared: Option<&PreparedHistory>) -> Self {
+        prepared.map_or_else(
+            || Self::new(retention),
+            |prepared| Self {
+                retention: retention.clone(),
+                entries: prepared.scalars().entries.as_slice().to_vec(),
+                context: BudgetContext {
+                    origin: prepared.origin(),
+                    grammar: prepared.legacy().cloned(),
+                },
+            },
+        )
+    }
+    pub fn prepare_snapshot(&self, chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
+        super::codec::prepare_origin(chat, self.context.origin, self.context.grammar.clone(), 0)
+    }
+    pub fn origin(&self) -> HistoryOrigin {
+        self.context.origin
+    }
+    pub fn legacy(&self) -> Option<&super::retention::LegacyFormat> {
+        self.context.grammar.as_ref()
+    }
+    pub fn resident_bytes(&self) -> Result<usize, HistoryCodecError> {
+        self.entries.iter().try_fold(0usize, |sum, row| {
+            sum.checked_add(row.resident)
+                .ok_or(HistoryCodecError::ArithmeticOverflow)
+        })
     }
     pub fn refresh(&mut self, entries: &[Entry], dirty: &[usize]) -> Result<(), HistoryCodecError> {
         let old = self.entries.len();
-        self.entries.resize(entries.len(), 0);
-        self.memory.resize(entries.len(), 0);
-        for index in (old..entries.len())
-            .chain(dirty.iter().copied())
-            .filter(|index| *index < entries.len())
-        {
-            self.memory[index] =
-                wire::entry_memory(&entries[index]).map_err(HistoryCodecError::from)?;
-            self.entries[index] =
-                wire::entry_size(&entries[index]).map_err(HistoryCodecError::from)?;
+        self.entries.truncate(entries.len());
+        for row in &entries[old.min(entries.len())..] {
+            self.entries.push(Measurement::row(row, self.legacy())?);
+        }
+        for index in dirty.iter().copied().filter(|index| *index < entries.len()) {
+            self.entries[index] = Measurement::row(&entries[index], self.legacy())?;
         }
         Ok(())
     }
-    pub fn validate_memory(
+    /// Read-only capture can occur before the foreground dirty-row cache refresh.
+    /// Measure actual borrowed rows with the original format context, never admit
+    /// a candidate from stale cached row costs.
+    pub fn validate_current(
         &self,
-        metadata: &SavedChat,
-        prompts: impl Iterator<Item = usize>,
-    ) -> Result<(), HistoryCodecError> {
-        let base = size::structural_size(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-            .map_err(HistoryCodecError::from)?;
-        let rows = &self.memory[self.memory.len().saturating_sub(MAX_SAVED_ENTRIES)..];
-        let (count, prompts) =
-            prompts.fold((0, 0), |(count, total), bytes| (count + 1, total + bytes));
-        super::check_memory(
-            base + rows.iter().sum::<usize>() + prompts + if count == 0 { 0 } else { 2048 },
-        )
+        entries: &[Entry],
+        view: HistoryView<'_>,
+        prompts: &[&PromptBudget],
+    ) -> Result<EncodingDecision, HistoryCodecError> {
+        let current = Self {
+            retention: self.retention.clone(),
+            entries: entries
+                .iter()
+                .map(|row| Measurement::row(row, self.legacy()))
+                .collect::<Result<_, _>>()?,
+            context: self.context.clone(),
+        };
+        current.validate(view, prompts)
     }
-    /// Metadata has empty entries and queue; cached elements fill those arrays exactly.
+    /// Real borrowed candidate payloads and matching cached owners replace unlabelled iterators.
     pub fn validate(
         &self,
-        metadata: &SavedChat,
-        prompts: impl Iterator<Item = usize>,
-    ) -> Result<(), HistoryCodecError> {
-        let mut metadata_size =
-            size::encoded_len(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-                .map_err(HistoryCodecError::from)?;
-        let entries = &self.entries[self.entries.len().saturating_sub(MAX_SAVED_ENTRIES)..];
-        metadata_size += entries.iter().sum::<usize>() + entries.len().saturating_sub(1);
-        let prompts = prompts.collect::<Vec<_>>();
-        if !prompts.is_empty() {
-            // The same serializer provides the field/empty-array framing; no mirrored field formula.
-            let mut with_queue = SavedChat::for_identity(
-                metadata.agent_id.clone(),
-                metadata.id.clone(),
-                metadata.updated,
-            );
-            with_queue.queue.push(super::SavedPrompt {
-                id: 0,
-                text: String::new(),
-                images: Vec::new(),
-                attachments: Vec::new(),
-            });
-            let framing = size::encoded_len(&wire::Wire::new(
-                &with_queue,
-                Some(&Vec::<super::SavedPrompt>::new()),
-            ))
-            .map_err(HistoryCodecError::from)?
-                - size::encoded_len(&wire::Wire::new(&with_queue, None::<&[super::SavedPrompt]>))
-                    .map_err(HistoryCodecError::from)?;
-            metadata_size += framing + prompts.iter().sum::<usize>() + prompts.len() - 1;
+        view: HistoryView<'_>,
+        prompts: &[&PromptBudget],
+    ) -> Result<EncodingDecision, HistoryCodecError> {
+        if prompts.len() != view.prompts().len() {
+            return Err(HistoryCodecError::CandidateMismatch);
         }
-        check_size(metadata_size)
+        for (index, budget) in prompts.iter().enumerate() {
+            if !view
+                .prompts()
+                .get(index)
+                .is_some_and(|prompt| budget.matches(prompt))
+            {
+                return Err(HistoryCodecError::CandidateMismatch);
+            }
+        }
+        let rows = &self.entries[self.entries.len().saturating_sub(super::MAX_SAVED_ENTRIES)..];
+        if rows.len() != view.entries().len() {
+            return Err(HistoryCodecError::CandidateMismatch);
+        }
+        let frame = wire::Wire::framing(view.framing(), view.shape());
+        let mut resident = size::retained(&frame)?;
+        resident = resident
+            .checked_add(self.resident_bytes()?)
+            .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+        for prompt in prompts {
+            resident = resident
+                .checked_add(prompt.resident_bytes())
+                .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+        }
+        if let Some(grammar) = self.legacy() {
+            let retained = grammar.retained_heap_bytes().map_err(|error| match error {
+                LegacySizingError::Json(error) => error.into(),
+                LegacySizingError::Formatting(error) => HistoryCodecError::Formatting(error),
+                LegacySizingError::UnsupportedRecord(reason) => {
+                    HistoryCodecError::Compatibility(reason)
+                }
+                LegacySizingError::ArithmeticOverflow => HistoryCodecError::ArithmeticOverflow,
+                LegacySizingError::Retention(error) => {
+                    HistoryCodecError::Retention(nocterm_core::SharedError::from_error(error))
+                }
+            })?;
+            resident = resident
+                .checked_add(retained)
+                .ok_or(HistoryCodecError::ArithmeticOverflow)?;
+        }
+        let version2 = compose(
+            size::measure(&frame)?,
+            rows.iter().map(|row| Ok(row.version2)),
+            prompts.iter().map(|prompt| Ok(prompt.version2())),
+        )?;
+        super::select_encoding(self.origin(), resident, Ok(version2), || {
+            let grammar = self.legacy().ok_or(HistoryCodecError::CandidateMismatch)?;
+            let frame = legacy_result(grammar.framing(view.framing(), view.shape()))?
+                .map_err(HistoryCodecError::Compatibility)?;
+            compose(
+                frame,
+                rows.iter().map(|row| row.legacy(grammar)),
+                prompts
+                    .iter()
+                    .map(|prompt| prompt.measurement.legacy(grammar)),
+            )
+        })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        acp,
-        history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt},
-    };
-    #[test]
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn bounded_wire_and_cached_budget_match_actual_acp_json_and_exact_limit() {
-        let mut chat = SavedChat::for_identity(
-            "agent\"\\\n界".into(),
-            "00000000-0000-4000-8000-000000000064".into(),
-            1,
-        );
-        chat.title = Some("title\u{0}\n".into());
-        chat.name = Some("name".into());
-        chat.session_id = Some("session".into());
-        chat.workdir = Some("/tmp/界".into());
-        chat.model = Some("model".into());
-        chat.pinned = true;
-        chat.pending_history = true;
-        chat.updated = u64::MAX;
-        chat.draft = Some("literal draft\n\0界\"\\".into());
-        chat.attachments = vec![
-            SavedAttachment::LocalTerminal("local".into()),
-            SavedAttachment::Connection("remote".into()),
-        ];
-        chat.entries = (0..2010)
-            .map(|index| Entry::Agent(format!("entry {index}")))
-            .collect();
-        let blocks = vec![
-            serde_json::json!({"type":"text", "text":"quote\"\\\n界", "_meta":{"number":0.1,"null":null}}),
-            serde_json::json!({"type":"image", "data":"AAAA", "mimeType":"image/png"}),
-            serde_json::json!({"type":"audio", "data":"AAAA", "mimeType":"audio/wav"}),
-            serde_json::json!({"type":"resource_link", "name":"link", "uri":"file:///界"}),
-            serde_json::json!({"type":"resource", "resource":{"uri":"file:///doc", "text":"body"}}),
-            serde_json::json!({"type":"resource", "resource":{"uri":"file:///blob", "blob":"AAAA"}}),
-        ].into_iter().map(|value| serde_json::from_value::<acp::ContentBlock>(value).unwrap()).collect::<Vec<_>>();
-        chat.entries
-            .extend(blocks.iter().cloned().map(Entry::Content));
-        chat.entries.push(Entry::User(blocks.clone()));
-        chat.entries.push(Entry::Thought("thinking\t界".into()));
-        chat.entries.push(Entry::Tool(
-            acp::ToolCall::new("id", "title")
-                .raw_input(serde_json::json!({"nested":[1,-2,0.1,true,null,"\u{1}\"\\界"]}))
-                .raw_output(serde_json::json!({"ok":false, "value":1e100})),
-        ));
-        chat.entries.push(Entry::Content(acp::ContentBlock::Image(
-            acp::ImageContent::new(
-                "A".repeat(super::super::MAX_SAVED_IMAGE_BYTES + 1),
-                "image/png",
-            ),
-        )));
-        chat.times = (0..chat.entries.len() as u64).collect();
-        chat.queue = vec![SavedPrompt {
-            id: u64::MAX,
-            text: "queue\n界".into(),
-            images: blocks,
-            attachments: chat.attachments.clone(),
-        }];
-        let wire = wire::Wire::new(&chat, Some(&chat.queue));
-        let expected = serde_json::to_vec(&wire).unwrap();
-        assert_eq!(size::encoded_len(&wire).unwrap(), expected.len());
-        let mut materialized = chat.clone();
-        materialized.entries = SavedChat::bounded_entries(&chat.entries);
-        materialized.times = SavedChat::bounded_times(chat.entries.len(), &chat.times);
-        assert_eq!(serde_json::to_vec(&materialized).unwrap(), expected);
-        assert_eq!(materialized.times[0], (chat.entries.len() - 2000) as u64);
-        let prepared = PreparedBudget::new(&chat).unwrap();
-        let mut budget = HistoryBudget::restored(Some(&prepared));
-        let mut metadata = materialized.clone();
-        metadata.entries.clear();
-        metadata.queue.clear();
-        assert!(
-            budget
-                .validate(&metadata, prepared.prompt_sizes().iter().copied())
-                .is_ok()
-        );
-        // One changed row updates the cache without rebuilding unrelated rows.
-        *chat.entries.last_mut().unwrap() = Entry::Agent("changed\n界".into());
-        budget
-            .refresh(&chat.entries, &[chat.entries.len() - 1])
-            .unwrap();
-        let mut prompt = SavedPrompt {
-            id: 0,
-            text: String::new(),
-            images: Vec::new(),
-            attachments: Vec::new(),
-        };
-        let mut wire_chat = chat.clone();
-        wire_chat.queue = vec![prompt.clone()];
-        let fixed =
-            size::encoded_len(&wire::Wire::new(&wire_chat, Some(&wire_chat.queue))).unwrap();
-        prompt.text = "a".repeat(MAX_FILE_BYTES as usize - fixed);
-        assert!(
-            budget
-                .validate(
-                    &metadata,
-                    std::iter::once(super::super::prompt_size(&prompt).unwrap())
-                )
-                .is_ok()
-        );
-        prompt.text.push('a');
-        assert!(
-            budget
-                .validate(
-                    &metadata,
-                    std::iter::once(super::super::prompt_size(&prompt).unwrap())
-                )
-                .is_err()
-        );
+impl crate::model::retention::graph::sealed::Source for PreparedBudget {}
+impl crate::model::retention::graph::OwnerGraph for PreparedBudget {
+    fn count(
+        &self,
+        count: &mut crate::model::retention::graph::Count<'_, '_>,
+    ) -> Result<(), crate::model::retention::RetentionError> {
+        self.entries.count(count)?;
+        self.prompts.count(count)
+    }
+    fn cleanup(&self, permit: &crate::model::retention::CensusPermit<'_>) {
+        self.entries.cleanup(permit);
+        self.prompts.cleanup(permit);
+    }
+
+    fn adopt(&self, publication: &mut crate::model::retention::document::Publication<'_>) {
+        self.entries.adopt(publication);
+        self.prompts.adopt(publication);
     }
 }

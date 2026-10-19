@@ -12,7 +12,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 mod capture;
+mod ownership;
 pub use capture::{CapturedKeys, KeyedOutcome};
+pub use ownership::{CloneValues, KeyedCapture, KeyedValueOwnership};
 pub type KeyedWriter<K, V> =
     Arc<dyn Fn(K, V) -> BoxFuture<'static, Result<(), StoreError>> + Send + Sync>;
 /// Retain registered-key metadata, or release a clean closed key after its hook.
@@ -71,11 +73,12 @@ type DiskStamps<K, Tag> = Arc<Mutex<HashMap<K, KeyedStamp<K, Tag>>>>;
 
 /// One worker and at most `capacity` ready-key tokens; accepted dirty keys are retained.
 /// No full committed values are retained after success and no per-edit receipt is allocated.
-pub struct KeyedPersisted<K, V, Tag> {
+pub struct KeyedPersisted<K, V, Tag, P: KeyedValueOwnership<V> = CloneValues> {
     entries: HashMap<K, Entry<K, V, Tag>>,
     ready: VecDeque<K>,
-    active: Option<Candidate<K, V, Tag>>,
-    writer: KeyedWriter<K, V>,
+    active: Option<KeyedStamp<K, Tag>>,
+    writer: KeyedWriter<K, P::Write>,
+    ownership: Arc<P>,
     control: DriverControl,
     sequence: Revision,
     closing: bool,
@@ -87,11 +90,27 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
     KeyedPersisted<K, V, Tag>
 {
     pub fn new(writer: KeyedWriter<K, V>, capacity: NonZeroUsize) -> Self {
+        Self::with_owned_values(writer, capacity, CloneValues)
+    }
+}
+impl<
+    K: Clone + Eq + Hash + Send + 'static,
+    V: Send + 'static,
+    Tag: Clone + Send + 'static,
+    P: KeyedValueOwnership<V>,
+> KeyedPersisted<K, V, Tag, P>
+{
+    pub fn with_owned_values(
+        writer: KeyedWriter<K, P::Write>,
+        capacity: NonZeroUsize,
+        ownership: P,
+    ) -> Self {
         Self {
             entries: HashMap::new(),
             ready: VecDeque::new(),
             active: None,
             writer,
+            ownership: Arc::new(ownership),
             control: DriverControl::default(),
             sequence: 0,
             closing: false,
@@ -111,16 +130,43 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
     pub fn update_latest(
         &mut self,
         key: K,
-        value: V,
+        mut value: V,
         tag: Tag,
+        cx: &mut Context<Self>,
+    ) -> Result<Revision, StoreError> {
+        let ownership = self.ownership.clone();
+        self.update_latest_owned(
+            key,
+            tag,
+            move |previous| {
+                ownership.accept(&mut value, previous)?;
+                Ok(value)
+            },
+            cx,
+        )
+    }
+    /// Synchronous intake can transfer a unique original capability from the
+    /// previous value. On error the factory must preserve that previous value.
+    /// No factory or borrowed source is retained by the worker.
+    pub fn update_latest_owned(
+        &mut self,
+        key: K,
+        tag: Tag,
+        build: impl FnOnce(Option<&mut V>) -> Result<V, StoreError>,
         cx: &mut Context<Self>,
     ) -> Result<Revision, StoreError> {
         if self.closing {
             return Err(StoreError::Closing);
         }
+        let value = build(
+            self.entries
+                .get_mut(&key)
+                .and_then(|entry| entry.latest.as_mut())
+                .map(|candidate| &mut candidate.value),
+        )?;
+        let entry = self.entries.entry(key.clone()).or_default();
         self.sequence += 1;
         let generation = self.sequence;
-        let entry = self.entries.entry(key.clone()).or_default();
         entry.latest = Some(Candidate {
             stamp: KeyedStamp {
                 key: key.clone(),
@@ -167,21 +213,22 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
             .get(key)
             .is_some_and(|entry| entry.latest.is_some())
     }
+    /// Remove a registered clean key; false also means the key was absent.
     pub fn forget_clean(&mut self, key: &K) -> bool {
         if self.is_dirty(key)
             || self
                 .active
                 .as_ref()
-                .is_some_and(|candidate| &candidate.stamp.key == key)
+                .is_some_and(|candidate| &candidate.key == key)
         {
             return false;
         }
-        self.entries.remove(key);
+        let removed = self.entries.remove(key).is_some();
         self.disk
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(key);
-        true
+        removed
     }
     fn eligible(entry: &Entry<K, V, Tag>) -> bool {
         entry.waiting.is_some()
@@ -218,12 +265,19 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
             self.enqueue(&key)
         }
     }
-    fn operation(&self, candidate: Candidate<K, V, Tag>) -> DiskOperation<()> {
+    fn operation(
+        &self,
+        stamp: KeyedStamp<K, Tag>,
+        capture: Result<KeyedCapture<P::Write, P::Guard>, StoreError>,
+    ) -> DiskOperation<()> {
         let writer = self.writer.clone();
         let disk = self.disk.clone();
-        let stamp = candidate.stamp.clone();
+        let key = stamp.key.clone();
         DiskOperation::new(
-            move || writer(candidate.stamp.key, candidate.value),
+            move || match capture {
+                Ok(capture) => capture.run(key, writer),
+                Err(error) => Box::pin(async move { Err(error) }),
+            },
             move |result| {
                 if result.is_ok() {
                     disk.lock()
@@ -233,7 +287,7 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
             },
         )
     }
-    pub fn capture(&mut self) -> CapturedKeys<K, V, Tag> {
+    pub fn capture(&mut self) -> CapturedKeys<K, V, Tag, P> {
         self.closing = true;
         self.control.freeze();
         let mut candidates = self
@@ -249,11 +303,16 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
             self.writer.clone(),
             self.control.gate(),
             self.disk.clone(),
+            self.ownership.clone(),
         )
     }
 }
-impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clone + Send + 'static>
-    NormalOwner for KeyedPersisted<K, V, Tag>
+impl<
+    K: Clone + Eq + Hash + Send + 'static,
+    V: Send + 'static,
+    Tag: Clone + Send + 'static,
+    P: KeyedValueOwnership<V>,
+> NormalOwner for KeyedPersisted<K, V, Tag, P>
 {
     type Physical = ();
     type Tag = KeyedStamp<K, Tag>;
@@ -270,14 +329,19 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
             if !Self::eligible(entry) {
                 continue;
             }
-            let Some(candidate) = entry.latest.clone() else {
+            let Some(candidate) = entry.latest.as_ref() else {
                 continue;
             };
-            entry.waiting = None;
-            self.active = Some(candidate.clone());
-            self.refill();
             let stamp = candidate.stamp.clone();
-            return Some(DiskWork::new(self.operation(candidate), stamp, None));
+            let capture = self.ownership.capture(&candidate.value);
+            entry.waiting = None;
+            self.active = Some(stamp.clone());
+            self.refill();
+            return Some(DiskWork::new(
+                self.operation(stamp.clone(), capture),
+                stamp,
+                None,
+            ));
         }
         None
     }

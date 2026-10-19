@@ -5,7 +5,7 @@
 //! protocol-independent form, so a chat shows its pickers before it connects.
 //! Choices made before the session opens, and the model and reasoning effort
 //! last chosen for the agent, are applied as soon as it does.
-use crate::acp;
+use crate::model::{controls::*, ids::*};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -17,34 +17,38 @@ pub enum ConfigValue {
     Value(String),
 }
 impl ConfigValue {
-    pub fn from_acp(value: &acp::SessionConfigOptionValue) -> Option<Self> {
-        match value {
-            acp::SessionConfigOptionValue::Boolean { value } => Some(Self::Flag(*value)),
-            acp::SessionConfigOptionValue::ValueId { value } => {
-                Some(Self::Value(value.to_string()))
-            }
-            _ => None,
-        }
-    }
-    pub fn to_acp(&self) -> acp::SessionConfigOptionValue {
-        match self {
-            Self::Flag(value) => acp::SessionConfigOptionValue::boolean(*value),
-            Self::Value(value) => acp::SessionConfigOptionValue::value_id(value.clone()),
-        }
-    }
-    fn current(option: &acp::SessionConfigOption) -> Option<Self> {
+    fn current(option: &ConfigOption) -> Option<Self> {
         match &option.kind {
-            acp::SessionConfigKind::Select(select) => {
-                Some(Self::Value(select.current_value.to_string()))
-            }
-            acp::SessionConfigKind::Boolean(boolean) => Some(Self::Flag(boolean.current_value)),
-            _ => None,
+            ConfigKind::Select { current, .. } => Some(Self::Value(current.as_str().into())),
+            ConfigKind::Boolean(value) => Some(Self::Flag(*value)),
+            ConfigKind::Unsupported { .. } => None,
         }
     }
 }
 
 /// Values chosen for a chat or an agent, by option id.
 pub type Choices = BTreeMap<String, ConfigValue>;
+
+/// Backing envelope for the pinned Rust 1.98 B-tree implementation (B=6).
+/// An internal node contains at most eleven keys/values, twelve edges and
+/// parent/index/length fields. Sixteen pointer widths cover edges, header and
+/// alignment padding on supported targets. Payload String buffers are separate.
+fn choice_node_bound() -> Option<usize> {
+    use std::mem::size_of;
+    size_of::<String>()
+        .checked_add(size_of::<ConfigValue>())?
+        .checked_mul(11)?
+        .checked_add(size_of::<usize>().checked_mul(16)?)
+}
+/// Stable nodes are nonempty, so their count never exceeds the number of keys.
+pub fn choices_retained_backing_bound(entries: usize) -> Option<usize> {
+    choice_node_bound()?.checked_mul(entries)
+}
+/// Reserve before insertion; two extra nodes cover an unfinished split and root
+/// promotion while the old nodes and all text payloads remain alive.
+pub fn choices_construction_backing_bound(entries: usize) -> Option<usize> {
+    choice_node_bound()?.checked_mul(entries.checked_add(2)?)
+}
 
 /// One option an agent reported, independent of the protocol schema.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,64 +78,61 @@ pub struct StoredValue {
     pub group: Option<(String, String)>,
 }
 
-fn category_name(category: &acp::SessionConfigOptionCategory) -> String {
+fn category_name(category: &ConfigCategory) -> String {
     match category {
-        acp::SessionConfigOptionCategory::Mode => "mode".into(),
-        acp::SessionConfigOptionCategory::Model => "model".into(),
-        acp::SessionConfigOptionCategory::ModelConfig => "model_config".into(),
-        acp::SessionConfigOptionCategory::ThoughtLevel => "thought_level".into(),
-        acp::SessionConfigOptionCategory::Other(name) => name.clone(),
-        _ => "other".into(),
+        ConfigCategory::Mode => "mode".into(),
+        ConfigCategory::Model => "model".into(),
+        ConfigCategory::ModelConfig => "model_config".into(),
+        ConfigCategory::ThoughtLevel => "thought_level".into(),
+        ConfigCategory::Other(name) => name.clone(),
     }
 }
-fn category(name: &str) -> acp::SessionConfigOptionCategory {
+fn category(name: &str) -> ConfigCategory {
     match name {
-        "mode" => acp::SessionConfigOptionCategory::Mode,
-        "model" => acp::SessionConfigOptionCategory::Model,
-        "model_config" => acp::SessionConfigOptionCategory::ModelConfig,
-        "thought_level" => acp::SessionConfigOptionCategory::ThoughtLevel,
-        other => acp::SessionConfigOptionCategory::Other(other.into()),
+        "mode" => ConfigCategory::Mode,
+        "model" => ConfigCategory::Model,
+        "model_config" => ConfigCategory::ModelConfig,
+        "thought_level" => ConfigCategory::ThoughtLevel,
+        other => ConfigCategory::Other(other.into()),
     }
 }
-
-fn stored_value(
-    value: &acp::SessionConfigSelectOption,
-    group: Option<&acp::SessionConfigSelectGroup>,
-) -> StoredValue {
+fn stored_value(value: &ConfigChoice, group: Option<&ConfigGroup>) -> StoredValue {
     StoredValue {
-        value: value.value.to_string(),
+        value: value.id.as_str().into(),
         name: value.name.clone(),
         description: value.description.clone(),
-        group: group.map(|group| (group.group.to_string(), group.name.clone())),
+        group: group.map(|group| (group.id.as_str().into(), group.name.clone())),
     }
 }
-
-/// The options an agent reported, in storable form.
-pub fn store(options: &[acp::SessionConfigOption]) -> Vec<StoredOption> {
+/// The options an agent reported, in the unchanged preference grammar.
+pub fn store(options: &[ConfigOption]) -> Vec<StoredOption> {
     options
         .iter()
         .filter_map(|option| {
             let values = match &option.kind {
-                acp::SessionConfigKind::Select(select) => match &select.options {
-                    acp::SessionConfigSelectOptions::Ungrouped(values) => values
-                        .iter()
-                        .map(|value| stored_value(value, None))
-                        .collect(),
-                    acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                        .iter()
-                        .flat_map(|group| {
-                            group
-                                .options
-                                .iter()
-                                .map(move |value| stored_value(value, Some(group)))
-                        })
-                        .collect(),
-                    _ => return None,
-                },
+                ConfigKind::Select {
+                    choices: SelectChoices::Flat(values),
+                    ..
+                } => values
+                    .iter()
+                    .map(|value| stored_value(value, None))
+                    .collect(),
+                ConfigKind::Select {
+                    choices: SelectChoices::Groups(groups),
+                    ..
+                } => groups
+                    .iter()
+                    .flat_map(|group| {
+                        group
+                            .choices
+                            .iter()
+                            .map(move |value| stored_value(value, Some(group)))
+                    })
+                    .collect(),
                 _ => Vec::new(),
             };
             Some(StoredOption {
-                id: option.id.to_string(),
+                id: option.id.as_str().into(),
                 name: option.name.clone(),
                 description: option.description.clone(),
                 category: option.category.as_ref().map(category_name),
@@ -141,143 +142,125 @@ pub fn store(options: &[acp::SessionConfigOption]) -> Vec<StoredOption> {
         })
         .collect()
 }
-
-/// Stored options as the agent would report them.
-pub fn restore(stored: &[StoredOption]) -> Vec<acp::SessionConfigOption> {
+/// Restore presentation options without native or provider lookup.
+pub fn restore(stored: &[StoredOption]) -> Vec<ConfigOption> {
     stored
         .iter()
         .map(|option| {
             let kind = match &option.current {
-                ConfigValue::Flag(value) => {
-                    acp::SessionConfigKind::Boolean(acp::SessionConfigBoolean::new(*value))
-                }
+                ConfigValue::Flag(value) => ConfigKind::Boolean(*value),
                 ConfigValue::Value(current) => {
-                    let value = |value: &StoredValue| {
-                        acp::SessionConfigSelectOption::new(value.value.clone(), value.name.clone())
-                            .description(value.description.clone())
+                    let choice = |value: &StoredValue| ConfigChoice {
+                        id: ConfigChoiceId::new(value.value.clone()),
+                        name: value.name.clone(),
+                        description: value.description.clone(),
+                        extensions: None,
                     };
-                    let options = if option.values.iter().any(|value| value.group.is_some()) {
-                        let mut groups: Vec<acp::SessionConfigSelectGroup> = Vec::new();
+                    let choices = if option.values.iter().any(|value| value.group.is_some()) {
+                        let mut groups: Vec<ConfigGroup> = Vec::new();
                         for stored in &option.values {
                             let (id, name) = stored.group.clone().unwrap_or_default();
                             match groups.last_mut() {
-                                Some(group) if group.group.to_string() == id => {
-                                    group.options.push(value(stored))
+                                Some(group) if group.id.as_str() == id => {
+                                    group.choices.push(choice(stored))
                                 }
-                                _ => groups.push(acp::SessionConfigSelectGroup::new(
-                                    id,
+                                _ => groups.push(ConfigGroup {
+                                    id: ConfigGroupId::new(id),
                                     name,
-                                    vec![value(stored)],
-                                )),
+                                    choices: vec![choice(stored)],
+                                    extensions: None,
+                                }),
                             }
                         }
-                        acp::SessionConfigSelectOptions::Grouped(groups)
+                        SelectChoices::Groups(groups)
                     } else {
-                        acp::SessionConfigSelectOptions::Ungrouped(
-                            option.values.iter().map(value).collect(),
-                        )
+                        SelectChoices::Flat(option.values.iter().map(choice).collect())
                     };
-                    acp::SessionConfigKind::Select(acp::SessionConfigSelect::new(
-                        current.clone(),
-                        options,
-                    ))
+                    ConfigKind::Select {
+                        current: ConfigChoiceId::new(current.clone()),
+                        choices,
+                    }
                 }
             };
-            acp::SessionConfigOption::new(option.id.clone(), option.name.clone(), kind)
-                .description(option.description.clone())
-                .category(option.category.as_deref().map(category))
+            ConfigOption {
+                id: ConfigId::new(option.id.clone()),
+                name: option.name.clone(),
+                description: option.description.clone(),
+                category: option.category.as_deref().map(category),
+                kind,
+                extensions: None,
+            }
         })
         .collect()
 }
-
-/// The values `options` currently have, by option id.
-pub fn current(options: &[acp::SessionConfigOption]) -> Choices {
+pub fn current(options: &[ConfigOption]) -> Choices {
     options
         .iter()
-        .filter_map(|option| Some((option.id.to_string(), ConfigValue::current(option)?)))
+        .filter_map(|option| Some((option.id.as_str().into(), ConfigValue::current(option)?)))
         .collect()
 }
-
-/// `options` showing the `choices` they offer as their current values.
-pub fn with_choices(
-    mut options: Vec<acp::SessionConfigOption>,
-    choices: &Choices,
-) -> Vec<acp::SessionConfigOption> {
+pub fn with_choices(mut options: Vec<ConfigOption>, choices: &Choices) -> Vec<ConfigOption> {
     for (id, value) in choices {
         choose(&mut options, id, value);
     }
     options
 }
-
-/// Whether `option` offers `value`.
-fn offers(option: &acp::SessionConfigOption, value: &ConfigValue) -> bool {
+fn offers(option: &ConfigOption, value: &ConfigValue) -> bool {
     match (&option.kind, value) {
-        (acp::SessionConfigKind::Boolean(_), ConfigValue::Flag(_)) => true,
-        (acp::SessionConfigKind::Select(select), ConfigValue::Value(value)) => {
-            match &select.options {
-                acp::SessionConfigSelectOptions::Ungrouped(values) => {
-                    values.iter().any(|offered| *offered.value.0 == **value)
-                }
-                acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                    .iter()
-                    .flat_map(|group| &group.options)
-                    .any(|offered| *offered.value.0 == **value),
-                _ => false,
-            }
-        }
+        (ConfigKind::Boolean(_), ConfigValue::Flag(_)) => true,
+        (
+            ConfigKind::Select {
+                choices: SelectChoices::Flat(choices),
+                ..
+            },
+            ConfigValue::Value(value),
+        ) => choices.iter().any(|choice| choice.id.as_str() == value),
+        (
+            ConfigKind::Select {
+                choices: SelectChoices::Groups(groups),
+                ..
+            },
+            ConfigValue::Value(value),
+        ) => groups
+            .iter()
+            .flat_map(|group| &group.choices)
+            .any(|choice| choice.id.as_str() == value),
         _ => false,
     }
 }
-
-/// Shows `value` as the current value of option `id` until the agent
-/// reports otherwise. Returns whether the option offers it.
-pub fn choose(options: &mut [acp::SessionConfigOption], id: &str, value: &ConfigValue) -> bool {
+pub fn choose(options: &mut [ConfigOption], id: &str, value: &ConfigValue) -> bool {
     let Some(option) = options
         .iter_mut()
-        .find(|option| *option.id.0 == *id && offers(option, value))
+        .find(|option| option.id.as_str() == id && offers(option, value))
     else {
         return false;
     };
     match (&mut option.kind, value) {
-        (acp::SessionConfigKind::Boolean(boolean), ConfigValue::Flag(value)) => {
-            boolean.current_value = *value
-        }
-        (acp::SessionConfigKind::Select(select), ConfigValue::Value(value)) => {
-            select.current_value = value.clone().into()
+        (ConfigKind::Boolean(current), ConfigValue::Flag(value)) => *current = *value,
+        (ConfigKind::Select { current, .. }, ConfigValue::Value(value)) => {
+            *current = ConfigChoiceId::new(value.clone())
         }
         _ => return false,
     }
     true
 }
-
-/// The requests that give an open session the `choices`, in the agent's
-/// option order: a model is set before the reasoning effort it offers.
-/// Choices the session already has, or no longer offers, are skipped.
-pub fn requests(
-    options: &[acp::SessionConfigOption],
-    choices: &Choices,
-) -> Vec<(acp::SessionConfigId, ConfigValue)> {
+/// Preserve agent option order and skip unchanged/unoffered selections.
+pub fn requests(options: &[ConfigOption], choices: &Choices) -> Vec<(ConfigId, ConfigValue)> {
     options
         .iter()
         .filter_map(|option| {
-            let value = choices.get(&*option.id.0)?;
+            let value = choices.get(option.id.as_str())?;
             (offers(option, value) && ConfigValue::current(option).as_ref() != Some(value))
                 .then(|| (option.id.clone(), value.clone()))
         })
         .collect()
 }
-
-/// Whether a choice of `option` carries over to the agent's next chats. The
-/// mode is not: a permissive mode must be chosen for each chat.
-pub fn remembered(option: &acp::SessionConfigOption) -> bool {
+/// Permissive modes never carry over to another chat.
+pub fn remembered(option: &ConfigOption) -> bool {
     matches!(
         option.category,
-        Some(
-            acp::SessionConfigOptionCategory::Model
-                | acp::SessionConfigOptionCategory::ThoughtLevel
-        )
+        Some(ConfigCategory::Model | ConfigCategory::ThoughtLevel)
     )
 }
-
 #[cfg(test)]
 mod tests;

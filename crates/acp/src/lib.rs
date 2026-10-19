@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! ACP subprocess transport and authenticated local terminal-tool relay.
 //!
 //! Owns: ACP subprocess drivers, process cleanup, native workspace preparation,
@@ -13,6 +14,7 @@
 mod bridge;
 mod client;
 mod lines;
+#[cfg(test)]
 mod models;
 mod process;
 mod relay;
@@ -27,5 +29,8 @@ pub use client::AcpConnector;
 pub use process::{AgentHostError, run_agent_host};
 pub use relay::{run_relay, run_relay_from_environment};
 
-#[cfg(test)]
 mod mapping;
+
+mod managed;
+
+pub use managed::DiagnosticBuildError;
