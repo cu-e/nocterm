@@ -3,8 +3,9 @@
 //! Owns the draft list and the add inputs. Route resolution, persistence and
 //! connecting belong to `nocterm_connections_model::jump_route` and the open intent.
 use super::{ConnectionEditor, FormError, field, watch};
+use crate::Installed;
 use gpui_kit::{
-    AnyElement, Context, Entity, SharedString, Subscription, Window,
+    AnyElement, App, Context, Entity, SharedString, Subscription, Window,
     base::TestSupportExt as _,
     component::{
         Disableable as _, Sizable as _,
@@ -18,19 +19,20 @@ use gpui_kit::{
 use nocterm_connections_model::{
     draft::ValidationField,
     jump_route::JumpHostEntry,
-    profiles::{Profile, ProfileId, Profiles},
+    profiles::{Profile, ProfileId},
 };
 use nocterm_session::Target;
 use nocterm_ui::form;
 
-type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
+mod choice;
+use choice::{ConnectionChoice, ServerBadge};
+
+type Picker = Entity<SelectState<SearchableVec<ConnectionChoice>>>;
 
 pub(super) struct JumpHostsFields {
     hops: Vec<JumpHostEntry>,
     address: Entity<gpui_kit::component::input::InputState>,
     picker: Picker,
-    /// The picker's entries, in the order it shows them.
-    choices: Vec<(SharedString, ProfileId)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -39,32 +41,44 @@ fn label(profile: &Profile) -> SharedString {
 }
 
 impl JumpHostsFields {
-    /// What the picker offers: every saved connection except the one being edited.
-    /// Entries that read alike are numbered, so a label picks exactly one connection.
-    pub(super) fn choices(own: ProfileId, profiles: &Profiles) -> Vec<(SharedString, ProfileId)> {
-        let mut choices: Vec<(SharedString, ProfileId)> = Vec::new();
-        for saved in profiles.iter().filter(|saved| saved.id != own) {
+    /// What the picker offers: every saved connection except the one being edited,
+    /// with its sidebar icon. Entries that read alike are numbered, so each one is
+    /// told apart when read aloud or searched.
+    pub(super) fn choices(
+        own: ProfileId,
+        installed: &Installed,
+        cx: &App,
+    ) -> Vec<ConnectionChoice> {
+        let mut titles: Vec<SharedString> = Vec::new();
+        let mut choices = Vec::new();
+        for saved in installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .iter()
+            .filter(|saved| saved.id != own)
+        {
             let base = label(saved);
             let mut unique = base.clone();
             let mut number = 1;
-            while choices.iter().any(|(existing, _)| *existing == unique) {
+            while titles.contains(&unique) {
                 number += 1;
                 unique = format!("{base} ({number})").into();
             }
-            choices.push((unique, saved.id));
+            titles.push(unique.clone());
+            choices.push(ConnectionChoice::new(unique, saved, installed, cx));
         }
         choices
     }
 
     pub(super) fn new(
         profile: Option<&Profile>,
-        choices: Vec<(SharedString, ProfileId)>,
+        choices: Vec<ConnectionChoice>,
         window: &mut Window,
         cx: &mut Context<ConnectionEditor>,
     ) -> Self {
-        let labels: Vec<SharedString> = choices.iter().map(|(label, _)| label.clone()).collect();
         let picker = cx.new(|cx| {
-            SelectState::new(SearchableVec::new(labels), None, window, cx).searchable(true)
+            SelectState::new(SearchableVec::new(choices), None, window, cx).searchable(true)
         });
         let address = field("user@bastion.example[:port]", String::new(), window, cx);
         let subscription = watch(&address, window, cx);
@@ -72,7 +86,6 @@ impl JumpHostsFields {
             hops: profile.map(|p| p.jump_hosts.clone()).unwrap_or_default(),
             address,
             picker,
-            choices,
             _subscriptions: vec![subscription],
         }
     }
@@ -111,13 +124,10 @@ impl JumpHostsFields {
         window: &mut Window,
         cx: &mut Context<ConnectionEditor>,
     ) -> bool {
-        let Some(chosen) = self.picker.read(cx).selected_value().cloned() else {
+        let Some(id) = self.picker.read(cx).selected_value().copied() else {
             return false;
         };
-        let Some((_, id)) = self.choices.iter().find(|(label, _)| *label == chosen) else {
-            return false;
-        };
-        self.hops.push(JumpHostEntry::Profile(*id));
+        self.hops.push(JumpHostEntry::Profile(id));
         self.picker
             .update(cx, |picker, cx| picker.set_selected_index(None, window, cx));
         true
@@ -144,15 +154,23 @@ impl JumpHostsFields {
 
 impl JumpHostsFields {
     /// How each hop reads in the list: an address as typed, a saved connection
-    /// by name, or a note that the connection was deleted.
-    pub(super) fn labels(&self, profiles: &Profiles) -> Vec<SharedString> {
+    /// by name with its sidebar icon, or a note that the connection was deleted.
+    pub(super) fn labels(
+        &self,
+        installed: &Installed,
+        cx: &App,
+    ) -> Vec<(SharedString, ServerBadge)> {
+        let profiles = installed.connections().read(cx).profiles(cx);
         self.hops
             .iter()
             .map(|hop| match hop {
-                JumpHostEntry::Address(target) => target.to_string().into(),
-                JumpHostEntry::Profile(id) => profiles
-                    .get(*id)
-                    .map_or_else(|| "Deleted connection".into(), label),
+                JumpHostEntry::Address(target) => {
+                    (target.to_string().into(), ServerBadge::default())
+                }
+                JumpHostEntry::Profile(id) => profiles.get(*id).map_or_else(
+                    || ("Deleted connection".into(), ServerBadge::default()),
+                    |profile| (label(profile), ServerBadge::of(profile, installed, cx)),
+                ),
             })
             .collect()
     }
@@ -160,7 +178,7 @@ impl JumpHostsFields {
     fn render_hop(
         &self,
         index: usize,
-        description: SharedString,
+        (description, badge): (SharedString, ServerBadge),
         cx: &mut Context<ConnectionEditor>,
     ) -> AnyElement {
         let last = index + 1 == self.hops.len();
@@ -181,6 +199,13 @@ impl JumpHostsFields {
             .py_2()
             .gap_2()
             .items_center()
+            .child(
+                div()
+                    .id(("jump-host-icon", index))
+                    .test_support()
+                    .flex_shrink_0()
+                    .child(badge.render(cx)),
+            )
             .child(
                 div()
                     .flex_1()
@@ -219,7 +244,7 @@ impl JumpHostsFields {
 
     pub(super) fn page(
         &self,
-        labels: Vec<SharedString>,
+        labels: Vec<(SharedString, ServerBadge)>,
         cx: &mut Context<ConnectionEditor>,
     ) -> Vec<AnyElement> {
         let hops: Vec<AnyElement> = if self.hops.is_empty() {

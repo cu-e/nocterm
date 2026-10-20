@@ -14,11 +14,7 @@ impl RowVisual {
     fn new(profile: &Profile, installed: &Installed, cx: &App) -> Self {
         Self {
             profile: profile.clone(),
-            os: profile
-                .icon
-                .as_deref()
-                .and_then(os::find)
-                .or_else(|| installed.os(profile.id, cx)),
+            os: installed.shown_os(profile, cx),
             flag: installed
                 .shown_country(profile, cx)
                 .and_then(|code| Some((code.to_uppercase(), installed.flag(&code, cx)?))),

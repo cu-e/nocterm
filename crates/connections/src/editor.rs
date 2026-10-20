@@ -197,7 +197,7 @@ impl ConnectionEditor {
         let authentication = AuthenticationFields::new(existing, window, cx);
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, &installed, window, cx);
-        let choices = JumpHostsFields::choices(id, installed.connections().read(cx).profiles(cx));
+        let choices = JumpHostsFields::choices(id, &installed, cx);
         let jump_hosts = JumpHostsFields::new(existing, choices, window, cx);
         let options = cx.new(|cx| {
             nocterm_ui::SessionOptionsEditor::new(

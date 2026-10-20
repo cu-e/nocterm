@@ -1,6 +1,7 @@
 //! The "Jump Hosts" section of the connection form, driven through its controls.
 use super::*;
 use futures::FutureExt as _;
+use gpui_kit::component::select::SelectItem;
 use nocterm_connections_model::jump_route::JumpHostEntry;
 
 fn saved(cx: &mut TestAppContext, installed: &crate::Installed, name: &str, host: &str) -> Profile {
@@ -120,6 +121,10 @@ fn hops_are_added_reordered_removed_and_saved_in_order(cx: &mut TestAppContext) 
         assert!(
             window.try_find(("jump-host", 1usize)).is_some(),
             "profile added"
+        );
+        assert!(
+            window.try_find(("jump-host-icon", 1usize)).is_some(),
+            "a saved connection shows its server icon"
         );
     });
     act(cx, handle, |window, cx| {
@@ -319,14 +324,14 @@ fn connections_that_read_alike_stay_distinct_choices_in_the_picker(cx: &mut Test
     second.name = "Twin".into();
     store(cx, &installed, &second);
     let own = nocterm_connections_model::test_support::profile_id_for("Edited");
-    let choices = cx.read(|cx| {
-        super::super::jump_hosts::JumpHostsFields::choices(
-            own,
-            installed.connections().read(cx).profiles(cx),
-        )
-    });
-    let labels: std::collections::HashSet<_> = choices.iter().map(|(label, _)| label).collect();
-    assert_eq!(labels.len(), 2, "each label selects exactly one connection");
-    let ids: Vec<_> = choices.iter().map(|(_, id)| *id).collect();
+    let choices =
+        cx.read(|cx| super::super::jump_hosts::JumpHostsFields::choices(own, &installed, cx));
+    let titles: std::collections::HashSet<_> = choices.iter().map(SelectItem::title).collect();
+    assert_eq!(
+        titles.len(),
+        2,
+        "each title reads as exactly one connection"
+    );
+    let ids: Vec<_> = choices.iter().map(|choice| *choice.value()).collect();
     assert!(ids.contains(&first.id) && ids.contains(&second.id));
 }

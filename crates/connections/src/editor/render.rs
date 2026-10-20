@@ -65,9 +65,7 @@ impl Render for ConnectionEditor {
             ),
             EditorSection::Authentication => self.authentication.page(cx),
             EditorSection::JumpHosts => {
-                let labels = self
-                    .jump_hosts
-                    .labels(self.deps.connections().read(cx).profiles(cx));
+                let labels = self.jump_hosts.labels(&self.deps, cx);
                 self.jump_hosts.page(labels, cx)
             }
             EditorSection::Session => {
