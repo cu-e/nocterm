@@ -22,25 +22,15 @@ struct Deps {
     seat: Seat,
     sign_in: Option<Rc<dyn SignInTerminal>>,
 }
-/// The shared collaborators [`ChatDeps`] is built from.
-pub struct ChatServices {
-    pub runtime: RuntimeHandle,
-    pub agents: AgentsHandle,
-    pub settings: SettingsHandle,
-    pub metadata: Arc<dyn ChatMetadataSource>,
-}
 impl ChatDeps {
     pub fn new(
-        services: ChatServices,
+        runtime: RuntimeHandle,
+        agents: AgentsHandle,
+        settings: SettingsHandle,
+        metadata: Arc<dyn ChatMetadataSource>,
         seat: Seat,
         sign_in: Option<Rc<dyn SignInTerminal>>,
     ) -> Self {
-        let ChatServices {
-            runtime,
-            agents,
-            settings,
-            metadata,
-        } = services;
         Self {
             inner: Rc::new(Deps {
                 runtime,

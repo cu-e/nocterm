@@ -245,9 +245,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         crate::thread::AgentThread::restored(
             saved.clone(),
             f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone())
-                .deps()
-                .clone(),
+                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });
@@ -377,9 +375,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
         crate::thread::AgentThread::restored(
             saved.clone(),
             f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone())
-                .deps()
-                .clone(),
+                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });

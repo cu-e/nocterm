@@ -33,7 +33,7 @@ pub enum ChatStart {
 #[error("Could not retain chat: {0}")]
 pub struct RetainError(#[from] AgentPersistenceError);
 
-/// What [`ChatRoster::retain`] removed.
+/// What [`ChatRoster::admit_removals`] admitted for removal.
 pub struct Retained {
     removed: Vec<EntityId>,
     error: Option<RetainError>,
@@ -42,7 +42,7 @@ impl Retained {
     pub fn removed(&self) -> &[EntityId] {
         &self.removed
     }
-    /// The last chat that stayed because its document could not be retained.
+    /// Why the last chat that stays could not be retained.
     pub fn into_error(self) -> Option<RetainError> {
         self.error
     }
@@ -182,8 +182,10 @@ impl ChatRoster {
         }
         Ok(())
     }
-    /// Removes the chats `keep` rejects whose documents are retained.
-    pub fn retain(
+    /// Admits the documents of the chats `keep` rejects, before they are
+    /// removed with [`Self::remove`]; chats whose documents could not be
+    /// retained stay.
+    pub fn admit_removals(
         &mut self,
         keep: impl Fn(&Entity<AgentThread>, &App) -> bool,
         cx: &mut App,
@@ -205,11 +207,14 @@ impl ChatRoster {
                 }
             })
             .collect::<Vec<_>>();
-        self.chats.remove_admitted(&removed);
         Retained { removed, error }
     }
-    /// Releases chat `id`'s agent and deletes its saved copy; the caller
-    /// removes it from the roster.
+    /// Removes admitted chats `ids` and their observations.
+    pub fn remove(&mut self, ids: &[EntityId]) {
+        self.chats.remove_admitted(ids);
+    }
+    /// Releases chat `id`'s agent and deletes its saved copy; the chat stays
+    /// listed until it is removed.
     pub fn delete(&self, id: EntityId, cx: &mut App) -> bool {
         let Some(thread) = self.chats.find(id).cloned() else {
             return false;

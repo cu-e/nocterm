@@ -1,5 +1,5 @@
 //! Explicit immutable host collaborators retained by each panel.
-use crate::chat_deps::{ChatDeps, ChatServices};
+use crate::chat_deps::ChatDeps;
 use gpui_kit::WeakEntity;
 use nocterm_workspace::Workspace;
 use std::rc::Rc;
@@ -18,14 +18,15 @@ impl ChatHost {
                 workspace.clone(),
             )) as Rc<dyn crate::sign_in::SignInTerminal>
         });
-        let services = ChatServices {
-            runtime: installed.runtime().clone(),
-            agents: installed.agents().clone(),
-            settings: installed.settings().clone(),
-            metadata: installed.metadata(),
-        };
         Self {
-            deps: ChatDeps::new(services, seat, sign_in),
+            deps: ChatDeps::new(
+                installed.runtime().clone(),
+                installed.agents().clone(),
+                installed.settings().clone(),
+                installed.metadata(),
+                seat,
+                sign_in,
+            ),
             workspace,
             installed,
         }

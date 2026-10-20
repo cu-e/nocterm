@@ -310,6 +310,14 @@ impl HostEnvironment {
     ) -> crate::chat_host::ChatHost {
         crate::chat_host::ChatHost::new(workspace, installed)
     }
+    /// What chats hosted by `workspace` receive.
+    fn deps(
+        &self,
+        workspace: gpui_kit::WeakEntity<Workspace>,
+        installed: crate::Installed,
+    ) -> crate::chat_deps::ChatDeps {
+        self.host(workspace, installed).deps().clone()
+    }
 }
 
 struct FixtureInstallation {

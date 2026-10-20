@@ -49,7 +49,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let active = self.current().map(|thread| thread.entity_id());
-        let retained = self.chats.retain(keep, cx);
+        let retained = self.chats.admit_removals(keep, cx);
         let removed = retained.removed().to_vec();
         if let Some(error) = retained.into_error() {
             self.notices.set_error(Some(error.to_string()));
@@ -62,6 +62,7 @@ impl AgentPanel {
             self.leave_composer_with(true, cx);
         }
         self.composer.removed_chats(&removed);
+        self.chats.remove(&removed);
         if active.is_some_and(|id| removed.contains(&id)) {
             self.reset_chat_view(cx);
         }
