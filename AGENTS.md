@@ -8,7 +8,8 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
 - Run every Cargo command with `CARGO_BUILD_JOBS=2` and serialize top-level Cargo
-  commands, including those from other agents, to stay within available memory.
+  commands, including those from other agents, to stay within available memory:
+  prefix them with `.claude/hooks/cargo-serial.sh`, which does both.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
@@ -115,10 +116,10 @@ Non-trivial work goes through four stages. Each stage is a subagent in `.claude/
 
 | #   | Stage  | Agent         | Writes code | Output                                            |
 | --- | ------ | ------------- | ----------- | ------------------------------------------------- |
-| 1   | Design | `architect`   | no          | plan: files, steps, risks, test strategy          |
+| 1   | Design | `architect`   | plan only   | plan: files, steps, risks, test strategy          |
 | 2   | Build  | `implementer` | yes         | code + tests on a feature branch                  |
 | 3   | Verify | `tester`      | tests only  | test run results, added coverage, reproduced bugs |
-| 4   | Review | `reviewer`    | no          | findings ranked by severity, verdict              |
+| 4   | Review | `reviewer`    | plan only   | findings ranked by severity, verdict              |
 
 Gates:
 
@@ -127,6 +128,13 @@ Gates:
 - **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
 
 Trivial changes (typos, one-line fixes, docs) skip the pipeline.
+
+`/feature` routes a task to a workflow skill (`crate-new`, `crate-extend`,
+`refactor`, `crate-split`, `debt-paydown`) built from procedure skills that each
+agent preloads. Stages share decisions through `.claude/plans/<slug>/`
+([plan contract](.claude/skills/feature/plan-bus.md)). Committed hooks in
+`.claude/settings.json` enforce the hard rules and stage roles
+([ADR 0059](docs/adr/0059-architecture-procedure-skills.md)); CI stays authoritative.
 Pass the target branch and verification scope to every stage. Review includes
 uncommitted changes as well as commits so it can finish before commit authorization.
 
@@ -153,6 +161,7 @@ A commit scope is the crate directory name under `crates/` (`agent-runtime`,
 ## Commands
 
 ```sh
+# Agents prefix each cargo command with .claude/hooks/cargo-serial.sh.
 export CARGO_BUILD_JOBS=2
 cargo run
 cargo fmt --all --check
@@ -164,6 +173,9 @@ cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
 cargo xtask survey <package> [--json] [--type <Type>]
+.claude/hooks/cargo-serial.sh cargo <command>
+python3 scripts/test-claude-hooks.py
+python3 scripts/check-claude-config.py
 cargo machete --skip-target-dir
 cargo doc --workspace --no-deps -j1
 python3 scripts/generate-license-notices.py --check-inputs

@@ -94,6 +94,11 @@ moving more methods of the same growing type into another file is not an extract
 The legacy exception list `xtask/oversized-files.toml` is empty; never add an entry to make
 a check pass.
 
+`cargo xtask architecture` warns, without failing, at about four fifths of each structural
+limit (640 lines, 12 fields, 4 implementation files). `cargo xtask survey <package>` shows
+the files, types and module references to design the split from; `--type <Type>` groups a
+struct's fields by the methods that use them together.
+
 A function may have at most 80 lines and a cognitive complexity of 20 (`clippy.toml`).
 Functions that were already over carry `#[expect(clippy::too_many_lines, reason = "...")]`;
 once one is split, the unfulfilled expectation fails clippy, so remove the attribute.
