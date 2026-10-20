@@ -55,6 +55,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
                     auth: Auth::Password,
                     launch: None,
                     credential: Some(id),
+                    jumps: Vec::new(),
                 },
                 cx,
             )

@@ -46,6 +46,7 @@ fn remote_session() -> nocterm_workspace::SessionSpec {
         auth: Default::default(),
         launch: None,
         credential: None,
+        jumps: Vec::new(),
     }
 }
 fn remote_fixture(

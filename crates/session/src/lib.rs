@@ -50,7 +50,7 @@ pub use exec::{
     HostExec,
 };
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
-pub use jump::{JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
+pub use jump::{HostAddress, JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
 pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,

@@ -35,6 +35,7 @@ fn oversized_bracketed_paste_is_rejected_without_a_partial_protocol_sequence(
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             );
@@ -126,6 +127,7 @@ fn setup_recording_test(
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )

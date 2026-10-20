@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use gpui_kit::{TestAppContext, WindowOptions, prelude::*};
-use nocterm_session::{Auth, Target};
+use nocterm_session::{Auth, HostAddress, RemoteFs, Target};
 
 use crate::{SessionSpec, Workspace};
 
@@ -10,6 +10,7 @@ use crate::test_support::SessionProbe as Remote;
 #[gpui_kit::test]
 fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
     let target = Target::parse("root@vm", None).unwrap();
+    let host = HostAddress::direct(target.clone());
     let opened = Rc::new(RefCell::new(Vec::<SessionSpec>::new()));
     let record = opened.clone();
     let spec = SessionSpec {
@@ -20,6 +21,7 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
         auth: Auth::Password,
         launch: None,
         credential: None,
+        jumps: Vec::new(),
     };
     let (window, workspace) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -39,7 +41,7 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
             let offline = Remote::new(spec.clone(), false, cx);
             workspace.add_item(offline, window, cx);
             let error = workspace
-                .open_on_host(&target, "nano".into(), vec![], None, "x".into(), window, cx)
+                .open_on_host(&host, "nano".into(), vec![], None, "x".into(), window, cx)
                 .unwrap_err();
             assert!(matches!(
                 error,
@@ -50,7 +52,7 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
             workspace.add_item(online, window, cx);
             let error = workspace
                 .open_on_host(
-                    &target,
+                    &host,
                     "bad\0program".into(),
                     vec![],
                     None,
@@ -64,7 +66,7 @@ fn programs_open_on_a_connected_host_with_its_sign_in(cx: &mut TestAppContext) {
             assert!(opened.borrow().is_empty());
             workspace
                 .open_on_host(
-                    &target,
+                    &host,
                     "nvim".into(),
                     vec!["-R".into(), "/etc/hosts".into()],
                     Some("/etc".into()),

@@ -39,7 +39,7 @@ impl Fixture {
         self.runtime
             .enqueue(UploadRequest {
                 sources: vec![source],
-                target: Target::new("u", "h", 22),
+                host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
                 destination: "/dest".into(),
                 fs: self.remote.clone(),
                 collisions: policy,
@@ -50,7 +50,7 @@ impl Fixture {
         self.runtime
             .enqueue_download(DownloadRequest {
                 sources: vec!["/file".into()],
-                target: Target::new("u", "h", 22),
+                host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
                 local_destination: destination,
                 fs: self.remote.clone(),
                 collisions: CollisionPolicy::Skip,
@@ -114,7 +114,7 @@ fn empty_directory_download_creates_native_directory_without_completed_files() {
         .runtime
         .enqueue_download(DownloadRequest {
             sources: vec!["/empty".into()],
-            target: Target::new("u", "h", 22),
+            host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
             local_destination: destination.clone(),
             fs: fixture.remote.clone(),
             collisions: CollisionPolicy::Skip,

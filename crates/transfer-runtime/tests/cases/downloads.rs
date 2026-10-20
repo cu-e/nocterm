@@ -248,7 +248,7 @@ fn hostile_sources_and_oversized_requests_fail_before_reader_or_stage_admission(
     for sources in [vec!["/../escape".into()], vec!["/a".into(); 4097]] {
         let result = fixture.runtime.enqueue_download(DownloadRequest {
             sources,
-            target: nocterm_session::Target::new("u", "h", 22),
+            host: nocterm_session::HostAddress::direct(nocterm_session::Target::new("u", "h", 22)),
             local_destination: native("output"),
             fs: fixture.remote.clone(),
             collisions: CollisionPolicy::Skip,

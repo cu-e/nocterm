@@ -2,7 +2,7 @@
 use super::*;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use chrome::StatusSide;
-use nocterm_session::ShellLaunch;
+use nocterm_session::{HostAddress, ShellLaunch};
 impl Workspace {
     /// Installs what turns requests into tabs.
     pub fn set_session_factory(&mut self, factory: impl SessionFactory) {
@@ -252,12 +252,12 @@ impl Workspace {
         self.ports.set_directory(directory);
     }
     /// Opens a new tab running `program` with `args` in `directory` on the
-    /// host of a connected session to `target`. It signs in as that session
+    /// host of a connected session to `host`, by the same route. It signs in as that session
     /// did; a saved profile's credentials are reused, otherwise the user is
     /// asked again.
     pub fn open_on_host(
         &mut self,
-        target: &Target,
+        host: &HostAddress,
         program: String,
         args: Vec<String>,
         directory: Option<String>,
@@ -267,9 +267,9 @@ impl Workspace {
     ) -> Result<(), crate::OpenOnHostError> {
         // Published snapshots choose the tab, the active one first; only the
         // chosen tabs are asked how they were opened.
-        let spec = self.tabs.session_spec_for(target, cx).ok_or_else(|| {
+        let spec = self.tabs.session_spec_for(host, cx).ok_or_else(|| {
             crate::OpenOnHostError::NoConnectedSession {
-                target: target.clone(),
+                target: host.target.clone(),
             }
         })?;
         let env = spec

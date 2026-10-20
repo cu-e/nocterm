@@ -628,7 +628,7 @@ fn alternate_child_focus_tracks_split_and_bottom_command_ownership(cx: &mut Test
     }
 }
 
-struct MarkerFs;
+pub(crate) struct MarkerFs;
 impl nocterm_session::RemoteFs for MarkerFs {
     fn home(&self) -> nocterm_session::FsFuture<String> {
         Box::pin(async { Ok("/home".into()) })
@@ -644,6 +644,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     use std::sync::Arc;
     let (window, workspace) = fixture(cx);
     let target = nocterm_session::Target::new("user", "same.test", 22);
+    let host = nocterm_session::HostAddress::direct(target.clone());
     let first_fs: Arc<dyn nocterm_session::RemoteFs> = Arc::new(MarkerFs);
     let second_fs: Arc<dyn nocterm_session::RemoteFs> = Arc::new(MarkerFs);
     let (first, second, utility) = cx
@@ -662,21 +663,19 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
             workspace.update(cx, |workspace, cx| {
                 workspace.add_item(first.clone(), window, cx);
                 workspace.add_item(second.clone(), window, cx);
-                let active = workspace.connected_session_for_target(&target).unwrap();
+                let active = workspace.connected_session_for_host(&host).unwrap();
                 assert!(
                     Arc::ptr_eq(active.fs.as_ref().unwrap(), &second_fs),
                     "active matching session wins"
                 );
                 workspace.add_item(utility.clone(), window, cx);
                 assert!(workspace.active_session(cx).is_none());
-                let fallback = workspace.connected_session_for_target(&target).unwrap();
+                let fallback = workspace.connected_session_for_host(&host).unwrap();
                 assert!(Arc::ptr_eq(fallback.fs.as_ref().unwrap(), &first_fs));
                 assert!(
                     workspace
-                        .connected_session_for_target(&nocterm_session::Target::new(
-                            "other",
-                            "same.test",
-                            22
+                        .connected_session_for_host(&nocterm_session::HostAddress::direct(
+                            nocterm_session::Target::new("other", "same.test", 22)
                         ))
                         .is_none()
                 );
@@ -686,7 +685,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
                 assert!(
                     workspace
                         .read(cx)
-                        .connected_session_for_target(&target)
+                        .connected_session_for_host(&host)
                         .is_some()
                 )
             });
@@ -704,7 +703,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     cx.update_window(window, |_, _, cx| {
         let session = workspace
             .read(cx)
-            .connected_session_for_target(&target)
+            .connected_session_for_host(&host)
             .unwrap();
         assert!(
             Arc::ptr_eq(session.fs.as_ref().unwrap(), &second_fs),
@@ -722,7 +721,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
         assert!(
             workspace
                 .read(cx)
-                .connected_session_for_target(&target)
+                .connected_session_for_host(&host)
                 .is_none()
         );
         workspace.update(cx, |workspace, cx| {
@@ -745,7 +744,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
         assert!(
             workspace
                 .read(cx)
-                .connected_session_for_target(&target)
+                .connected_session_for_host(&host)
                 .is_none(),
             "closed Item removes its cached connected session"
         );

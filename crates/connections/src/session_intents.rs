@@ -12,6 +12,7 @@ pub fn spec_for_profile(profile: &Profile) -> SessionSpec {
         auth: profile.auth.clone(),
         credential: profile.credential,
         launch: profile.launch.clone(),
+        jumps: Vec::new(),
     }
 }
 pub(crate) fn spec_for_recent(installed: &Installed, recent: &Recent, cx: &App) -> SessionSpec {
@@ -28,6 +29,7 @@ pub(crate) fn spec_for_recent(installed: &Installed, recent: &Recent, cx: &App) 
             auth: recent.auth.clone(),
             credential: recent.credential,
             launch: recent.launch.clone(),
+            jumps: Vec::new(),
         },
     }
 }

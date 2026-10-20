@@ -107,6 +107,7 @@ impl Terminal {
                 auth: nocterm_session::Auth::Auto,
                 launch: None,
                 credential: None,
+                jumps: Vec::new(),
             },
             true,
             None,
@@ -131,6 +132,7 @@ impl Terminal {
             auth: nocterm_session::Auth::Auto,
             launch: Some(launch),
             credential: None,
+            jumps: Vec::new(),
         };
         Self::new_kind(
             deps,

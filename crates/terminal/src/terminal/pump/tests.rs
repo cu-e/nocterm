@@ -159,6 +159,7 @@ fn terminal(
                     auth: nocterm_session::Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )

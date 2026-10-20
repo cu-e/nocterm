@@ -23,6 +23,35 @@ pub struct ResolvedJump {
     pub credential: Option<CredentialId>,
 }
 
+/// A machine as the user reached it: the destination and the jump hosts in
+/// front of it. Equal targets behind different routes are different machines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAddress {
+    pub target: Target,
+    pub via: Vec<Target>,
+}
+
+impl HostAddress {
+    pub fn new(target: Target, via: Vec<Target>) -> Self {
+        Self { target, via }
+    }
+
+    /// A destination reached directly.
+    pub fn direct(target: Target) -> Self {
+        Self::new(target, Vec::new())
+    }
+}
+
+impl std::fmt::Display for HostAddress {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.target.fmt(output)?;
+        match self.via.first() {
+            Some(first) => write!(output, " via {first}"),
+            None => Ok(()),
+        }
+    }
+}
+
 /// The hop a prompt belongs to. A prompt without one is for the destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptHop {
@@ -66,6 +95,21 @@ mod tests {
                 host,
                 credential: None
             }
+        );
+    }
+
+    #[test]
+    fn a_routed_address_names_the_first_jump_host_so_equal_targets_stay_apart() {
+        let target = Target::new("root", "192.168.122.10", 22);
+        let other = Target::new("ops", "other", 22);
+
+        assert_eq!(
+            HostAddress::direct(target.clone()).to_string(),
+            "root@192.168.122.10"
+        );
+        assert_eq!(
+            HostAddress::new(target.clone(), vec![bastion(), other]).to_string(),
+            "root@192.168.122.10 via ops@bastion"
         );
     }
 

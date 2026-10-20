@@ -58,6 +58,7 @@ fn fixture_with_transport(
                         auth: Auth::Auto,
                         launch: None,
                         credential: None,
+                        jumps: Vec::new(),
                     },
                     cx,
                 )

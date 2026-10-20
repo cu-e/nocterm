@@ -7,7 +7,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_session::{Target, fs::path};
+use nocterm_session::{HostAddress, fs::path};
 use nocterm_transfers::{Progress, TransferDirection};
 use nocterm_ui::IconName;
 use std::path::Path;
@@ -47,10 +47,10 @@ impl Activity {
 
 /// Whether a finished upload changed the remote folder `shown` on `target`:
 /// it was copied into that folder or into one of its direct subfolders.
-pub(crate) fn changes_remote(job: &Progress, target: &Target, shown: &str) -> bool {
+pub(crate) fn changes_remote(job: &Progress, host: &HostAddress, shown: &str) -> bool {
     let trim = |value: &str| value.trim_end_matches('/').to_owned();
     job.direction == TransferDirection::Upload
-        && job.target == *target
+        && job.host == *host
         && (trim(&job.destination) == trim(shown)
             || trim(path::parent(&job.destination)) == trim(shown))
 }
@@ -146,12 +146,13 @@ pub(crate) fn strip<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nocterm_session::Target;
     use nocterm_transfers::TransferState;
 
     fn job(direction: TransferDirection, destination: &str, state: TransferState) -> Progress {
         Progress {
             id: nocterm_transfers::TransferId::from_bytes([1; 16]).unwrap(),
-            target: Target::parse("u@h", None).unwrap(),
+            host: HostAddress::direct(Target::parse("u@h", None).unwrap()),
             destination: destination.into(),
             direction,
             state,
@@ -178,8 +179,16 @@ mod tests {
     }
 
     #[test]
-    fn finished_transfers_change_their_folder_and_its_parent() {
+    fn a_transfer_through_other_jump_hosts_does_not_change_this_folder() {
         let target = Target::parse("u@h", None).unwrap();
+        let upload = job(TransferDirection::Upload, "/srv", TransferState::Completed);
+        let behind_bastion = HostAddress::new(target, vec![Target::new("ops", "bastion", 22)]);
+        assert!(!changes_remote(&upload, &behind_bastion, "/srv"));
+    }
+
+    #[test]
+    fn finished_transfers_change_their_folder_and_its_parent() {
+        let target = HostAddress::direct(Target::parse("u@h", None).unwrap());
         let upload = job(
             TransferDirection::Upload,
             "/srv/app/",
@@ -188,7 +197,7 @@ mod tests {
         assert!(changes_remote(&upload, &target, "/srv/app"));
         assert!(changes_remote(&upload, &target, "/srv"));
         assert!(!changes_remote(&upload, &target, "/etc"));
-        let other = Target::parse("u@other", None).unwrap();
+        let other = HostAddress::direct(Target::parse("u@other", None).unwrap());
         assert!(!changes_remote(&upload, &other, "/srv/app"));
         let download = job(
             TransferDirection::Download,

@@ -177,6 +177,7 @@ fn prompt_fixture(
                         auth: Auth::Password,
                         credential: None,
                         launch: None,
+                        jumps: Vec::new(),
                     },
                     window,
                     cx,

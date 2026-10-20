@@ -23,6 +23,7 @@ fn remote(installed: Installed, name: &str, cx: &mut TestAppContext) -> Entity<T
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )

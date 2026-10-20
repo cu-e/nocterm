@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_session::{Auth, Target};
+use nocterm_session::{Auth, HostAddress, Target};
 
 mod background;
 mod bindings;
@@ -53,6 +53,21 @@ pub struct SessionSpec {
     pub auth: Auth,
     pub launch: Option<nocterm_session::ShellLaunch>,
     pub credential: Option<nocterm_session::CredentialId>,
+    /// Jump hosts, resolved before opening; the session's proxy reaches the first.
+    pub jumps: Vec<nocterm_session::ResolvedJump>,
+}
+
+impl SessionSpec {
+    /// The machine this spec reaches and the jump hosts in front of it.
+    pub fn address(&self) -> HostAddress {
+        HostAddress::new(
+            self.target.clone(),
+            self.jumps
+                .iter()
+                .map(|jump| jump.host.target.clone())
+                .collect(),
+        )
+    }
 }
 
 /// What the workspace tells its observers.

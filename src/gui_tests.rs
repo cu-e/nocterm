@@ -53,6 +53,7 @@ fn spec(host: &str) -> SessionSpec {
         auth: nocterm_session::Auth::Auto,
         launch: None,
         credential: None,
+        jumps: Vec::new(),
     }
 }
 

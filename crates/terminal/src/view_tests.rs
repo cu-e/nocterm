@@ -68,6 +68,7 @@ pub(super) fn fixture_with_credentials(
                         options: Default::default(),
                         launch: None,
                         credential: None,
+                        jumps: Vec::new(),
                     },
                     window,
                     cx,

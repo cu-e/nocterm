@@ -97,6 +97,7 @@ impl NewTabMenu {
             auth: Auth::Auto,
             launch: None,
             credential: None,
+            jumps: Vec::new(),
         };
         connect(&self.installed, &self.workspace, spec, None, window, cx);
     }

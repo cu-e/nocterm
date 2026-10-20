@@ -57,6 +57,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
                     auth: Auth::Password,
                     launch: None,
                     credential: Some(id),
+                    jumps: Vec::new(),
                 },
                 cx,
             )
@@ -189,6 +190,7 @@ fn remembers_password_only_after_success_and_never_remembers_mfa(cx: &mut TestAp
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )
@@ -294,6 +296,7 @@ fn association_terminal(
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )

@@ -1,12 +1,12 @@
 use crate::{
     CollisionPolicy, DiscoveryLimits, TransferDirection, TransferError, valid_remote_source,
 };
-use nocterm_session::{RemoteFs, Target};
+use nocterm_session::{HostAddress, RemoteFs};
 use std::{path::PathBuf, sync::Arc};
 #[derive(Clone)]
 pub struct UploadRequest {
     pub sources: Vec<PathBuf>,
-    pub target: Target,
+    pub host: HostAddress,
     pub destination: String,
     pub fs: Arc<dyn RemoteFs>,
     pub collisions: CollisionPolicy,
@@ -14,7 +14,7 @@ pub struct UploadRequest {
 #[derive(Clone)]
 pub struct DownloadRequest {
     pub sources: Vec<String>,
-    pub target: Target,
+    pub host: HostAddress,
     pub local_destination: PathBuf,
     pub fs: Arc<dyn RemoteFs>,
     pub collisions: CollisionPolicy,
@@ -25,10 +25,10 @@ pub enum Request {
     Download(DownloadRequest),
 }
 impl Request {
-    pub fn target(&self) -> &Target {
+    pub fn host(&self) -> &HostAddress {
         match self {
-            Self::Upload(value) => &value.target,
-            Self::Download(value) => &value.target,
+            Self::Upload(value) => &value.host,
+            Self::Download(value) => &value.host,
         }
     }
     pub fn destination(&self) -> String {
@@ -64,10 +64,11 @@ impl Request {
     }
     pub fn validate(&self, limits: DiscoveryLimits) -> Result<(), TransferError> {
         if self
-            .target()
+            .host()
+            .target
             .host
             .len()
-            .saturating_add(self.target().user.len())
+            .saturating_add(self.host().target.user.len())
             > limits.source_path_bytes()
         {
             return Err(TransferError::RequestTooLarge);

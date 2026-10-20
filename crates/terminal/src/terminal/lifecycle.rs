@@ -140,13 +140,16 @@ impl SessionLifecycle {
     }
     pub(super) fn context(&self) -> SessionContext {
         let target = self.spec.target.clone();
+        let via = self.spec.address().via;
         let exec = self.session.as_ref().and_then(Session::exec);
         if !self.is_command() {
             return SessionContext::new(target, self.fs.clone(), self.status == Status::Connected)
+                .with_via(via)
                 .with_exec(exec);
         }
         let lost = matches!(self.status, Status::Closed(CloseReason::Failed(_)));
         SessionContext::new(target, self.session.as_ref().and_then(Session::fs), !lost)
+            .with_via(via)
             .with_exec(exec)
     }
 }

@@ -267,10 +267,10 @@ impl FilesPanel {
                     .remote
                     .read(cx)
                     .transfer_target(destination.clone())
-                    .map(|(fs, target, destination)| {
+                    .map(|(fs, host, destination)| {
                         self.installed.transfers().enqueue(UploadRequest {
                             sources: sources.clone(),
-                            target,
+                            host,
                             destination,
                             fs,
                             collisions: self.collisions,
@@ -297,7 +297,7 @@ impl FilesPanel {
                             .transfers()
                             .enqueue_download(DownloadRequest {
                                 sources: files.sources.clone(),
-                                target: files.target.clone(),
+                                host: files.host.clone(),
                                 local_destination,
                                 fs: files.fs.clone(),
                                 collisions: self.collisions,
