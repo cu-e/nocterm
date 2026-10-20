@@ -118,7 +118,7 @@ fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works
     assert_eq!(service.snapshot().len(), 2);
     let current = service.snapshot()[0].id;
     assert_eq!(
-        recorded_upload(&recording, current).target.host,
+        recorded_upload(&recording, current).host.target.host,
         "second-host"
     );
     cx.update_window(handle, |_, window, cx| {
@@ -368,7 +368,7 @@ fn remote_drag_captures_source_before_switching_tabs_and_destination_when_droppe
     let request = recorded_download(&recording, service.snapshot()[0].id);
     let pinned: Arc<dyn RemoteFs> = original;
     assert!(Arc::ptr_eq(&request.fs, &pinned));
-    assert_eq!(request.target.host, "host");
+    assert_eq!(request.host.target.host, "host");
     assert_eq!(request.sources, ["/home/test/a.txt"]);
     panel.update(cx, |panel, cx| {
         panel.navigate_local(other.path().to_owned(), cx)

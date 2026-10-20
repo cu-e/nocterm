@@ -16,7 +16,7 @@ use std::{
 
 use futures::channel::oneshot;
 
-use crate::{Auth, HostExec, RemoteFs, Secret, ShellLaunch, Target};
+use crate::{Auth, HostExec, JumpHost, PromptHop, RemoteFs, Secret, ShellLaunch, Target};
 
 /// Events a transport may queue before it has to wait for the owner.
 ///
@@ -56,6 +56,8 @@ pub struct ConnectRequest {
     pub launch: ShellLaunch,
     pub target: Target,
     pub auth: Auth,
+    /// Jump hosts in order; the proxy applies to the first connection.
+    pub jumps: Vec<JumpHost>,
     /// Terminal type announced to the remote host (its `TERM` variable).
     pub term: String,
     pub size: PtySize,
@@ -92,10 +94,10 @@ pub enum Event {
 /// Where a connection attempt has got to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectStage {
-    /// Reaching the host.
-    Connecting,
-    /// Proving who the user is.
-    Authenticating,
+    /// Reaching the host, or the jump host at position `hop` of the route.
+    Connecting { hop: Option<usize> },
+    /// Proving who the user is, to the host or to the jump host at `hop`.
+    Authenticating { hop: Option<usize> },
     /// Starting the remote shell.
     StartingShell,
 }
@@ -140,6 +142,17 @@ pub enum SessionError {
     Cancelled,
     #[error("the connection was lost: {0}")]
     ConnectionLost(String),
+    /// A hop of the jump route failed; `source` is what went wrong with it.
+    #[error("jump host {} ({host}): {source}", hop + 1)]
+    JumpHost {
+        /// Zero-based position in the route.
+        hop: usize,
+        host: String,
+        #[source]
+        source: Box<SessionError>,
+    },
+    #[error("{count} jump hosts exceed the limit of {limit}")]
+    TooManyJumpHosts { count: usize, limit: usize },
     #[error("{0}")]
     Other(String),
 }
@@ -156,6 +169,8 @@ pub enum Prompt {
         algorithm: String,
         /// The key's SHA-256 fingerprint, as OpenSSH prints it.
         fingerprint: String,
+        /// The jump host being verified; `None` for the destination.
+        hop: Option<PromptHop>,
         reply: Reply<HostKeyDecision>,
     },
     /// The host presents a different key from an existing trust record.
@@ -169,11 +184,15 @@ pub enum Prompt {
         line: usize,
         /// Why the conflicting records cannot safely be replaced; `None` permits saving.
         replacement_error: Option<String>,
+        /// The jump host being verified; `None` for the destination.
+        hop: Option<PromptHop>,
         reply: Reply<HostKeyDecision>,
     },
     /// A secret is needed to sign in.
     Secret {
         request: SecretRequest,
+        /// The jump host asking; `None` for the destination.
+        hop: Option<PromptHop>,
         reply: Reply<Option<Secret>>,
     },
 }
@@ -527,6 +546,7 @@ mod tests {
                         prompt: "Code:".into(),
                         echo: true,
                     },
+                    hop: None,
                     reply,
                 }),
                 async {
@@ -553,6 +573,7 @@ mod tests {
                     host: "example.com".into(),
                     algorithm: "ssh-ed25519".into(),
                     fingerprint: "SHA256:abc".into(),
+                    hop: None,
                     reply,
                 }),
                 async {

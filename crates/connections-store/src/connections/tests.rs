@@ -1,12 +1,21 @@
 use super::*;
 use crate::ConnectionStore as Connections;
 use futures::channel::oneshot;
+use nocterm_connections_model::credential_scope::CredentialScope;
 use nocterm_core::persist;
+use nocterm_session::{Auth, Target};
 use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
 use std::sync::{Arc, Mutex};
 
 mod publication;
 mod shutdown;
+
+fn direct(profile: &Profile) -> nocterm_connections_model::credential_scope::CredentialScope {
+    nocterm_connections_model::credential_scope::CredentialScope::direct(
+        profile.target.clone(),
+        profile.auth.clone(),
+    )
+}
 
 fn profile(name: &str) -> Profile {
     Profile {
@@ -22,6 +31,7 @@ fn profile(name: &str) -> Profile {
         icon_color: None,
         country: None,
         group: None,
+        jump_hosts: Vec::new(),
     }
 }
 
@@ -38,7 +48,7 @@ async fn stale_edit_cannot_resurrect_deleted_profile_or_replace_credential(
     let credential = CredentialId::from_bytes([1; 16]);
     entity
         .update(cx, |c, cx| {
-            c.associate_credential(&original.target, &original.auth, credential, cx)
+            c.associate_credential(direct(&original), credential, cx)
         })
         .await
         .unwrap();
@@ -331,7 +341,7 @@ async fn consumed_credential_does_not_overwrite_later_independent_use(
     let assigned = CredentialId::from_bytes([2; 16]);
     entity
         .update(cx, |c, cx| {
-            c.associate_credential(&original.target, &original.auth, assigned, cx)
+            c.associate_credential(direct(&original), assigned, cx)
         })
         .await
         .unwrap();
@@ -542,6 +552,103 @@ async fn deleting_and_readding_the_same_profile_keeps_the_old_recent_unlinked(
     assert_eq!(
         entity.read_with(cx, |c, cx| c.recents(cx).iter().next().unwrap().profile),
         None
+    );
+}
+
+#[gpui::test]
+async fn deleting_a_profile_with_jump_hosts_removes_its_recents(cx: &mut gpui::TestAppContext) {
+    let mut routed = profile("Routed");
+    routed.target = Target::new("ci", "private", 22);
+    routed.jump_hosts = vec![
+        nocterm_connections_model::jump_route::JumpHostEntry::Address(Target::new(
+            "ops", "bastion", 22,
+        )),
+    ];
+    let direct = profile("Direct");
+    let entity = cx.new(|_| {
+        Connections::with_documents(
+            documents(&[routed.clone(), direct.clone()]),
+            Recents::default(),
+        )
+    });
+    entity.update(cx, |c, cx| {
+        c.record_use(recent_use(&routed, Some(routed.id)), cx);
+        c.record_use(recent_use(&direct, Some(direct.id)), cx);
+    });
+    for id in [routed.id, direct.id] {
+        entity
+            .update(cx, |c, cx| c.delete_profile(id, cx))
+            .await
+            .unwrap();
+    }
+    let remaining = entity.read_with(cx, |c, cx| {
+        c.recents(cx)
+            .iter()
+            .map(|recent| recent.target.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        remaining,
+        [direct.target],
+        "only the connection that never used a route stays reachable as a plain destination"
+    );
+}
+
+#[gpui::test]
+async fn remembering_a_password_stays_with_the_route_it_was_typed_for(
+    cx: &mut gpui::TestAppContext,
+) {
+    let via = |name: &str, hop: &str| {
+        let mut item = profile(name);
+        item.target = Target::new("root", "192.168.122.10", 22);
+        item.jump_hosts = vec![
+            nocterm_connections_model::jump_route::JumpHostEntry::Address(Target::new(
+                "ops", hop, 22,
+            )),
+        ];
+        item
+    };
+    let (vm_a, vm_b) = (via("vm-a", "hyp-a"), via("vm-b", "hyp-b"));
+    let mut plain = profile("plain");
+    plain.target = vm_a.target.clone();
+    let entity = cx.new(|_| {
+        Connections::with_documents(
+            documents(&[vm_a.clone(), vm_b.clone(), plain.clone()]),
+            Recents::default(),
+        )
+    });
+    entity.update(cx, |c, cx| {
+        c.record_use(recent_use(&vm_a, Some(vm_a.id)), cx);
+        c.record_use(recent_use(&vm_b, Some(vm_b.id)), cx);
+    });
+    let credential = CredentialId::from_bytes([9; 16]);
+    let scope = CredentialScope::routed(vm_a.id, vm_a.target.clone(), vm_a.auth.clone());
+    entity
+        .update(cx, |c, cx| c.associate_credential(scope, credential, cx))
+        .await
+        .unwrap();
+
+    let held = entity.read_with(cx, |c, cx| {
+        let profiles = c.profiles(cx);
+        let profile_of = |id| profiles.get(id).and_then(|item| item.credential);
+        let recent_of = |id| {
+            c.recents(cx)
+                .iter()
+                .find(|recent| recent.profile == Some(id))
+                .and_then(|recent| recent.credential)
+        };
+        (
+            profile_of(vm_a.id),
+            profile_of(vm_b.id),
+            profile_of(plain.id),
+            recent_of(vm_a.id),
+            recent_of(vm_b.id),
+        )
+    });
+    assert_eq!(
+        held,
+        (Some(credential), None, None, Some(credential), None),
+        "the password for vm-a is not offered to the same address through another route or directly"
     );
 }
 

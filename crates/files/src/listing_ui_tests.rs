@@ -383,7 +383,9 @@ fn partial_directory_download_refreshes(cx: &mut TestAppContext, cancelled: bool
     let id = service
         .enqueue_download(nocterm_transfers::DownloadRequest {
             sources: vec!["/home/test/incoming".into()],
-            target: nocterm_session::Target::new("test", "host", 22),
+            host: nocterm_session::HostAddress::direct(nocterm_session::Target::new(
+                "test", "host", 22,
+            )),
             local_destination: directory.path().to_owned(),
             fs,
             collisions: CollisionPolicy::Skip,

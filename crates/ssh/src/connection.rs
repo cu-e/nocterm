@@ -2,88 +2,29 @@
 //! the shell, report how it ended.
 
 use std::{
-    borrow::Cow,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use nocterm_session::{
-    CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,
-    SessionDriver, SessionError, Target,
+    CloseReason, Command, ConnectRequest, ConnectStage, Event, PtySize, SessionDriver, SessionError,
 };
 use russh::{
-    Channel, ChannelMsg, Disconnect, Preferred,
-    client::{self, DisconnectReason, Handle, Msg},
-    keys::{HashAlg, PublicKey, PublicKeyOrCertificate},
+    Channel, ChannelMsg, Disconnect,
+    client::{Handle, Msg},
 };
 use tokio::time::timeout;
 
 use crate::{
-    SshConfig, auth,
+    SshConfig,
     exec::{self, ExecRequests},
-    host_keys::{HostKeys, RememberError, Verdict, same_kind},
+    login::{Client, Observed, take_disconnect},
+    route,
     sftp::{self, FsRequests},
 };
 
-/// Unanswered keepalives after which the connection counts as lost.
-const KEEPALIVE_MAX: usize = 3;
-
 /// How long the host may take to start the shell once the user is signed in.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// What the connection's protocol callbacks have seen so far.
-#[derive(Default)]
-pub(crate) struct Observed {
-    host_key: Option<(PublicKey, Verdict)>,
-    disconnect: Option<String>,
-}
-
-/// The protocol callbacks of one connection.
-pub(crate) struct Client {
-    host_keys: HostKeys,
-    host: String,
-    port: u16,
-    observed: Arc<Mutex<Observed>>,
-}
-
-impl client::Handler for Client {
-    type Error = russh::Error;
-
-    /// Records what is known about the host's key.
-    ///
-    /// Revoked keys end the handshake here. Unknown and changed keys are put
-    /// to the user afterwards, before any credential leaves this machine: asking
-    /// from inside the handshake would stall it for as long as they think.
-    async fn check_server_key(
-        &mut self,
-        key: &PublicKeyOrCertificate,
-    ) -> Result<bool, Self::Error> {
-        // Host certificates are never requested, so one cannot be verified.
-        let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
-            return Ok(false);
-        };
-
-        let verdict = self.host_keys.check(&self.host, self.port, key);
-        let acceptable = !matches!(verdict, Verdict::Revoked { .. });
-        lock(&self.observed).host_key = Some((key.clone(), verdict));
-        Ok(acceptable)
-    }
-
-    async fn disconnected(
-        &mut self,
-        reason: DisconnectReason<Self::Error>,
-    ) -> Result<(), Self::Error> {
-        let message = match reason {
-            DisconnectReason::ReceivedDisconnect(info) if info.message.is_empty() => {
-                format!("{:?}", info.reason_code)
-            }
-            DisconnectReason::ReceivedDisconnect(info) => info.message,
-            DisconnectReason::Error(error) => error.to_string(),
-        };
-        lock(&self.observed).disconnect = Some(message);
-        Ok(())
-    }
-}
 
 /// Runs a session from the first packet to [`Event::Closed`].
 pub(crate) async fn run(
@@ -98,7 +39,6 @@ pub(crate) async fn run(
     driver.emit(Event::Closed(reason)).await;
 }
 
-#[expect(clippy::cognitive_complexity, reason = "predates the limit")]
 async fn session(
     config: &SshConfig,
     request: &ConnectRequest,
@@ -111,26 +51,58 @@ async fn session(
 
     // Until the shell runs, the only commands that matter are a new size to
     // start it with and the user giving up.
-    let signed_in = tokio::select! {
+    let established = tokio::select! {
         () = driver.closed() => return CloseReason::ClosedByUser,
-        result = sign_in(config, request, driver, &observed) => result,
+        result = route::establish(config, request, driver, &observed) => result,
         () = closed_while_connecting(driver, &mut size) => return CloseReason::ClosedByUser,
     };
-    let handle = match signed_in {
-        Ok(handle) => Arc::new(handle),
+    let (handle, route) = match established {
+        Ok(established) => established,
         Err(error) => return CloseReason::Failed(error),
     };
+    let handle = Arc::new(handle);
 
+    let reason = serve(
+        &handle,
+        request,
+        driver,
+        &observed,
+        size,
+        fs_requests,
+        exec_requests,
+    )
+    .await;
+    let reason = match reason {
+        CloseReason::Failed(error) => CloseReason::Failed(route.attribute(error)),
+        other => other,
+    };
+
+    // Fails only if the connection is already gone.
+    let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
+    route.close().await;
+    reason
+}
+
+/// Runs the shell, the file browser and programs on the signed-in destination.
+async fn serve(
+    handle: &Arc<Handle<Client>>,
+    request: &ConnectRequest,
+    driver: &SessionDriver,
+    observed: &Arc<Mutex<Observed>>,
+    size: PtySize,
+    fs_requests: FsRequests,
+    exec_requests: ExecRequests,
+) -> CloseReason {
     driver
         .emit(Event::Connecting(ConnectStage::StartingShell))
         .await;
     let starting = tokio::select! {
         () = driver.closed() => return CloseReason::ClosedByUser,
-        result = timeout(SHELL_TIMEOUT, start_shell(&handle, &request.term, size, &request.launch)) => result,
+        result = timeout(SHELL_TIMEOUT, start_shell(handle, &request.term, size, &request.launch)) => result,
     };
     let shell = match starting {
         Ok(Ok(shell)) => shell,
-        Ok(Err(error)) => return CloseReason::Failed(lost(&observed, &error)),
+        Ok(Err(error)) => return CloseReason::Failed(lost(observed, &error)),
         Err(_) => {
             return CloseReason::Failed(SessionError::Other(
                 "the host did not start a shell".into(),
@@ -152,7 +124,7 @@ async fn session(
     ));
     let reason = tokio::select! {
         () = driver.closed() => CloseReason::ClosedByUser,
-        reason = run_shell(shell, driver, &observed) => reason,
+        reason = run_shell(shell, driver, observed) => reason,
     };
     let _ = shutdown.send(());
     let _ = stop_programs.send(());
@@ -168,188 +140,7 @@ async fn session(
     {
         programs.abort();
     }
-
-    // Fails only if the connection is already gone.
-    let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
     reason
-}
-
-/// Reaches the host, verifies its key and authenticates the user.
-async fn sign_in(
-    config: &SshConfig,
-    request: &ConnectRequest,
-    driver: &SessionDriver,
-    observed: &Arc<Mutex<Observed>>,
-) -> Result<Handle<Client>, SessionError> {
-    let target = &request.target;
-    let writable = config.known_hosts.clone();
-    let read_only = config.read_only_known_hosts.clone();
-    let host_keys = tokio::task::spawn_blocking(move || HostKeys::load(writable, read_only))
-        .await
-        .map_err(|error| SessionError::Other(format!("cannot load host trust records: {error}")))?
-        .map_err(|error| SessionError::Other(error.to_string()))?;
-
-    driver
-        .emit(Event::Connecting(ConnectStage::Connecting))
-        .await;
-    let mut handle = connect(request, &host_keys, observed).await?;
-    verify_host(&handle, target, &host_keys, driver, observed).await?;
-
-    driver
-        .emit(Event::Connecting(ConnectStage::Authenticating))
-        .await;
-    auth::authenticate(&mut handle, request, config, driver).await?;
-    Ok(handle)
-}
-
-async fn connect(
-    request: &ConnectRequest,
-    host_keys: &HostKeys,
-    observed: &Arc<Mutex<Observed>>,
-) -> Result<Handle<Client>, SessionError> {
-    let Target { host, port, .. } = &request.target;
-
-    // Ask for a kind of key that is already on record, if there is one.
-    let known = host_keys.known_algorithms(host, *port);
-    let mut preferred = Preferred::default();
-    let mut algorithms = preferred.key.to_vec();
-    algorithms.sort_by_key(|algorithm| !known.iter().any(|known| same_kind(known, algorithm)));
-    preferred.key = Cow::Owned(algorithms);
-
-    let ssh = client::Config {
-        keepalive_interval: request.keepalive_interval,
-        keepalive_max: KEEPALIVE_MAX,
-        preferred,
-        ..client::Config::default()
-    };
-    let client = Client {
-        host_keys: host_keys.clone(),
-        host: host.clone(),
-        port: *port,
-        observed: observed.clone(),
-    };
-
-    let handshake = async {
-        let socket = crate::proxy::connect(&request.target, &request.proxy)
-            .await
-            .map_err(|error| SessionError::Unreachable {
-                host: host.clone(),
-                reason: error.to_string(),
-            })?;
-        // Keystrokes are tiny packets; batching them only adds latency.
-        let _ = socket.set_nodelay(true);
-
-        client::connect_stream(Arc::new(ssh), socket, client)
-            .await
-            .map_err(|error| match lock(observed).host_key.take() {
-                Some((_, Verdict::Revoked { known_hosts, line })) => {
-                    revoked(host, &known_hosts, line)
-                }
-                _ => SessionError::Other(error.to_string()),
-            })
-    };
-
-    timeout(request.connect_timeout, handshake)
-        .await
-        .map_err(|_| SessionError::TimedOut {
-            host: host.clone(),
-            seconds: request.connect_timeout.as_secs(),
-        })?
-}
-
-/// Makes sure the user trusts the host before anything secret is sent to it.
-async fn verify_host(
-    handle: &Handle<Client>,
-    target: &Target,
-    host_keys: &HostKeys,
-    driver: &SessionDriver,
-    observed: &Arc<Mutex<Observed>>,
-) -> Result<(), SessionError> {
-    let host = &target.host;
-    let rejected = || SessionError::HostKeyRejected { host: host.clone() };
-
-    let (key, verdict) = lock(observed).host_key.take().ok_or_else(rejected)?;
-    match &verdict {
-        Verdict::Known => return Ok(()),
-        Verdict::Revoked { known_hosts, line } => return Err(revoked(host, known_hosts, *line)),
-        Verdict::Changed { .. } | Verdict::Unknown => {}
-    }
-    let changed = matches!(verdict, Verdict::Changed { .. });
-    let decision = driver
-        .ask(|reply| match verdict {
-            Verdict::Changed { known_hosts, line } => Prompt::ChangedHostKey {
-                host: host.clone(),
-                port: target.port,
-                algorithm: key.algorithm().as_str().to_owned(),
-                old_fingerprints: host_keys.old_fingerprints(host, target.port, &key),
-                fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-                known_hosts,
-                line,
-                replacement_error: host_keys.replacement_error(host, target.port, &key),
-                reply,
-            },
-            _ => Prompt::UnknownHostKey {
-                host: host_label(target),
-                algorithm: key.algorithm().as_str().to_owned(),
-                fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-                reply,
-            },
-        })
-        .await
-        .unwrap_or(HostKeyDecision::Reject);
-
-    match decision {
-        HostKeyDecision::Reject => {
-            let _ = handle
-                .disconnect(Disconnect::HostKeyNotVerifiable, "", "en")
-                .await;
-            Err(rejected())
-        }
-        HostKeyDecision::AcceptOnce => {
-            host_keys
-                .revalidate()
-                .map_err(|e| SessionError::Other(e.to_string()))?;
-            Ok(())
-        }
-        HostKeyDecision::AcceptAndRemember if changed => {
-            let records = host_keys.clone();
-            let host = host.clone();
-            let port = target.port;
-            tokio::task::spawn_blocking(move || records.replace(&host, port, &key))
-                .await
-                .map_err(|error| {
-                    SessionError::Other(format!("Could not save the new host key: {error}"))
-                })?
-                .map_err(|error| SessionError::Other(error.to_string()))
-        }
-        HostKeyDecision::AcceptAndRemember => {
-            match host_keys.remember(host, target.port, &key) {
-                Ok(()) => Ok(()),
-                Err(RememberError::TrustChanged(error)) => Err(SessionError::Other(error)),
-                Err(RememberError::Write(error)) => {
-                    // Preserve unknown-host behavior for ordinary write errors.
-                    tracing::warn!(%host, %error, "could not record the host key");
-                    Ok(())
-                }
-            }
-        }
-    }
-}
-
-fn revoked(host: &str, file: &std::path::Path, line: usize) -> SessionError {
-    SessionError::Other(format!(
-        "the host key of {host} is revoked (line {line} of {}); refusing to connect",
-        file.display()
-    ))
-}
-
-/// The host as known-hosts files spell it.
-fn host_label(target: &Target) -> String {
-    if target.port == nocterm_session::DEFAULT_PORT {
-        target.host.clone()
-    } else {
-        format!("[{}]:{}", target.host, target.port)
-    }
 }
 
 async fn closed_while_connecting(driver: &SessionDriver, size: &mut PtySize) {
@@ -495,15 +286,5 @@ pub(crate) async fn run_shell(
 
 /// The connection broke: prefer the host's own explanation, if it gave one.
 fn lost(observed: &Arc<Mutex<Observed>>, fallback: &dyn std::fmt::Display) -> SessionError {
-    SessionError::ConnectionLost(
-        lock(observed)
-            .disconnect
-            .take()
-            .unwrap_or_else(|| fallback.to_string()),
-    )
-}
-
-fn lock(observed: &Arc<Mutex<Observed>>) -> MutexGuard<'_, Observed> {
-    // The state is plain data, valid even if a holder panicked.
-    observed.lock().unwrap_or_else(PoisonError::into_inner)
+    SessionError::ConnectionLost(take_disconnect(observed).unwrap_or_else(|| fallback.to_string()))
 }

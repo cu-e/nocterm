@@ -37,7 +37,7 @@ impl Fixture {
         self.runtime
             .enqueue(UploadRequest {
                 sources,
-                target: Target::new("u", "pinned-host", 2222),
+                host: nocterm_session::HostAddress::direct(Target::new("u", "pinned-host", 2222)),
                 destination: "/dest".into(),
                 fs: self.remote.clone(),
                 collisions: policy,
@@ -48,7 +48,7 @@ impl Fixture {
         self.runtime
             .enqueue_download(DownloadRequest {
                 sources,
-                target: Target::new("u", "pinned-host", 2222),
+                host: nocterm_session::HostAddress::direct(Target::new("u", "pinned-host", 2222)),
                 local_destination: native("output"),
                 fs: self.remote.clone(),
                 collisions: policy,

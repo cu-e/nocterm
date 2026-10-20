@@ -583,6 +583,7 @@ mod tests {
                     "nocterm-ai",
                     "nocterm-agent-storage",
                     "nocterm-agent-runtime",
+                    "nocterm-agent-chat",
                     "nocterm-agent",
                     "nocterm",
                 ] {

@@ -212,7 +212,14 @@ fn a_program_joins_the_session_on_its_host_it_was_opened_from(cx: &mut TestAppCo
 
     with(cx, window, &workspace, |ws, window, cx| {
         ws.activate_item_by_id(parent, window, cx);
-        ws.open_program(spec(HostKey::Remote(target.clone())), window, cx);
+        ws.open_program(
+            spec(HostKey::Remote {
+                target: target.clone(),
+                via: Vec::new(),
+            }),
+            window,
+            cx,
+        );
     });
     let logs = workspace.read_with(cx, |ws, cx| ws.tabs(cx).last().unwrap().id());
     assert_eq!(bars(cx, &workspace), [vec![parent, logs, other]]);

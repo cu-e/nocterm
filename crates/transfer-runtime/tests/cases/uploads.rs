@@ -175,7 +175,7 @@ fn failed_ack_is_typed_and_retry_keeps_target_destination_and_new_remote_port() 
     let retried = fixture.runtime.retry(first, replacement.clone()).unwrap();
     let completed = fixture.finished(retried);
     assert_eq!(completed.state, TransferState::Completed);
-    assert_eq!(completed.target, failed.target);
+    assert_eq!(completed.host, failed.host);
     assert_eq!(completed.destination, failed.destination);
     assert_eq!(replacement.bytes("/dest/file").unwrap(), b"data");
 }
@@ -208,7 +208,7 @@ fn bounded_queue_reports_backpressure_and_queued_cancellation_opens_nothing() {
         .unwrap();
     let result = fixture.runtime.enqueue(UploadRequest {
         sources: vec![source],
-        target: nocterm_session::Target::new("u", "h", 22),
+        host: nocterm_session::HostAddress::direct(nocterm_session::Target::new("u", "h", 22)),
         destination: "/dest".into(),
         fs: fixture.remote.clone(),
         collisions: CollisionPolicy::Skip,
@@ -278,7 +278,7 @@ fn admission_rejects_oversized_sources_before_opening_any_writer() {
     let fixture = Fixture::new();
     let result = fixture.runtime.enqueue(UploadRequest {
         sources: vec![native("input/a"); 4097],
-        target: nocterm_session::Target::new("u", "h", 22),
+        host: nocterm_session::HostAddress::direct(nocterm_session::Target::new("u", "h", 22)),
         destination: "/dest".into(),
         fs: fixture.remote.clone(),
         collisions: CollisionPolicy::Skip,
@@ -305,7 +305,7 @@ fn shutdown_freezes_before_polling_and_retains_runtime_until_cleanup_finishes() 
     assert!(matches!(
         fixture.runtime.enqueue(UploadRequest {
             sources: vec![source],
-            target: nocterm_session::Target::new("u", "h", 22),
+            host: nocterm_session::HostAddress::direct(nocterm_session::Target::new("u", "h", 22)),
             destination: "/dest".into(),
             fs: fixture.remote.clone(),
             collisions: CollisionPolicy::Skip

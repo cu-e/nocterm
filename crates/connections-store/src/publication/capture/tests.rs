@@ -3,6 +3,7 @@ use super::*;
 use gpui::AppContext as _;
 use nocterm_connections_model::profiles::{Profile, ProfileExpectation};
 use nocterm_session::testing::Gate;
+use nocterm_session::{Auth, Target};
 use nocterm_store::{Publication, SnapshotWriter};
 use std::sync::Mutex;
 
@@ -20,6 +21,7 @@ fn profile() -> Profile {
         icon_color: None,
         country: None,
         group: None,
+        jump_hosts: Vec::new(),
     }
 }
 fn documents(profile: &Profile) -> Profiles {

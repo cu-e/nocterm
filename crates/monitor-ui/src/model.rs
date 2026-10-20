@@ -202,7 +202,7 @@ impl HostMonitor {
         }
         let platform = match host.key {
             HostKey::Local => Some(local_platform()),
-            HostKey::Remote(_) => self.records[0].platform.clone(),
+            HostKey::Remote { .. } => self.records[0].platform.clone(),
         };
         self.set_status(
             if platform.is_some() {

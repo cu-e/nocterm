@@ -35,6 +35,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     };
     let a = profile("a", "Work");
     let b = profile("b", "Personal");
@@ -205,6 +206,7 @@ fn gp(name: &str, group: Option<&str>) -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 
@@ -381,7 +383,7 @@ fn delete_dialog_ungroups_or_deletes_members(cx: &mut TestAppContext) {
     );
     let (handle, _, opened, installed) = setup(cx, &[a.clone(), b.clone(), c.clone()]);
     cx.update(|cx| {
-        let spec = spec_for_profile(&a);
+        let spec = crate::test_support::direct_spec(&a);
         installed.connections().update(cx, |connections, cx| {
             crate::session_intents::record_use(connections, &spec, Some(a.id), cx)
         });
@@ -405,7 +407,12 @@ fn delete_dialog_ungroups_or_deletes_members(cx: &mut TestAppContext) {
             for p in [&a, &b] {
                 connections.save_profile(p.clone(), cx).now_or_never();
             }
-            crate::session_intents::record_use(connections, &spec_for_profile(&a), Some(a.id), cx);
+            crate::session_intents::record_use(
+                connections,
+                &crate::test_support::direct_spec(&a),
+                Some(a.id),
+                cx,
+            );
         });
     })
     .unwrap();

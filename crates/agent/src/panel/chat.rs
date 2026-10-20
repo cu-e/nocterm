@@ -377,11 +377,12 @@ impl AgentPanel {
             .limits(thread.document().agent_id(), cx)
             .map(|limits| limits.iter().cloned().collect())
             .unwrap_or_default();
-        let limits_hint = match thread.document().agent_id() {
-            "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
-            "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
-            _ => None,
-        };
+        let limits_hint = self
+            .host
+            .agents()
+            .profile(thread.document().agent_id(), cx)
+            .and_then(|profile| profile.usage().empty_hint())
+            .filter(|_| limits.is_empty());
         Some(Report::new(
             context,
             breakdown,

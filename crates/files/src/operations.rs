@@ -1,6 +1,6 @@
 //! Pinned file targets and asynchronous operations shared by both Explorer halves.
 use nocterm_session::{
-    EntryKind, FileMetadata, FsCapabilities, FsError, RemoteFs, Target, fs::path,
+    EntryKind, FileMetadata, FsCapabilities, FsError, HostAddress, RemoteFs, fs::path,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -12,7 +12,7 @@ pub(super) enum FileTarget {
     },
     Remote {
         path: String,
-        host: Target,
+        host: HostAddress,
         fs: Arc<dyn RemoteFs>,
     },
 }

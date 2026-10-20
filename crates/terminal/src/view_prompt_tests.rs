@@ -2,7 +2,8 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_session::{
-    Auth, ConnectRequest, Event, Reply, Session, SessionDriver, Target, Transport,
+    Auth, ConnectRequest, ConnectStage, Event, PromptHop, Reply, Session, SessionDriver, Target,
+    Transport,
 };
 use std::sync::{Arc, Mutex};
 
@@ -25,7 +26,11 @@ fn emit(
     cx.background_executor
         .spawn(async move {
             driver
-                .emit(Event::Prompt(Prompt::Secret { request, reply }))
+                .emit(Event::Prompt(Prompt::Secret {
+                    request,
+                    reply,
+                    hop: None,
+                }))
                 .await;
         })
         .detach();
@@ -145,6 +150,17 @@ fn prompt_fixture(
     Entity<TerminalView>,
     Arc<PromptTransport>,
 ) {
+    prompt_fixture_via(cx, credentials, Vec::new())
+}
+fn prompt_fixture_via(
+    cx: &mut TestAppContext,
+    credentials: Option<crate::CredentialProvider>,
+    jumps: Vec<nocterm_session::ResolvedJump>,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<TerminalView>,
+    Arc<PromptTransport>,
+) {
     let transport = Arc::new(PromptTransport::default());
     let (handle, view) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -173,6 +189,7 @@ fn prompt_fixture(
                         auth: Auth::Password,
                         credential: None,
                         launch: None,
+                        jumps,
                     },
                     window,
                     cx,
@@ -206,6 +223,7 @@ fn emit_changed(
                     replacement_error: unavailable
                         .then(|| "A conflicting key is in a read-only SSH trust file.".into()),
                     reply,
+                    hop: None,
                 }))
                 .await;
         })
@@ -252,4 +270,298 @@ fn unsafe_changed_host_cannot_save_but_can_connect_once(cx: &mut TestAppContext)
         (&mut answer).now_or_never().unwrap().unwrap(),
         HostKeyDecision::AcceptOnce
     );
+}
+#[gpui_kit::test]
+fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
+    cx: &mut TestAppContext,
+) {
+    let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
+    store.fail_next(nocterm_session::testing::FakeCredentialError::NotFound);
+    let provider = crate::CredentialProvider::new(store, |_, _, _| Task::ready(Ok(())));
+    let (handle, view, _) = super::tests::fixture_with_credentials(cx, Some(provider));
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.terminal.update(cx, |t, cx| {
+                let (reply, _) = nocterm_session::Reply::channel();
+                t.handle_event(
+                    Event::Prompt(Prompt::Secret {
+                        request: SecretRequest::Password {
+                            target: t.spec().target.clone(),
+                            retry: false,
+                        },
+                        reply,
+                        hop: None,
+                    }),
+                    cx,
+                );
+                t.answer_secret_and_remember(Secret::new("temporary test secret"), true, cx);
+                t.handle_event(Event::Connected, cx);
+            });
+        });
+        window.render_frame(cx);
+        assert!(
+            nocterm_ui::notice::count(window, cx) == 0,
+            "render posted an operational notice"
+        );
+        view.update(cx, |v, cx| {
+            v.terminal
+                .update(cx, |_, cx| cx.emit(TerminalEvent::Changed));
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
+        window.render_frame(cx);
+        assert!(nocterm_ui::notice::run_action(
+            window,
+            cx,
+            "terminal-credential"
+        ));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |v, cx| {
+        v.terminal.read(cx).credential_message().is_none()
+    }));
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        nocterm_ui::notice::clear(window, cx);
+        view.update(cx, |v, cx| {
+            v.terminal.update(cx, |t, cx| t.start_recording(cx))
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
+        nocterm_ui::notice::clear(window, cx);
+        view.update(cx, |v, cx| {
+            v.terminal
+                .update(cx, |_, cx| cx.emit(TerminalEvent::Output))
+        });
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(500));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            nocterm_ui::notice::count(window, cx) == 0,
+            "unchanged error returned after dismissal"
+        );
+    })
+    .unwrap();
+}
+
+fn bastion_hop() -> PromptHop {
+    PromptHop {
+        index: 0,
+        target: Target::new("ops", "bastion", 22),
+    }
+}
+fn emit_prompt(cx: &mut TestAppContext, transport: &PromptTransport, prompt: Prompt) {
+    let driver = transport.0.lock().unwrap().as_ref().unwrap().clone();
+    cx.background_executor
+        .spawn(async move {
+            driver.emit(Event::Prompt(prompt)).await;
+        })
+        .detach();
+    cx.run_until_parked();
+}
+#[gpui_kit::test]
+fn a_host_key_card_names_the_jump_host_only_for_a_hop(cx: &mut TestAppContext) {
+    let (handle, _view, transport) = prompt_fixture(cx, None);
+    let unknown = |hop| {
+        let (reply, _answer) = Reply::channel();
+        Prompt::UnknownHostKey {
+            host: "bastion".into(),
+            algorithm: "ssh-ed25519".into(),
+            fingerprint: "SHA256:qoUNJBOnhjgeRaLSuJzlFb/dbgesgwNUceBElNcALc8".into(),
+            hop,
+            reply,
+        }
+    };
+    emit_prompt(cx, &transport, unknown(Some(bastion_hop())));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("prompt-hop").is_some());
+        window.click("host-key-reject", cx);
+    })
+    .unwrap();
+    emit_prompt(cx, &transport, unknown(None));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("host-key-once").is_some());
+        assert!(window.try_find("prompt-hop").is_none());
+    })
+    .unwrap();
+}
+#[gpui_kit::test]
+fn a_jump_host_password_prompt_offers_no_remember_choice(cx: &mut TestAppContext) {
+    let (handle, transport, _store) = credential_fixture(cx);
+    let (reply, _answer) = Reply::channel();
+    emit_prompt(
+        cx,
+        &transport,
+        Prompt::Secret {
+            request: SecretRequest::Password {
+                target: bastion_hop().target,
+                retry: false,
+            },
+            hop: Some(bastion_hop()),
+            reply,
+        },
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("secret-input").is_some());
+        assert!(window.try_find("remember-credential").is_none());
+    })
+    .unwrap();
+    let _destination = emit(cx, &transport, password());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("remember-credential").is_some());
+    })
+    .unwrap();
+}
+#[gpui_kit::test]
+fn a_jump_host_prompt_with_a_locked_saved_secret_offers_to_unlock_the_vault(
+    cx: &mut TestAppContext,
+) {
+    let store = Arc::new(crate::credentials::fake::FakeStore::default());
+    let bastion = bastion_hop().target;
+    let saved = store.insert(
+        SecretRequest::Password {
+            target: bastion.clone(),
+            retry: false,
+        },
+        "bastion password",
+    );
+    let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+    let jumps = vec![nocterm_session::ResolvedJump {
+        host: nocterm_session::JumpHost {
+            target: bastion.clone(),
+            auth: Auth::Password,
+        },
+        credential: Some(saved),
+    }];
+    let (handle, _view, transport) = prompt_fixture_via(cx, Some(provider), jumps);
+    let (reply, answer) = Reply::channel();
+    emit_prompt(
+        cx,
+        &transport,
+        Prompt::Secret {
+            request: SecretRequest::Password {
+                target: bastion,
+                retry: false,
+            },
+            hop: Some(bastion_hop()),
+            reply,
+        },
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("remember-credential").is_none());
+        assert!(window.try_find("auth-open-vault").is_some());
+    })
+    .unwrap();
+    // Unlocking answers the jump host's prompt from its saved secret.
+    store.unlock();
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never().unwrap().unwrap().unwrap().expose(),
+        "bastion password"
+    );
+}
+#[gpui_kit::test]
+fn a_changed_host_key_card_names_the_jump_host_only_for_a_hop(cx: &mut TestAppContext) {
+    let (handle, _view, transport) = prompt_fixture(cx, None);
+    let changed = |hop| {
+        let (reply, _answer) = Reply::channel();
+        Prompt::ChangedHostKey {
+            host: "bastion".into(),
+            port: 22,
+            algorithm: "ssh-ed25519".into(),
+            old_fingerprints: vec!["SHA256:BSxf4FJAM6+KpCeKyk1kM0PG/OkbwTk79Pxvc12or4c".into()],
+            fingerprint: "SHA256:qoUNJBOnhjgeRaLSuJzlFb/dbgesgwNUceBElNcALc8".into(),
+            known_hosts: "/home/example/.local/share/nocterm/ssh/known_hosts".into(),
+            line: 3,
+            replacement_error: None,
+            hop,
+            reply,
+        }
+    };
+    emit_prompt(cx, &transport, changed(Some(bastion_hop())));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("prompt-hop").is_some());
+        window.click("host-key-reject", cx);
+    })
+    .unwrap();
+    emit_prompt(cx, &transport, changed(None));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("host-key-once").is_some());
+        assert!(window.try_find("prompt-hop").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_status_names_the_jump_host_being_reached_then_the_destination(cx: &mut TestAppContext) {
+    let bastion = nocterm_session::ResolvedJump {
+        host: nocterm_session::JumpHost {
+            target: Target::new("ops", "bastion", 22),
+            auth: Auth::Auto,
+        },
+        credential: None,
+    };
+    let (handle, _view, transport) = prompt_fixture_via(cx, None, vec![bastion]);
+    let stage = |cx: &mut TestAppContext, stage| {
+        let driver = transport.0.lock().unwrap().as_ref().unwrap().clone();
+        cx.background_executor
+            .spawn(async move {
+                driver.emit(Event::Connecting(stage)).await;
+            })
+            .detach();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find("connect-status").label().map(str::to_owned)
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        stage(cx, ConnectStage::Connecting { hop: Some(0) }).as_deref(),
+        Some("Connecting to jump host ops@bastion…")
+    );
+    assert_eq!(
+        stage(cx, ConnectStage::Authenticating { hop: Some(0) }).as_deref(),
+        Some("Signing in to jump host ops@bastion…")
+    );
+    assert_eq!(
+        stage(cx, ConnectStage::Connecting { hop: None }).as_deref(),
+        Some("Connecting to me@host…")
+    );
+}
+
+#[gpui_kit::test]
+fn the_session_context_carries_the_route_it_was_reached_through(cx: &mut TestAppContext) {
+    let bastion = nocterm_session::ResolvedJump {
+        host: nocterm_session::JumpHost {
+            target: Target::new("ops", "bastion", 22),
+            auth: Auth::Auto,
+        },
+        credential: None,
+    };
+    let (_handle, view, _transport) = prompt_fixture_via(cx, None, vec![bastion.clone()]);
+    let context = cx.read(|cx| view.read(cx).terminal.read(cx).session_context());
+    assert_eq!(context.target, Target::new("me", "host", 22));
+    assert_eq!(context.via, [bastion.host.target]);
+    let direct = prompt_fixture(cx, None).1;
+    let context = cx.read(|cx| direct.read(cx).terminal.read(cx).session_context());
+    assert!(context.via.is_empty());
 }

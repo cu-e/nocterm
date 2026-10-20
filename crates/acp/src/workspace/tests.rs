@@ -11,6 +11,7 @@ fn request(path: &std::path::Path, private: bool, isolated: bool) -> WorkdirRequ
         isolation: isolated.then(|| IsolationPaths {
             private_dirs: vec![],
             shared_dirs: vec![],
+            home_state: vec![],
         }),
     }
 }
@@ -77,11 +78,13 @@ fn symlinked_home_and_private_roots_share_physical_identity_and_mask_order() {
         isolation: Some(IsolationPaths {
             private_dirs: vec![alias.join("state")],
             shared_dirs: vec![],
+            home_state: vec![".agent".into()],
         }),
     };
     let prepared = block_on(resolver.prepare(input)).unwrap();
     assert_eq!(prepared.root, work);
     let policy = prepared.sandbox.unwrap();
+    assert!(policy.writable.contains(&alias.join(".agent")));
     let facts = crate::sandbox::resolution::PathResolver::resolve(&policy, &work).unwrap();
     assert!(
         facts
@@ -187,6 +190,7 @@ fn looping_private_alias_is_a_typed_resolution_failure_instead_of_a_mount_fallba
         isolation: Some(IsolationPaths {
             private_dirs: vec![loop_path],
             shared_dirs: Vec::new(),
+            home_state: Vec::new(),
         }),
     };
     let error = block_on(NativeWorkdirResolver::with_home(None).prepare(input)).unwrap_err();

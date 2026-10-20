@@ -55,6 +55,7 @@ fn setup(cx: &mut TestAppContext) -> Setup {
                     auth: Auth::Password,
                     launch: None,
                     credential: Some(id),
+                    jumps: Vec::new(),
                 },
                 cx,
             )
@@ -79,7 +80,14 @@ fn ask_password(
     };
     cx.update(|cx| {
         setup.terminal.update(cx, |terminal, cx| {
-            terminal.handle_event(Event::Prompt(Prompt::Secret { request, reply }), cx)
+            terminal.handle_event(
+                Event::Prompt(Prompt::Secret {
+                    request,
+                    reply,
+                    hop: None,
+                }),
+                cx,
+            )
         })
     });
     drain(setup, cx);
@@ -144,4 +152,24 @@ fn a_prompt_that_ended_is_not_answered_after_unlocking(cx: &mut TestAppContext) 
         !matches!(answer.try_recv(), Ok(Some(Some(_)))),
         "a closed session never receives the secret"
     );
+}
+
+#[test]
+fn a_jump_host_prompt_is_labelled_with_its_hop() {
+    let hop = nocterm_session::PromptHop {
+        index: 1,
+        target: Target::new("ops", "bastion", 22),
+    };
+    let request = SecretRequest::Password {
+        target: hop.target.clone(),
+        retry: false,
+    };
+    let (plain, _, _) = crate::credentials::describe(&request, None);
+    let (labelled, retry, masked) = crate::credentials::describe(&request, Some(&hop));
+    assert_eq!(plain, "Password for ops@bastion");
+    assert_eq!(
+        labelled,
+        "Jump host 2 (ops@bastion): Password for ops@bastion"
+    );
+    assert!(!retry && masked);
 }

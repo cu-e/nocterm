@@ -34,6 +34,8 @@ pub(crate) struct Services {
     pub(crate) files: nocterm_files::Deps,
     pub(crate) themes: Option<Themes>,
     pub(crate) agent: nocterm_agent::AgentServices,
+    /// Whether agents can be sandboxed here, shown on the AI settings page.
+    pub(crate) sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     pub(crate) images: nocterm_agent::ImageDeps,
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
@@ -113,6 +115,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         files,
         themes,
         mut agent,
+        sandbox_probe,
         images,
         vault,
         connections,
@@ -131,13 +134,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         cx,
     );
     let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown);
-    let connections = match nocterm_connections::install(connections, &ui, &shutdown, cx) {
-        Ok(connections) => Some(connections),
-        Err(error) => {
-            report_store_registration("connections", Err(error));
-            None
-        }
-    };
+    let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
@@ -154,7 +151,11 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         nocterm_settings_ui::Installed::new(ui.settings().clone()),
         themes.clone(),
         nocterm_terminal::settings_pages(&terminal),
-        nocterm_agent::settings_page(&agent),
+        nocterm_agent_settings_ui::settings_page(
+            ui.settings().clone(),
+            agent.agents().clone(),
+            sandbox_probe,
+        ),
         [
             nocterm_keymap_ui::settings_page(keymap.clone()),
             nocterm_monitor_ui::settings_page(&monitor),
@@ -179,6 +180,22 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     Ok(booted)
+}
+
+/// Saved connections, or none when their store could not register for shutdown.
+fn install_connections(
+    deps: nocterm_connections::PreparedConnections,
+    ui: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<nocterm_connections::Installed> {
+    match nocterm_connections::install(deps, ui, shutdown, cx) {
+        Ok(connections) => Some(connections),
+        Err(error) => {
+            report_store_registration("connections", Err(error));
+            None
+        }
+    }
 }
 
 /// Bind credentials before installing the retained terminal capability.
@@ -355,8 +372,22 @@ fn open_vault(
                     nocterm_terminal::CredentialAssociationError::Unavailable,
                 ));
             };
+            // A secret remembered for a machine behind jump hosts binds only to
+            // the connection it was typed for, never to one that merely shares its address.
+            let Some(scope) =
+                nocterm_connections_model::credential_scope::CredentialScope::of_session(
+                    spec.target.clone(),
+                    spec.auth.clone(),
+                    spec.profile
+                        .as_deref()
+                        .and_then(|profile| profile.parse().ok()),
+                    !spec.jumps.is_empty(),
+                )
+            else {
+                return gpui_kit::Task::ready(Ok(()));
+            };
             let association = connections.update(cx, |connections, cx| {
-                connections.associate_credential(&spec.target, &spec.auth, id, cx)
+                connections.associate_credential(scope, id, cx)
             });
             cx.spawn(async move |_| {
                 association
@@ -511,6 +542,7 @@ mod credential_tests {
             icon_color: None,
             country: None,
             group: None,
+            jump_hosts: Vec::new(),
         }
     }
     fn association_fixture(
@@ -580,6 +612,7 @@ mod credential_tests {
                         auth: Auth::Password,
                         launch: None,
                         credential: None,
+                        jumps: Vec::new(),
                     },
                     cx,
                 )
@@ -606,7 +639,8 @@ mod credential_tests {
         let (reply, answer) = Reply::channel();
         assert!(block_on(driver.emit(Event::Prompt(Prompt::Secret {
             request: request.clone(),
-            reply
+            reply,
+            hop: None
         }))));
         cx.run_until_parked();
         cx.update(|cx| {

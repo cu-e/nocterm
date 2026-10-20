@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use gpui_kit::Context;
-use nocterm_session::{Auth, ProgramTransport, ShellLaunch, Target, Transport};
+use nocterm_session::{
+    Auth, JumpHost, ProgramTransport, ResolvedJump, ShellLaunch, Target, Transport,
+};
 use nocterm_workspace::{ProgramSpec, SessionContext, SessionSpec};
 
 use super::Terminal;
@@ -29,6 +31,22 @@ impl Terminal {
             || Target::new("local", "localhost", 22),
             |session| session.target.clone(),
         );
+        // The tab is on the machine as its host session reached it: the same
+        // address behind other jump hosts is a different machine. The transport
+        // never connects, so the hops carry only their identity.
+        let jumps = session.as_ref().map_or_else(Vec::new, |session| {
+            session
+                .via
+                .iter()
+                .map(|hop| ResolvedJump {
+                    host: JumpHost {
+                        target: hop.clone(),
+                        auth: Auth::Auto,
+                    },
+                    credential: None,
+                })
+                .collect()
+        });
         let fs = session.as_ref().and_then(|session| session.fs.clone());
         let launch = ShellLaunch {
             program: Some(program.program.clone()),
@@ -45,6 +63,7 @@ impl Terminal {
             auth: Auth::Auto,
             launch: Some(launch),
             credential: None,
+            jumps,
         };
         let mut terminal = Self::new_kind(deps, spec, session.is_none(), Some(transport), None, cx);
         terminal.input.set_shell_syntax(shell_syntax);

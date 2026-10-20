@@ -123,7 +123,13 @@ fn sessions_that_run_programs_are_watched_remotely() {
     let local: Arc<dyn HostExec> = FakeHost::new("Linux");
 
     let watched = watched_host(Some(&remote(&host, true)), Some(&local), &settings).unwrap();
-    assert_eq!(watched.key, HostKey::Remote(target("user@host")));
+    assert_eq!(
+        watched.key,
+        HostKey::Remote {
+            target: target("user@host"),
+            via: Vec::new()
+        }
+    );
     assert!(Arc::ptr_eq(
         &watched.exec,
         &(host.clone() as Arc<dyn HostExec>)

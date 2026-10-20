@@ -62,8 +62,10 @@ so closing a window releases its views and subscriptions while surviving and new
 windows keep the same optimistic layout state and shutdown participant. Services
 remain the composition inputs; `Booted` owns the installed per-window dependencies.
 
-Composition supplies the ACP native workspace resolver and sandbox display probe
-through AgentServices. Agent installation retains the probe for its settings page;
+Composition supplies the ACP native workspace resolver and the built-in agent
+catalog from `nocterm-agent-providers` through AgentServices;
+`nocterm_ui::Assets` serves the catalog's brand marks. The sandbox display probe goes
+to `nocterm-agent-settings-ui` with the agent installation's `AgentsHandle`;
 the Settings host retains only the supplied SettingsHandle. Native sandbox probe
 selection happens at startup composition; feature/service fixtures
 supply AI's shared scripted capabilities rather than reaching adapters or globals.

@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub struct IsolationPaths {
     pub private_dirs: Vec<PathBuf>,
     pub shared_dirs: Vec<PathBuf>,
+    /// Agent state the sandbox keeps writable, relative to the home directory.
+    pub home_state: Vec<PathBuf>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkdirRequest {

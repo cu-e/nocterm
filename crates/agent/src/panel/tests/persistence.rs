@@ -346,11 +346,11 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
         assert!(Arc::ptr_eq(&first.queue[0], &second.queue[0]));
         assert!(Arc::ptr_eq(
             &first.queue[0],
-            &thread.composer().queue()[0].saved
+            thread.composer().queue()[0].saved()
         ));
         assert_eq!(
-            thread.composer().queue()[0].encoded_len,
-            nocterm_ai::history::prompt_size(&thread.composer().queue()[0].saved).unwrap()
+            thread.composer().queue()[0].encoded_len(),
+            nocterm_ai::history::prompt_size(thread.composer().queue()[0].saved()).unwrap()
         );
     });
 }

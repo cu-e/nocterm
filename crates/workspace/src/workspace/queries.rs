@@ -17,8 +17,8 @@ impl Workspace {
     pub fn active_session(&self, _: &App) -> Option<SessionContext> {
         self.tabs.active_session()
     }
-    pub fn connected_session_for_target(&self, target: &Target) -> Option<SessionContext> {
-        self.tabs.connected_session(target)
+    pub fn connected_session_for_host(&self, host: &HostAddress) -> Option<SessionContext> {
+        self.tabs.connected_session(host)
     }
     pub fn tabs(&self, cx: &App) -> Vec<TabSnapshot> {
         self.tabs.snapshots(cx)

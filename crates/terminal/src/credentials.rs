@@ -1,6 +1,7 @@
 //! Prompts answered from, and remembered in, a [`nocterm_session::CredentialStore`].
 use gpui_kit::Task;
-use nocterm_session::{Secret, SecretRequest};
+use nocterm_session::{CredentialId, PromptHop, Secret, SecretRequest};
+use nocterm_workspace::SessionSpec;
 
 /// The credential is saved, but attaching its ID to connection history failed.
 #[derive(Debug, thiserror::Error)]
@@ -71,9 +72,36 @@ impl CredentialState {
         self.candidate.take()
     }
 }
+/// The saved credential that answers a prompt: the destination's, or the one
+/// saved for the jump host asking. A hop whose target differs from the route's
+/// entry at that position gets none, so one host's secret never reaches another.
+pub(crate) fn credential_for(spec: &SessionSpec, hop: Option<&PromptHop>) -> Option<CredentialId> {
+    let Some(hop) = hop else {
+        return spec.credential;
+    };
+    spec.jumps
+        .get(hop.index)
+        .filter(|jump| jump.host.target == hop.target)
+        .and_then(|jump| jump.credential)
+}
+
+/// Names the jump host a prompt belongs to.
+pub(crate) fn describe_hop(hop: &PromptHop) -> String {
+    format!("Jump host {} ({})", hop.index + 1, hop.target)
+}
+
 /// What a secret prompt asks for, whether the last answer was wrong, and
-/// whether the answer is hidden while typed.
-pub(crate) fn describe(request: &SecretRequest) -> (String, bool, bool) {
+/// whether the answer is hidden while typed. A jump host's prompt is prefixed
+/// with the hop it belongs to.
+pub(crate) fn describe(request: &SecretRequest, hop: Option<&PromptHop>) -> (String, bool, bool) {
+    let (title, retry, masked) = describe_request(request);
+    match hop {
+        Some(hop) => (format!("{}: {title}", describe_hop(hop)), retry, masked),
+        None => (title, retry, masked),
+    }
+}
+
+fn describe_request(request: &SecretRequest) -> (String, bool, bool) {
     match request {
         SecretRequest::Password { target, retry } => {
             (format!("Password for {target}"), *retry, true)

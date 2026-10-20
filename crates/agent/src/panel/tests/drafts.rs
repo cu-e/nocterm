@@ -331,12 +331,12 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
         thread.set_draft(next.clone(), cx);
         thread.begin_composer_edit(Vec::new(), vec![Attachment::Group("editing".into())], cx);
         let next_id = thread.composer().next_queue_id();
-        let queued = thread.composer().queue()[0].saved.clone();
+        let queued = thread.composer().queue()[0].saved().clone();
         let entries = thread.history_entries().len();
         assert!(thread.submit(next, None, cx).is_err());
         assert!(thread.composer().draft().is_some());
         assert_eq!(thread.composer().queue().len(), 1);
-        assert!(Arc::ptr_eq(&thread.composer().queue()[0].saved, &queued));
+        assert!(Arc::ptr_eq(thread.composer().queue()[0].saved(), &queued));
         assert_eq!(thread.composer().next_queue_id(), next_id);
         assert_eq!(
             thread.composer().attachments(),

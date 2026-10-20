@@ -6,8 +6,8 @@ Features depend on shared contracts and never on other features or the SSH
 adapter. Feature crates use the service, UI, domain and foundation
 layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-files`, `nocterm-snippets-ui`, `nocterm-monitor-ui`,
-`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui` and
-`nocterm-agent`.
+`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
+`nocterm-agent` and `nocterm-agent-settings-ui`.
 
 ## Terminal
 
@@ -108,10 +108,18 @@ projects its six most recent saved profiles through
 `ConnectionDirectory`, using current names and the same icon and country policy as
 the sidebar. Quick destinations and deleted profiles are excluded. Selecting a
 recent server defers opening through the normal authentication path until the
-workspace borrow ends. Editor sections own their address/metadata, authentication, launch and appearance
+workspace borrow ends. Editor sections own their address/metadata, authentication, jump hosts, launch and appearance
 controls and subscriptions. They project one pure domain draft, with a scrollable
 active form, multiline description and fixed footer;
-typed validation selects the section containing the invalid field. Folder membership
+typed validation selects the section containing the invalid field. The Jump Hosts
+section edits the ordered route from saved connections or `user@host[:port]`
+addresses and reports an unresolvable route when saving. Opening a connection
+resolves its route from the current profiles in the connections feature, posts a
+notice when it cannot, and hands only resolved hops to the session spec. The
+terminal labels hop prompts with the hop's address, selects a saved credential only
+for the hop it belongs to and never remembers answers to hop prompts
+([ADR 0060](../adr/0060-ssh-jump-host-routes.md)). Deleting a connection that has jump
+hosts removes its recents rather than leaving plain destinations that skip the route. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. Group rename, ungroup and
 delete are single queued mutations; removed profiles unlink their recents and
@@ -287,7 +295,7 @@ Chats are saved one file each in a private state directory and reopened through
 the agent's session resume/load; fork uses `session/fork`. All three are sent only when
 advertised. Favorites have a separate state file. Usage limits come from Claude's
 `usage_update` metadata and Codex's session logs through an injected
-`AccountUsageSource`. See [AI agents](../AI_AGENTS.md) for protocol, limits and
+`AccountUsageSource`, as each agent's profile says. See [AI agents](../AI_AGENTS.md) for protocol, limits and
 privacy boundaries. On Linux, `nocterm_ai::sandbox` validates supplied path facts
 and derives the ordered mount policy; the ACP adapter resolves native paths and
 launches bubblewrap. Startup uses the injected `WorkdirResolver` to prepare the
@@ -295,8 +303,9 @@ canonical directory shared by the process and session. Fresh launch validation
 rejects changed or protected directories and unavailable bubblewrap without an
 unisolated fallback. A changed isolation setting restarts running agents.
 
-The Agent-owned settings page receives `SandboxProbe` from its retained installation.
-It reports availability while keeping the isolation controls visible; launch
+The AI agents settings page lives in `nocterm-agent-settings-ui`. Composition gives it
+the `SettingsHandle`, the installation's `AgentsHandle` and the `SandboxProbe`; it
+edits the `ai` section only through AI's validation rules. It reports availability while keeping the isolation controls visible; launch
 checks availability again rather than trusting the displayed result.
 
 A chat's input — the draft, the attachments and images for the next prompt
@@ -488,8 +497,9 @@ reloading the file. See [ADR0051](../adr/0051-retained-keymap-installation.md).
 Agent panels and threads retain one `Installed` through their original weak-workspace
 ChatHost. Runtime commands, deferred preferences/usage and terminal authentication
 use that same installation, while policy is read from its supplied SettingsHandle
-at the existing admission/completion boundary. The service registers the AI schema
-before registry reads. Installation retains a weak-runtime settings subscription;
+at the existing admission/completion boundary. The installation builds one
+`AgentsHandle` from the supplied catalog; it registers the AI schema before agents
+are resolved. Installation retains a weak-runtime settings subscription;
 per-window subscriptions retain weak views and original window handles. There is
 no runtime/auth or shared-UI AI policy compatibility lookup. Shutdown registration
 status remains separately typed and does not discard a usable installation. See

@@ -13,12 +13,12 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_connections_model::profiles::Profile;
+use nocterm_connections_model::{jump_route::resolve_jump_route, profiles::Profile};
 
 use nocterm_ui::ActiveDesign as _;
 use nocterm_workspace::Workspace;
 
-use crate::{Installed, connect, spec_for_profile};
+use crate::{Installed, session_intents::open_profile};
 
 /// Two rows of icon tiles: 28 px tiles with a 4 px gap.
 const ICON_ROWS_HEIGHT: f32 = 60.;
@@ -32,17 +32,19 @@ use profile::build_profile;
 enum EditorSection {
     Connection,
     Authentication,
+    JumpHosts,
     Session,
     Launch,
 }
 impl EditorSection {
-    const ALL: [(Self, &'static str, &'static str); 4] = [
+    const ALL: [(Self, &'static str, &'static str); 5] = [
         (Self::Connection, "editor-section-connection", "Connection"),
         (
             Self::Authentication,
             "editor-section-authentication",
             "Authentication",
         ),
+        (Self::JumpHosts, "editor-section-jump-hosts", "Jump Hosts"),
         (Self::Session, "editor-section-session", "Session"),
         (Self::Launch, "editor-section-launch", "Launch"),
     ];
@@ -51,11 +53,13 @@ impl EditorSection {
 use appearance::AppearanceFields;
 use authentication::AuthenticationFields;
 use connection::ConnectionFields;
+use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
 use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField};
 use state::EditState;
 mod authentication;
 mod connection;
+mod jump_hosts;
 mod launch;
 mod state;
 
@@ -123,17 +127,7 @@ fn open_editor_view(
             .footer(footer.clone())
             .on_close(move |_, _, _| dismissed.dismiss())
             .on_ok(move |_, window, cx| {
-                editor.update(cx, |editor, cx| {
-                    if !editor
-                        .connection
-                        .description()
-                        .read(cx)
-                        .focus_handle(cx)
-                        .contains_focused(window, cx)
-                    {
-                        editor.save(true, window, cx);
-                    }
-                });
+                editor.update(cx, |editor, cx| editor.confirm(window, cx));
                 // Saving closes the dialog only after validation succeeds.
                 false
             })
@@ -152,6 +146,7 @@ pub struct ConnectionEditor {
     authentication: AuthenticationFields,
     launch: LaunchFields,
     appearance: AppearanceFields,
+    jump_hosts: JumpHostsFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
     section: EditorSection,
     error: Option<SharedString>,
@@ -202,6 +197,8 @@ impl ConnectionEditor {
         let authentication = AuthenticationFields::new(existing, window, cx);
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, &installed, window, cx);
+        let choices = JumpHostsFields::choices(id, &installed, cx);
+        let jump_hosts = JumpHostsFields::new(existing, choices, window, cx);
         let options = cx.new(|cx| {
             nocterm_ui::SessionOptionsEditor::new(
                 existing.map(|p| p.options.clone()).unwrap_or_default(),
@@ -220,6 +217,7 @@ impl ConnectionEditor {
             authentication,
             launch,
             appearance,
+            jump_hosts,
             options,
             section: EditorSection::Connection,
             error: None,
@@ -235,6 +233,31 @@ impl ConnectionEditor {
             options: Default::default(),
             launch: self.launch.snapshot(cx),
             appearance: self.appearance.snapshot(cx),
+            jump_hosts: self.jump_hosts.snapshot(),
+        }
+    }
+
+    /// Enter in the dialog: adds the typed jump host, leaves a multi-line
+    /// description alone, and otherwise saves and connects.
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let address = self.jump_hosts.address().read(cx).focus_handle(cx);
+        let description = self.connection.description().read(cx).focus_handle(cx);
+        if address.contains_focused(window, cx) {
+            self.add_jump_address(window, cx);
+        } else if !description.contains_focused(window, cx) {
+            self.save(true, window, cx);
+        }
+    }
+
+    /// Adds the typed address as a jump host, or explains why it is not one.
+    fn add_jump_address(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let user = self.deps.inputs().defaults().user.clone();
+        match self.jump_hosts.add_address(user.as_deref(), window, cx) {
+            Ok(()) => {
+                self.error = None;
+                cx.notify();
+            }
+            Err(error) => self.show_validation(error, window, cx),
         }
     }
 
@@ -275,14 +298,7 @@ impl ConnectionEditor {
                         this.edit.dismiss();
                         window.close_dialog(cx);
                         if and_connect {
-                            connect(
-                                &this.deps,
-                                &this.workspace,
-                                spec_for_profile(&profile),
-                                Some(profile.id),
-                                window,
-                                cx,
-                            );
+                            open_profile(&this.deps, &this.workspace, &profile, window, cx);
                         }
                     }
                 }
@@ -298,13 +314,17 @@ impl ConnectionEditor {
             .read(cx)
             .options(cx)
             .map_err(|error| FormError::new(ValidationField::Session, error.to_string()))?;
-        build_profile(
+        let profile = build_profile(
             self.edit.id(),
             &fields,
             self.authentication.kind(),
             self.deps.inputs().defaults().user.as_deref(),
             self.deps.inputs().defaults().home.as_deref(),
-        )
+        )?;
+        // The unsaved edit takes part in the check in place of the stored profile.
+        resolve_jump_route(self.deps.connections().read(cx).profiles(cx), &profile)
+            .map_err(|error| FormError::new(ValidationField::JumpHosts, error.to_string()))?;
+        Ok(profile)
     }
 
     fn set_auth(&mut self, auth: AuthKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -325,6 +345,7 @@ impl ConnectionEditor {
                 EditorSection::Launch
             }
             ValidationField::Session => EditorSection::Session,
+            ValidationField::JumpHosts => EditorSection::JumpHosts,
             _ => EditorSection::Connection,
         };
         self.select_section(section, window, cx);
@@ -339,6 +360,7 @@ impl ConnectionEditor {
             ValidationField::Launch => Some(&self.launch.inputs()[0]),
             ValidationField::IconColor => Some(self.appearance.color()),
             ValidationField::Country => Some(self.appearance.country()),
+            ValidationField::JumpHosts => Some(self.jump_hosts.address()),
             _ => None,
         };
         let focus = input
@@ -446,6 +468,7 @@ impl ConnectionEditor {
             EditorSection::Authentication => {
                 self.authentication.credential().read(cx).focus_handle(cx)
             }
+            EditorSection::JumpHosts => self.jump_hosts.address().read(cx).focus_handle(cx),
             EditorSection::Session => self.options.read(cx).focus_handle(cx),
             EditorSection::Launch if self.launch.overridden() => {
                 self.launch.inputs()[0].read(cx).focus_handle(cx)

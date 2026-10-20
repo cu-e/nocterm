@@ -67,7 +67,9 @@ impl ObservationEpochs {
                 .live
                 .entry(profile.id)
                 .or_insert(ProfileStamp::at(generation));
-            if previous.target != profile.target {
+            // The same address behind other jump hosts is another machine, so what
+            // was detected on the old one no longer applies.
+            if previous.target != profile.target || previous.jump_hosts != profile.jump_hosts {
                 stamp.endpoint = generation;
             }
             if previous.icon != profile.icon {

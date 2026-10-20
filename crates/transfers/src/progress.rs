@@ -1,7 +1,7 @@
 use crate::{LimitKind, Request, StreamLimits, TransferId};
 use nocterm_core::SharedCause;
 use nocterm_session::{
-    FsError, Target,
+    FsError, HostAddress,
     local_fs::{DurabilityWarning, LocalFsError},
 };
 use std::{error::Error, fmt, path::PathBuf, sync::Arc};
@@ -27,7 +27,7 @@ pub enum TransferDirection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub id: TransferId,
-    pub target: Target,
+    pub host: HostAddress,
     pub destination: String,
     pub direction: TransferDirection,
     pub state: TransferState,
@@ -202,7 +202,7 @@ impl ProgressTracker {
         Self {
             progress: Progress {
                 id,
-                target: request.target().clone(),
+                host: request.host().clone(),
                 destination: request.destination(),
                 direction: request.direction(),
                 state: TransferState::Queued,

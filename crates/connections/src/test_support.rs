@@ -6,6 +6,11 @@ use nocterm_workspace::{SessionSpec, Workspace};
 
 use crate::{Connections, FactsPrepared, Installed, ObservationDeps};
 
+/// The session for a profile that jumps through nothing.
+pub(crate) fn direct_spec(profile: &nocterm_connections_model::profiles::Profile) -> SessionSpec {
+    crate::spec_for_profile(profile, &Default::default()).unwrap()
+}
+
 pub(crate) type Opened = Rc<RefCell<Vec<SessionSpec>>>;
 
 pub(crate) fn workspace(

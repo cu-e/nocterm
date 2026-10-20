@@ -35,6 +35,9 @@ mod exec;
 #[path = "cases/host_keys.rs"]
 mod host_keys;
 
+#[path = "cases/jump.rs"]
+mod jump;
+
 use nocterm_session::{
     Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, PtySize, Secret,
     SecretRequest, Session, SessionError, Target, Transport,
@@ -59,6 +62,11 @@ struct Sshd {
 impl Sshd {
     /// Starts a server, or returns `None` when the machine has none.
     fn start() -> Option<Self> {
+        Self::start_with("")
+    }
+
+    /// Like [`Sshd::start`], with `extra_config` appended to `sshd_config`.
+    fn start_with(extra_config: &str) -> Option<Self> {
         let Some(binary) = find_sshd() else {
             assert!(
                 std::env::var_os("NOCTERM_REQUIRE_SSHD").is_none(),
@@ -96,7 +104,8 @@ impl Sshd {
                  PasswordAuthentication no\n\
                  KbdInteractiveAuthentication no\n\
                  Subsystem sftp internal-sftp\n\
-                 LogLevel ERROR\n",
+                 LogLevel ERROR\n\
+                 {extra_config}",
                 root = root.display(),
             ),
         )
@@ -118,6 +127,15 @@ impl Sshd {
 
     fn root(&self) -> &Path {
         self.dir.path()
+    }
+
+    /// Lets the plain key of `keys_of` sign in to this server too.
+    fn authorize(&self, keys_of: &Sshd) {
+        let key = fs::read_to_string(keys_of.root().join("plain/id_ed25519.pub")).unwrap();
+        let path = self.root().join("authorized_keys");
+        let mut keys = fs::read_to_string(&path).unwrap();
+        keys.push_str(&key);
+        fs::write(path, keys).unwrap();
     }
 
     fn wait_until_listening(&self) {
@@ -154,6 +172,7 @@ impl Sshd {
             size: PtySize::default(),
             connect_timeout: Duration::from_secs(10),
             keepalive_interval: None,
+            jumps: Vec::new(),
         }
     }
 
@@ -336,6 +355,7 @@ async fn an_encrypted_key_is_unlocked_with_its_passphrase() {
         Prompt::Secret {
             request: SecretRequest::KeyPassphrase { retry, .. },
             reply,
+            ..
         } => {
             retries.push(retry);
             let guess = if retry { PASSPHRASE } else { "wrong" };

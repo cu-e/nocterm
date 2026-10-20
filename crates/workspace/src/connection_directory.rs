@@ -1,23 +1,7 @@
 //! Only user-facing connection metadata crosses this boundary.
-use std::sync::Arc;
+use gpui_kit::{App, EntityId, SharedString, WeakEntity, Window};
 
-use gpui_kit::{App, EntityId, Image, SharedString, WeakEntity, Window};
-use nocterm_session::Target;
-
-use crate::Workspace;
-
-#[derive(Clone, Debug)]
-pub struct ConnectionSummary {
-    pub id: SharedString,
-    pub name: SharedString,
-    pub group: Option<SharedString>,
-    pub description: SharedString,
-    pub target: Target,
-    /// The server's system icon, in its colour; none shows a generic server.
-    pub icon: Option<Arc<Image>>,
-    /// The flag of the server's country, once loaded.
-    pub flag: Option<Arc<Image>>,
-}
+use crate::{ConnectionSummary, Workspace};
 
 /// Called with the application context, never from inside a workspace
 /// update: opening a connection updates the workspace itself.

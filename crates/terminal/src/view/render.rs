@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::base::TestSupportExt as _;
+use nocterm_session::PromptHop;
 use nocterm_workspace::UnlockVault;
 
 impl TerminalView {
@@ -155,11 +156,13 @@ impl TerminalView {
                 host,
                 algorithm,
                 fingerprint,
+                hop,
                 ..
             } => {
                 let (host, algorithm, fingerprint) =
                     (host.clone(), algorithm.clone(), fingerprint.clone());
-                self.render_host_key(host, algorithm, fingerprint, cx)
+                let hop = hop.clone();
+                self.render_host_key(host, algorithm, fingerprint, hop, cx)
             }
             Prompt::ChangedHostKey {
                 host,
@@ -170,9 +173,11 @@ impl TerminalView {
                 known_hosts,
                 line,
                 replacement_error,
+                hop,
                 ..
             } => {
                 let details = ChangedKey {
+                    hop: hop.clone(),
                     host: if *port == 22 {
                         host.clone()
                     } else {
@@ -187,9 +192,9 @@ impl TerminalView {
                 };
                 self.render_changed_host_key(details, cx)
             }
-            Prompt::Secret { request, .. } => {
-                let request = request.clone();
-                self.render_secret(&request, cx)?
+            Prompt::Secret { request, hop, .. } => {
+                let (request, hop) = (request.clone(), hop.clone());
+                self.render_secret(&request, hop.as_ref(), cx)?
             }
         };
 
@@ -229,15 +234,25 @@ impl TerminalView {
         if terminal.prompt().is_some() {
             return None;
         }
-        let target = terminal.spec().target.to_string();
+        let destination = terminal.spec().target.to_string();
         let theme = cx.theme();
+        // The jump host being reached, when the stage belongs to one.
+        let named = |hop: Option<usize>| {
+            hop.and_then(|index| terminal.spec().jumps.get(index))
+                .map_or_else(
+                    || destination.clone(),
+                    |jump| format!("jump host {}", jump.host.target),
+                )
+        };
 
         match terminal.status().clone() {
             Status::Connected => None,
             Status::Connecting(stage) => {
                 let text = match stage {
-                    ConnectStage::Connecting => format!("Connecting to {target}…"),
-                    ConnectStage::Authenticating => format!("Signing in to {target}…"),
+                    ConnectStage::Connecting { hop } => format!("Connecting to {}…", named(hop)),
+                    ConnectStage::Authenticating { hop } => {
+                        format!("Signing in to {}…", named(hop))
+                    }
                     ConnectStage::StartingShell => "Starting the shell…".to_owned(),
                 };
                 Some(
@@ -249,6 +264,10 @@ impl TerminalView {
                         .justify_center()
                         .child(
                             h_flex()
+                                .id("connect-status")
+                                .test_support()
+                                .role(gpui_kit::Role::Label)
+                                .aria_label(text.clone())
                                 .gap_2()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
@@ -444,10 +463,12 @@ impl TerminalView {
         host: String,
         algorithm: String,
         fingerprint: String,
+        hop: Option<PromptHop>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
         self.card("Unknown host key", cx)
+            .children(hop_line(hop.as_ref(), cx))
             .child(div().text_sm().child(format!(
                 "This is the first connection to {host}. Check that the fingerprint \
                          below is the one the host's administrator gives you."
@@ -505,7 +526,21 @@ impl TerminalView {
     }
 }
 
+/// Names the jump host a host-key question is about; none for the destination.
+fn hop_line(hop: Option<&PromptHop>, cx: &App) -> Option<AnyElement> {
+    hop.map(|hop| {
+        div()
+            .id("prompt-hop")
+            .test_support()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(crate::credentials::describe_hop(hop))
+            .into_any_element()
+    })
+}
+
 pub(super) struct ChangedKey {
+    hop: Option<PromptHop>,
     host: String,
     algorithm: String,
     old_fingerprints: Vec<String>,
@@ -523,6 +558,7 @@ impl TerminalView {
         let theme = cx.theme();
         let unavailable = key.replacement_error.is_some();
         self.card("Host key changed", cx)
+            .children(hop_line(key.hop.as_ref(), cx))
             .child(div().text_sm().child(format!(
                 "The identity of {} has changed. This can happen after a server reinstall, or if someone intercepts the connection. Verify the new fingerprint with the host's administrator before connecting.", key.host
             )))
@@ -552,15 +588,18 @@ impl TerminalView {
     pub(super) fn render_secret(
         &mut self,
         request: &SecretRequest,
+        hop: Option<&PromptHop>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let input = self.secret.as_ref()?.input.clone();
-        let (title, retry, masked) = crate::credentials::describe(request);
+        let (title, retry, masked) = crate::credentials::describe(request, hop);
         let danger = cx.theme().danger;
 
-        let rememberable = !matches!(request, SecretRequest::Interactive { .. });
+        let rememberable = !matches!(request, SecretRequest::Interactive { .. }) && hop.is_none();
         let unlocked = self.terminal.read(cx).vault_unlocked(cx);
-        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        // A saved secret behind the locked vault can answer any prompt, including
+        // a jump host's, which never offers to remember.
+        let unlockable = !unlocked && (rememberable || self.terminal.read(cx).awaiting_vault());
         let message = self
             .terminal
             .read(cx)
@@ -583,38 +622,7 @@ impl TerminalView {
                 .when_some(message, |card, message| {
                     card.child(div().text_xs().child(message))
                 })
-                .when(rememberable, |card| {
-                    card.child(
-                        h_flex()
-                            .justify_between()
-                            .gap_2()
-                            .child(
-                                gpui_kit::component::checkbox::Checkbox::new("remember-credential")
-                                    .small()
-                                    .label("Remember after sign in")
-                                    .checked(remember && unlocked)
-                                    .disabled(!unlocked)
-                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                        if let Some(field) = &mut this.secret {
-                                            field.remember = *checked;
-                                            cx.notify();
-                                        }
-                                    })),
-                            )
-                            .when(!unlocked, |row| {
-                                row.child(
-                                    Button::new("auth-open-vault")
-                                        .link()
-                                        .small()
-                                        .icon(IconName::Lock)
-                                        .label("Unlock vault…")
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(Box::new(UnlockVault), cx)
-                                        }),
-                                )
-                            }),
-                    )
-                })
+                .children(self.secret_choices(rememberable, unlockable, cx))
                 .child(
                     h_flex()
                         .justify_end()
@@ -634,6 +642,52 @@ impl TerminalView {
                                 })),
                         ),
                 )
+                .into_any_element(),
+        )
+    }
+
+    /// The remember choice and the vault link under a secret field; none when
+    /// neither applies.
+    fn secret_choices(
+        &self,
+        rememberable: bool,
+        unlockable: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !rememberable && !unlockable {
+            return None;
+        }
+        let unlocked = self.terminal.read(cx).vault_unlocked(cx);
+        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        let choice = rememberable.then(|| {
+            gpui_kit::component::checkbox::Checkbox::new("remember-credential")
+                .small()
+                .label("Remember after sign in")
+                .checked(remember && unlocked)
+                .disabled(!unlocked)
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                    if let Some(field) = &mut this.secret {
+                        field.remember = *checked;
+                        cx.notify();
+                    }
+                }))
+                .into_any_element()
+        });
+        let link = unlockable.then(|| {
+            Button::new("auth-open-vault")
+                .link()
+                .small()
+                .icon(IconName::Lock)
+                .label("Unlock vault…")
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(UnlockVault), cx))
+        });
+        Some(
+            h_flex()
+                .justify_between()
+                .gap_2()
+                // Keeps the link on the right when there is no choice beside it.
+                .child(choice.unwrap_or_else(|| div().into_any_element()))
+                .children(link)
                 .into_any_element(),
         )
     }

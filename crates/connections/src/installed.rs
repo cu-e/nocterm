@@ -111,6 +111,14 @@ impl Installed {
     pub(crate) fn os(&self, id: ProfileId, cx: &App) -> Option<&'static crate::os::Os> {
         self.facts().read(cx).os(id, cx).and_then(crate::os::find)
     }
+    /// The system a profile's icon shows: the one chosen for it, else the detected one.
+    pub(crate) fn shown_os(&self, profile: &Profile, cx: &App) -> Option<&'static crate::os::Os> {
+        profile
+            .icon
+            .as_deref()
+            .and_then(crate::os::find)
+            .or_else(|| self.os(profile.id, cx))
+    }
     pub(crate) fn shown_country(&self, profile: &Profile, cx: &App) -> Option<String> {
         profile.country.clone().or_else(|| {
             self.detecting_country(cx)

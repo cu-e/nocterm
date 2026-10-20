@@ -44,6 +44,18 @@ through foundation `SharedError`; clones share each original allocation. Domain
 constructors preserve semantic NotFound/PermissionDenied/AlreadyExists conversion
 and its deliberate lack of a native source. Publication warnings retain their native
 kind while the already committed file remains a successful outcome.
+Jump hosts cross this boundary only as resolved values: `JumpHost` carries target and
+authentication and `ResolvedJump` adds an optional saved credential, `ConnectRequest.jumps`
+lists them in order up to `MAX_JUMP_HOSTS`, `Prompt.hop` (`PromptHop`) names the
+hop a prompt belongs to, and `ConnectStage` names the hop being reached. `HostAddress`
+(destination plus jump-host targets) identifies a machine as reached: the workspace
+matches sessions, transfer jobs and program hosts by it, not by target alone, and
+`nocterm-connections-model::credential_scope` limits a remembered credential to the
+connection (and its recents) it was typed for when that connection has jump hosts.
+`nocterm-connections-model::jump_route` stores a profile's
+ordered jump entries (saved connections or literal addresses) and resolves them
+purely at open time, with typed errors for deleted connections, cycles and routes over
+the limit ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
 `nocterm-vt` turns a byte stream into a terminal grid using
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.
@@ -179,6 +191,19 @@ preparations. A prepared directory may already have existed; the count records s
 adapter create/open acknowledgement, not a new-file or new-directory count. Its acknowledgement
 survives later failure or cancellation without advancing file or byte counters.
 
+## Agent profiles
+
+`nocterm-ai::agents` describes how a known agent deviates from plain ACP as an
+`AgentProfile`: its pinned launch, the home directories it writes, how it reports
+plan limits and its brand mark. Deviations are named by shape, never by brand.
+`AgentCatalog` validates profiles (unique valid ids, a command, permitted inherited
+environment, home-relative state) and finds the profile of a launch by id, then by
+an adapter marker in its command. `AvailableAgents::resolve` applies the `ai`
+settings to the catalog and returns typed `AgentConfigWarning`s; `validate_agent`
+takes the catalog to know which agents may leave their command unset. The domain
+names no concrete agent: `nocterm-agent-providers` holds one module per built-in
+agent and `catalog()`, which the application injects.
+
 ## Agent history
 
 `nocterm-ai` owns pure version-one transcript codecs, structural/collection
@@ -194,9 +219,12 @@ ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
-contains launch identity without environment secrets; typed `UsageReadError` retains
-native causes as values. Domain `Limits` and transcript estimates remain pure;
-provider log discovery and parsing belong to the agent-storage adapter.
+carries the agent id and its profile's `AccountUsage` kind, never its launch or
+environment, and `UsageSources` routes it to the source registered for that kind.
+Rate-limit records in usage-update metadata are parsed by `rate_limit_record` under
+the key the profile's `UsageMeta` names. Typed `UsageReadError` retains native causes
+as values. Domain `Limits` and transcript estimates remain pure; account requests,
+log discovery and their grammars belong to the agent-usage adapter.
 
 AI workspace preparation is a pure `WorkdirResolver` contract with typed
 `WorkdirError` values. `SandboxPolicy` validates supplied lexical/canonical path

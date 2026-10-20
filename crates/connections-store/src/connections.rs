@@ -1,6 +1,7 @@
 use gpui::{App, AppContext as _, Context, Entity, Task};
-use nocterm_session::{Auth, CredentialId, Target};
+use nocterm_session::CredentialId;
 
+use nocterm_connections_model::credential_scope::CredentialScope;
 use nocterm_connections_model::profiles::{Profile, ProfileId, Profiles, Recent, Recents};
 
 use crate::{error::ConnectionsError, publication};
@@ -228,19 +229,11 @@ impl ConnectionStore {
     }
     pub fn associate_credential(
         &mut self,
-        target: &Target,
-        auth: &Auth,
+        scope: CredentialScope,
         id: CredentialId,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ConnectionsError>> {
-        self.enqueue(
-            Mutation::Credential {
-                target: target.clone(),
-                auth: auth.clone(),
-                id,
-            },
-            cx,
-        )
+        self.enqueue(Mutation::Credential { scope, id }, cx)
     }
     pub fn record_use(&mut self, request: RecentUse, cx: &mut Context<Self>) {
         let recent = Recent {

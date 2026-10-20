@@ -2,6 +2,7 @@
 use nocterm_ai::model::tools::ToolStatus;
 use std::time::Duration;
 
+use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::{
     App, IntoElement, SharedString, TestSupportExt as _,
     component::{
@@ -184,6 +185,16 @@ pub(super) fn chat_markdown(id: impl Into<gpui_kit::ElementId>, text: String) ->
             heading_base_font_size: px(14.),
             code_block,
             ..Default::default()
+        })
+        .code_block_actions(|block, _, _| {
+            Clipboard::new("copy")
+                .value(block.code())
+                .tooltip("Copy code")
+        })
+        .table_actions(|table, _, _| {
+            Clipboard::new("copy")
+                .value(table.markdown.clone())
+                .tooltip("Copy table")
         })
 }
 

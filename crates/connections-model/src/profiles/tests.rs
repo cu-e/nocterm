@@ -16,6 +16,7 @@ fn profile(name: &str, host: &str, group: Option<&str>) -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 
@@ -565,4 +566,106 @@ fn profile_mutations_keep_exact_size_limits_and_checked_conflicts() {
     );
     assert_eq!(profiles.get(current.id), Some(&current));
     assert_eq!(toml::to_string(&profiles).unwrap(), before);
+}
+
+fn routed(name: &str, host: &str, hop: &str) -> Profile {
+    let mut item = profile(name, host, None);
+    item.jump_hosts = vec![crate::jump_route::JumpHostEntry::Address(Target::new(
+        "root", hop, 22,
+    ))];
+    item
+}
+
+fn remembered(profiles: &Profiles, recents: &Recents, scope: &CredentialScope) -> Vec<String> {
+    let id = CredentialId::from_bytes([7; 16]);
+    let mut profiles = profiles.clone();
+    let mut recents = recents.clone();
+    profiles.associate_credential(scope, id);
+    recents.associate_credential(scope, id, &profiles);
+    let mut names: Vec<String> = profiles
+        .iter()
+        .filter(|item| item.credential == Some(id))
+        .map(|item| item.name.clone())
+        .collect();
+    names.extend(
+        recents
+            .iter()
+            .filter(|item| item.credential == Some(id))
+            .map(|item| format!("recent:{}", item.last_used)),
+    );
+    names
+}
+
+#[test]
+fn remembering_for_one_route_leaves_the_same_address_behind_another_route() {
+    let mut profiles = Profiles::default();
+    let via_a = routed("vm-a", "192.168.122.10", "hyp-a");
+    let via_b = routed("vm-b", "192.168.122.10", "hyp-b");
+    let direct = profile("vm-direct", "192.168.122.10", None);
+    for item in [&via_a, &via_b, &direct] {
+        profiles.upsert(item.clone());
+    }
+    let mut recents = Recents::default();
+    recents.record(recent("192.168.122.10", Some(via_a.id), 1));
+    recents.record(recent("192.168.122.10", Some(via_b.id), 2));
+    recents.record(recent("192.168.122.10", Some(direct.id), 3));
+
+    let scope = CredentialScope::routed(via_a.id, via_a.target.clone(), via_a.auth.clone());
+
+    assert_eq!(
+        remembered(&profiles, &recents, &scope),
+        ["vm-a", "recent:1"],
+        "only the connection it was typed for, and its own recents"
+    );
+}
+
+#[test]
+fn a_direct_credential_never_reaches_a_routed_connection_with_the_same_address() {
+    let mut profiles = Profiles::default();
+    let via_a = routed("vm-a", "192.168.122.10", "hyp-a");
+    let direct = profile("vm-direct", "192.168.122.10", None);
+    profiles.upsert(via_a.clone());
+    profiles.upsert(direct.clone());
+    let mut recents = Recents::default();
+    recents.record(recent("192.168.122.10", Some(via_a.id), 1));
+    recents.record(recent("192.168.122.10", Some(direct.id), 2));
+    recents.record(recent("192.168.122.10", None, 3));
+
+    let scope = CredentialScope::direct(direct.target.clone(), direct.auth.clone());
+
+    assert_eq!(
+        remembered(&profiles, &recents, &scope),
+        ["vm-direct", "recent:3", "recent:2"]
+    );
+}
+
+#[test]
+fn direct_credentials_keep_matching_among_direct_connections_by_address() {
+    let mut profiles = Profiles::default();
+    profiles.upsert(profile("one", "box.test", None));
+    profiles.upsert(profile("two", "box.test", Some("lab")));
+    profiles.upsert(profile("other", "elsewhere.test", None));
+    let mut recents = Recents::default();
+    recents.record(recent("box.test", None, 1));
+
+    let scope = CredentialScope::direct(Target::new("root", "box.test", 22), Auth::Auto);
+
+    assert_eq!(
+        remembered(&profiles, &recents, &scope),
+        ["one", "two", "recent:1"]
+    );
+}
+
+#[test]
+fn a_routed_session_without_a_saved_connection_has_nowhere_to_remember_a_credential() {
+    let target = Target::new("root", "192.168.122.10", 22);
+
+    assert_eq!(
+        CredentialScope::of_session(target.clone(), Auth::Auto, None, true),
+        None
+    );
+    assert_eq!(
+        CredentialScope::of_session(target.clone(), Auth::Auto, None, false),
+        Some(CredentialScope::direct(target, Auth::Auto))
+    );
 }

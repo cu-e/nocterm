@@ -171,7 +171,7 @@ fn launch(
 fn open_remote(
     target: &FileTarget,
     file: &str,
-    host: &nocterm_session::Target,
+    host: &nocterm_session::HostAddress,
     workspace: &WeakEntity<Workspace>,
     installed: &crate::Installed,
     window: &mut Window,

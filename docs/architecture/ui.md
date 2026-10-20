@@ -140,7 +140,10 @@ opener connect requests from the connections feature to the terminal feature.
 Cached session contexts avoid reading an Item reentrantly during its own render;
 matching connected contexts also support transfer retry while a utility tab is active.
 
-The narrow terminal ports return `TerminalError`, retaining charset sources and
+The narrow terminal ports, `SessionContext` and `ConnectionSummary` are declared by
+the `nocterm-workspace-ports` service crate and re-exported by the workspace, so
+services can consume them without depending on the window shell
+([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)). They return `TerminalError`, retaining charset sources and
 concrete capability, prompt, ownership and queue refusals. `open_on_host` returns
 `OpenOnHostError`, retaining launch validation and identifying a missing connected
 session. Consumers format these causes at notices or agent transcript boundaries.
@@ -262,7 +265,7 @@ that section explicitly before constructing AI controls.
 `SettingsTextField` owns native text, checked immutable admissions and the original
 store receipt. `FieldPresentation` retains that field and its weak redraw observation
 with the page membership. The small shared syntax helpers parse numbers and JSON;
-AI registry and credential policy remain in the AI domain and Agent page.
+agent resolution and credential policy remain in the AI domain and Agent page.
 `SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
 factories. The latter receive only their original SettingsHandle and per-Item save
 feedback. The additive flush operation leaves existing guest lifecycle contracts intact.

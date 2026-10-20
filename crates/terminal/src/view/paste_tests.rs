@@ -104,7 +104,11 @@ fn native_remote_source_drop_uses_paths_and_focuses_receiving_terminal(cx: &mut 
     drain(&driver);
     let files = FileDrag::Remote(nocterm_workspace::RemoteFileDrag {
         sources: vec!["/remote/a b".into(), "/remote/資料's".into()],
-        target: nocterm_session::Target::new("other-user", "other-host", 22),
+        host: nocterm_session::HostAddress::direct(nocterm_session::Target::new(
+            "other-user",
+            "other-host",
+            22,
+        )),
         fs: view.read_with(cx, |view, cx| {
             view.terminal.read(cx).session_context().fs.unwrap()
         }),
@@ -221,6 +225,19 @@ fn program_fixture(
     Entity<TerminalView>,
     std::sync::Arc<nocterm_session::SessionDriver>,
 ) {
+    program_fixture_via(engine, remote, shell_syntax, Vec::new(), cx)
+}
+fn program_fixture_via(
+    engine: &str,
+    remote: bool,
+    shell_syntax: Option<nocterm_workspace::ShellSyntax>,
+    via: Vec<nocterm_session::Target>,
+    cx: &mut TestAppContext,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<TerminalView>,
+    std::sync::Arc<nocterm_session::SessionDriver>,
+) {
     use nocterm_workspace::{Host, HostKey, ProgramSpec, SessionContext};
     let (handle, source, _) = fixture(cx);
     let host = std::sync::Arc::new(ProgramHost::default());
@@ -237,13 +254,17 @@ fn program_fixture(
                         title: "Container shell".into(),
                         host: Host {
                             key: if remote {
-                                HostKey::Remote(target.clone())
+                                HostKey::Remote {
+                                    target: target.clone(),
+                                    via: via.clone(),
+                                }
                             } else {
                                 HostKey::Local
                             },
                             exec: host.clone(),
                             connected: true,
-                            session: remote.then(|| SessionContext::new(target, None, true)),
+                            session: remote
+                                .then(|| SessionContext::new(target, None, true).with_via(via)),
                         },
                         program: program.clone(),
                         shell_syntax,
@@ -303,6 +324,7 @@ fn native_container_wrapper_uses_explicit_receiving_syntax_and_keeps_state_guard
                         echo: false,
                     },
                     reply,
+                    hop: None,
                 }),
                 cx,
             );
@@ -346,5 +368,31 @@ fn native_program_wrapper_without_shell_metadata_refuses_path_drop(cx: &mut Test
     assert!(
         drain(&driver).is_empty(),
         "Program and log tabs need explicit shell metadata"
+    );
+}
+
+#[gpui_kit::test]
+fn a_program_tab_is_on_the_machine_its_host_session_reached_through_its_jump_hosts(
+    cx: &mut TestAppContext,
+) {
+    let hop = |name: &str| nocterm_session::Target::new("ops", name, 22);
+    let (handle, view, _) =
+        program_fixture_via("docker", true, None, vec![hop("hyp-a"), hop("hyp-b")], cx);
+
+    let session = cx
+        .update_window(handle, |_, _, cx| {
+            view.read(cx).terminal.read(cx).session_context()
+        })
+        .unwrap();
+
+    let target = nocterm_session::Target::new("user", "host", 22);
+    assert_eq!(session.via, [hop("hyp-a"), hop("hyp-b")]);
+    assert!(session.reaches(&nocterm_session::HostAddress::new(
+        target.clone(),
+        vec![hop("hyp-a"), hop("hyp-b")]
+    )));
+    assert!(
+        !session.reaches(&nocterm_session::HostAddress::direct(target)),
+        "the same address reached directly is another machine"
     );
 }

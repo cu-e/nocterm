@@ -99,11 +99,10 @@ impl Item for SessionProbe {
         self.spec.title.clone()
     }
     fn session(&self, _: &App) -> Option<SessionContext> {
-        Some(SessionContext::new(
-            self.spec.target.clone(),
-            self.fs.clone(),
-            self.connected,
-        ))
+        Some(
+            SessionContext::new(self.spec.target.clone(), self.fs.clone(), self.connected)
+                .with_via(self.spec.address().via),
+        )
     }
     fn session_spec(&self, _: &App) -> Option<SessionSpec> {
         Some(self.spec.clone())
@@ -126,7 +125,8 @@ impl crate::ConnectionFactSession for ProbeState {
                 probe.spec.target.clone(),
                 probe.fs.clone(),
                 probe.connected,
-            ),
+            )
+            .with_via(probe.spec.address().via),
             profile: probe.spec.profile.clone(),
         })
     }

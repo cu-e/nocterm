@@ -19,6 +19,7 @@
 //! Invariants: layout edits remain visible on persistence failure; text drafts retain original checked receipts.
 //! Text errors stay typed until display; close/deactivation synchronously admit distinct literals.
 
+mod animations;
 mod design;
 mod drag_preview;
 mod floating;
@@ -37,6 +38,7 @@ mod terminal_style;
 mod theme;
 mod themes;
 
+pub use animations::thinking_indicator;
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};

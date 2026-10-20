@@ -35,7 +35,7 @@ fn invalid(message: &str) -> io::Error {
 fn failure(message: &str) -> io::Error {
     io::Error::other(message)
 }
-fn validate_host(host: &str) -> io::Result<()> {
+pub(crate) fn validate_host(host: &str) -> io::Result<()> {
     if host.is_empty()
         || host.len() > 255
         || !host.is_ascii()

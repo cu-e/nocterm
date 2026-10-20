@@ -1,5 +1,5 @@
 //! File paths carried between independent Explorer and terminal features.
-use nocterm_session::{RemoteFs, Target};
+use nocterm_session::{HostAddress, RemoteFs};
 use std::{path::PathBuf, sync::Arc};
 
 /// An internal file drag. Remote payloads retain their original connection so
@@ -14,6 +14,6 @@ pub enum FileDrag {
 #[derive(Clone)]
 pub struct RemoteFileDrag {
     pub sources: Vec<String>,
-    pub target: Target,
+    pub host: HostAddress,
     pub fs: Arc<dyn RemoteFs>,
 }

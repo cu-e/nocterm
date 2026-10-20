@@ -1,6 +1,6 @@
 //! Pure saved-connection formats, drafts, transitions and native capability ports.
 //!
-//! Owns: profile/recent/facts formats, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values and bounded immutable flag bytes.
+//! Owns: profile/recent/facts formats, jump-host references and route resolution, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values and bounded immutable flag bytes.
 //! Does not own: DNS, HTTP, files, clocks, GPUI or observation lifecycle.
 //! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock and country/flag/RemoteOsDetector observation ports.
 //! Ports used: session value types. Settings section: none. Globals: none.
@@ -9,8 +9,10 @@
 //! observations are not connection authority and mutable collection state stays private.
 //! Profile encoding diagnostics share original typed serializer causes through foundation core.
 
+pub mod credential_scope;
 pub mod draft;
 pub mod facts;
+pub mod jump_route;
 pub mod observation;
 pub mod os;
 pub mod os_observation;

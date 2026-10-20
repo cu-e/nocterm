@@ -39,19 +39,10 @@ const HIDDEN_IN_HOME: &[&str] = &[
     ".pypirc",
 ];
 
-/// Where agents and their package managers keep state, relative to the home
-/// directory. Writable so that sign-in, history and `npx` downloads work.
-const AGENT_STATE_IN_HOME: &[&str] = &[
-    ".claude",
-    ".claude.json",
-    ".codex",
-    ".hermes",
-    ".gemini",
-    ".npm",
-    ".cache",
-    ".local/state",
-    ".config/claude",
-];
+/// Where package managers and agents without a profile keep state, relative
+/// to the home directory. Writable so that `npx` downloads work; profiled
+/// agents add their own state with `with_home_state`.
+const TOOL_STATE_IN_HOME: &[&str] = &[".gemini", ".npm", ".cache", ".local/state"];
 
 /// What the sandbox shows of the file system.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -88,9 +79,20 @@ impl SandboxPolicy {
             policy.hidden.extend(policy.credentials.iter().cloned());
             policy
                 .writable
-                .extend(AGENT_STATE_IN_HOME.iter().map(|path| home.join(path)));
+                .extend(TOOL_STATE_IN_HOME.iter().map(|path| home.join(path)));
         }
         policy
+    }
+
+    /// Also makes `state`, relative to `home`, writable so that agents' sign-in
+    /// and history work. Without a home nothing is added.
+    #[must_use]
+    pub fn with_home_state(mut self, home: Option<&Path>, state: &[PathBuf]) -> Self {
+        if let Some(home) = home {
+            self.writable
+                .extend(state.iter().map(|path| home.join(path)));
+        }
+        self
     }
 
     /// Compare supplied lexical and physical identities without resolving any path.

@@ -1,5 +1,8 @@
 //! Recent destinations and supplied observation timestamps.
-use crate::profiles::ProfileId;
+use crate::{
+    credential_scope::CredentialScope,
+    profiles::{ProfileId, Profiles},
+};
 use nocterm_session::{Auth, CredentialId, ShellLaunch, Target};
 use serde::{Deserialize, Serialize};
 pub const MAX_RECENTS: usize = 8;
@@ -68,11 +71,18 @@ impl Recents {
         self.list.iter()
     }
 
-    pub fn associate_credential(&mut self, target: &Target, auth: &Auth, id: CredentialId) {
+    /// Attaches `id` to the recents `scope` admits; `profiles` tells whether the
+    /// profile a recent came from reaches its host through jump hosts.
+    pub fn associate_credential(
+        &mut self,
+        scope: &CredentialScope,
+        id: CredentialId,
+        profiles: &Profiles,
+    ) {
         for recent in self
             .list
             .iter_mut()
-            .filter(|recent| &recent.target == target && &recent.auth == auth)
+            .filter(|recent| scope.admits_recent(recent, profiles))
         {
             recent.credential = Some(id);
         }
@@ -84,6 +94,13 @@ impl Recents {
         self.list.retain(|existing| !existing.same_as(&recent));
         self.list.insert(0, recent);
         self.list.truncate(MAX_RECENTS);
+    }
+
+    /// Drops the entries that came from a profile that is gone. Used when the
+    /// profile reached its host through jump hosts: kept as plain destinations
+    /// they would connect directly, around the route, with its saved credential.
+    pub fn forget(&mut self, id: ProfileId) {
+        self.list.retain(|recent| recent.profile != Some(id));
     }
 
     /// Forgets that entries came from a profile that is gone; they stay as

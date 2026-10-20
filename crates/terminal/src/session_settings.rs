@@ -182,6 +182,7 @@ mod tests {
                 ..Default::default()
             }),
             credential: Some(nocterm_session::CredentialId::from_bytes([42; 16])),
+            jumps: Vec::new(),
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
