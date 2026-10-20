@@ -1,5 +1,34 @@
 # Changelog
 
+## [3.3.0](https://github.com/cu-e/nocterm/compare/v3.2.0...v3.3.0) (2026-10-20)
+
+
+### Features
+
+* **agent:** add animated thinking indicator ([4943824](https://github.com/cu-e/nocterm/commit/49438242f28c3022d2f28928b31dcb97f36bddfb))
+* **agent:** copy and highlight fenced code in chat replies ([2308f88](https://github.com/cu-e/nocterm/commit/2308f889131bf26797059a26c71a38576c736b0d))
+* **connections-model:** store and resolve profile jump hosts ([fe21b82](https://github.com/cu-e/nocterm/commit/fe21b8218e72b4c2185d6597ccd26fc4a6748983))
+* **connections:** edit jump hosts and resolve them when opening ([1d0689e](https://github.com/cu-e/nocterm/commit/1d0689e483a5cf2959d570cb7e1fb2b9d6cff955))
+* **session:** add jump host route values to the session contract ([7ecaf50](https://github.com/cu-e/nocterm/commit/7ecaf506f8083d0ac6e755f3447c2726d6a5c079))
+* **ssh:** establish sessions through jump hosts ([19670e0](https://github.com/cu-e/nocterm/commit/19670e09bc29c3a4ed02b041469a09b085cdc4aa))
+* **terminal:** label jump host prompts and use hop credentials ([3c80948](https://github.com/cu-e/nocterm/commit/3c80948878395fe880fe8351cfa345b8a36a9cfd))
+* **workspace:** carry resolved jump hosts in session specs ([6337f67](https://github.com/cu-e/nocterm/commit/6337f67eae7605448043e0cbf40ab2352554bfc3))
+
+
+### Bug Fixes
+
+* **agent-usage:** read Claude plan limits from the account ([bba1b18](https://github.com/cu-e/nocterm/commit/bba1b188c7cbce63ba86febe5cd9248c7b85d979))
+* **agent:** end a removed chat's queue edit before it leaves the roster ([e6aa903](https://github.com/cu-e/nocterm/commit/e6aa90358e6f2fe07c7b6e1392a5a887d45e3738))
+
+
+### Documentation
+
+* **agent-chat:** record chats below the panel in ADR 0063 ([b1151b5](https://github.com/cu-e/nocterm/commit/b1151b5d8c6397411f6473c9be59fc24ea6da2d2))
+* record procedure skills and early structural signals ([f8d0b2c](https://github.com/cu-e/nocterm/commit/f8d0b2c786be6b563efca95f6bb95498423db672))
+* record SSH jump host routes ([5d96600](https://github.com/cu-e/nocterm/commit/5d96600fa40ab701fa41228321fa6d70a1c6a0e0))
+* trim agent instructions and drop stale checks ([b88a65e](https://github.com/cu-e/nocterm/commit/b88a65eec70d940d4aaaba7bd566cd7d5e4c03e9))
+* **vault-broker:** add the crate ownership card ([955c36d](https://github.com/cu-e/nocterm/commit/955c36d131c7b927ab5f32886e0824b595dbf000))
+
 ## [3.2.0](https://github.com/cu-e/nocterm/compare/v3.1.0...v3.2.0) (2026-10-19)
 
 
