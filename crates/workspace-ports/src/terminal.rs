@@ -1,6 +1,6 @@
 //! Allowlisted access to existing terminals. No authentication or launch data
 //! reaches agents; only the user answers a sign-in prompt.
-use crate::TerminalError;
+use crate::{SessionContext, TerminalError};
 
 use std::{
     path::PathBuf,
@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use gpui_kit::{App, EntityId, SharedString};
+use gpui::{App, EntityId, SharedString};
 use nocterm_session::{HostExec, Secret, Session, Target};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl Drop for LiveCommandLease {
 #[derive(Clone)]
 pub struct FactSessionSnapshot {
     pub expected: ExpectedSession,
-    pub session: crate::SessionContext,
+    pub session: SessionContext,
     pub profile: Option<SharedString>,
 }
 pub trait ConnectionFactSession: 'static {

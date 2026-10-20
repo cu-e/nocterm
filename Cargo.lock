@@ -5684,8 +5684,18 @@ dependencies = [
  "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
+ "nocterm-workspace-ports",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "nocterm-workspace-ports"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-session",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

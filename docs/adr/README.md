@@ -60,3 +60,4 @@ acceptance; a later record supersedes an earlier one.
 | [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
 | [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |
 | [0061](0061-agent-profiles-and-directory.md) | Agent profiles, an injected catalog and one directory of available agents |
+| [0062](0062-terminal-contracts-below-the-workspace.md) | Terminal and connection contracts live below the window shell |

@@ -11,6 +11,10 @@ and synchronous quit capture for layout, settings, snippets, connection state an
 `AgentsHandle`, the one resolution of the injected agent catalog and the `ai`
 settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
+`nocterm-workspace-ports` declares the terminal contracts, `SessionContext` and
+`ConnectionSummary` with GPUI core alone; the workspace re-exports them and keeps
+`ConnectionDirectory`, which opens connections into a workspace
+([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)).
 
 ## Agents
 
@@ -22,8 +26,8 @@ connections, closes idle ones and coordinates document writes; `nocterm-agent` s
 and chat UI. App injects the adapter. The runtime knows no thread type: a thread
 registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
-host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace exposes narrow terminal ports
-and `ConnectionDirectory` seams so the agent feature never imports other
+host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace re-exports the narrow terminal ports
+of `nocterm-workspace-ports` and exposes `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called
