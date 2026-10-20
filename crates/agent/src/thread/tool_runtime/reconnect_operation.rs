@@ -4,7 +4,7 @@ use super::super::{
     connection_wait::{ConnectionWaitError, ConnectionWaitOperation, WaitTarget},
 };
 use gpui_kit::{AsyncApp, WeakEntity};
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 pub(in crate::thread) struct ReconnectOperation {
     target: WaitTarget,
 }

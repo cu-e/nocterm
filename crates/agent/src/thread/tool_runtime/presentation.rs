@@ -1,7 +1,7 @@
 //! Terminal outcome framing receives an explicit redaction policy.
 use super::CommandSnapshot;
 pub(in crate::thread) fn text_payload(
-    tail: nocterm_workspace::TerminalText,
+    tail: nocterm_workspace_ports::TerminalText,
     redact: bool,
 ) -> (serde_json::Value, usize) {
     let text = if redact {

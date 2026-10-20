@@ -6,7 +6,7 @@ use super::{
 };
 use crate::seat::{Seat, current_session};
 use gpui_kit::{AnyWindowHandle, AppContext as _, AsyncApp, WeakEntity};
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 
 pub(super) struct BackgroundOpen {
     seat: Seat,

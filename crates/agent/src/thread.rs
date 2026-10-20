@@ -11,7 +11,7 @@ use nocterm_ai::{
     thread::ThreadState,
 };
 
-use nocterm_workspace::{ConnectionSummary, ExpectedSession, TerminalEntry};
+use nocterm_workspace_ports::{ConnectionSummary, ExpectedSession, TerminalEntry};
 use session_driver::OperationGuard;
 use std::{path::PathBuf, sync::Arc};
 

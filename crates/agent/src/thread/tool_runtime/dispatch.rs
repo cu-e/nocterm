@@ -1,7 +1,7 @@
 //! One accepted terminal dispatch uses its captured capability and ExpectedSession.
 use gpui_kit::App;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
-use nocterm_workspace::{
+use nocterm_workspace_ports::{
     ExpectedSession, TerminalCapability, TerminalEntry, TerminalError, TextRequest,
 };
 pub(in crate::thread) struct TerminalDispatch {
@@ -173,7 +173,7 @@ impl ExecutionAdmission {
             && uses_session
             && (reconnecting
                 || info.is_some_and(|info| {
-                    !info.local && info.status == nocterm_workspace::TerminalStatus::Closed
+                    !info.local && info.status == nocterm_workspace_ports::TerminalStatus::Closed
                 }))
         {
             return DispatchAction::Reconnect(bound, entry, expected);

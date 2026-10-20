@@ -1,7 +1,7 @@
 //! Supplied workspace observations are finite inputs to turn context projection.
 use crate::seat::Seat;
 use gpui_kit::App;
-use nocterm_workspace::{ConnectionSummary, TerminalEntry};
+use nocterm_workspace_ports::{ConnectionSummary, TerminalEntry};
 pub(in crate::thread) struct Resolution {
     terminals: Vec<TerminalEntry>,
     summaries: Vec<ConnectionSummary>,
@@ -31,6 +31,6 @@ pub(in crate::thread) enum OpenSelection {
     Respond(serde_json::Value),
     Unknown,
     Closed,
-    Reconnect(TerminalEntry, nocterm_workspace::ExpectedSession),
+    Reconnect(TerminalEntry, nocterm_workspace_ports::ExpectedSession),
     Create(ConnectionSummary),
 }

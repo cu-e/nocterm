@@ -1,6 +1,6 @@
 //! Reusable target grants expire when the observed session changes.
 use nocterm_ai::{ApprovalSettings, TerminalCall, ToolCapability, approval::ApprovalGrants};
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 use std::collections::HashMap;
 #[derive(Default)]
 pub(super) struct SessionGrants {

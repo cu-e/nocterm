@@ -32,7 +32,7 @@ pub(super) struct ToolGate {
     registration: Option<u64>,
     attached: bool,
     unsafe_input: bool,
-    expected: Option<nocterm_workspace::ExpectedSession>,
+    expected: Option<nocterm_workspace_ports::ExpectedSession>,
 }
 impl ToolGate {
     pub(super) fn from_context(
@@ -41,12 +41,12 @@ impl ToolGate {
         registration: Option<u64>,
         resolved: &[(
             String,
-            nocterm_workspace::TerminalEntry,
+            nocterm_workspace_ports::TerminalEntry,
             nocterm_ai::context::TerminalDescriptor,
         )],
         offline: &[(
             nocterm_ai::context::ServerDescriptor,
-            nocterm_workspace::ConnectionSummary,
+            nocterm_workspace_ports::ConnectionSummary,
         )],
         cx: &gpui_kit::App,
     ) -> Self {
@@ -71,7 +71,7 @@ impl ToolGate {
             info.map(|info| info.expected),
         )
     }
-    pub(super) fn expected(&self) -> Option<nocterm_workspace::ExpectedSession> {
+    pub(super) fn expected(&self) -> Option<nocterm_workspace_ports::ExpectedSession> {
         self.expected
     }
 
@@ -80,7 +80,7 @@ impl ToolGate {
         registration: Option<u64>,
         attached: bool,
         unsafe_input: bool,
-        expected: Option<nocterm_workspace::ExpectedSession>,
+        expected: Option<nocterm_workspace_ports::ExpectedSession>,
     ) -> Self {
         Self {
             available,

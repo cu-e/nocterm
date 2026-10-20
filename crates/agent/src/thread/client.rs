@@ -17,7 +17,7 @@ use nocterm_ai::{
     tool_display::{self, ToolDisplay},
 };
 
-use nocterm_workspace::TerminalEntry;
+use nocterm_workspace_ports::TerminalEntry;
 use std::path::PathBuf;
 use std::sync::Arc;
 

@@ -5,7 +5,7 @@ use nocterm_ai::{
     TerminalCall,
     context::{ConnectionDescriptor, OpaqueIds, ServerDescriptor, TerminalDescriptor},
 };
-use nocterm_workspace::{ConnectionSummary, TerminalEntry, TerminalStatus};
+use nocterm_workspace_ports::{ConnectionSummary, TerminalEntry, TerminalStatus};
 #[derive(Default)]
 struct TurnUsage {
     context: usize,

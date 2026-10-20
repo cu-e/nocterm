@@ -3,7 +3,7 @@ use super::{AgentThread, session_driver::OperationGuard, tools::unreachable};
 use gpui_kit::{App, AsyncApp, WeakEntity};
 use nocterm_ai::BridgeCall;
 
-use nocterm_workspace::{TerminalEntry, TerminalStatus, TextRequest};
+use nocterm_workspace_ports::{TerminalEntry, TerminalStatus, TextRequest};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -11,7 +11,7 @@ use std::{
 #[derive(Debug, thiserror::Error)]
 pub(super) enum TerminalOperationError {
     #[error("{0}")]
-    Terminal(#[from] nocterm_workspace::TerminalError),
+    Terminal(#[from] nocterm_workspace_ports::TerminalError),
     #[error("Live command ownership was revoked by user input or reconnection.")]
     Revoked,
     #[error("Command observation cancelled.")]
@@ -35,8 +35,8 @@ impl TerminalOperationError {
 /// A live observation owns its cursor, timing and original lease, not the chat.
 pub(super) struct LiveCommandOperation {
     id: String,
-    expected: nocterm_workspace::ExpectedSession,
-    lease: Arc<nocterm_workspace::LiveCommandLease>,
+    expected: nocterm_workspace_ports::ExpectedSession,
+    lease: Arc<nocterm_workspace_ports::LiveCommandLease>,
     since: u64,
     timeout: Duration,
     idle: Duration,
@@ -48,15 +48,15 @@ pub(super) struct LiveCommandOperation {
 impl LiveCommandOperation {
     pub(super) fn acquire(
         entry: TerminalEntry,
-        expected: nocterm_workspace::ExpectedSession,
+        expected: nocterm_workspace_ports::ExpectedSession,
         request: nocterm_ai::RunCommand,
         cx: &mut App,
     ) -> Result<Self, TerminalOperationError> {
         let since = entry
             .capabilities
             .text()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::TextRead,
+            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
+                nocterm_workspace_ports::TerminalCapability::TextRead,
             ))?
             .read(
                 expected,
@@ -72,8 +72,8 @@ impl LiveCommandOperation {
             entry
                 .capabilities
                 .live()
-                .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                    nocterm_workspace::TerminalCapability::LiveCommands,
+                .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
+                    nocterm_workspace_ports::TerminalCapability::LiveCommands,
                 ))?
                 .begin(expected, &request.command, cx)?,
         );
@@ -94,7 +94,7 @@ impl LiveCommandOperation {
     pub(super) fn id(&self) -> &str {
         &self.id
     }
-    pub(super) fn lease(&self) -> Arc<nocterm_workspace::LiveCommandLease> {
+    pub(super) fn lease(&self) -> Arc<nocterm_workspace_ports::LiveCommandLease> {
         self.lease.clone()
     }
     pub(super) fn hold(&mut self, guard: OperationGuard) {
@@ -120,9 +120,9 @@ impl LiveCommandOperation {
             .capabilities
             .state()
             .info(cx)
-            .ok_or(nocterm_workspace::TerminalError::Gone)?;
+            .ok_or(nocterm_workspace_ports::TerminalError::Gone)?;
         if info.expected != self.expected {
-            return Err(nocterm_workspace::TerminalError::StaleSession.into());
+            return Err(nocterm_workspace_ports::TerminalError::StaleSession.into());
         }
         if info.status != TerminalStatus::Connected {
             return Err(TerminalOperationError::Disconnected);
@@ -146,8 +146,8 @@ impl LiveCommandOperation {
         let tail = entry
             .capabilities
             .text()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::TextRead,
+            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
+                nocterm_workspace_ports::TerminalCapability::TextRead,
             ))?
             .read(
                 self.expected,

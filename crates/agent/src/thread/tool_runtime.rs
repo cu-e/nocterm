@@ -12,7 +12,7 @@ use nocterm_ai::{
     ApprovalPolicy, ApprovalSettings, BridgeCall, TerminalCall, ToolFailure, thread::Entry,
     tool_display::ToolDisplay,
 };
-use nocterm_workspace::{ExpectedSession, LiveCommandLease};
+use nocterm_workspace_ports::{ExpectedSession, LiveCommandLease};
 use std::sync::Arc;
 mod command_jobs;
 pub(in crate::thread) mod dispatch;
@@ -42,7 +42,7 @@ pub(super) struct ToolRuntime {
 impl ToolRuntime {
     pub(super) fn prepare_reconnect(
         &mut self,
-        entry: &nocterm_workspace::TerminalEntry,
+        entry: &nocterm_workspace_ports::TerminalEntry,
         expected: ExpectedSession,
         cx: &mut gpui_kit::App,
     ) -> Result<ExpectedSession, super::connection_wait::ConnectionWaitError> {
@@ -52,8 +52,8 @@ impl ToolRuntime {
         let receipt = entry
             .capabilities
             .reconnect()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::Reconnect,
+            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
+                nocterm_workspace_ports::TerminalCapability::Reconnect,
             ))
             .and_then(|port| port.reconnect(expected, cx))
             .map_err(super::connection_wait::ConnectionWaitError::Terminal)?;
@@ -130,7 +130,7 @@ impl ToolRuntime {
                             .as_ref()
                             .is_some_and(|connection| connection.id == summary.id.as_ref())
                         && entry.capabilities.state().info(cx).is_some_and(|info| {
-                            info.status == nocterm_workspace::TerminalStatus::Closed
+                            info.status == nocterm_workspace_ports::TerminalStatus::Closed
                         })
                 });
         if let Some((_, entry, _)) = closed {
@@ -150,7 +150,7 @@ impl ToolRuntime {
     pub(super) fn dispatch(
         &mut self,
         call: BridgeCall,
-        entry: nocterm_workspace::TerminalEntry,
+        entry: nocterm_workspace_ports::TerminalEntry,
         expected: ExpectedSession,
         redact: bool,
         cx: &mut gpui_kit::App,
@@ -169,7 +169,7 @@ impl ToolRuntime {
         cx: &gpui_kit::App,
     ) -> Vec<(
         String,
-        nocterm_workspace::TerminalEntry,
+        nocterm_workspace_ports::TerminalEntry,
         nocterm_ai::context::TerminalDescriptor,
     )> {
         self.turn.resolved(input, defaults, cx)
@@ -182,7 +182,7 @@ impl ToolRuntime {
         cx: &gpui_kit::App,
     ) -> Vec<(
         nocterm_ai::context::ServerDescriptor,
-        nocterm_workspace::ConnectionSummary,
+        nocterm_workspace_ports::ConnectionSummary,
     )> {
         self.turn.offline_servers(input, defaults, cx)
     }

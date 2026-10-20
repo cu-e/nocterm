@@ -1,6 +1,6 @@
 //! Accepted reconnect receipts, removed only by the waiter holding that receipt.
 use gpui_kit::EntityId;
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 use std::collections::HashMap;
 #[derive(Default)]
 pub(super) struct Reconnects {

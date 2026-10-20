@@ -1,7 +1,7 @@
 //! Background membership, secret prompts and reconnect receipts retain original Item authority.
 use super::super::{SignInWait, reconnects::Reconnects};
 use gpui_kit::EntityId;
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 #[derive(Default)]
 pub(super) struct TerminalSessions {
     background: Vec<EntityId>,

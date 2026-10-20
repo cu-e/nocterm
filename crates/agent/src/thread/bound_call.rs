@@ -1,6 +1,6 @@
 //! Approval and reconnect authority stays tied to the captured Item connection.
 use nocterm_ai::BridgeCall;
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 pub(super) struct BoundToolCall {
     call: BridgeCall,
     expected: Option<ExpectedSession>,

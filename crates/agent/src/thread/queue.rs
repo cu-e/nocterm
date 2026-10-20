@@ -12,7 +12,7 @@ use nocterm_ai::model::content::Content;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 use nocterm_session::ExecRequest;
 
-use nocterm_workspace::{ExpectedSession, TerminalEntry, TerminalStatus};
+use nocterm_workspace_ports::{ExpectedSession, TerminalEntry, TerminalStatus};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -140,7 +140,7 @@ impl AgentThread {
     pub(super) fn execute_command(
         &mut self,
         entry: TerminalEntry,
-        expected: nocterm_workspace::ExpectedSession,
+        expected: nocterm_workspace_ports::ExpectedSession,
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
@@ -150,8 +150,8 @@ impl AgentThread {
         let executor = match entry
             .capabilities
             .execution()
-            .ok_or(nocterm_workspace::TerminalError::Unsupported(
-                nocterm_workspace::TerminalCapability::StructuredExecution,
+            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
+                nocterm_workspace_ports::TerminalCapability::StructuredExecution,
             ))
             .and_then(|port| port.executor(expected, cx))
         {
@@ -500,7 +500,7 @@ impl AgentThread {
     pub(super) fn on_live_command_complete(
         &mut self,
         id: String,
-        lease: std::sync::Arc<nocterm_workspace::LiveCommandLease>,
+        lease: std::sync::Arc<nocterm_workspace_ports::LiveCommandLease>,
         call: BridgeCall,
         result: Result<serde_json::Value, super::live::TerminalOperationError>,
         cx: &mut Context<Self>,

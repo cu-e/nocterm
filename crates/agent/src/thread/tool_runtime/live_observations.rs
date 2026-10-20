@@ -1,5 +1,5 @@
 //! Completion only retires its original live-shell lease; observation never guesses exit status.
-use nocterm_workspace::LiveCommandLease;
+use nocterm_workspace_ports::LiveCommandLease;
 use std::{collections::HashMap, sync::Arc};
 #[derive(Default)]
 pub(super) struct LiveObservations {

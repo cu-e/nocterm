@@ -1,5 +1,5 @@
 //! Typed reconnect/open orchestration failures become tool results only at delivery.
-use nocterm_workspace::TerminalError;
+use nocterm_workspace_ports::TerminalError;
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ConnectionWaitError {
     #[error("The server was detached before it connected.")]
@@ -44,7 +44,7 @@ impl ConnectionWaitError {
 
 use super::AgentThread;
 use gpui_kit::{AppContext as _, AsyncApp, WeakEntity};
-use nocterm_workspace::{ExpectedSession, TerminalStatus};
+use nocterm_workspace_ports::{ExpectedSession, TerminalStatus};
 use std::time::{Duration, Instant};
 /// Authority held by one waiter, never inferred from a replacement session.
 pub(in crate::thread) struct WaitTarget {
@@ -59,7 +59,7 @@ impl WaitTarget {
         &self,
         entry: Option<(
             String,
-            nocterm_workspace::TerminalEntry,
+            nocterm_workspace_ports::TerminalEntry,
             nocterm_ai::context::TerminalDescriptor,
         )>,
         cx: &gpui_kit::App,

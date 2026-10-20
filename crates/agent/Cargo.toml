@@ -18,6 +18,7 @@ nocterm-store.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
+nocterm-workspace-ports.workspace = true
 # Fenced code in chat replies: the languages agents write most.
 gpui-kit = { workspace = true, features = [
     "tree-sitter-bash",

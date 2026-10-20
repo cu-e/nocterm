@@ -8,7 +8,7 @@ use super::super::{
 use crate::seat::Seat;
 use gpui_kit::{AnyWindowHandle, App, EntityId};
 use nocterm_ai::{BridgeCall, session::Ticket};
-use nocterm_workspace::ExpectedSession;
+use nocterm_workspace_ports::ExpectedSession;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

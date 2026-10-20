@@ -1,6 +1,6 @@
 //! Composer editing owns future context separately from active grants and saved defaults.
 use super::Attachment;
-use nocterm_workspace::ConnectionSummary;
+use nocterm_workspace_ports::ConnectionSummary;
 
 impl Attachment {
     /// Whether this attachment gives the agent the saved server `summary`:

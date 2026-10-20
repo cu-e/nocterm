@@ -5013,6 +5013,7 @@ dependencies = [
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
  "serde",
  "serde_json",
  "tempfile",
