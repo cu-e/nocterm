@@ -160,7 +160,9 @@ async fn link(
     };
     let host_keys = login::load_host_keys(config).await.map_err(own)?;
     driver
-        .emit(Event::Connecting(ConnectStage::Connecting))
+        .emit(Event::Connecting(ConnectStage::Connecting {
+            hop: login.hop().map(|hop| hop.index),
+        }))
         .await;
     let mut handle = reach(route, login, &host_keys, request, observed)
         .await
@@ -173,7 +175,9 @@ async fn link(
         .map_err(own)?;
 
     driver
-        .emit(Event::Connecting(ConnectStage::Authenticating))
+        .emit(Event::Connecting(ConnectStage::Authenticating {
+            hop: login.hop().map(|hop| hop.index),
+        }))
         .await;
     auth::authenticate(&mut handle, login, config, driver)
         .await

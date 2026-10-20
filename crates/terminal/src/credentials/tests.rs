@@ -153,3 +153,23 @@ fn a_prompt_that_ended_is_not_answered_after_unlocking(cx: &mut TestAppContext) 
         "a closed session never receives the secret"
     );
 }
+
+#[test]
+fn a_jump_host_prompt_is_labelled_with_its_hop() {
+    let hop = nocterm_session::PromptHop {
+        index: 1,
+        target: Target::new("ops", "bastion", 22),
+    };
+    let request = SecretRequest::Password {
+        target: hop.target.clone(),
+        retry: false,
+    };
+    let (plain, _, _) = crate::credentials::describe(&request, None);
+    let (labelled, retry, masked) = crate::credentials::describe(&request, Some(&hop));
+    assert_eq!(plain, "Password for ops@bastion");
+    assert_eq!(
+        labelled,
+        "Jump host 2 (ops@bastion): Password for ops@bastion"
+    );
+    assert!(!retry && masked);
+}

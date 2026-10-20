@@ -111,7 +111,7 @@ async fn changed_prompt(session: &Session) -> Prompt {
     loop {
         match next_event(session).await {
             Event::Prompt(prompt @ Prompt::ChangedHostKey { .. }) => return prompt,
-            Event::Connecting(nocterm_session::ConnectStage::Connecting) => {}
+            Event::Connecting(nocterm_session::ConnectStage::Connecting { .. }) => {}
             event => panic!("authentication must wait for host verification: {event:?}"),
         }
     }
@@ -375,7 +375,7 @@ async fn revocation_while_unknown_prompt_is_open_cannot_fall_back_to_connecting_
         let reply = loop {
             match next_event(&session).await {
                 Event::Prompt(Prompt::UnknownHostKey { reply, .. }) => break reply,
-                Event::Connecting(nocterm_session::ConnectStage::Connecting) => {}
+                Event::Connecting(nocterm_session::ConnectStage::Connecting { .. }) => {}
                 other => panic!("authentication must wait for trust: {other:?}"),
             }
         };

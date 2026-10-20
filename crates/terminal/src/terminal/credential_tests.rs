@@ -2,7 +2,7 @@ use super::*;
 use crate::credentials::fake::FakeStore;
 use futures::executor::block_on;
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
-use nocterm_session::{Auth, Reply, SecretRequest, Target};
+use nocterm_session::{Auth, PromptHop, Reply, SecretRequest, Target};
 use std::sync::Mutex;
 
 fn prompt(request: SecretRequest) -> Prompt {
@@ -457,4 +457,218 @@ fn old_association_failure_does_not_replace_a_reconnected_password_prompt(cx: &m
         assert!(matches!(terminal.prompt(), Some(Prompt::Secret { request: SecretRequest::Password { retry: true, target: current }, .. }) if current == &target));
         assert!(!terminal.credential_message().is_some_and(|message| message.contains("old history refusal")));
     });
+}
+
+fn bastion() -> Target {
+    Target::new("ops", "bastion", 22)
+}
+
+fn hop_prompt(
+    request: SecretRequest,
+    hop: PromptHop,
+) -> (Prompt, futures::channel::oneshot::Receiver<Option<Secret>>) {
+    let (reply, answer) = Reply::channel();
+    (
+        Prompt::Secret {
+            request,
+            hop: Some(hop),
+            reply,
+        },
+        answer,
+    )
+}
+
+/// A terminal for `destination` reached through the bastion, whose password
+/// is saved as `hop_credential`.
+fn jump_terminal(
+    store: &Arc<FakeStore>,
+    destination_credential: Option<nocterm_session::CredentialId>,
+    hop_credential: Option<nocterm_session::CredentialId>,
+    saved: &Arc<Mutex<Vec<nocterm_session::CredentialId>>>,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Terminal>,
+    Arc<nocterm_session::testing::ScriptedTransport>,
+    nocterm_session::SessionDriver,
+) {
+    let transport = Arc::new(nocterm_session::testing::ScriptedTransport::default());
+    let driver = transport.queue(None, None);
+    let sink = saved.clone();
+    let store = store.clone();
+    let terminal = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let ui = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            (SettingsConfig::in_memory(Default::default())).install(cx),
+            cx,
+        );
+        let provider = crate::CredentialProvider::new(store, move |_, id, _| {
+            sink.lock().unwrap().push(id);
+            Task::ready(Ok(()))
+        });
+        let installed = crate::install(
+            crate::Deps::new(
+                transport.clone(),
+                crate::LocalSessions::disabled("/bin/bash".into()),
+            )
+            .with_credentials(provider),
+            &ui,
+            cx,
+        );
+        cx.new(|cx| {
+            Terminal::new(
+                installed,
+                SessionSpec {
+                    profile: None,
+                    options: Default::default(),
+                    title: "inner".into(),
+                    target: Target::new("app", "inner", 22),
+                    auth: Auth::Password,
+                    launch: None,
+                    credential: destination_credential,
+                    jumps: vec![nocterm_session::ResolvedJump {
+                        host: nocterm_session::JumpHost {
+                            target: bastion(),
+                            auth: Auth::Password,
+                        },
+                        credential: hop_credential,
+                    }],
+                },
+                cx,
+            )
+        })
+    });
+    (terminal, transport, driver)
+}
+
+fn password(target: Target) -> SecretRequest {
+    SecretRequest::Password {
+        target,
+        retry: false,
+    }
+}
+
+fn show(terminal: &Entity<Terminal>, prompt: Prompt, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Prompt(prompt), cx)
+        })
+    });
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn connect_request_carries_the_session_jump_hosts(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let (_terminal, transport, _driver) = jump_terminal(&store, None, None, &Arc::default(), cx);
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].jumps,
+        [nocterm_session::JumpHost {
+            target: bastion(),
+            auth: Auth::Password,
+        }]
+    );
+}
+
+#[gpui_kit::test]
+fn a_jump_host_prompt_is_answered_from_that_hops_credential(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let bastion_id = store.insert(password(bastion()), "bastion password");
+    let (terminal, _transport, _driver) =
+        jump_terminal(&store, None, Some(bastion_id), &Arc::default(), cx);
+    let (prompt, answer) = hop_prompt(
+        password(bastion()),
+        PromptHop {
+            index: 0,
+            target: bastion(),
+        },
+    );
+    show(&terminal, prompt, cx);
+    assert_eq!(
+        block_on(answer).unwrap().unwrap().expose(),
+        "bastion password"
+    );
+}
+
+#[gpui_kit::test]
+fn the_destination_prompt_keeps_using_the_destination_credential(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let bastion_id = store.insert(password(bastion()), "bastion password");
+    let inner = Target::new("app", "inner", 22);
+    let inner_id = store.insert(password(inner.clone()), "inner password");
+    let (terminal, _transport, _driver) = jump_terminal(
+        &store,
+        Some(inner_id),
+        Some(bastion_id),
+        &Arc::default(),
+        cx,
+    );
+    let (reply, answer) = Reply::channel();
+    show(
+        &terminal,
+        Prompt::Secret {
+            request: password(inner),
+            hop: None,
+            reply,
+        },
+        cx,
+    );
+    assert_eq!(
+        block_on(answer).unwrap().unwrap().expose(),
+        "inner password"
+    );
+}
+
+#[gpui_kit::test]
+fn a_hop_prompt_for_another_host_is_not_answered_from_the_route_entry(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let bastion_id = store.insert(password(bastion()), "bastion password");
+    let (terminal, _transport, _driver) =
+        jump_terminal(&store, None, Some(bastion_id), &Arc::default(), cx);
+    let stranger = Target::new("ops", "stranger", 22);
+    let (prompt, mut answer) = hop_prompt(
+        password(stranger.clone()),
+        PromptHop {
+            index: 0,
+            target: stranger,
+        },
+    );
+    show(&terminal, prompt, cx);
+    cx.update(|cx| {
+        let terminal = terminal.read(cx);
+        assert!(terminal.prompt().is_some(), "the prompt waits for the user");
+        assert_eq!(
+            terminal.credential_message(),
+            None,
+            "no saved credential was even tried"
+        );
+    });
+    assert!(futures::FutureExt::now_or_never(&mut answer).is_none());
+}
+
+#[gpui_kit::test]
+fn remembering_on_a_jump_host_prompt_saves_nothing(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let saved = Arc::new(Mutex::new(Vec::new()));
+    let (terminal, _transport, _driver) = jump_terminal(&store, None, None, &saved, cx);
+    let (prompt, answer) = hop_prompt(
+        password(bastion()),
+        PromptHop {
+            index: 0,
+            target: bastion(),
+        },
+    );
+    show(&terminal, prompt, cx);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.answer_secret_and_remember(Secret::new("typed"), true, cx);
+            terminal.handle_event(Event::Connected, cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(block_on(answer).unwrap().unwrap().expose(), "typed");
+    assert!(store.records().is_empty());
+    assert!(saved.lock().unwrap().is_empty());
 }

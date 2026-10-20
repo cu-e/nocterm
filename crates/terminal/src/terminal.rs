@@ -322,7 +322,13 @@ impl Terminal {
             launch,
             target: self.lifecycle.spec().target.clone(),
             auth: self.lifecycle.spec().auth.clone(),
-            jumps: Vec::new(),
+            jumps: self
+                .lifecycle
+                .spec()
+                .jumps
+                .iter()
+                .map(|jump| jump.host.clone())
+                .collect(),
             term: self
                 .lifecycle
                 .spec()
@@ -345,7 +351,10 @@ impl Terminal {
 
         let session = transport.open(request);
         self.lifecycle.accept_session(session.clone());
-        self.set_status(Status::Connecting(ConnectStage::Connecting), cx);
+        self.set_status(
+            Status::Connecting(ConnectStage::Connecting { hop: None }),
+            cx,
+        );
         cx.emit(TerminalEvent::Changed);
 
         let pump = pump::spawn(session, self.connection_epoch(), cx);

@@ -2,6 +2,7 @@
 use crate::file_drop::FileDropError;
 
 use super::{Terminal, TerminalEvent};
+use crate::credentials::credential_for;
 use gpui_kit::{App, Context};
 use nocterm_session::{HostKeyDecision, Prompt, Secret, SecretRequest};
 use nocterm_vt::encode_paste;
@@ -428,10 +429,11 @@ impl Terminal {
     }
     pub(crate) fn retrieve_credential(&mut self, cx: &mut Context<Self>) {
         self.credentials.begin_lookup();
-        let Some(Prompt::Secret { request, .. }) = self.prompt() else {
+        let Some(Prompt::Secret { request, hop, .. }) = self.prompt() else {
             return;
         };
         let request = request.clone();
+        let credential = credential_for(self.spec(), hop.as_ref());
         if !matches!(request, SecretRequest::Interactive { .. }) {
             self.credentials.cancel_candidate();
         }
@@ -445,7 +447,7 @@ impl Terminal {
         if !request.is_storable() {
             return;
         }
-        let Some(id) = self.spec().credential else {
+        let Some(id) = credential else {
             return;
         };
         let Some(provider) = self.deps.credentials() else {
@@ -501,7 +503,8 @@ impl Terminal {
                 });
             }));
     }
-    /// Remember is an explicit user choice and never applies to interactive/MFA.
+    /// Remember is an explicit user choice. It never applies to interactive/MFA
+    /// or to a jump host, whose secret cannot be bound to the destination profile.
     pub fn answer_secret_and_remember(
         &mut self,
         secret: Secret,
@@ -521,7 +524,9 @@ impl Terminal {
         }
         if remember
             && self.vault_unlocked(cx)
-            && let Some(Prompt::Secret { request, .. }) = self.prompt()
+            && let Some(Prompt::Secret {
+                request, hop: None, ..
+            }) = self.prompt()
             && request.is_storable()
         {
             self.credentials

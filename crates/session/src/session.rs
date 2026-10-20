@@ -94,10 +94,10 @@ pub enum Event {
 /// Where a connection attempt has got to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectStage {
-    /// Reaching the host.
-    Connecting,
-    /// Proving who the user is.
-    Authenticating,
+    /// Reaching the host, or the jump host at position `hop` of the route.
+    Connecting { hop: Option<usize> },
+    /// Proving who the user is, to the host or to the jump host at `hop`.
+    Authenticating { hop: Option<usize> },
     /// Starting the remote shell.
     StartingShell,
 }

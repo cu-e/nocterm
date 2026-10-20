@@ -78,8 +78,8 @@ impl TerminalState for Access {
             alt_screen: terminal.emulator().modes().alt_screen,
             generation: terminal.emulator().generation(),
             sign_in: match terminal.prompt() {
-                Some(Prompt::Secret { request, .. }) => {
-                    let (label, retry, masked) = describe(request);
+                Some(Prompt::Secret { request, hop, .. }) => {
+                    let (label, retry, masked) = describe(request, hop.as_ref());
                     Some(SignInPrompt {
                         token: UserPromptToken::new(expected, terminal.prompt_epoch()),
                         label: label.into(),

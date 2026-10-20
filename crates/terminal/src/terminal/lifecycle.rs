@@ -34,7 +34,7 @@ impl SessionLifecycle {
             completion,
             session: None,
             fs: None,
-            status: Status::Connecting(ConnectStage::Connecting),
+            status: Status::Connecting(ConnectStage::Connecting { hop: None }),
             prompt: None,
             prompt_epoch: 0,
             connection_epoch: 0,
