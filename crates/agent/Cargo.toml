@@ -12,6 +12,7 @@ layer = "feature"
 [dependencies]
 nocterm-settings.workspace = true
 nocterm-ai.workspace = true
+nocterm-agent-chat.workspace = true
 nocterm-agent-runtime.workspace = true
 nocterm-agent-directory.workspace = true
 nocterm-store.workspace = true
@@ -47,6 +48,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-agent-chat = { workspace = true, features = ["test-support"] }
 nocterm-agent-providers.workspace = true
 nocterm-session = { workspace = true, features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }

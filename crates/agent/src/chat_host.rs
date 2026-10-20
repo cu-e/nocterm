@@ -11,9 +11,9 @@ pub(crate) struct ChatHost {
 }
 impl ChatHost {
     pub(crate) fn new(workspace: WeakEntity<Workspace>, installed: crate::Installed) -> Self {
-        let seat = Rc::new(crate::seat::WorkspaceSeat::new(workspace.clone()));
+        let seat = Rc::new(crate::workspace_seat::WorkspaceSeat::new(workspace.clone()));
         let sign_in = installed.auth().map(|opener| {
-            Rc::new(crate::sign_in::WorkspaceSignIn::new(
+            Rc::new(crate::workspace_sign_in::WorkspaceSignIn::new(
                 opener,
                 workspace.clone(),
             )) as Rc<dyn crate::sign_in::SignInTerminal>

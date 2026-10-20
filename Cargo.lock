@@ -5004,6 +5004,7 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "nocterm-agent-chat",
  "nocterm-agent-directory",
  "nocterm-agent-providers",
  "nocterm-agent-runtime",
@@ -5013,6 +5014,26 @@ dependencies = [
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-agent-chat"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "futures",
+ "gpui-pre",
+ "nocterm-agent-directory",
+ "nocterm-agent-runtime",
+ "nocterm-ai",
+ "nocterm-session",
+ "nocterm-store",
  "nocterm-workspace-ports",
  "serde",
  "serde_json",

@@ -235,6 +235,7 @@ impl AgentPanel {
     pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
         self.chats.current()
     }
+    #[cfg(test)]
     pub(crate) fn chat_documents(&self) -> impl ExactSizeIterator<Item = &Entity<AgentThread>> {
         self.chats.iter()
     }

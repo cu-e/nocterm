@@ -163,6 +163,7 @@ nocterm-agent-providers = { path = "crates/agent-providers" }
 nocterm-agent-directory = { path = "crates/agent-directory" }
 nocterm-agent-settings-ui = { path = "crates/agent-settings-ui" }
 nocterm-workspace-ports = { path = "crates/workspace-ports" }
+nocterm-agent-chat = { path = "crates/agent-chat" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }
 nocterm-agent-usage = { path = "crates/agent-usage" }
