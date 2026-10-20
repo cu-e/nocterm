@@ -378,7 +378,9 @@ impl AgentPanel {
             .map(|limits| limits.iter().cloned().collect())
             .unwrap_or_default();
         let limits_hint = match thread.document().agent_id() {
-            "claude" if limits.is_empty() => Some("Claude reports plan limits after a reply."),
+            "claude" if limits.is_empty() => {
+                Some("Claude plan limits load from your Claude Code sign-in.")
+            }
             "codex" if limits.is_empty() => Some("Codex reports plan limits after a reply."),
             _ => None,
         };

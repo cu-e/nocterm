@@ -1,8 +1,9 @@
 //! Account usage capabilities, without native paths or provider log formats.
 use super::RateLimit;
 use futures::future::BoxFuture;
-use nocterm_core::SharedError;
+use nocterm_core::{SharedCause, SharedError};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// The launch identity needed to select an account source; environment is omitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +44,12 @@ pub enum UsageReadError {
         #[source]
         source: SharedError<std::io::Error>,
     },
+    #[error("Could not fetch account usage from {url}: {source}")]
+    Fetch {
+        url: String,
+        #[source]
+        source: SharedCause,
+    },
 }
 
 impl UsageReadError {
@@ -64,6 +71,15 @@ impl UsageReadError {
             source: SharedError::from_error(source),
         }
     }
+    pub fn fetch(
+        url: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Fetch {
+            url: url.into(),
+            source: SharedCause::new(source),
+        }
+    }
 }
 
 /// Implementations read only when polled on the host's background executor.
@@ -73,4 +89,41 @@ pub trait AccountUsageSource: Send + Sync {
         &self,
         agent: UsageAgent,
     ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>>;
+}
+
+/// Several account sources, each serving the agents it recognizes: the
+/// first report wins, and the first failure is returned only when no source
+/// reports.
+pub struct UsageSources(Vec<Arc<dyn AccountUsageSource>>);
+
+impl UsageSources {
+    pub fn new(sources: Vec<Arc<dyn AccountUsageSource>>) -> Self {
+        Self(sources)
+    }
+}
+
+impl AccountUsageSource for UsageSources {
+    fn read(
+        &self,
+        agent: UsageAgent,
+    ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
+        let reads: Vec<_> = self
+            .0
+            .iter()
+            .map(|source| source.read(agent.clone()))
+            .collect();
+        Box::pin(async move {
+            let mut failure = None;
+            for read in reads {
+                match read.await {
+                    Ok(Some(limits)) => return Ok(Some(limits)),
+                    Ok(None) => {}
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    }
+                }
+            }
+            failure.map_or(Ok(None), Err)
+        })
+    }
 }

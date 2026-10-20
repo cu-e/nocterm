@@ -3,12 +3,13 @@
 //!
 //! ACP reports the context window (`usage_update`) and, at the end of a turn,
 //! the session's token totals. Plan limits are not part of ACP: the Claude
-//! adapter attaches them to `usage_update` under `_claude/rateLimit`, and
-//! Codex writes them into session logs read through an injected account source.
+//! adapter attaches them to `usage_update` under `_claude/rateLimit` when they
+//! change, and injected account sources read the full report: Claude's from
+//! its account, Codex's from session logs.
 use crate::model::content::Content;
 
 mod source;
-pub use source::{AccountUsageSource, UsageAgent, UsageReadError};
+pub use source::{AccountUsageSource, UsageAgent, UsageReadError, UsageSources};
 
 use crate::{model::usage::ContextUsage, thread::Entry};
 
@@ -213,6 +214,50 @@ mod tests {
 
         assert!(claude_limit(&ContextUsage::new(1, 2)).is_none());
         assert!(claude_limit(&update(serde_json::json!({"other": 1}))).is_none());
+    }
+
+    #[test]
+    fn usage_sources_return_the_first_report_and_a_failure_only_without_one() {
+        use futures::future::BoxFuture;
+        use std::sync::Arc;
+        struct Fixed(Result<Option<Vec<RateLimit>>, UsageReadError>);
+        impl AccountUsageSource for Fixed {
+            fn read(
+                &self,
+                _: UsageAgent,
+            ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
+                let result = self.0.clone();
+                Box::pin(async move { result })
+            }
+        }
+        let report = vec![RateLimit {
+            window: Window::FiveHour,
+            used: Some(0.1),
+            resets_at: None,
+            reached: false,
+        }];
+        let failure =
+            || UsageReadError::fetch("https://example.test", std::io::Error::other("down"));
+        let agent = UsageAgent {
+            id: "claude".into(),
+            command: "npx".into(),
+            args: Vec::new(),
+        };
+        let read = |sources: Vec<Arc<dyn AccountUsageSource>>| {
+            futures::executor::block_on(UsageSources::new(sources).read(agent.clone()))
+        };
+        let reported = read(vec![
+            Arc::new(Fixed(Err(failure()))),
+            Arc::new(Fixed(Ok(None))),
+            Arc::new(Fixed(Ok(Some(report.clone())))),
+        ]);
+        assert_eq!(reported.unwrap(), Some(report));
+        let failed = read(vec![
+            Arc::new(Fixed(Ok(None))),
+            Arc::new(Fixed(Err(failure()))),
+        ]);
+        assert!(matches!(failed, Err(UsageReadError::Fetch { .. })));
+        assert_eq!(read(vec![Arc::new(Fixed(Ok(None)))]).unwrap(), None);
     }
 
     #[test]

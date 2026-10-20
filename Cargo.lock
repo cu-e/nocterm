@@ -4925,6 +4925,7 @@ dependencies = [
  "nocterm-agent",
  "nocterm-agent-runtime",
  "nocterm-agent-storage",
+ "nocterm-agent-usage",
  "nocterm-ai",
  "nocterm-connections",
  "nocterm-connections-io",
@@ -5041,6 +5042,17 @@ dependencies = [
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
  "uuid",
+]
+
+[[package]]
+name = "nocterm-agent-usage"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre-reqwest",
+ "nocterm-ai",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

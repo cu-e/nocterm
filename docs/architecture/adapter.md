@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -134,6 +134,18 @@ executor. The adapter owns no writer loop, per-chat gate or shutdown timer.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 ## Agent account usage
+
+Composition combines the account sources with AI's `UsageSources`, which returns
+the first report among the sources that recognize a launch.
+
+`nocterm-agent-usage::ClaudeUsageReader` serves Claude launches. Composition
+supplies Claude Code's configuration directory (`CLAUDE_CONFIG_DIR` or
+`~/.claude`); the reader takes the unexpired OAuth access token from
+`.credentials.json`, requests the account's plan limits from Anthropic's API with a
+10-second timeout and a 1 MiB response bound, and converts percentage windows to
+shares. Missing credentials, an expired token or a rejected request produce no
+report; it never refreshes or writes credentials. The adapter's `_claude/rateLimit`
+updates still merge into the same limits between reads.
 
 `nocterm-agent-storage::CodexUsageReader` implements AI's `AccountUsageSource`.
 Composition supplies its optional home directory; unsupported launches never touch

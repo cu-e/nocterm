@@ -194,11 +194,22 @@ fn agent_services(
         )),
         storage,
         workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
-        usage_source: Arc::new(nocterm_agent_storage::CodexUsageReader::new(codex_home())),
+        usage_source: Arc::new(nocterm_ai::usage::UsageSources::new(vec![
+            Arc::new(nocterm_agent_usage::ClaudeUsageReader::new(claude_config())),
+            Arc::new(nocterm_agent_storage::CodexUsageReader::new(codex_home())),
+        ])),
         workdir: paths.state_dir().join("agent-workspace"),
         private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
         shared_dirs: vec![paths.effective_runtime_dir()],
     }
+}
+
+/// Resolve Claude Code's configuration directory once at composition.
+fn claude_config() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
 }
 
 /// Resolve the native account-log location once at composition.

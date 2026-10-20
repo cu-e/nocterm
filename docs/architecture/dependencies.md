@@ -6,11 +6,12 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-agent-runtime`, `nocterm-agent-storage`, `nocterm-ai`, `nocterm-connections`, `nocterm-connections-io`, `nocterm-connections-model`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-image-codec`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets`, `nocterm-snippets-io`, `nocterm-snippets-store`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-themes-registry`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-agent-runtime`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-ai`, `nocterm-connections`, `nocterm-connections-io`, `nocterm-connections-model`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-image-codec`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor-ui`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets`, `nocterm-snippets-io`, `nocterm-snippets-store`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-themes-registry`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
 | `nocterm-agent-runtime` | service | `nocterm-ai`, `nocterm-core`, `nocterm-store` | ACP agent connections, their admission and the chats' durable documents. |
 | `nocterm-agent-storage` | adapter | `nocterm-ai`, `nocterm-core` | Bounded agent history and favorites filesystem repositories. |
+| `nocterm-agent-usage` | adapter | `nocterm-ai` | Bounded native reads of provider account plan limits. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-settings` |  |
 | `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-connections-store`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-connections-io` | adapter | `nocterm-connections-model`, `nocterm-core`, `nocterm-session` | Native connection repository, value discovery and bounded observation adapters. |
@@ -61,6 +62,7 @@ graph TD
     nocterm --> nocterm_agent
     nocterm --> nocterm_agent_runtime
     nocterm --> nocterm_agent_storage
+    nocterm --> nocterm_agent_usage
     nocterm --> nocterm_ai
     nocterm --> nocterm_connections
     nocterm --> nocterm_connections_io
@@ -111,6 +113,7 @@ graph TD
     nocterm_agent_runtime --> nocterm_store
     nocterm_agent_storage --> nocterm_ai
     nocterm_agent_storage --> nocterm_core
+    nocterm_agent_usage --> nocterm_ai
     nocterm_ai --> nocterm_core
     nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_connections_model
