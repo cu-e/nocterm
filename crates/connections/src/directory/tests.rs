@@ -96,7 +96,7 @@ async fn empty_center_reconnect_uses_normal_directory_and_current_profile(
     connections.update(cx, |connections, cx| {
         crate::session_intents::record_use(
             connections,
-            &spec_for_profile(&server),
+            &crate::test_support::direct_spec(&server),
             Some(server.id),
             cx,
         )
@@ -126,7 +126,10 @@ async fn empty_center_reconnect_uses_normal_directory_and_current_profile(
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(&*opened.borrow(), &[spec_for_profile(&server)]);
+    assert_eq!(
+        &*opened.borrow(),
+        &[crate::test_support::direct_spec(&server)]
+    );
 }
 
 #[gpui_kit::test]
@@ -148,7 +151,7 @@ async fn recent_flags_follow_detection_setting_and_keep_manually_chosen_country(
         connections.update(cx, |connections, cx| {
             crate::session_intents::record_use(
                 connections,
-                &spec_for_profile(server),
+                &crate::test_support::direct_spec(server),
                 Some(server.id),
                 cx,
             )
@@ -391,4 +394,79 @@ async fn directory_background_attempt_does_not_record_foreground_recent_use(
     })
     .unwrap();
     assert_eq!(opened.borrow().len(), 1);
+}
+
+fn via(bastion: &Profile, name: &str) -> Profile {
+    let mut inner = profile(name);
+    inner.jump_hosts =
+        vec![nocterm_connections_model::jump_route::JumpHostEntry::Profile(bastion.id)];
+    inner
+}
+
+#[gpui_kit::test]
+async fn opening_a_connection_with_a_jump_host_passes_the_resolved_route(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
+    let mut bastion = profile("Bastion");
+    bastion.target = Target::new("ops", "bastion.example", 2222);
+    bastion.auth = Auth::Password;
+    let inner = via(&bastion, "Inner");
+    let connections = installed.connections().clone();
+    for saved in [&bastion, &inner] {
+        connections
+            .update(cx, |connections, cx| {
+                connections.save_profile(saved.clone(), cx)
+            })
+            .await
+            .unwrap();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        let directory = Directory::new(installed.clone());
+        assert!(directory.open(&inner.id.to_string(), &workspace.downgrade(), window, cx));
+    })
+    .unwrap();
+    let opened = opened.borrow();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].target, inner.target);
+    assert_eq!(
+        opened[0].jumps,
+        [nocterm_session::ResolvedJump {
+            host: nocterm_session::JumpHost {
+                target: bastion.target.clone(),
+                auth: Auth::Password,
+            },
+            credential: None,
+        }]
+    );
+}
+
+#[gpui_kit::test]
+async fn a_connection_whose_jump_host_was_deleted_opens_nothing_and_says_why(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
+    let bastion = profile("Bastion");
+    let inner = via(&bastion, "Inner");
+    // The bastion is never saved, as if it had been deleted.
+    installed
+        .connections()
+        .clone()
+        .update(cx, |connections, cx| {
+            connections.save_profile(inner.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let directory = Directory::new(installed.clone());
+        let id = inner.id.to_string();
+        assert!(!directory.open(&id, &workspace.downgrade(), window, cx));
+        assert_eq!(
+            directory.open_background(&id, &workspace.downgrade(), window, cx),
+            None
+        );
+        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
+    })
+    .unwrap();
+    assert!(opened.borrow().is_empty());
 }

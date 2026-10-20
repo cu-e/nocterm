@@ -20,7 +20,10 @@ use nocterm_session::{Auth, Target};
 use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{OpenVault, SessionSpec, Workspace};
 
-use crate::{Installed, connect, open_editor, session_intents::spec_for_recent};
+use crate::{
+    Installed, connect, open_editor,
+    session_intents::{recent_label, report_route_error, spec_for_recent},
+};
 
 const KEY_CONTEXT: &str = "QuickConnect";
 
@@ -103,7 +106,13 @@ impl NewTabMenu {
     }
 
     fn open_recent(&mut self, recent: &Recent, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = spec_for_recent(&self.installed, recent, cx);
+        let spec = match spec_for_recent(&self.installed, recent, cx) {
+            Ok(spec) => spec,
+            Err(error) => {
+                report_route_error(&error, window, cx);
+                return;
+            }
+        };
         connect(
             &self.installed,
             &self.workspace,
@@ -129,10 +138,10 @@ impl NewTabMenu {
 
     fn render_recents(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let connections = self.installed.connections().read(cx);
-        let recents: Vec<(Recent, SessionSpec)> = connections
+        let recents: Vec<(Recent, (SharedString, Target))> = connections
             .recents(cx)
             .iter()
-            .map(|recent| (recent.clone(), spec_for_recent(&self.installed, recent, cx)))
+            .map(|recent| (recent.clone(), recent_label(&self.installed, recent, cx)))
             .collect();
         let theme = cx.theme();
         let muted = theme.muted_foreground;
@@ -149,47 +158,52 @@ impl NewTabMenu {
 
         v_flex()
             .gap_px()
-            .children(recents.into_iter().enumerate().map(|(ix, (recent, spec))| {
-                let destination = spec.target.to_string();
-                let saved = recent.profile.is_some();
-                h_flex()
-                    .id(("recent", ix))
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded(theme.radius)
-                    .cursor_pointer()
-                    .hover(|row| row.bg(hover))
-                    .child(
-                        Icon::new(if saved {
-                            IconName::Server
-                        } else {
-                            IconName::Clock
-                        })
-                        .small()
-                        .text_color(muted),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .child(spec.title.clone()),
-                    )
-                    .when(saved, |row| {
-                        row.child(
-                            div()
-                                .text_xs()
-                                .text_color(muted)
-                                .truncate()
-                                .child(destination),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.open_recent(&recent, window, cx);
-                    }))
-            }))
+            .children(
+                recents
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (recent, (title, target)))| {
+                        let destination = target.to_string();
+                        let saved = recent.profile.is_some();
+                        h_flex()
+                            .id(("recent", ix))
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded(theme.radius)
+                            .cursor_pointer()
+                            .hover(|row| row.bg(hover))
+                            .child(
+                                Icon::new(if saved {
+                                    IconName::Server
+                                } else {
+                                    IconName::Clock
+                                })
+                                .small()
+                                .text_color(muted),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .child(title.clone()),
+                            )
+                            .when(saved, |row| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .truncate()
+                                        .child(destination),
+                                )
+                            })
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.open_recent(&recent, window, cx);
+                            }))
+                    }),
+            )
             .into_any_element()
     }
 }

@@ -102,7 +102,7 @@ impl Scene {
         (window, workspace)
     }
     fn spec(&self) -> SessionSpec {
-        crate::spec_for_profile(&self.profile)
+        crate::test_support::direct_spec(&self.profile)
     }
     fn add(
         &self,

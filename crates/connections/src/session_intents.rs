@@ -1,10 +1,20 @@
 //! Feature-owned conversion and foreground open intent; background routes skip recents.
 use crate::Installed;
-use gpui_kit::{App, WeakEntity, Window};
-use nocterm_connections_model::profiles::{Profile, ProfileId, Recent};
+use gpui_kit::{App, SharedString, WeakEntity, Window};
+use nocterm_connections_model::{
+    jump_route::{JumpRouteError, resolve_jump_route},
+    profiles::{Profile, ProfileId, Profiles, Recent},
+};
+use nocterm_session::Target;
 use nocterm_workspace::{SessionSpec, Workspace};
-pub fn spec_for_profile(profile: &Profile) -> SessionSpec {
-    SessionSpec {
+/// The session to open for `profile`, with its jump hosts resolved against
+/// `profiles`. Fails when a jump host is gone, loops back, or the route is too long.
+pub fn spec_for_profile(
+    profile: &Profile,
+    profiles: &Profiles,
+) -> Result<SessionSpec, JumpRouteError> {
+    let jumps = resolve_jump_route(profiles, profile)?;
+    Ok(SessionSpec {
         profile: Some(profile.id.to_string().into()),
         options: profile.options.clone(),
         title: profile.name.clone().into(),
@@ -12,16 +22,32 @@ pub fn spec_for_profile(profile: &Profile) -> SessionSpec {
         auth: profile.auth.clone(),
         credential: profile.credential,
         launch: profile.launch.clone(),
-        jumps: Vec::new(),
-    }
+        jumps,
+    })
 }
-pub(crate) fn spec_for_recent(installed: &Installed, recent: &Recent, cx: &App) -> SessionSpec {
+/// What a recent entry shows in the menu: its title and destination.
+pub(crate) fn recent_label(
+    installed: &Installed,
+    recent: &Recent,
+    cx: &App,
+) -> (SharedString, Target) {
     match recent
         .profile
         .and_then(|id| installed.connections().read(cx).profiles(cx).get(id))
     {
-        Some(profile) => spec_for_profile(profile),
-        None => SessionSpec {
+        Some(profile) => (profile.name.clone().into(), profile.target.clone()),
+        None => (recent.target.to_string().into(), recent.target.clone()),
+    }
+}
+pub(crate) fn spec_for_recent(
+    installed: &Installed,
+    recent: &Recent,
+    cx: &App,
+) -> Result<SessionSpec, JumpRouteError> {
+    let profiles = installed.connections().read(cx).profiles(cx);
+    match recent.profile.and_then(|id| profiles.get(id)) {
+        Some(profile) => spec_for_profile(profile, profiles),
+        None => Ok(SessionSpec {
             profile: None,
             options: recent.options.clone(),
             title: recent.target.to_string().into(),
@@ -30,7 +56,38 @@ pub(crate) fn spec_for_recent(installed: &Installed, recent: &Recent, cx: &App) 
             credential: recent.credential,
             launch: recent.launch.clone(),
             jumps: Vec::new(),
-        },
+        }),
+    }
+}
+/// Tells the user why a connection could not be opened.
+pub(crate) fn report_route_error(error: &JumpRouteError, window: &mut Window, cx: &mut App) {
+    nocterm_ui::notice::error(
+        window,
+        cx,
+        "connection-route",
+        "Could not open connection",
+        error.to_string(),
+    );
+}
+/// Opens a saved connection in the foreground, or reports why its route cannot
+/// be resolved and returns false.
+pub(crate) fn open_profile(
+    installed: &Installed,
+    workspace: &WeakEntity<Workspace>,
+    profile: &Profile,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let spec = spec_for_profile(profile, installed.connections().read(cx).profiles(cx));
+    match spec {
+        Ok(spec) => {
+            connect(installed, workspace, spec, Some(profile.id), window, cx);
+            true
+        }
+        Err(error) => {
+            report_route_error(&error, window, cx);
+            false
+        }
     }
 }
 /// Records the foreground intent before asking the existing workspace session factory.

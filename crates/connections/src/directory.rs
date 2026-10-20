@@ -4,7 +4,11 @@ use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, Workspace};
 
 use std::collections::HashSet;
 
-use crate::{Installed, connect, spec_for_profile};
+use crate::{
+    Installed,
+    session_intents::{open_profile, report_route_error},
+    spec_for_profile,
+};
 
 pub(crate) struct Directory {
     installed: Installed,
@@ -63,15 +67,7 @@ impl ConnectionDirectory for Directory {
         let Some(profile) = self.profile(id, cx) else {
             return false;
         };
-        connect(
-            &self.installed,
-            workspace,
-            spec_for_profile(&profile),
-            Some(profile.id),
-            window,
-            cx,
-        );
-        true
+        open_profile(&self.installed, workspace, &profile, window, cx)
     }
 
     fn open_background(
@@ -81,7 +77,15 @@ impl ConnectionDirectory for Directory {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EntityId> {
-        let spec = spec_for_profile(&self.profile(id, cx)?);
+        let profile = self.profile(id, cx)?;
+        let spec = spec_for_profile(&profile, self.installed.connections().read(cx).profiles(cx));
+        let spec = match spec {
+            Ok(spec) => spec,
+            Err(error) => {
+                report_route_error(&error, window, cx);
+                return None;
+            }
+        };
         workspace
             .update(cx, |workspace, cx| {
                 workspace.open_background_session(spec, window, cx)
