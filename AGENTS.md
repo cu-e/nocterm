@@ -7,13 +7,14 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
-- Run every Cargo command with `CARGO_BUILD_JOBS=1` and serialize top-level Cargo
-  commands, including those from other agents, to stay within available memory.
+- Run every Cargo command with `CARGO_BUILD_JOBS=2` and serialize top-level Cargo
+  commands, including those from other agents, to stay within available memory:
+  prefix them with `.claude/hooks/cargo-serial.sh`, which does both.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
-  growing file into child modules by responsibility instead of adding to it. Never raise an
-  entry in `xtask/oversized-files.toml`.
+  growing file into child modules by responsibility instead of adding to it. Never add an
+  entry to `xtask/oversized-files.toml`.
 
 ## Read first
 
@@ -46,8 +47,8 @@ Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
   uses `nocterm_core::persist::{WriteQueue, WriteGate, ShutdownDeadline}`
   ([ADR 0004](docs/adr/0004-write-queue.md)).
 - Atomic files: `nocterm_core::fs::{write_private_atomic, create_private,
-  AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
-  save_preserving}` for configuration. Check their symlink and format semantics
+AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
+save_preserving}` for configuration. Check their symlink and format semantics
   before reuse ([ADR 0015](docs/adr/0015-private-file-publication.md)).
 - Shutdown, link-safe filesystem traversal and test fakes: inspect existing
   implementations before adding one; propose shared extraction for missing reuse.
@@ -113,12 +114,12 @@ errors. See [architecture guardrails](docs/architecture/guardrails.md) and
 
 Non-trivial work goes through four stages. Each stage is a subagent in `.claude/agents/`; the main session orchestrates (run it with `/feature <task>`).
 
-| # | Stage     | Agent         | Writes code | Output                                             |
-| - | --------- | ------------- | ----------- | -------------------------------------------------- |
-| 1 | Design    | `architect`   | no          | plan: files, steps, risks, test strategy           |
-| 2 | Build     | `implementer` | yes         | code + tests on a feature branch                   |
-| 3 | Verify    | `tester`      | tests only  | test run results, added coverage, reproduced bugs  |
-| 4 | Review    | `reviewer`    | no          | findings ranked by severity, verdict               |
+| #   | Stage  | Agent         | Writes code | Output                                            |
+| --- | ------ | ------------- | ----------- | ------------------------------------------------- |
+| 1   | Design | `architect`   | plan only   | plan: files, steps, risks, test strategy          |
+| 2   | Build  | `implementer` | yes         | code + tests on a feature branch                  |
+| 3   | Verify | `tester`      | tests only  | test run results, added coverage, reproduced bugs |
+| 4   | Review | `reviewer`    | plan only   | findings ranked by severity, verdict              |
 
 Gates:
 
@@ -127,6 +128,13 @@ Gates:
 - **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
 
 Trivial changes (typos, one-line fixes, docs) skip the pipeline.
+
+`/feature` routes a task to a workflow skill (`crate-new`, `crate-extend`,
+`refactor`, `crate-split`, `debt-paydown`) built from procedure skills that each
+agent preloads. Stages share decisions through `.claude/plans/<slug>/`
+([plan contract](.claude/skills/feature/plan-bus.md)). Committed hooks in
+`.claude/settings.json` enforce the hard rules and stage roles
+([ADR 0059](docs/adr/0059-architecture-procedure-skills.md)); CI stays authoritative.
 Pass the target branch and verification scope to every stage. Review includes
 uncommitted changes as well as commits so it can finish before commit authorization.
 
@@ -147,62 +155,14 @@ still require the user's request.
 
 ## Scopes
 
-Commit scopes mirror top-level modules. Add a row when a module appears.
-
-| Scope  | Covers              |
-| ------ | ------------------- |
-| `deps` | dependency updates  |
-| `core` | paths and persistence |
-| `design` | design tokens and themes |
-| `themes` | Zed theme import, catalogue and installation |
-| `settings` | settings schema and storage |
-| `store` | common persistence service and shutdown coordination |
-| `session` | transport, filesystem and native program contracts |
-| `ssh` | SSH and SFTP adapter |
-| `vt` | terminal emulation and input encoding |
-| `ui` | shared UI theme, assets and settings globals |
-| `workspace` | window, tabs, panels and actions |
-| `terminal-model` | pure terminal display settings and validation |
-| `terminal` | terminal model, view and settings pages |
-| `connections` | connection UI, editor inputs and detected facts |
-| `connections-store` | ordered profile/recent publication and committed authority |
-| `connections-model` | connection formats, rules and capability ports |
-| `connections-io` | native connection files, values and observations |
-| `settings-ui` | settings tab |
-| `keymap` | default and user key bindings |
-| `keymap-ui` | keymap settings page |
-| `ai` | agent registry, thread model, context and tool protocol |
-| `acp` | ACP client and local MCP bridge adapter |
-| `agent-runtime` | agent connections, admission and chat documents |
-| `agent-storage` | history and preferences filesystem repositories |
-| `image-codec` | bounded native image inspection and preview encoding |
-| `agent` | agent panel, threads and composer |
-| `explorer` | pure Explorer indexing and opener rules |
-| `files` | local/remote Explorer and transfer UI |
-| `local` | local PTY, shell integration and external program opening |
-| `localfs` | native filesystem capabilities |
-| `transfers` | pure transfer requests, progress and service contract |
-| `transfer-runtime` | bounded streaming transfer execution over injected ports |
-| `monitor` | host resource collection, parsing and history |
-| `monitor-ui` | status bar monitor, details popup and settings page |
-| `snippets` | snippet library, validation and connection bindings |
-| `snippets-ui` | contextual snippet panel and highlighted editor |
-| `snippets-store` | checked snippet library publication |
-| `snippets-io` | native snippet documents and draft identities |
-| `containers` | container engine CLI, listing and actions |
-| `containers-ui` | containers panel, logs and shell tabs |
-| `vault` | encrypted format and credential rules |
-| `vault-store` | vault files, entropy and bounded lifecycle worker |
-| `vault-ui` | vault settings and authentication bridge |
-| `device-unlock` | native authenticated vault key release |
-| `vault-broker` | optional privileged Linux fingerprint broker |
-| `app` | application composition and keymap |
-| `xtask` | generation and architecture checks |
+A commit scope is the crate directory name under `crates/` (`agent-runtime`,
+`connections-model`, …). Special scopes: `app` (root `src/`), `xtask`, `deps`.
 
 ## Commands
 
 ```sh
-export CARGO_BUILD_JOBS=1
+# Agents prefix each cargo command with .claude/hooks/cargo-serial.sh.
+export CARGO_BUILD_JOBS=2
 cargo run
 cargo fmt --all --check
 cargo build --workspace --all-targets
@@ -212,6 +172,10 @@ NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
+cargo xtask survey <package> [--json] [--type <Type>]
+.claude/hooks/cargo-serial.sh cargo <command>
+python3 scripts/test-claude-hooks.py
+python3 scripts/check-claude-config.py
 cargo machete --skip-target-dir
 cargo doc --workspace --no-deps -j1
 python3 scripts/generate-license-notices.py --check-inputs
