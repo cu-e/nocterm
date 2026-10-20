@@ -13,6 +13,7 @@
 //! stamps change only after writer acceptance; final work reads no App and joins
 //! captured admission failures with publication failures. Shared cleanup diagnostics
 //! retain the original typed AgentError through standard source traversal.
+use nocterm_ai::agents::UsageMeta;
 use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
 use nocterm_ai::model::controls::ConfigOption;
 use nocterm_ai::model::session::SessionUpdate;
@@ -273,7 +274,7 @@ impl Runtime {
             return;
         };
         self.usage
-            .refresh(nocterm_ai::usage::UsageAgent::from(agent.launch()), cx);
+            .refresh(nocterm_ai::usage::UsageAgent::new(&agent), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {
@@ -467,6 +468,20 @@ impl Runtime {
         }
         true
     }
+    /// The plan limit `update` carries where the launched agent's profile
+    /// says it attaches them.
+    fn limit_in(
+        &self,
+        launch: &AgentLaunch,
+        update: &nocterm_ai::model::usage::ContextUsage,
+    ) -> Option<nocterm_ai::usage::RateLimit> {
+        let profile = self.services.agents.catalog().for_launch(launch)?;
+        match profile.usage().meta() {
+            UsageMeta::RateLimitRecord { key } => nocterm_ai::usage::rate_limit_record(update, key),
+            UsageMeta::None => None,
+        }
+    }
+
     fn event(&mut self, key: u64, serial: u64, event: AgentEvent, cx: &mut Context<Self>) {
         if let AgentEvent::Barrier(ack) = event {
             let _ = ack.send(());
@@ -483,7 +498,7 @@ impl Runtime {
             AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
                 if let SessionUpdate::UsageUpdate(update) = &notification.update
-                    && let Some(limit) = nocterm_ai::usage::claude_limit(update)
+                    && let Some(limit) = self.limit_in(&connection.launch, update)
                 {
                     let agent = connection.launch.id.clone();
                     self.usage.merge(agent, limit);

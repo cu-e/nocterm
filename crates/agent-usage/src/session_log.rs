@@ -1,4 +1,4 @@
-//! Bounded native reads of provider account limits; the runtime schedules them.
+//! Codex's plan limits, read from the tail of its newest session log.
 mod parser;
 #[cfg(test)]
 mod tests;
@@ -13,7 +13,8 @@ use std::{
 
 const CODEX_TAIL_BYTES: u64 = 256 * 1024;
 
-/// Reads Codex's latest account report under a home supplied by composition.
+/// Reads Codex's latest account report under a home supplied by composition,
+/// for whichever agent the runtime asks about.
 pub struct CodexUsageReader {
     home: Option<PathBuf>,
 }
@@ -25,14 +26,11 @@ impl CodexUsageReader {
 impl AccountUsageSource for CodexUsageReader {
     fn read(
         &self,
-        agent: UsageAgent,
+        _: UsageAgent,
     ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
         let home = self.home.clone();
         Box::pin(async move {
-            let codex = std::iter::once(&agent.command)
-                .chain(&agent.args)
-                .any(|part| part.contains("codex"));
-            match home.filter(|_| codex) {
+            match home {
                 Some(home) => read_codex_limits(&home),
                 None => Ok(None),
             }

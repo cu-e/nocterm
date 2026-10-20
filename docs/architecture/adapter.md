@@ -135,21 +135,22 @@ See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 ## Agent account usage
 
-Composition combines the account sources with AI's `UsageSources`, which returns
-the first report among the sources that recognize a launch.
+`nocterm_agent_usage::native_sources()` resolves the readers' locations once and
+registers one reader per `AccountUsage` kind in AI's `UsageSources`. The runtime
+asks with the agent's kind from its profile, so readers never inspect launches and
+agents without a profile or kind are never read.
 
-`nocterm-agent-usage::ClaudeUsageReader` serves Claude launches. Composition
+`nocterm-agent-usage::ClaudeUsageReader` serves `OAuthAccount` agents. Composition
 supplies Claude Code's configuration directory (`CLAUDE_CONFIG_DIR` or
 `~/.claude`); the reader takes the unexpired OAuth access token from
 `.credentials.json`, requests the account's plan limits from Anthropic's API with a
 10-second timeout and a 1 MiB response bound, and converts percentage windows to
 shares. Missing credentials, an expired token or a rejected request produce no
-report; it never refreshes or writes credentials. The adapter's `_claude/rateLimit`
-updates still merge into the same limits between reads.
+report; it never refreshes or writes credentials. Rate-limit records the agent
+attaches to usage updates still merge into the same limits between reads.
 
-`nocterm-agent-storage::CodexUsageReader` implements AI's `AccountUsageSource`.
-Composition supplies its optional home directory; unsupported launches never touch
-that path. The reader selects the newest lexical date and log, scans at most the
+`nocterm-agent-usage::CodexUsageReader` serves `SessionLog` agents. Composition
+supplies its optional home directory (`CODEX_HOME` or `~/.codex`). The reader selects the newest lexical date and log, scans at most the
 last 256 KiB and returns the last usable account report. Missing or malformed reports
 produce no replacement; physical failures preserve typed I/O causes.
 AI owns typed shared usage causes and category-specific constructors; native readers

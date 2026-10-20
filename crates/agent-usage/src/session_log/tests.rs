@@ -52,21 +52,14 @@ fn the_newest_codex_log_is_read() {
 fn codex() -> UsageAgent {
     UsageAgent {
         id: "custom".into(),
-        command: "npx".into(),
-        args: vec!["codex".into()],
+        account: nocterm_ai::agents::AccountUsage::SessionLog,
     }
 }
 
 #[test]
-fn unsupported_launch_does_not_access_the_configured_account_path() {
+fn an_unset_home_reports_nothing_and_an_unreadable_one_fails() {
     let file = tempfile::NamedTempFile::new().unwrap();
     let reader = CodexUsageReader::new(Some(file.path().to_owned()));
-    let other = UsageAgent {
-        id: "codex".into(),
-        command: "claude".into(),
-        args: Vec::new(),
-    };
-    assert!(block_on(reader.read(other)).unwrap().is_none());
     assert!(
         block_on(CodexUsageReader::new(None).read(codex()))
             .unwrap()

@@ -12,7 +12,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BODY_BYTES: u64 = 1024 * 1024;
 
 /// Reads Claude's plan limits under a configuration directory supplied by
-/// composition.
+/// composition, for whichever agent the runtime asks about.
 pub struct ClaudeUsageReader {
     config: Option<PathBuf>,
 }
@@ -26,15 +26,11 @@ impl ClaudeUsageReader {
 impl AccountUsageSource for ClaudeUsageReader {
     fn read(
         &self,
-        agent: UsageAgent,
+        _: UsageAgent,
     ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
         let config = self.config.clone();
         Box::pin(async move {
-            let claude = agent.id == "claude"
-                || std::iter::once(&agent.command)
-                    .chain(&agent.args)
-                    .any(|part| part.contains("claude-agent-acp"));
-            match config.filter(|_| claude) {
+            match config {
                 Some(config) => match token(&config.join(".credentials.json"))? {
                     Some(token) => fetch(&token),
                     None => Ok(None),
@@ -101,24 +97,24 @@ mod tests {
     use super::{ClaudeUsageReader, token};
     use nocterm_ai::usage::{AccountUsageSource as _, UsageAgent};
 
-    fn agent(id: &str) -> UsageAgent {
+    fn agent() -> UsageAgent {
         UsageAgent {
-            id: id.into(),
-            command: "npx".into(),
-            args: Vec::new(),
+            id: "claude".into(),
+            account: nocterm_ai::agents::AccountUsage::OAuthAccount,
         }
     }
 
     #[test]
-    fn other_agents_and_missing_credentials_report_nothing() {
+    fn missing_credentials_report_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let reader = ClaudeUsageReader::new(Some(dir.path().to_owned()));
-        let read = |id| futures::executor::block_on(reader.read(agent(id)));
-        assert_eq!(read("codex").unwrap(), None);
-        assert_eq!(read("claude").unwrap(), None);
+        assert_eq!(
+            futures::executor::block_on(reader.read(agent())).unwrap(),
+            None
+        );
         let unconfigured = ClaudeUsageReader::new(None);
         assert_eq!(
-            futures::executor::block_on(unconfigured.read(agent("claude"))).unwrap(),
+            futures::executor::block_on(unconfigured.read(agent())).unwrap(),
             None
         );
     }

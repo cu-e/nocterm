@@ -1,24 +1,26 @@
 //! Account usage capabilities, without native paths or provider log formats.
 use super::RateLimit;
+use crate::agents::AccountUsage;
 use futures::future::BoxFuture;
 use nocterm_core::{SharedCause, SharedError};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The launch identity needed to select an account source; environment is omitted.
+/// The agent whose limits to read and how its account reports them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageAgent {
     pub id: String,
-    pub command: String,
-    pub args: Vec<String>,
+    pub account: AccountUsage,
 }
 
-impl From<&crate::AgentLaunch> for UsageAgent {
-    fn from(launch: &crate::AgentLaunch) -> Self {
+impl UsageAgent {
+    /// An agent without a profile reports limits with usage updates only.
+    pub fn new(agent: &crate::agents::AvailableAgent) -> Self {
         Self {
-            id: launch.id.clone(),
-            command: launch.command.clone(),
-            args: launch.args.clone(),
+            id: agent.id().to_owned(),
+            account: agent
+                .profile()
+                .map_or(AccountUsage::None, |profile| profile.usage().account()),
         }
     }
 }
@@ -91,14 +93,18 @@ pub trait AccountUsageSource: Send + Sync {
     ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>>;
 }
 
-/// Several account sources, each serving the agents it recognizes: the
-/// first report wins, and the first failure is returned only when no source
-/// reports.
-pub struct UsageSources(Vec<Arc<dyn AccountUsageSource>>);
+/// One account source per way of reporting limits; agents whose way has no
+/// source report nothing.
+#[derive(Default)]
+pub struct UsageSources(Vec<(AccountUsage, Arc<dyn AccountUsageSource>)>);
 
 impl UsageSources {
-    pub fn new(sources: Vec<Arc<dyn AccountUsageSource>>) -> Self {
-        Self(sources)
+    /// Reads `account` agents' limits from `source`, replacing an earlier one.
+    #[must_use]
+    pub fn with(mut self, account: AccountUsage, source: Arc<dyn AccountUsageSource>) -> Self {
+        self.0.retain(|(kind, _)| *kind != account);
+        self.0.push((account, source));
+        self
     }
 }
 
@@ -107,23 +113,9 @@ impl AccountUsageSource for UsageSources {
         &self,
         agent: UsageAgent,
     ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
-        let reads: Vec<_> = self
-            .0
-            .iter()
-            .map(|source| source.read(agent.clone()))
-            .collect();
-        Box::pin(async move {
-            let mut failure = None;
-            for read in reads {
-                match read.await {
-                    Ok(Some(limits)) => return Ok(Some(limits)),
-                    Ok(None) => {}
-                    Err(error) => {
-                        failure.get_or_insert(error);
-                    }
-                }
-            }
-            failure.map_or(Ok(None), Err)
-        })
+        match self.0.iter().find(|(kind, _)| *kind == agent.account) {
+            Some((_, source)) => source.read(agent),
+            None => Box::pin(async { Ok(None) }),
+        }
     }
 }
