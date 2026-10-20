@@ -222,3 +222,61 @@ fn eight_hops_are_accepted_and_nine_are_too_long() {
         Err(JumpRouteError::TooLong { limit: 8 })
     );
 }
+
+#[test]
+fn a_connection_reached_twice_by_the_route_is_not_a_cycle() {
+    let a = profile("a", "a.example", Vec::new());
+    let b = profile("b", "b.example", vec![via("a")]);
+    let c = profile("c", "c.example", vec![via("a")]);
+    let d = profile("d", "d.example", vec![via("b"), via("c")]);
+    let route = resolve_jump_route(&saved(vec![a, b, c, d.clone()]), &d).unwrap();
+    assert_eq!(
+        hosts(&route),
+        ["a.example", "b.example", "a.example", "c.example"]
+    );
+}
+
+#[test]
+fn hops_pulled_in_by_nested_connections_count_toward_the_limit() {
+    let chain: Vec<Profile> = (0..10)
+        .map(|n| {
+            let jumps = if n == 0 {
+                Vec::new()
+            } else {
+                vec![via(&format!("h{}", n - 1))]
+            };
+            profile(&format!("h{n}"), &format!("h{n}.example"), jumps)
+        })
+        .collect();
+    let destination = profile("db", "10.0.0.5", vec![via("h9")]);
+    let mut all = chain;
+    all.push(destination.clone());
+    assert_eq!(
+        resolve_jump_route(&saved(all), &destination),
+        Err(JumpRouteError::TooLong { limit: 8 })
+    );
+}
+
+#[test]
+fn a_cycle_behind_a_nested_connection_is_found_from_the_destination() {
+    let b = profile("b", "b.example", vec![via("c")]);
+    let c = profile("c", "c.example", vec![via("b")]);
+    let destination = profile("db", "10.0.0.5", vec![via("b")]);
+    assert!(matches!(
+        resolve_jump_route(&saved(vec![b, c, destination.clone()]), &destination),
+        Err(JumpRouteError::Cycle { .. })
+    ));
+}
+
+#[test]
+fn a_missing_connection_behind_a_nested_one_names_the_nested_referrer() {
+    let b = profile("b", "b.example", vec![via("gone")]);
+    let destination = profile("db", "10.0.0.5", vec![via("b")]);
+    assert_eq!(
+        resolve_jump_route(&saved(vec![b, destination.clone()]), &destination),
+        Err(JumpRouteError::MissingProfile {
+            referrer: "b".into(),
+            missing: profile_id_for("gone")
+        })
+    );
+}
