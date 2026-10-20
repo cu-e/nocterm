@@ -523,3 +523,35 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     .unwrap();
     complete_active(&f, cx);
 }
+
+#[gpui_kit::test]
+fn code_blocks_in_replies_copy_their_code(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let code = "export function debounce() {\n  return null;\n}";
+    thread.update(cx, |thread, cx| {
+        restore_entries(
+            &f,
+            thread,
+            vec![
+                Entry::User(vec![Content::text("Show debounce")]),
+                Entry::Agent(format!("Here it is:\n\n```typescript\n{code}\n```\n")),
+            ],
+            cx,
+        );
+        for index in 0..thread.transcript().entries.len() {
+            thread.mark_dirty(index);
+        }
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|cx| cx.set_reduce_motion(true));
+    settle(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("copy", cx);
+        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), code);
+    })
+    .unwrap();
+}

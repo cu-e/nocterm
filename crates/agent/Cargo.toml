@@ -17,7 +17,24 @@ nocterm-store.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
-gpui-kit.workspace = true
+# Fenced code in chat replies: the languages agents write most.
+gpui-kit = { workspace = true, features = [
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
 futures.workspace = true
 async-channel.workspace = true
 serde.workspace = true

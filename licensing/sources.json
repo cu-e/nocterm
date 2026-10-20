@@ -597,5 +597,69 @@
     "path": "upstream/tree-sitter-toml-ng-0.7.0-LICENSE",
     "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE",
     "sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
+  },
+  {
+    "packages": [
+      "tree-sitter-cpp@0.23.4"
+    ],
+    "path": "upstream/tree-sitter-cpp-0.23.4-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "packages": [
+      "tree-sitter-css@0.23.2"
+    ],
+    "path": "upstream/tree-sitter-css-0.23.2-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/c0d581e32d183a536731ed6c3a72758b27e20411/LICENSE",
+    "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78"
+  },
+  {
+    "packages": [
+      "tree-sitter-diff@0.1.0"
+    ],
+    "path": "upstream/tree-sitter-diff-0.1.0-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-diff/4867e8470e1b0ad7364c4e3ffab762c361bbb635/LICENSE",
+    "sha256": "bb98faf5a86e9458536a6c745e02b53775d01066f1e51dda4ae220a3c0b050f4"
+  },
+  {
+    "packages": [
+      "tree-sitter-go@0.23.4"
+    ],
+    "path": "upstream/tree-sitter-go-0.23.4-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/3c3775faa968158a8b4ac190a7fda867fd5fb748/LICENSE",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "packages": [
+      "tree-sitter-html@0.23.2"
+    ],
+    "path": "upstream/tree-sitter-html-0.23.2-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/5a5ca8551a179998360b4a4ca2c0f366a35acc03/LICENSE",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "packages": [
+      "tree-sitter-java@0.23.5"
+    ],
+    "path": "upstream/tree-sitter-java-0.23.5-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/94703d5a6bed02b98e438d7cad1136c01a60ba2c/LICENSE",
+    "sha256": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7"
+  },
+  {
+    "packages": [
+      "tree-sitter-javascript@0.23.1"
+    ],
+    "path": "upstream/tree-sitter-javascript-0.23.1-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/3a837b6f3658ca3618f2022f8707e29739c91364/LICENSE",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+  },
+  {
+    "packages": [
+      "tree-sitter-typescript@0.23.2"
+    ],
+    "path": "upstream/tree-sitter-typescript-0.23.2-LICENSE",
+    "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
+    "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
   }
 ]
