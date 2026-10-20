@@ -672,3 +672,73 @@ fn remembering_on_a_jump_host_prompt_saves_nothing(cx: &mut TestAppContext) {
     assert!(store.records().is_empty());
     assert!(saved.lock().unwrap().is_empty());
 }
+
+#[gpui_kit::test]
+fn a_jump_host_prompt_does_not_borrow_the_destination_credential(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let inner = Target::new("app", "inner", 22);
+    let inner_id = store.insert(password(inner), "inner password");
+    let (terminal, _transport, _driver) =
+        jump_terminal(&store, Some(inner_id), None, &Arc::default(), cx);
+    let (prompt, mut answer) = hop_prompt(
+        password(bastion()),
+        PromptHop {
+            index: 0,
+            target: bastion(),
+        },
+    );
+    show(&terminal, prompt, cx);
+    cx.update(|cx| assert!(terminal.read(cx).prompt().is_some()));
+    assert!(futures::FutureExt::now_or_never(&mut answer).is_none());
+}
+
+#[gpui_kit::test]
+fn the_destination_prompt_never_borrows_a_jump_host_credential(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let bastion_id = store.insert(password(bastion()), "bastion password");
+    let (terminal, _transport, _driver) =
+        jump_terminal(&store, None, Some(bastion_id), &Arc::default(), cx);
+    let (reply, mut answer) = Reply::channel();
+    show(
+        &terminal,
+        Prompt::Secret {
+            request: password(Target::new("app", "inner", 22)),
+            hop: None,
+            reply,
+        },
+        cx,
+    );
+    cx.update(|cx| assert!(terminal.read(cx).prompt().is_some()));
+    assert!(futures::FutureExt::now_or_never(&mut answer).is_none());
+}
+
+#[gpui_kit::test]
+fn a_hop_position_beyond_the_route_is_not_answered_from_a_credential(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let bastion_id = store.insert(password(bastion()), "bastion password");
+    let (terminal, _transport, _driver) =
+        jump_terminal(&store, None, Some(bastion_id), &Arc::default(), cx);
+    let (prompt, mut answer) = hop_prompt(
+        password(bastion()),
+        PromptHop {
+            index: 3,
+            target: bastion(),
+        },
+    );
+    show(&terminal, prompt, cx);
+    cx.update(|cx| assert!(terminal.read(cx).prompt().is_some()));
+    assert!(futures::FutureExt::now_or_never(&mut answer).is_none());
+}
+
+#[gpui_kit::test]
+fn reconnecting_goes_through_the_same_jump_hosts(cx: &mut TestAppContext) {
+    let store = Arc::new(FakeStore::unlocked());
+    let (terminal, transport, _driver) = jump_terminal(&store, None, None, &Arc::default(), cx);
+    transport.queue(None, None);
+    cx.update(|cx| terminal.update(cx, |terminal, cx| terminal.reconnect(cx)));
+    cx.run_until_parked();
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].jumps, requests[1].jumps);
+    assert_eq!(requests[1].jumps.len(), 1);
+}
