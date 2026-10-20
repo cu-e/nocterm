@@ -5010,16 +5010,13 @@ dependencies = [
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-session",
- "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
- "nocterm-workspace-ports",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracing",
 ]
 
 [[package]]
