@@ -38,27 +38,28 @@ mod file_drag;
 pub mod host;
 mod item;
 mod local_terminal;
+mod open_on_host;
 mod panel;
 mod right_panel;
 mod tab_groups;
-mod terminal_errors;
-mod terminal_ports;
-pub use terminal_errors::{OpenOnHostError, TerminalCapability, TerminalError};
+pub use open_on_host::OpenOnHostError;
 mod workspace;
 
 pub use actions::*;
-pub use connection_directory::{ConnectionDirectory, ConnectionSummary};
+pub use connection_directory::ConnectionDirectory;
 pub use file_drag::{FileDrag, RemoteFileDrag};
 pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
-pub use item::{Item, ItemEvent, ItemHandle, SessionContext, TabState};
+pub use item::{Item, ItemEvent, ItemHandle, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
 pub use panel::{Panel, PanelHandle};
 pub use right_panel::{RightPanel, RightPanelEvent};
-pub use terminal_ports::{
-    ConnectionFactSession, ExpectedSession, FactSessionSnapshot, LiveCommandLease, LiveCommands,
-    RemoteReconnect, SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalEntry,
-    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
-    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+// The terminal and connection contracts live below the shell (ADR 0062).
+pub use nocterm_workspace_ports::{
+    ConnectionFactSession, ConnectionSummary, ExpectedSession, FactSessionSnapshot,
+    LiveCommandLease, LiveCommands, RemoteReconnect, SessionContext, SignInPrompt, SignInPrompts,
+    TerminalCapabilities, TerminalCapability, TerminalEntry, TerminalError, TerminalExecution,
+    TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource,
+    TextRequest, UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
     Deps, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace,

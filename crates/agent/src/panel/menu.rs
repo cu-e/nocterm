@@ -187,7 +187,7 @@ impl ConfigMenuRenderer {
         match kind {
             Some(MenuKind::Agents) => {
                 menu = menu.children(Self::agent_choices(
-                    &frame.settings,
+                    &frame.agents,
                     frame.last.as_deref(),
                     &frame.focus,
                     window,
@@ -256,16 +256,16 @@ impl ConfigMenuRenderer {
 
 impl ConfigMenuRenderer {
     fn agent_choices(
-        settings: &nocterm_ai::AiSettings,
+        agents: &nocterm_ai::AvailableAgents,
         last: Option<&str>,
         focus: &gpui_kit::FocusHandle,
         window: &gpui_kit::Window,
         cx: &mut Context<AgentPanel>,
     ) -> Vec<gpui_kit::AnyElement> {
-        nocterm_ai::AgentRegistry::new(settings)
+        agents
             .iter()
-            .map(|launch| {
-                let id = launch.id.clone();
+            .map(|agent| {
+                let id = agent.id().to_owned();
                 let shortcut = (last == Some(id.as_str()))
                     .then(|| {
                         gpui_kit::component::kbd::Kbd::binding_for_action_in(
@@ -277,8 +277,12 @@ impl ConfigMenuRenderer {
                     .flatten();
                 menu_row_with(
                     SharedString::from(format!("new-agent-{id}")),
-                    launch.name.clone(),
-                    Some(nocterm_ui::agent_icon(&id).small().into_any_element()),
+                    agent.name().to_owned(),
+                    Some(
+                        crate::agent_icon::agent_icon(agent.profile().copied())
+                            .small()
+                            .into_any_element(),
+                    ),
                     cx,
                 )
                 .children(shortcut)
@@ -408,7 +412,7 @@ pub(super) struct MenuFrame {
     thread: Option<gpui_kit::Entity<crate::thread::AgentThread>>,
     query_input: gpui_kit::component::input::Input,
     query: String,
-    settings: nocterm_ai::AiSettings,
+    agents: nocterm_ai::AvailableAgents,
     last: Option<String>,
     focus: gpui_kit::FocusHandle,
     favorites: nocterm_ai::favorites::AgentStateFile,
@@ -445,7 +449,7 @@ impl MenuFrame {
         thread: Option<gpui_kit::Entity<crate::thread::AgentThread>>,
         query_input: gpui_kit::component::input::Input,
         query: String,
-        settings: nocterm_ai::AiSettings,
+        agents: nocterm_ai::AvailableAgents,
         last: Option<String>,
         focus: gpui_kit::FocusHandle,
         favorites: nocterm_ai::favorites::AgentStateFile,
@@ -456,7 +460,7 @@ impl MenuFrame {
             thread,
             query_input,
             query,
-            settings,
+            agents,
             last,
             focus,
             favorites,

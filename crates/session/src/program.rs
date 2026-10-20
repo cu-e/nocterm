@@ -93,6 +93,7 @@ mod tests {
             size: PtySize::default(),
             connect_timeout: Duration::from_secs(1),
             keepalive_interval: None,
+            jumps: Vec::new(),
         }
     }
 

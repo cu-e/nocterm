@@ -152,10 +152,16 @@ fn runtime_with_usage_source(
 ) -> Entity<Runtime> {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        let agents = nocterm_agent_directory::AgentsHandle::new(
+            nocterm_agent_providers::catalog(),
+            settings.clone(),
+            cx,
+        );
         cx.new(|cx| {
             Runtime::new(
                 RuntimeServices {
                     settings,
+                    agents,
                     connector,
                     bridge: Arc::new(UnusedBridge),
                     storage,

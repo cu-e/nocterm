@@ -43,7 +43,7 @@ pub(super) fn collect(
         }
     }
     for (name, files) in implementations {
-        if files.len() > 4 {
+        if files.len() > super::MAX_IMPL_FILES {
             counts.set("impl_spread", &name, files.len());
         }
     }
@@ -63,7 +63,7 @@ fn record_fields(
         .iter()
         .filter(|field| !source::test_only(&field.attrs))
         .collect();
-    if fields.len() > 15 {
+    if fields.len() > super::MAX_FIELDS {
         counts.set("struct_fields", &name, fields.len());
     }
     if matches!(module.layer.as_str(), "feature" | "service") && !dtos.contains_key(&name) {

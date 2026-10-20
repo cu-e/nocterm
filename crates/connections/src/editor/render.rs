@@ -40,6 +40,7 @@ impl EditorSection {
         match self {
             Self::Connection => IconName::Server,
             Self::Authentication => IconName::KeyRound,
+            Self::JumpHosts => IconName::Cable,
             Self::Session => IconName::SquareTerminal,
             Self::Launch => IconName::Zap,
         }
@@ -63,6 +64,10 @@ impl Render for ConnectionEditor {
                 cx,
             ),
             EditorSection::Authentication => self.authentication.page(cx),
+            EditorSection::JumpHosts => {
+                let labels = self.jump_hosts.labels(&self.deps, cx);
+                self.jump_hosts.page(labels, cx)
+            }
             EditorSection::Session => {
                 vec![form::section(
                     "Session",

@@ -23,6 +23,7 @@ fn remote(installed: Installed, name: &str, cx: &mut TestAppContext) -> Entity<T
                     auth: Auth::Password,
                     launch: None,
                     credential: None,
+                    jumps: Vec::new(),
                 },
                 cx,
             )
@@ -228,7 +229,8 @@ fn original_installed_association_callback_exposes_its_native_leaf(cx: &mut Test
     let (reply, answer) = Reply::channel();
     assert!(block_on(driver.emit(Event::Prompt(Prompt::Secret {
         request: request.clone(),
-        reply
+        reply,
+        hop: None
     }))));
     cx.run_until_parked();
     cx.update(|cx| {

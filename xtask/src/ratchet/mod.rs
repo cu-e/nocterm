@@ -9,6 +9,11 @@ mod includes;
 mod metrics;
 mod source;
 mod symbols;
+pub(crate) use source::test_only;
+/// Production structs may have at most this many fields.
+pub(crate) const MAX_FIELDS: usize = 15;
+/// A local type may be implemented in at most this many source files.
+pub(crate) const MAX_IMPL_FILES: usize = 4;
 const IO_DEPENDENCIES: &[&str] = &[
     "reqwest",
     "gpui-pre-reqwest",

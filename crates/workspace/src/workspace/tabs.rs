@@ -251,8 +251,8 @@ impl Tabs {
     pub(super) fn active_session(&self) -> Option<SessionContext> {
         self.announced_session.clone()
     }
-    pub(super) fn connected_session(&self, target: &Target) -> Option<SessionContext> {
-        let matches = |session: &&SessionContext| session.connected && session.target == *target;
+    pub(super) fn connected_session(&self, host: &HostAddress) -> Option<SessionContext> {
+        let matches = |session: &&SessionContext| session.connected && session.reaches(host);
         self.active_entry()
             .and_then(|entry| entry.session.as_ref())
             .filter(matches)
@@ -264,7 +264,7 @@ impl Tabs {
             })
             .cloned()
     }
-    pub(super) fn session_spec_for(&self, target: &Target, cx: &App) -> Option<SessionSpec> {
+    pub(super) fn session_spec_for(&self, host: &HostAddress, cx: &App) -> Option<SessionSpec> {
         self.active_entry()
             .into_iter()
             .chain(self.entries.iter())
@@ -272,7 +272,7 @@ impl Tabs {
                 entry
                     .session
                     .as_ref()
-                    .is_some_and(|session| session.connected && session.target == *target)
+                    .is_some_and(|session| session.connected && session.reaches(host))
             })
             .find_map(|entry| entry.handle.session_spec(cx))
     }

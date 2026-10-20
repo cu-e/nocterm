@@ -459,6 +459,7 @@ fn command_completion_effect_observes_closed_state_and_retired_prompt_authority(
                             echo: false,
                         },
                         reply,
+                        hop: None,
                     }),
                     cx,
                 );

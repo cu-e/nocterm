@@ -1,6 +1,7 @@
 //! Agent contracts, neutral protocol records, bounded context rules and version-one history formats.
 //!
-//! Owns: neutral `model` records (the only agent vocabulary other crates see), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
+//! Owns: neutral `model` records (the only agent vocabulary other crates see), agent
+//! profiles, catalog and settings resolution (`agents`), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
 //! bounded history codecs and capability/storage ports.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
@@ -22,6 +23,8 @@
 //! No agent protocol SDK type appears in this crate; persisted records serialize as the
 //! version-one transcript JSON and `nocterm-acp` maps the SDK to them (ADR 0058).
 //! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
+//! No concrete agent is named here: built-in profiles are injected as an `AgentCatalog`.
+pub mod agents;
 pub mod approval;
 pub mod commands;
 pub mod connection;
@@ -33,7 +36,6 @@ pub mod images;
 pub mod mcp;
 pub mod metadata;
 pub mod redact;
-pub mod registry;
 pub mod sandbox;
 pub mod session;
 pub mod session_config;
@@ -45,12 +47,12 @@ pub mod tool_display;
 pub mod tools;
 pub mod usage;
 pub mod workspace;
+pub use agents::{AgentCatalog, AgentLaunch, AvailableAgents};
 pub use connection::*;
-pub use registry::{AgentLaunch, AgentRegistry};
 pub use settings::lifecycle::{AgentResourceSettings, AgentSessionSettings, InvalidResourceLimits};
 pub use settings::{
     AgentServerSettings, AgentValidationError, AiSettings, ApprovalPolicy, ApprovalSettings,
-    BUILTIN_AGENT_IDS, SandboxMode, validate_agent,
+    SandboxMode, validate_agent,
 };
 pub use tools::*;
 #[cfg(test)]

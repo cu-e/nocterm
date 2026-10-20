@@ -6,7 +6,7 @@ use std::{error::Error as _, io, path::PathBuf, sync::Arc};
 fn request() -> Request {
     Request::Upload(UploadRequest {
         sources: vec![PathBuf::from("selected.txt")],
-        target: Target::new("u", "h", 22),
+        host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
         destination: "/dest".into(),
         fs: Arc::new(InMemoryFs::default()),
         collisions: CollisionPolicy::Skip,

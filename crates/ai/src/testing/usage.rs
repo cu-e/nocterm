@@ -60,8 +60,7 @@ mod tests {
     fn agent() -> UsageAgent {
         UsageAgent {
             id: "account".into(),
-            command: "codex".into(),
-            args: vec![],
+            account: crate::agents::AccountUsage::SessionLog,
         }
     }
     #[test]

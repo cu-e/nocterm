@@ -1,4 +1,5 @@
 //! Text drafts and checked values; defaults and identifiers are supplied by callers.
+use crate::jump_route::JumpHostEntry;
 use nocterm_session::{
     Auth, CredentialId, CredentialIdParseError, DEFAULT_PORT, LaunchValidationError,
     SessionOptions, SessionOptionsError, ShellLaunch, Target,
@@ -26,6 +27,7 @@ pub enum ValidationField {
     Description,
     IconColor,
     Country,
+    JumpHosts,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +118,7 @@ pub struct ProfileDraft {
     pub options: SessionOptions,
     pub launch: LaunchDraft,
     pub appearance: AppearanceDraft,
+    pub jump_hosts: Vec<JumpHostEntry>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct EditorDefaults {
@@ -136,6 +139,7 @@ pub struct ValidatedProfile {
     pub icon: Option<String>,
     pub icon_color: Option<String>,
     pub country: Option<String>,
+    pub jump_hosts: Vec<JumpHostEntry>,
 }
 impl ValidatedProfile {
     /// Attach the supplied persistent identity without introducing entropy or UI rules.
@@ -153,6 +157,7 @@ impl ValidatedProfile {
             icon: self.icon,
             icon_color: self.icon_color,
             country: self.country,
+            jump_hosts: self.jump_hosts,
         }
     }
 }
@@ -184,6 +189,7 @@ impl ProfileDraft {
             icon: appearance.icon,
             icon_color: appearance.icon_color,
             country: appearance.country,
+            jump_hosts: self.jump_hosts.clone(),
         })
     }
 }

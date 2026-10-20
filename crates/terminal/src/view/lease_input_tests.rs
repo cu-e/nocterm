@@ -315,6 +315,7 @@ fn identical_sign_in_prompts_reject_the_original_secret_token(cx: &mut TestAppCo
                 echo: false,
             },
             reply: old_reply,
+            hop: None,
         }),
     );
     let original = cx.update(|cx| ports.prompts().unwrap().pending(cx).unwrap());
@@ -329,6 +330,7 @@ fn identical_sign_in_prompts_reject_the_original_secret_token(cx: &mut TestAppCo
                 echo: false,
             },
             reply,
+            hop: None,
         }),
     );
     let current = cx.update(|cx| ports.prompts().unwrap().pending(cx).unwrap());

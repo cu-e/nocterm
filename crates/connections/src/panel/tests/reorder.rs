@@ -17,6 +17,7 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     };
     let (a, b, c) = (
         profile("a", None),

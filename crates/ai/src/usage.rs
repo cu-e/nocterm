@@ -2,13 +2,13 @@
 //! limits of the account behind the agent.
 //!
 //! ACP reports the context window (`usage_update`) and, at the end of a turn,
-//! the session's token totals. Plan limits are not part of ACP: the Claude
-//! adapter attaches them to `usage_update` under `_claude/rateLimit`, and
-//! Codex writes them into session logs read through an injected account source.
+//! the session's token totals. Plan limits are not part of ACP: an agent's
+//! `UsageProfile` says whether it attaches them to `usage_update` metadata and
+//! which injected account source reads the full report.
 use crate::model::content::Content;
 
 mod source;
-pub use source::{AccountUsageSource, UsageAgent, UsageReadError};
+pub use source::{AccountUsageSource, UsageAgent, UsageReadError, UsageSources};
 
 use crate::{model::usage::ContextUsage, thread::Entry};
 
@@ -96,9 +96,10 @@ impl Limits {
     }
 }
 
-/// The plan limit the Claude adapter attached to `update`, if any.
-pub fn claude_limit(update: &ContextUsage) -> Option<RateLimit> {
-    let info = update.meta.as_ref()?.get("_claude/rateLimit")?;
+/// The plan limit an agent attached to `update` as a rate-limit record under
+/// `key` of its metadata, if any.
+pub fn rate_limit_record(update: &ContextUsage, key: &str) -> Option<RateLimit> {
+    let info = update.meta.as_ref()?.get(key)?;
     let window = match info.get("rateLimitType")?.as_str()? {
         "five_hour" => Window::FiveHour,
         "seven_day" => Window::Weekly,
@@ -188,9 +189,10 @@ mod tests {
     }
 
     #[test]
-    fn claude_limits_come_from_usage_metadata() {
-        let limit = claude_limit(&update(serde_json::json!({
-            "_claude/rateLimit": {
+    fn rate_limit_records_come_from_usage_metadata() {
+        let record = |update: &ContextUsage| rate_limit_record(update, "_alpha/rateLimit");
+        let limit = record(&update(serde_json::json!({
+            "_alpha/rateLimit": {
                 "status": "allowed_warning",
                 "rateLimitType": "five_hour",
                 "utilization": 0.82,
@@ -203,16 +205,60 @@ mod tests {
         assert_eq!(limit.resets_at, Some(1_791_588_105));
         assert!(!limit.reached);
 
-        let reached = claude_limit(&update(serde_json::json!({
-            "_claude/rateLimit": {"status": "rejected", "rateLimitType": "seven_day_opus"}
+        let reached = record(&update(serde_json::json!({
+            "_alpha/rateLimit": {"status": "rejected", "rateLimitType": "seven_day_opus"}
         })))
         .unwrap();
         assert_eq!(reached.window, Window::WeeklyModel("Opus".into()));
         assert_eq!(reached.used, None);
         assert!(reached.reached);
 
-        assert!(claude_limit(&ContextUsage::new(1, 2)).is_none());
-        assert!(claude_limit(&update(serde_json::json!({"other": 1}))).is_none());
+        assert!(record(&ContextUsage::new(1, 2)).is_none());
+        assert!(record(&update(serde_json::json!({"other": 1}))).is_none());
+    }
+
+    #[test]
+    fn usage_sources_read_each_agent_from_the_source_for_its_account() {
+        use crate::agents::AccountUsage;
+        use futures::future::BoxFuture;
+        use std::sync::Arc;
+        struct Fixed(Result<Option<Vec<RateLimit>>, UsageReadError>);
+        impl AccountUsageSource for Fixed {
+            fn read(
+                &self,
+                _: UsageAgent,
+            ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
+                let result = self.0.clone();
+                Box::pin(async move { result })
+            }
+        }
+        let report = vec![RateLimit {
+            window: Window::FiveHour,
+            used: Some(0.1),
+            resets_at: None,
+            reached: false,
+        }];
+        let failure =
+            || UsageReadError::fetch("https://example.test", std::io::Error::other("down"));
+        let sources = UsageSources::default()
+            .with(AccountUsage::OAuthAccount, Arc::new(Fixed(Err(failure()))))
+            .with(
+                AccountUsage::OAuthAccount,
+                Arc::new(Fixed(Ok(Some(report.clone())))),
+            )
+            .with(AccountUsage::SessionLog, Arc::new(Fixed(Err(failure()))));
+        let read = |account| {
+            futures::executor::block_on(sources.read(UsageAgent {
+                id: "agent".into(),
+                account,
+            }))
+        };
+        assert_eq!(read(AccountUsage::OAuthAccount).unwrap(), Some(report));
+        assert!(matches!(
+            read(AccountUsage::SessionLog),
+            Err(UsageReadError::Fetch { .. })
+        ));
+        assert_eq!(read(AccountUsage::None).unwrap(), None);
     }
 
     #[test]

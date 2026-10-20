@@ -12,6 +12,7 @@ layer = "ui"
 [dependencies]
 nocterm-store.workspace = true
 nocterm-session.workspace = true
+nocterm-workspace-ports.workspace = true
 nocterm-ui.workspace = true
 nocterm-keymap.workspace = true
 

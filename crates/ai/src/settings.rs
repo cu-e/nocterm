@@ -263,4 +263,4 @@ mod tests {
 }
 
 mod validation;
-pub use validation::{AgentValidationError, BUILTIN_AGENT_IDS, validate_agent};
+pub use validation::{AgentValidationError, validate_agent};

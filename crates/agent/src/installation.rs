@@ -1,6 +1,7 @@
 //! Original runtime, policy and host capabilities shared by every agent window.
 use crate::{AgentServices, ImageDeps, TerminalAuthOpener, runtime};
 use gpui_kit::{App, Subscription};
+use nocterm_agent_directory::AgentsHandle;
 use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::{LayoutHandle, UiReady};
 use std::{rc::Rc, sync::Arc};
@@ -9,8 +10,8 @@ pub struct Installed {
     inner: Rc<Installation>,
 }
 struct Installation {
-    sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     runtime: runtime::RuntimeHandle,
+    agents: AgentsHandle,
     settings: SettingsHandle,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     images: ImageDeps,
@@ -19,11 +20,12 @@ struct Installation {
     _settings_observation: Subscription,
 }
 impl Installed {
-    pub(crate) fn sandbox_probe(&self) -> Arc<dyn nocterm_ai::sandbox::SandboxProbe> {
-        self.inner.sandbox_probe.clone()
-    }
     pub fn runtime(&self) -> &runtime::RuntimeHandle {
         &self.inner.runtime
+    }
+    /// The agents available to start, for other surfaces such as settings.
+    pub fn agents(&self) -> &AgentsHandle {
+        &self.inner.agents
     }
     pub(crate) fn settings(&self) -> &SettingsHandle {
         &self.inner.settings
@@ -37,12 +39,8 @@ impl Installed {
     pub(crate) fn auth(&self) -> Option<TerminalAuthOpener> {
         self.inner.auth.clone()
     }
-    pub(crate) fn timestamp(&self) -> u64 {
-        self.inner.metadata.timestamp()
-    }
-    pub(crate) fn new_chat(&self, agent: String) -> nocterm_ai::history::SavedChat {
-        let identity = self.inner.metadata.new_identity();
-        nocterm_ai::history::SavedChat::for_identity(agent, identity.id, identity.created)
+    pub(crate) fn metadata(&self) -> Arc<dyn nocterm_ai::metadata::ChatMetadataSource> {
+        self.inner.metadata.clone()
     }
 }
 pub(crate) fn install(
@@ -54,9 +52,11 @@ pub(crate) fn install(
     cx: &mut App,
 ) -> (Installed, Result<(), StoreError>) {
     let settings = ready.settings().clone();
+    let agents = AgentsHandle::new(services.catalog, settings.clone(), cx);
     let runtime = runtime::RuntimeHandle::new(
         runtime::RuntimeServices {
             settings: settings.clone(),
+            agents: agents.clone(),
             connector: services.connector,
             bridge: services.bridge,
             storage: services.storage,
@@ -75,8 +75,8 @@ pub(crate) fn install(
     (
         Installed {
             inner: Rc::new(Installation {
-                sandbox_probe: services.sandbox_probe,
                 runtime,
+                agents,
                 settings,
                 metadata: services.metadata,
                 images,

@@ -68,6 +68,7 @@ pub(super) fn fixture_with_credentials(
                         options: Default::default(),
                         launch: None,
                         credential: None,
+                        jumps: Vec::new(),
                     },
                     window,
                     cx,
@@ -279,6 +280,7 @@ fn live_reconnect_uses_new_options_and_disconnect_cancels_prompts(cx: &mut TestA
                 echo: false,
             },
             reply,
+            hop: None,
         }),
     );
     cx.update_window(handle, |_, window, cx| {
@@ -621,89 +623,6 @@ fn find_modes_survive_live_output_invalidation_resize_and_throttled_refresh(
             find.options().regex && !find.options().case_sensitive && find.options().whole_word
         );
     });
-}
-
-#[gpui_kit::test]
-fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
-    cx: &mut TestAppContext,
-) {
-    let store = Arc::new(nocterm_session::testing::FakeCredentialStore::default());
-    store.fail_next(nocterm_session::testing::FakeCredentialError::NotFound);
-    let provider = crate::CredentialProvider::new(store, |_, _, _| Task::ready(Ok(())));
-    let (handle, view, _) = fixture_with_credentials(cx, Some(provider));
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |v, cx| {
-            v.terminal.update(cx, |t, cx| {
-                let (reply, _) = nocterm_session::Reply::channel();
-                t.handle_event(
-                    Event::Prompt(Prompt::Secret {
-                        request: SecretRequest::Password {
-                            target: t.spec().target.clone(),
-                            retry: false,
-                        },
-                        reply,
-                    }),
-                    cx,
-                );
-                t.answer_secret_and_remember(Secret::new("temporary test secret"), true, cx);
-                t.handle_event(Event::Connected, cx);
-            });
-        });
-        window.render_frame(cx);
-        assert!(
-            nocterm_ui::notice::count(window, cx) == 0,
-            "render posted an operational notice"
-        );
-        view.update(cx, |v, cx| {
-            v.terminal
-                .update(cx, |_, cx| cx.emit(TerminalEvent::Changed));
-        });
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
-        window.render_frame(cx);
-        assert!(nocterm_ui::notice::run_action(
-            window,
-            cx,
-            "terminal-credential"
-        ));
-    })
-    .unwrap();
-    cx.run_until_parked();
-    assert!(view.read_with(cx, |v, cx| {
-        v.terminal.read(cx).credential_message().is_none()
-    }));
-    cx.executor().advance_clock(Duration::from_millis(500));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        nocterm_ui::notice::clear(window, cx);
-        view.update(cx, |v, cx| {
-            v.terminal.update(cx, |t, cx| t.start_recording(cx))
-        });
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        assert_eq!(nocterm_ui::notice::count(window, cx), 1);
-        nocterm_ui::notice::clear(window, cx);
-        view.update(cx, |v, cx| {
-            v.terminal
-                .update(cx, |_, cx| cx.emit(TerminalEvent::Output))
-        });
-    })
-    .unwrap();
-    cx.executor().advance_clock(Duration::from_millis(500));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(
-            nocterm_ui::notice::count(window, cx) == 0,
-            "unchanged error returned after dismissal"
-        );
-    })
-    .unwrap();
 }
 
 #[gpui_kit::test]

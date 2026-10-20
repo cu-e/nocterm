@@ -22,9 +22,9 @@ use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace};
 
 use crate::{
-    Connections, Installed, connect, open_editor,
+    Connections, Installed, open_editor,
     os::{self, Os},
-    spec_for_profile,
+    session_intents::open_profile,
 };
 
 mod group_actions;
@@ -160,14 +160,7 @@ impl ConnectionsPanel {
         else {
             return;
         };
-        connect(
-            &self.installed,
-            &self.workspace,
-            spec_for_profile(&profile),
-            Some(id),
-            window,
-            cx,
-        );
+        open_profile(&self.installed, &self.workspace, &profile, window, cx);
     }
 
     fn open_single_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {

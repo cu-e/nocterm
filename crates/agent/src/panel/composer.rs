@@ -193,7 +193,7 @@ impl AgentPanel {
         );
         let notices = composer_renderer::ComposerRenderer::render_notices(
             &self.composer,
-            self.host.auth().is_some(),
+            self.host.sign_in().is_some(),
             thread,
             cx,
         );
@@ -474,27 +474,27 @@ impl AgentPanel {
             .composer()
             .queue()
             .iter()
-            .find(|prompt| prompt.saved.id == id)
+            .find(|prompt| prompt.saved().id == id)
             .cloned()
         else {
             return;
         };
         let draft = self.original_composer_text(cx);
-        let ready = prompt.saved.images.is_empty();
+        let ready = prompt.saved().images.is_empty();
         let binding = self
             .composer
             .begin_edit(thread.entity_id(), id, draft.clone(), ready);
         thread.update(cx, |thread, cx| {
             thread.set_draft(draft, cx);
-            thread.begin_composer_edit(Vec::new(), prompt.attachments, cx);
+            thread.begin_composer_edit(Vec::new(), prompt.attachments().to_vec(), cx);
             cx.notify();
         });
         if !ready {
-            self.prepare_queue_images(&thread, id, binding, prompt.saved.clone(), cx);
+            self.prepare_queue_images(&thread, id, binding, prompt.saved().clone(), cx);
         }
         self.reset_commands();
         self.composer
-            .set_text(prompt.saved.text.clone(), window, cx);
+            .set_text(prompt.saved().text.clone(), window, cx);
         self.composer.open_queue();
         self.focus_composer(window, cx);
         cx.notify();

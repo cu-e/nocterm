@@ -57,3 +57,8 @@ acceptance; a later record supersedes an earlier one.
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
 | [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition |
 | [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at the ACP adapter |
+| [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
+| [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |
+| [0061](0061-agent-profiles-and-directory.md) | Agent profiles, an injected catalog and one directory of available agents |
+| [0062](0062-terminal-contracts-below-the-workspace.md) | Terminal and connection contracts live below the window shell |
+| [0063](0063-agent-chats-below-the-panel.md) | Agent chats live in a service crate below the panel |

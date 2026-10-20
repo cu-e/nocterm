@@ -387,6 +387,11 @@ fn ready_hides_auth_and_status_while_working_status_precedes_composer(cx: &mut T
         let status = window.find("agent-status").bounds();
         let composer = window.find("agent-composer").bounds();
         assert!(status.bottom() <= composer.origin.y);
+        let thinking = window.find("agent-thinking").bounds();
+        assert!(status.contains(&thinking.origin));
+        assert_eq!(thinking.origin.x, status.origin.x + gpui_kit::px(12.));
+        let thread = f.panel.read(cx).current().unwrap();
+        assert_eq!(thread.read(cx).status(), "Thinking…");
         assert!(window.try_find("authenticate-sign-in").is_none());
     })
     .unwrap();
@@ -709,7 +714,7 @@ fn snapshot_capture_and_rejected_queue_budget_do_not_acquire_native_metadata(
 
 #[gpui_kit::test]
 fn chat_membership_preserves_selection_and_retires_removed_observations(cx: &mut TestAppContext) {
-    use crate::panel::chat_list::{ChatList, ChatSlot};
+    use crate::roster::chat_list::{ChatList, ChatSlot};
     let f = fixture(cx);
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());

@@ -3,9 +3,10 @@ use crate::connections::ConnectionStore;
 use crate::error::ConnectionsError;
 use futures::future::BoxFuture;
 use gpui::{App, Context, Entity};
+use nocterm_connections_model::credential_scope::CredentialScope;
 use nocterm_connections_model::profiles::{ProfileId, ProfileMutation, Profiles, Recent, Recents};
 use nocterm_connections_model::repository::ConnectionStorageError;
-use nocterm_session::{Auth, CredentialId, Target};
+use nocterm_session::CredentialId;
 use nocterm_store::{
     CommitPhase, Committed, Persisted, ShutdownCoordinator, SnapshotWriter, StoreError,
 };

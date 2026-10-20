@@ -120,6 +120,7 @@ async fn cancelled_startup_closes_the_unconfirmed_exec_channel() {
         size: PtySize::default(),
         connect_timeout: Duration::from_secs(5),
         keepalive_interval: None,
+        jumps: Vec::new(),
     });
     timeout(Duration::from_secs(5), async {
         loop {
@@ -165,6 +166,7 @@ async fn invalid_launch_is_rejected_before_connecting_or_reading_trust_files() {
         size: PtySize::default(),
         connect_timeout: Duration::from_secs(1),
         keepalive_interval: None,
+        jumps: Vec::new(),
     });
     let event = timeout(Duration::from_secs(1), session.next_event())
         .await

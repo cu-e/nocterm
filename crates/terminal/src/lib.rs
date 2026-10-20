@@ -29,7 +29,8 @@
 //! Settings: TerminalSettings plus SSH, local launch and recording defaults.
 //! Globals: none. Installed capabilities and the UiReady settings handle are explicit.
 //! Invariants: captured connection/prompt authority precedes effects; input is admitted
-//! exactly once before integration/lease changes; paint snapshots track presentation revisions.
+//! exactly once before integration/lease changes; paint snapshots track presentation revisions;
+//! a jump host's prompt is answered only from that hop's own saved credential and never remembered.
 
 //! Settings pages: terminal, local-shell and SSH controls retain the original Installed settings.
 mod access;

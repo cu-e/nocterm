@@ -1,9 +1,10 @@
 //! Checked profile intents, independent of UI and persistence scheduling.
 use nocterm_core::SharedError;
 
-use nocterm_session::{Auth, CredentialId, Target};
+use nocterm_session::CredentialId;
 
 use super::{Profile, ProfileId, Profiles};
+use crate::credential_scope::CredentialScope;
 
 const MAX_PROFILE_BYTES: usize = 64 * 1024;
 
@@ -64,8 +65,7 @@ pub enum ProfileMutation {
         expected: Vec<ProfileId>,
     },
     Credential {
-        target: Target,
-        auth: Auth,
+        scope: CredentialScope,
         id: CredentialId,
     },
 }
@@ -76,12 +76,14 @@ impl ProfileMutation {
             Self::Move { group, .. } => group.as_ref().map_or(0, String::len),
             Self::RenameGroup { from, to } => from.len().saturating_add(to.len()),
             Self::Ungroup(group) | Self::DeleteGroup { group, .. } => group.len(),
-            Self::Credential { target, auth, .. } => target
+            Self::Credential { scope, .. } => scope
+                .target()
                 .host
                 .len()
-                .saturating_add(target.user.len())
+                .saturating_add(scope.target().user.len())
                 .saturating_add(
-                    serde_json::to_string(auth).map_or(MAX_PROFILE_BYTES + 1, |text| text.len()),
+                    serde_json::to_string(scope.auth())
+                        .map_or(MAX_PROFILE_BYTES + 1, |text| text.len()),
                 ),
             _ => 0,
         };
@@ -144,8 +146,8 @@ impl ProfileMutation {
                 }
                 profiles.remove_group(group);
             }
-            Self::Credential { target, auth, id } => {
-                profiles.associate_credential(target, auth, *id);
+            Self::Credential { scope, id } => {
+                profiles.associate_credential(scope, *id);
             }
         }
         Ok(())

@@ -7,8 +7,18 @@ depend on GPUI alone, never on the component library, the UI layer or features,
 and UI/feature crates depend on them. `nocterm-store` owns ordered persistence
 and synchronous quit capture for layout, settings, snippets, connection state and agent preferences/documents ([ADR 0013](../adr/0013-persistence-shutdown-service.md)).
 `nocterm-agent-runtime` owns agent lifecycle
-([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-snippets-store` owns
+([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-agent-directory` owns
+`AgentsHandle`, the one resolution of the injected agent catalog and the `ai`
+settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
+`nocterm-workspace-ports` declares the terminal contracts, `SessionContext` and
+`ConnectionSummary` with GPUI core alone; the workspace re-exports them and keeps
+`ConnectionDirectory`, which opens connections into a workspace
+([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)).
+`nocterm-agent-chat` owns agent chats without views: `AgentThread`, the
+`ChatRoster` of a window's chats and their lifecycle, and the `ChatWorkspace` and
+`SignInTerminal` ports the window shell implements
+([ADR 0063](../adr/0063-agent-chats-below-the-panel.md)).
 
 ## Agents
 
@@ -16,12 +26,12 @@ The ACP AI panel uses four layers: `nocterm-ai` declares runtime-neutral agent
 contracts, neutral protocol records and bounded context/tool rules; `nocterm-acp` maps the
 protocol SDK to them and supplies subprocess and
 authenticated local bridge adapters; the `nocterm-agent-runtime` service admits
-connections, closes idle ones and coordinates document writes; `nocterm-agent` supplies threads
-and chat UI. App injects the adapter. The runtime knows no thread type: a thread
+connections, closes idle ones and coordinates document writes; `nocterm-agent-chat` supplies
+threads and `nocterm-agent` the chat UI. App injects the adapter. The runtime knows no thread type: a thread
 registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
-host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace exposes narrow terminal ports
-and `ConnectionDirectory` seams so the agent feature never imports other
+host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace re-exports the narrow terminal ports
+of `nocterm-workspace-ports` and exposes `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
 no tabs; maximize uses the working area while preserving the footer.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called

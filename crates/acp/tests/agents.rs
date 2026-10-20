@@ -5,7 +5,7 @@ use futures::{
 };
 use nocterm_acp::AcpConnector;
 use nocterm_ai::{
-    AgentConnector, AgentError, AgentEvent, AgentRegistry, ConnectRequest,
+    AgentConnector, AgentError, AgentEvent, ConnectRequest,
     model::{
         auth::PermissionOutcome,
         content::Content,
@@ -24,9 +24,10 @@ fn real_agent_initialize_and_session() {
     futures::executor::block_on(async {
         let id =
             std::env::var("NOCTERM_ACP_SMOKE").expect("Set NOCTERM_ACP_SMOKE=claude|codex|hermes");
-        let settings = nocterm_ai::AiSettings::default();
-        let registry = AgentRegistry::new(&settings);
-        let launch = registry.get(&id).expect("Known agent").clone();
+        let launch = nocterm_agent_providers::catalog()
+            .get(&id)
+            .expect("Known agent")
+            .default_launch();
         let directory = tempfile::tempdir().unwrap();
         let connection = AcpConnector::unmanaged()
             .connect(ConnectRequest {

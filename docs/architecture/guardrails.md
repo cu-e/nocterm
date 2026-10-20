@@ -85,6 +85,32 @@ fail-closed policy rejects `include!` source, including literal, dynamic and
 locally aliased calls: declare a Rust module instead. Passing the
 inventory does not waive the design rules.
 
+## Crate cards
+
+Every package under `crates/` starts its crate root (library, else binary) with
+an ownership card in its `//!` documentation: `Owns:`, `Does not own:`, its
+`Ports`, `Settings` section, `Globals` and `Invariants`. The label may carry a
+short qualifier before its colon (`Ports used:`, `Settings section:`). The
+check is a presence check on crate-level documentation; it does not judge
+whether the card describes the actual boundary, which remains a review duty.
+
+## Early warnings and the survey
+
+`cargo xtask architecture` also prints, without failing, each package that has
+reached about four fifths of a structural limit: files of 640 lines or more,
+structs with 12 or more fields and types implemented in four files. A warning
+asks for a split by responsibility to be designed before the limit forces one.
+
+`cargo xtask survey <package> [--json] [--type <Type>]` reports the facts such
+a design needs: file sizes, struct shapes and visibility, implementation spread,
+references from each top-level module to workspace crates and sibling modules,
+tests longer than 60 lines and the same warnings. `--type` adds the method ×
+field matrix of one struct with candidate owners: fields that the same methods
+use together, coordinators that reach most of the state, fields only they use,
+cross-cluster methods and methods without direct field access. The survey is syntactic and
+keys types by name; it refuses a matrix for an ambiguous name and is a planning
+aid, not a check.
+
 ## History and maintained documentation
 
 CI runs [`check-architecture-history.py`](../../scripts/check-architecture-history.py)

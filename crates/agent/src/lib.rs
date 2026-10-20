@@ -1,47 +1,27 @@
-//! Agent chat presentation and session coordination through injected contracts.
-//! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose immutable facts.
-//! Installed retains the actual runtime, image, layout, settings, metadata and auth collaborators.
+//! The agent chat panel: views over the chats of `nocterm-agent-chat`.
+//! Installed retains the actual runtime, available agents, image, layout, settings, metadata
+//! and auth collaborators.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.
-//! ChatList retains original entity selection and slot observations; SignInCards owns
-//! secret controls and prompt tokens. PanelNotices owns errors, approval identity and
-//! cancellable redraw work; PanelBindings retains installation subscriptions.
+//! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
+//! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return
 //! typed results to named completions bound to their original view/session authority.
 //!
-//! Owns: panel views, private Composer/ChatConfig/ChatDocument owners, AgentThread
-//! coordination, private SessionDriver and ToolRuntime owners, and the session-scoped
-//! ApprovalInbox for provider requests, bridge cards, card tokens and terminal grants.
-//! ThreadNotice owns status/error presentation; ThreadBindings retains the window/subscriptions.
-//! Finite operations return named completions and original-authority polling projections.
-//! Archive owns lazy hydration generations, typed pending intentions and delivery residency.
-//! BackgroundOpen owns the native-opening handoff and its original workspace receipt.
-//! Does not own: ACP transport, connection admission, filesystem storage or image decoding.
-//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, terminal ports,
-//! ConnectionDirectory, ImageInspector and ImageThumbnailer through ImageDeps,
-//! and explicit ChatMetadataSource retained with each window collaborator.
+//! Owns: panel views and presentation state, the panel's ChatRoster, WorkspaceSeat (the
+//! ChatWorkspace over the panel's workspace) and WorkspaceSignIn (the SignInTerminal over the
+//! host's TerminalAuthOpener).
+//! Does not own: chats, sessions and tools (nocterm-agent-chat), ACP transport, connection
+//! admission, filesystem storage or image decoding.
+//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory,
+//! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
-//! Invariants: approval cards retain their original chat and stable token; every
-//! choice revalidates current session, registration and attachment authority.
-//! Archive delivery also validates document ownership and its local load generation;
-//! a literal pending draft supersedes the saved draft and its timestamp together.
-//! Preview cache generations reject stale same-key delivery after clear or chat changes.
-//! Terminal operation causes stay typed until tool transcripts and sign-in errors are presented.
-//! Configuration replies accept only their current session ticket; candidate prompt admission
-//! validates bounded payloads before committing draft, image and queue changes.
-//! ChatDocument revisions describe accepted durable transitions, not capture or a
-//! content fingerprint. Deferred offers remain pending until shared-writer admission;
-//! old publication failures cannot pause a newer desired document.
-//! Session operations carry their original ticket, connection, session and registration
-//! authority. Tool work retains fixed prompt scope, original executor identities and
-//! workspace receipts; cancellation preserves readable job outcomes.
-//! Joined reconnect calls retain their original busy guards and dispatch in acceptance
-//! order after validating original session, registration, workspace and window authority.
-//! Ordering releases after synchronous launch; direct calls after connection retain
-//! their existing admission path and long-running commands remain independent.
+//! Invariants: preview cache generations reject stale same-key delivery after clear or chat
+//! changes; archive delivery reaches the panel only while the chat it opened is current.
 
+mod agent_icon;
 mod chat_host;
 mod image_deps;
 mod installation;
@@ -49,26 +29,15 @@ pub use installation::Installed;
 mod panel;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
-mod thread;
+mod workspace_seat;
+mod workspace_sign_in;
+pub use nocterm_agent_chat::TerminalAuthError;
+use nocterm_agent_chat::{chat_deps, roster, sign_in, thread};
 pub use runtime::TerminalAuthRequest;
 
 use gpui_kit::{App, WeakEntity, Window, prelude::*};
 use nocterm_ai::{AgentConnector, ToolBridge};
 use std::{path::PathBuf, sync::Arc};
-
-/// Why a terminal sign-in reported through [`TerminalAuthOpener`] did not succeed.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
-pub enum TerminalAuthError {
-    /// The user closed the sign-in terminal.
-    #[error("Authentication canceled.")]
-    Canceled,
-    /// The sign-in command exited unsuccessfully or its terminal closed otherwise.
-    #[error("Authentication command did not complete successfully.")]
-    Failed,
-    /// The agent's sign-in command cannot be launched safely.
-    #[error(transparent)]
-    InvalidLaunch(#[from] nocterm_session::LaunchValidationError),
-}
 
 /// Runs an agent's sign-in command in a terminal of `workspace`, and reports
 /// whether it succeeded.
@@ -85,7 +54,8 @@ pub type TerminalAuthOpener = Arc<
 
 /// What the host provides to the agents.
 pub struct AgentServices {
-    pub sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
+    /// The agents nocterm ships profiles for.
+    pub catalog: nocterm_ai::AgentCatalog,
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
@@ -147,6 +117,3 @@ pub fn register(
     workspace.set_right_panel(panel, window, cx);
     workspace.set_right_panel_available(enabled, window, cx);
 }
-
-mod settings_page;
-pub use settings_page::settings_page;

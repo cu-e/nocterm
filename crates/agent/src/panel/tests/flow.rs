@@ -34,12 +34,12 @@ fn queued_prompts_are_fifo_edit_in_place_and_snapshot_context(cx: &mut TestAppCo
         assert!(thread.submit("second".into(), None, cx).unwrap());
         thread.replace_composer_context(vec![Attachment::Group("third context".into())], cx);
         assert!(thread.submit("third".into(), None, cx).unwrap());
-        let id = thread.composer().queue()[0].saved.id;
+        let id = thread.composer().queue()[0].saved().id;
         thread.replace_composer_context(vec![Attachment::Group("edited context".into())], cx);
         assert!(thread.submit("edited second".into(), Some(id), cx).unwrap());
         assert_eq!(thread.composer().queue().len(), 2);
-        assert_eq!(thread.composer().queue()[0].saved.id, id);
-        assert_eq!(thread.composer().queue()[1].saved.text, "third");
+        assert_eq!(thread.composer().queue()[0].saved().id, id);
+        assert_eq!(thread.composer().queue()[1].saved().text, "third");
         let error = thread
             .submit("edited again".into(), Some(u64::MAX), cx)
             .unwrap_err();
@@ -79,7 +79,7 @@ fn send_now_waits_for_cancellation_then_retains_other_messages(cx: &mut TestAppC
     thread.update(cx, |thread, cx| {
         thread.send("second".into(), cx);
         thread.send("priority".into(), cx);
-        let priority = thread.composer().queue()[1].saved.id;
+        let priority = thread.composer().queue()[1].saved().id;
         thread.send_now(priority, cx);
     });
     cx.run_until_parked();
@@ -113,14 +113,14 @@ fn stopping_or_auth_failure_retains_queue_without_auto_resend(cx: &mut TestAppCo
     cx.update(|cx| assert_eq!(thread.read(cx).composer().queue().len(), 1));
     f.commands.auth_required.store(true, Ordering::SeqCst);
     thread.update(cx, |thread, cx| {
-        let id = thread.composer().queue()[0].saved.id;
+        let id = thread.composer().queue()[0].saved().id;
         thread.send_now(id, cx);
         thread.send("third".into(), cx);
     });
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "third");
+        assert_eq!(thread.read(cx).composer().queue()[0].saved().text, "third");
     });
     assert_eq!(texts(&f), ["first", "second"]);
 }
@@ -168,7 +168,7 @@ fn queue_edit_restores_the_unsent_composer_draft(cx: &mut TestAppContext) {
                 .read(cx)
                 .composer()
                 .queue()[0]
-                .saved
+                .saved()
                 .text,
             "replacement"
         );
@@ -245,7 +245,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         crate::thread::AgentThread::restored(
             saved.clone(),
             f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });
@@ -264,7 +264,7 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
         );
         let restore = thread.read(cx).pending_restore().as_ref().unwrap();
         assert_eq!(
-            restore.session.as_str(),
+            restore.session().as_str(),
             saved.session_id.as_deref().unwrap()
         );
     });
@@ -375,7 +375,7 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
         crate::thread::AgentThread::restored(
             saved.clone(),
             f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
             cx,
         )
     });
@@ -432,7 +432,10 @@ fn failed_persistence_pauses_but_keeps_the_queue(cx: &mut TestAppContext) {
         assert!(thread.read(cx).composer().paused());
         assert!(thread.read(cx).has_status_error());
         assert!(thread.read(cx).status().contains("Could not save chat"));
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "retained");
+        assert_eq!(
+            thread.read(cx).composer().queue()[0].saved().text,
+            "retained"
+        );
     });
     complete_active(&f, cx);
     assert_eq!(texts(&f), ["active"]);
@@ -466,7 +469,7 @@ fn switching_chat_during_queue_edit_preserves_each_composer(cx: &mut TestAppCont
                 .is_none_or(|thread| !thread.read(cx).composer().editing_queue())
         );
         assert!(f.panel.read(cx).composer_text(cx).is_empty());
-        assert_eq!(old.read(cx).composer().queue()[0].saved.text, "queued");
+        assert_eq!(old.read(cx).composer().queue()[0].saved().text, "queued");
         assert_eq!(
             old.read(cx).composer().attachments(),
             [Attachment::Terminal(f.terminal)]

@@ -114,6 +114,7 @@ impl PreparedApp {
                 files: self.files,
                 themes: Some(self.themes),
                 agent,
+                sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
                 vault,
                 connections,
             },
@@ -180,8 +181,7 @@ fn agent_services(
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
-        sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
-
+        catalog: nocterm_agent_providers::catalog(),
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
         terminal_auth: None,
@@ -194,19 +194,11 @@ fn agent_services(
         )),
         storage,
         workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
-        usage_source: Arc::new(nocterm_agent_storage::CodexUsageReader::new(codex_home())),
+        usage_source: Arc::new(nocterm_agent_usage::native_sources()),
         workdir: paths.state_dir().join("agent-workspace"),
         private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
         shared_dirs: vec![paths.effective_runtime_dir()],
     }
-}
-
-/// Resolve the native account-log location once at composition.
-fn codex_home() -> Option<PathBuf> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
 }
 
 /// A broken theme is reported and ignored so the window still opens.

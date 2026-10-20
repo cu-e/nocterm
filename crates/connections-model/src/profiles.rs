@@ -4,6 +4,7 @@ pub use crate::recents::{MAX_RECENTS, Recent, Recents};
 pub use mutation::{ProfileError, ProfileExpectation, ProfileMutation};
 use std::fmt;
 
+use crate::{credential_scope::CredentialScope, jump_route::JumpHostEntry};
 use nocterm_session::{Auth, CredentialId, ShellLaunch, Target};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -61,6 +62,9 @@ pub struct Profile {
     /// the detected country.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
+    /// Hosts to jump through, in order, before reaching this one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jump_hosts: Vec<JumpHostEntry>,
 }
 
 fn is_auto(auth: &Auth) -> bool {
@@ -89,11 +93,11 @@ impl Profiles {
         self.list.is_empty()
     }
 
-    pub fn associate_credential(&mut self, target: &Target, auth: &Auth, id: CredentialId) {
+    pub fn associate_credential(&mut self, scope: &CredentialScope, id: CredentialId) {
         for profile in self
             .list
             .iter_mut()
-            .filter(|profile| &profile.target == target && &profile.auth == auth)
+            .filter(|profile| scope.admits_profile(profile))
         {
             profile.credential = Some(id);
         }

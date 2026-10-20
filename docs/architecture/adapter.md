@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -29,6 +29,15 @@ enumerate and kill arbitrary detached jobs. Explicit input refusal
 is surfaced in the terminal instead of silently discarding text.
 HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
+
+The adapter also establishes jump-host routes ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
+`ConnectRequest.jumps` lists resolved hops; each is reached through a `direct-tcpip`
+forward opened on the previous connection, and the configured proxy carries only the
+first connection. Every hop verifies its own host key and completes authentication
+before a forward is requested through it, with prompts tagged by their hop. The
+connection timeout applies per hop, a failure is attributed to its hop, routes over
+the limit are refused before any I/O, and closing the session closes the chain from the
+destination outward.
 
 Structured local commands through `HostExec::exec` start on a worker when their
 future is polled. The worker owns cleanup independently of output delivery or
@@ -126,9 +135,22 @@ See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 ## Agent account usage
 
-`nocterm-agent-storage::CodexUsageReader` implements AI's `AccountUsageSource`.
-Composition supplies its optional home directory; unsupported launches never touch
-that path. The reader selects the newest lexical date and log, scans at most the
+`nocterm_agent_usage::native_sources()` resolves the readers' locations once and
+registers one reader per `AccountUsage` kind in AI's `UsageSources`. The runtime
+asks with the agent's kind from its profile, so readers never inspect launches and
+agents without a profile or kind are never read.
+
+`nocterm-agent-usage::ClaudeUsageReader` serves `OAuthAccount` agents. Composition
+supplies Claude Code's configuration directory (`CLAUDE_CONFIG_DIR` or
+`~/.claude`); the reader takes the unexpired OAuth access token from
+`.credentials.json`, requests the account's plan limits from Anthropic's API with a
+10-second timeout and a 1 MiB response bound, and converts percentage windows to
+shares. Missing credentials, an expired token or a rejected request produce no
+report; it never refreshes or writes credentials. Rate-limit records the agent
+attaches to usage updates still merge into the same limits between reads.
+
+`nocterm-agent-usage::CodexUsageReader` serves `SessionLog` agents. Composition
+supplies its optional home directory (`CODEX_HOME` or `~/.codex`). The reader selects the newest lexical date and log, scans at most the
 last 256 KiB and returns the last usable account report. Missing or malformed reports
 produce no replacement; physical failures preserve typed I/O causes.
 AI owns typed shared usage causes and category-specific constructors; native readers

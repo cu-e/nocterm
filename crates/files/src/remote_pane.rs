@@ -86,10 +86,10 @@ impl RemotePane {
     pub(super) fn transfer_target(
         &self,
         destination: Option<String>,
-    ) -> Option<(Arc<dyn RemoteFs>, nocterm_session::Target, String)> {
+    ) -> Option<(Arc<dyn RemoteFs>, nocterm_session::HostAddress, String)> {
         Some((
             self.filesystem()?,
-            self.session.as_ref()?.target.clone(),
+            self.session.as_ref()?.address(),
             destination.or_else(|| self.browser.path().map(str::to_owned))?,
         ))
     }
@@ -105,7 +105,7 @@ impl RemotePane {
             && let Some(shown) = self.browser.path()
             && finished
                 .iter()
-                .any(|job| activity::changes_remote(job, &session.target, shown))
+                .any(|job| activity::changes_remote(job, &session.address(), shown))
         {
             self.stale = true;
         }
@@ -115,7 +115,7 @@ impl RemotePane {
             .map(|session| {
                 jobs.into_iter()
                     .filter(|job| {
-                        job.target == session.target
+                        job.host == session.address()
                             && job.direction == nocterm_transfers::TransferDirection::Upload
                             && !job.state.finished()
                     })
@@ -296,7 +296,7 @@ impl RemotePane {
         let session = self.session.as_ref()?;
         Some(FileTarget::Remote {
             path: path::join(self.browser.path()?, &entry.name),
-            host: session.target.clone(),
+            host: session.address(),
             fs: session.fs.clone()?,
         })
     }
@@ -309,7 +309,7 @@ impl RemotePane {
             .collect();
         Some(RemotePaths {
             sources,
-            target: self.session.as_ref()?.target.clone(),
+            host: self.session.as_ref()?.address(),
             fs: self.filesystem()?,
         })
     }

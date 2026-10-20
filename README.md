@@ -156,8 +156,11 @@ argument arrays preserve the exact invocation and disable automatic integration.
 
 Global session defaults and individual profiles offer TERM presets/custom values,
 UTF-8 or Windows-1251/KOI8-R/Windows-1252/GBK, and Direct, HTTP CONNECT or SOCKS5
-routes. SOCKS5 can resolve names at the proxy. Proxy authentication and jump hosts
-are outside this subset. Selecting TERM announces server capabilities; it does
+routes. SOCKS5 can resolve names at the proxy. Proxy authentication
+is outside this subset. A saved connection can reach its host through ordered
+jump hosts, each a saved connection or a `user@host[:port]` address; every
+jump host is verified and signed in to in turn, and a configured proxy carries
+only the first connection. Selecting TERM announces server capabilities; it does
 not switch to a separate terminal emulator. Charset conversion is incremental
 and affects terminal text, never SFTP bytes. Unrepresentable input reports an error.
 Saved connections also have a description.

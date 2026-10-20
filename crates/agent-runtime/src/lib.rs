@@ -13,6 +13,7 @@
 //! stamps change only after writer acceptance; final work reads no App and joins
 //! captured admission failures with publication failures. Shared cleanup diagnostics
 //! retain the original typed AgentError through standard source traversal.
+use nocterm_ai::agents::UsageMeta;
 use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
 use nocterm_ai::model::controls::ConfigOption;
 use nocterm_ai::model::session::SessionUpdate;
@@ -55,6 +56,8 @@ pub struct TerminalAuthRequest {
 /// What the runtime connects agents with, and where it keeps their state.
 pub struct RuntimeServices {
     pub settings: nocterm_store::SettingsHandle,
+    /// The agents chats may start.
+    pub agents: nocterm_agent_directory::AgentsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: AgentStorage,
@@ -97,6 +100,11 @@ pub struct Runtime {
     releases: releases::LeaseInbox,
     bridge: bridge::BridgeRegistry,
 }
+fn log_warnings(agents: &nocterm_ai::AvailableAgents) {
+    for warning in agents.warnings() {
+        tracing::warn!(message=%nocterm_ai::redact::redact(&warning.to_string()),"Ignoring AI agent configuration");
+    }
+}
 impl Runtime {
     fn ai<'a>(&self, cx: &'a App) -> &'a nocterm_ai::AiSettings {
         self.services.settings.setting::<nocterm_ai::AiSettings>(cx)
@@ -107,12 +115,7 @@ impl Runtime {
 
     pub fn new(mut services: RuntimeServices, cx: &mut Context<Self>) -> Self {
         services.settings.register::<nocterm_ai::AiSettings>(cx);
-        for warning in
-            nocterm_ai::AgentRegistry::new(services.settings.setting::<nocterm_ai::AiSettings>(cx))
-                .warnings
-        {
-            tracing::warn!(message=%nocterm_ai::redact::redact(&warning),"Ignoring AI agent configuration");
-        }
+        log_warnings(&services.agents.available(cx));
         let state = state::AgentStateStore::new(&services.storage, cx);
         let chats = documents::ChatStore::new(&mut services.storage, cx);
         let releases = releases::LeaseInbox::new(cx);
@@ -134,14 +137,12 @@ impl Runtime {
         if self.shutting_down {
             return;
         }
-        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
-        for warning in &registry.warnings {
-            tracing::warn!(message=%nocterm_ai::redact::redact(warning),"Ignoring AI agent configuration");
-        }
+        let agents = self.services.agents.available(cx);
+        log_warnings(&agents);
         let keys: Vec<_> = self
             .connections
             .iter()
-            .filter(|(_, connection)| registry.get(&connection.launch.id).is_none())
+            .filter(|(_, connection)| agents.get(&connection.launch.id).is_none())
             .map(|(key, _)| *key)
             .collect();
         for key in keys {
@@ -269,12 +270,11 @@ impl Runtime {
         if self.shutting_down {
             return;
         }
-        let registry = nocterm_ai::AgentRegistry::new(self.ai(cx));
-        let Some(launch) = registry.get(agent) else {
+        let Some(agent) = self.services.agents.get(agent, cx) else {
             return;
         };
         self.usage
-            .refresh(nocterm_ai::usage::UsageAgent::from(launch), cx);
+            .refresh(nocterm_ai::usage::UsageAgent::new(&agent), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {
@@ -468,6 +468,20 @@ impl Runtime {
         }
         true
     }
+    /// The plan limit `update` carries where the launched agent's profile
+    /// says it attaches them.
+    fn limit_in(
+        &self,
+        launch: &AgentLaunch,
+        update: &nocterm_ai::model::usage::ContextUsage,
+    ) -> Option<nocterm_ai::usage::RateLimit> {
+        let profile = self.services.agents.catalog().for_launch(launch)?;
+        match profile.usage().meta() {
+            UsageMeta::RateLimitRecord { key } => nocterm_ai::usage::rate_limit_record(update, key),
+            UsageMeta::None => None,
+        }
+    }
+
     fn event(&mut self, key: u64, serial: u64, event: AgentEvent, cx: &mut Context<Self>) {
         if let AgentEvent::Barrier(ack) = event {
             let _ = ack.send(());
@@ -484,7 +498,7 @@ impl Runtime {
             AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
                 if let SessionUpdate::UsageUpdate(update) = &notification.update
-                    && let Some(limit) = nocterm_ai::usage::claude_limit(update)
+                    && let Some(limit) = self.limit_in(&connection.launch, update)
                 {
                     let agent = connection.launch.id.clone();
                     self.usage.merge(agent, limit);

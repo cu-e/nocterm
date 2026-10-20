@@ -20,7 +20,9 @@ use crate::{SessionContext, Workspace, WorkspaceEvent};
 pub enum HostKey {
     /// The computer nocterm runs on.
     Local,
-    Remote(Target),
+    /// A remote machine: the same target behind different jump hosts is a
+    /// different machine.
+    Remote { target: Target, via: Vec<Target> },
 }
 
 impl HostKey {
@@ -28,7 +30,10 @@ impl HostKey {
     /// computer otherwise.
     pub fn of(session: &SessionContext) -> Self {
         match session.exec {
-            Some(_) => Self::Remote(session.target.clone()),
+            Some(_) => Self::Remote {
+                target: session.target.clone(),
+                via: session.via.clone(),
+            },
             None => Self::Local,
         }
     }
@@ -36,7 +41,7 @@ impl HostKey {
     pub fn label(&self) -> String {
         match self {
             Self::Local => "This computer".into(),
-            Self::Remote(target) => target.to_string(),
+            Self::Remote { target, .. } => target.to_string(),
         }
     }
 }

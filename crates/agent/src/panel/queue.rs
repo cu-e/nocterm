@@ -236,7 +236,7 @@ impl QueueRenderer {
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let id = prompt.saved.id;
+        let id = prompt.saved().id;
         let mut row = v_flex()
             .id(("queued-message", id))
             .test_support()
@@ -252,7 +252,7 @@ impl QueueRenderer {
                             .min_w_0()
                             .text_sm()
                             .whitespace_normal()
-                            .child(prompt.saved.text.clone()),
+                            .child(prompt.saved().text.clone()),
                     )
                     .child(
                         Button::new(("queued-send-now", id))
@@ -288,7 +288,7 @@ impl QueueRenderer {
                             })),
                     ),
             );
-        for attachment in &prompt.attachments {
+        for attachment in prompt.attachments() {
             row = row.child(
                 div()
                     .text_xs()
@@ -322,7 +322,7 @@ impl QueueRenderer {
             return None;
         }
         let count = thread.read(cx).queued_prompt_ids().count();
-        let first = thread.read(cx).composer().queue()[0].saved.id;
+        let first = thread.read(cx).composer().queue()[0].saved().id;
         let frame = QueueFrame {
             chat: thread.entity_id(),
             open: composer.queue_open(),

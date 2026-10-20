@@ -193,12 +193,12 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
         let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
         assert!(
             labels
-                .label(&thread.read(cx).composer().queue()[0].attachments[0])
+                .label(&thread.read(cx).composer().queue()[0].attachments()[0])
                 .contains("unavailable")
         );
         assert!(
             labels
-                .label(&thread.read(cx).composer().queue()[0].attachments[1])
+                .label(&thread.read(cx).composer().queue()[0].attachments()[1])
                 .to_lowercase()
                 .contains("unavailable")
         );
@@ -211,7 +211,7 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
     .unwrap();
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
-        assert_eq!(thread.composer().queue()[0].saved.text, "edited");
+        assert_eq!(thread.composer().queue()[0].saved().text, "edited");
         assert_eq!(thread.snapshot(cx).unwrap().queue[0].attachments, refs);
     });
     let disk = f.repository.chats();
@@ -419,7 +419,7 @@ fn a_restored_text_prompt_is_edited_with_its_own_context(cx: &mut TestAppContext
     cx.run_until_parked();
     thread.update(cx, |thread, _| {
         assert!(!thread.composer().editing());
-        assert_eq!(thread.composer().queue()[0].saved.text, "edited text");
+        assert_eq!(thread.composer().queue()[0].saved().text, "edited text");
         assert_eq!(
             thread.composer().attachments().to_vec(),
             [Attachment::Group("defaults".into())]

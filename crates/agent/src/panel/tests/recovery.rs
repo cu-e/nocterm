@@ -243,7 +243,7 @@ fn restart_during_edit_preserves_original_draft_scope_and_saved_model(cx: &mut T
             Some("remembered model")
         );
         assert_eq!(
-            current.read(cx).composer().queue()[0].saved.text,
+            current.read(cx).composer().queue()[0].saved().text,
             "queued prompt"
         );
     });
@@ -274,7 +274,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
             .unwrap()
             .update(cx, |thread, cx| {
                 assert_eq!(thread.composer().queue().len(), 2);
-                let retained = thread.composer().queue()[0].saved.id;
+                let retained = thread.composer().queue()[0].saved().id;
                 thread.send_now(retained, cx);
                 thread.send("new first".into(), cx);
                 thread.send("new second".into(), cx);
@@ -283,7 +283,7 @@ fn restart_retains_queue_with_unique_message_ids(cx: &mut TestAppContext) {
                     .composer()
                     .queue()
                     .iter()
-                    .map(|prompt| prompt.saved.id)
+                    .map(|prompt| prompt.saved().id)
                     .collect::<Vec<_>>();
                 let unique = ids
                     .iter()
@@ -314,7 +314,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
     thread.update(cx, |thread, _| {
         assert!(thread.ended());
         assert!(thread.composer().paused());
-        assert_eq!(thread.composer().queue()[0].saved.text, "retained");
+        assert_eq!(thread.composer().queue()[0].saved().text, "retained");
     });
     // Nothing reconnects by itself.
     cx.run_until_parked();
@@ -324,7 +324,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
 
     // Sending reconnects the chat and goes on with its queue.
     thread.update(cx, |thread, cx| {
-        thread.send_now(thread.composer().queue()[0].saved.id, cx);
+        thread.send_now(thread.composer().queue()[0].saved().id, cx);
         assert!(thread.submit("another".into(), None, cx).unwrap());
     });
     cx.run_until_parked();
@@ -332,7 +332,7 @@ fn prompt_transport_failure_keeps_the_queue_until_the_user_reconnects(cx: &mut T
         assert!(!thread.ended());
         assert!(thread.session_generating());
         assert_eq!(thread.composer().queue().len(), 1);
-        assert_eq!(thread.composer().queue()[0].saved.text, "another");
+        assert_eq!(thread.composer().queue()[0].saved().text, "another");
     });
     let prompts = f.commands.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2);

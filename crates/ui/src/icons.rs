@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 pub use gpui_kit::assets::IconName;
-use gpui_kit::{AssetSource, Result, SharedString, Styled as _};
+use gpui_kit::{AssetSource, Result, SharedString};
 
 gpui_kit::assets::icon_assets!(
     ExtraIcons,
@@ -76,43 +76,39 @@ gpui_kit::assets::icon_assets!(
     ]
 );
 
-/// The application's asset source: nocterm's icons over the component
-/// library's defaults.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Assets;
+/// The application's asset source: agent brand marks and nocterm's icons
+/// over the component library's defaults.
+#[derive(Clone, Debug, Default)]
+pub struct Assets {
+    marks: Vec<(&'static str, &'static [u8])>,
+}
 
-/// Brand marks of the built-in agents, drawn in one colour like every icon.
-const AGENT_ICONS: &[(&str, &[u8])] = &[
-    (
-        "icons/agents/claude.svg",
-        include_bytes!("../assets/agents/claude.svg"),
-    ),
-    (
-        "icons/agents/codex.svg",
-        include_bytes!("../assets/agents/codex.svg"),
-    ),
-    (
-        "icons/agents/hermes.svg",
-        include_bytes!("../assets/agents/hermes.svg"),
-    ),
-];
+impl Assets {
+    /// Also serve each `(path, svg)` brand mark, such as the built-in agents'.
+    pub fn with_marks(marks: impl IntoIterator<Item = (&'static str, &'static [u8])>) -> Self {
+        Self {
+            marks: marks.into_iter().collect(),
+        }
+    }
+}
 
-/// The icon of agent `id`: its brand mark and colour when nocterm knows
-/// the agent, a generic bot otherwise.
-pub fn agent_icon(id: &str) -> gpui_kit::component::Icon {
-    use gpui_kit::component::Icon;
-    let mark = |path: &'static str| Icon::empty().path(path);
-    match id {
-        "claude" => mark("icons/agents/claude.svg").text_color(gpui_kit::rgb(0xd97757)),
-        "codex" => mark("icons/agents/codex.svg"),
-        "hermes" => mark("icons/agents/hermes.svg"),
-        _ => Icon::new(IconName::Bot),
+/// An agent's icon: its brand mark served at `mark`, in the `0xRRGGBB` `tint`
+/// when it has one, or a generic bot for agents without a mark.
+pub fn agent_icon(mark: Option<&'static str>, tint: Option<u32>) -> gpui_kit::component::Icon {
+    use gpui_kit::{Styled as _, component::Icon};
+    let Some(mark) = mark else {
+        return Icon::new(IconName::Bot);
+    };
+    let icon = Icon::empty().path(mark);
+    match tint {
+        Some(rgb) => icon.text_color(gpui_kit::rgb(rgb)),
+        None => icon,
     }
 }
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        if let Some((_, data)) = AGENT_ICONS.iter().find(|(name, _)| *name == path) {
+        if let Some((_, data)) = self.marks.iter().find(|(name, _)| *name == path) {
             return Ok(Some(Cow::Borrowed(data)));
         }
         match ExtraIcons.load(path)? {
@@ -122,7 +118,8 @@ impl AssetSource for Assets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths: Vec<SharedString> = AGENT_ICONS
+        let mut paths: Vec<SharedString> = self
+            .marks
             .iter()
             .map(|(name, _)| *name)
             .filter(|name| name.starts_with(path))

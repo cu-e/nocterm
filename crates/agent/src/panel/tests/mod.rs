@@ -310,6 +310,14 @@ impl HostEnvironment {
     ) -> crate::chat_host::ChatHost {
         crate::chat_host::ChatHost::new(workspace, installed)
     }
+    /// What chats hosted by `workspace` receive.
+    fn deps(
+        &self,
+        workspace: gpui_kit::WeakEntity<Workspace>,
+        installed: crate::Installed,
+    ) -> crate::chat_deps::ChatDeps {
+        self.host(workspace, installed).deps().clone()
+    }
 }
 
 struct FixtureInstallation {
@@ -407,9 +415,7 @@ fn fixture_with_width(
             let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
             let (installed, registration) = crate::init(
                 AgentServices {
-                    sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
-                        nocterm_ai::sandbox::Availability::Unsupported,
-                    )),
+                    catalog: nocterm_agent_providers::catalog(),
                     metadata: directory.metadata.clone(),
                     terminal_auth: None,
                     private_dirs: Vec::new(),
@@ -495,9 +501,7 @@ fn fixture_with_width(
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
-        sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
-            nocterm_ai::sandbox::Availability::Unsupported,
-        )),
+        catalog: nocterm_agent_providers::catalog(),
         metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),
         bridge: f.bridge.clone(),
