@@ -49,6 +49,7 @@ mod image_deps;
 mod installation;
 pub use installation::Installed;
 mod panel;
+mod seat;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
 mod thread;

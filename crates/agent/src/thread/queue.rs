@@ -6,7 +6,7 @@ use super::{
     connection_wait::{ConnectionWaitError, WaitTarget},
     execution::jobs,
 };
-use gpui_kit::{App, Context, EntityId, Task, WeakEntity};
+use gpui_kit::{App, Context, EntityId, Task};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
 use nocterm_ai::model::content::Content;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
@@ -203,7 +203,7 @@ impl AgentThread {
             .ok_or(ConnectionWaitError::WorkspaceClosed)?;
         let receipt = self.tools.prepare_reconnect(entry, expected, cx)?;
         Ok(WaitTarget::new(
-            self.host.workspace().clone(),
+            self.host.seat().clone(),
             window,
             receipt,
             self.session.ticket(),
@@ -259,7 +259,7 @@ impl AgentThread {
 
     fn open_terminal(&mut self, server: String, call: BridgeCall, cx: &mut Context<Self>) {
         use super::tool_runtime::resolution::{OpenSelection, Resolution};
-        let input = Resolution::observe(self.host.workspace(), cx);
+        let input = Resolution::observe(self.host.seat(), cx);
         let summary =
             match self
                 .tools
@@ -290,20 +290,17 @@ impl AgentThread {
                 }
                 OpenSelection::Create(summary) => summary,
             };
-        let (Some(window), Some(directory)) = (
-            self.bindings.window(),
-            self.host
-                .workspace()
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).connection_directory()),
-        ) else {
+        let Some(window) = self
+            .bindings
+            .window()
+            .filter(|_| self.host.seat().opens_connections(cx))
+        else {
             self.finish_unreachable(call, "The workspace is unavailable.");
             return;
         };
         let opening = BackgroundOpen::new(
-            self.host.workspace().clone(),
+            self.host.seat().clone(),
             window,
-            directory,
             summary.id.to_string(),
             self.session.ticket(),
             self.registration().as_ref().map(|value| value.id),
@@ -404,7 +401,7 @@ impl AgentThread {
         ),
         ConnectionWaitError,
     > {
-        if self.host.workspace().entity_id() != target.workspace().entity_id()
+        if self.host.seat().id() != target.seat().id()
             || self.registration().as_ref().map(|value| value.id) != target.registration()
             || !self.session.session_current(target.ticket())
             || !self.session.accepts_updates()
@@ -432,7 +429,7 @@ impl AgentThread {
         cx: &App,
     ) -> Result<(), ConnectionWaitError> {
         self.authorize_background_open(
-            opening.workspace(),
+            opening.seat(),
             opening.ticket(),
             opening.registration(),
             opening.profile(),
@@ -444,13 +441,13 @@ impl AgentThread {
 
     pub(super) fn authorize_background_open(
         &self,
-        workspace: &WeakEntity<nocterm_workspace::Workspace>,
+        seat: &crate::seat::Seat,
         ticket: nocterm_ai::session::Ticket,
         registration: Option<u64>,
         profile: &str,
         cx: &App,
     ) -> Result<(), ConnectionWaitError> {
-        if self.host.workspace().entity_id() != workspace.entity_id()
+        if self.host.seat().id() != seat.id()
             || self.registration().as_ref().map(|value| value.id) != registration
             || !self.session.session_current(ticket)
             || !self.session.accepts_updates()
@@ -478,7 +475,7 @@ impl AgentThread {
             let current = self.session.accepts_updates()
                 && self.host.enabled(cx)
                 && accepted.is_current(
-                    self.host.workspace(),
+                    self.host.seat(),
                     self.bindings.window(),
                     self.session.session_current(accepted.ticket()),
                     self.registration().as_ref().map(|value| value.id),
@@ -642,12 +639,7 @@ impl AgentThread {
         values: &[Attachment],
         cx: &App,
     ) -> Vec<SavedAttachment> {
-        let terminals = self
-            .host
-            .workspace()
-            .upgrade()
-            .map(|workspace| workspace.read(cx).terminals(cx))
-            .unwrap_or_default();
+        let terminals = self.host.seat().terminals(cx).unwrap_or_default();
         let mut saved = Vec::new();
         for attachment in values {
             let value = match attachment {

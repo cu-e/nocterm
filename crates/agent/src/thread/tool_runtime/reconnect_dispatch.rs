@@ -5,9 +5,10 @@ use super::super::{
     connection_wait::{ConnectionWaitError, WaitTarget},
     session_driver::OperationGuard,
 };
-use gpui_kit::{AnyWindowHandle, App, EntityId, WeakEntity};
+use crate::seat::Seat;
+use gpui_kit::{AnyWindowHandle, App, EntityId};
 use nocterm_ai::{BridgeCall, session::Ticket};
-use nocterm_workspace::{ExpectedSession, Workspace};
+use nocterm_workspace::ExpectedSession;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,7 +25,7 @@ impl DispatchScope {
             receipt: target.expected(),
             ticket: target.ticket(),
             registration: target.registration(),
-            workspace: target.workspace().entity_id(),
+            workspace: target.seat().id(),
             window: target.window(),
         }
     }
@@ -36,14 +37,14 @@ impl DispatchScope {
     }
     pub(in crate::thread) fn is_current(
         &self,
-        workspace: &WeakEntity<Workspace>,
+        seat: &Seat,
         window: Option<AnyWindowHandle>,
         session_current: bool,
         registration: Option<u64>,
         cx: &App,
     ) -> bool {
-        self.workspace == workspace.entity_id()
-            && workspace.upgrade().is_some()
+        self.workspace == seat.id()
+            && seat.is_open()
             && window == Some(self.window)
             && cx.windows().contains(&self.window)
             && session_current

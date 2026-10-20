@@ -48,7 +48,7 @@ use nocterm_workspace::{ExpectedSession, TerminalStatus};
 use std::time::{Duration, Instant};
 /// Authority held by one waiter, never inferred from a replacement session.
 pub(in crate::thread) struct WaitTarget {
-    workspace: WeakEntity<nocterm_workspace::Workspace>,
+    seat: crate::seat::Seat,
     window: gpui_kit::AnyWindowHandle,
     expected: ExpectedSession,
     ticket: nocterm_ai::session::Ticket,
@@ -111,22 +111,22 @@ impl WaitTarget {
     pub(in crate::thread) fn registration(&self) -> Option<u64> {
         self.registration
     }
-    pub(in crate::thread) fn workspace(&self) -> &WeakEntity<nocterm_workspace::Workspace> {
-        &self.workspace
+    pub(in crate::thread) fn seat(&self) -> &crate::seat::Seat {
+        &self.seat
     }
     pub(in crate::thread) fn window(&self) -> gpui_kit::AnyWindowHandle {
         self.window
     }
 
     pub(in crate::thread) fn new(
-        workspace: WeakEntity<nocterm_workspace::Workspace>,
+        seat: crate::seat::Seat,
         window: gpui_kit::AnyWindowHandle,
         expected: ExpectedSession,
         ticket: nocterm_ai::session::Ticket,
         registration: Option<u64>,
     ) -> Self {
         Self {
-            workspace,
+            seat,
             window,
             expected,
             ticket,
@@ -193,12 +193,10 @@ impl ConnectionWaitOperation {
             (_, true, _) => self.waiting = true,
             (Some(TerminalStatus::AwaitingUser), false, _) if !self.shown => {
                 self.shown = true;
-                let workspace = self.target.workspace.clone();
+                let seat = self.target.seat.clone();
                 let item = self.target.expected.item();
                 let _ = cx.update_window(self.target.window, |_, window, cx| {
-                    let _ = workspace.update(cx, |workspace, cx| {
-                        workspace.show_background_session(item, window, cx)
-                    });
+                    seat.show_background(item, window, cx)
                 });
             }
             (Some(TerminalStatus::Closed) | None, _, _) => {

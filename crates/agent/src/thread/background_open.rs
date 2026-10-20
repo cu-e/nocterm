@@ -4,21 +4,20 @@ use super::{
     connection_wait::ConnectionWaitError,
     connection_wait::{ConnectionWaitOperation, WaitTarget},
 };
-use gpui_kit::{AnyWindowHandle, App, AppContext as _, AsyncApp, WeakEntity};
-use nocterm_workspace::{ConnectionDirectory, ExpectedSession, Workspace};
-use std::rc::Rc;
+use crate::seat::{Seat, current_session};
+use gpui_kit::{AnyWindowHandle, AppContext as _, AsyncApp, WeakEntity};
+use nocterm_workspace::ExpectedSession;
 
 pub(super) struct BackgroundOpen {
-    workspace: WeakEntity<Workspace>,
+    seat: Seat,
     window: AnyWindowHandle,
-    directory: Rc<dyn ConnectionDirectory>,
     profile: String,
     ticket: nocterm_ai::session::Ticket,
     registration: Option<u64>,
 }
 impl BackgroundOpen {
-    pub(super) fn workspace(&self) -> &WeakEntity<Workspace> {
-        &self.workspace
+    pub(super) fn seat(&self) -> &Seat {
+        &self.seat
     }
     pub(super) fn ticket(&self) -> nocterm_ai::session::Ticket {
         self.ticket
@@ -31,17 +30,15 @@ impl BackgroundOpen {
     }
 
     pub(super) fn new(
-        workspace: WeakEntity<Workspace>,
+        seat: Seat,
         window: AnyWindowHandle,
-        directory: Rc<dyn ConnectionDirectory>,
         profile: String,
         ticket: nocterm_ai::session::Ticket,
         registration: Option<u64>,
     ) -> Self {
         Self {
-            workspace,
+            seat,
             window,
-            directory,
             profile,
             ticket,
             registration,
@@ -62,7 +59,7 @@ impl BackgroundOpen {
         let result = match (registered, opened.expected) {
             (Ok(Ok(())), Some(expected)) => {
                 ConnectionWaitOperation::new(WaitTarget::new(
-                    self.workspace.clone(),
+                    self.seat.clone(),
                     self.window,
                     expected,
                     self.ticket,
@@ -74,7 +71,7 @@ impl BackgroundOpen {
             (Ok(Err(error)) | Err(error), _) => Err(error),
             (Ok(Ok(())), None) => Err(ConnectionWaitError::SessionClosed),
         };
-        if result.is_err() && opened.close_if_original(&self.workspace, self.window, cx) {
+        if result.is_err() && opened.close_if_original(&self.seat, self.window, cx) {
             let _ = thread.update(cx, |thread, _| thread.forget_background_open(opened.item));
         }
         result
@@ -89,7 +86,7 @@ impl BackgroundOpen {
             thread
                 .update(cx, |thread, cx| {
                     thread.authorize_background_open(
-                        &self.workspace,
+                        &self.seat,
                         self.ticket,
                         self.registration,
                         &self.profile,
@@ -98,15 +95,14 @@ impl BackgroundOpen {
                 })
                 .map_err(|_| ConnectionWaitError::ChatClosed)??;
             let item = self
-                .directory
-                .open_background(&self.profile, &self.workspace, window, cx)
+                .seat
+                .open_background(&self.profile, window, cx)
                 .ok_or(ConnectionWaitError::OpenFailed)?;
-            let workspace = self
-                .workspace
-                .upgrade()
-                .ok_or(ConnectionWaitError::WorkspaceClosed)?;
+            if !self.seat.is_open() {
+                return Err(ConnectionWaitError::WorkspaceClosed);
+            }
             // Capture from placement authority, not the chat's mutable attachment projection.
-            let expected = OpenedBackground::current(workspace.read(cx), item, cx);
+            let expected = current_session(&self.seat, item, cx);
             Ok(OpenedBackground { item, expected })
         })
         .map_err(|_| ConnectionWaitError::WorkspaceClosed)?
@@ -119,37 +115,10 @@ struct OpenedBackground {
     expected: Option<ExpectedSession>,
 }
 impl OpenedBackground {
-    fn current(
-        workspace: &Workspace,
-        item: gpui_kit::EntityId,
-        cx: &App,
-    ) -> Option<ExpectedSession> {
-        workspace
-            .terminals(cx)
-            .into_iter()
-            .find(|entry| entry.item == item)
-            .and_then(|entry| entry.capabilities.state().info(cx))
-            .map(|info| info.expected)
-    }
-    fn close_if_original(
-        &self,
-        workspace: &WeakEntity<Workspace>,
-        window: AnyWindowHandle,
-        cx: &mut AsyncApp,
-    ) -> bool {
+    fn close_if_original(&self, seat: &Seat, window: AnyWindowHandle, cx: &mut AsyncApp) -> bool {
         // Membership and epoch are checked in the same workspace transition that closes it.
         cx.update_window(window, |_, window, cx| {
-            workspace
-                .update(cx, |workspace, cx| {
-                    if !workspace.is_background(self.item)
-                        || Self::current(workspace, self.item, cx) != self.expected
-                    {
-                        return false;
-                    }
-                    workspace.close_background_session(self.item, window, cx);
-                    true
-                })
-                .unwrap_or(false)
+            seat.close_if_original(self.item, self.expected, window, cx)
         })
         .unwrap_or(false)
     }

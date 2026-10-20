@@ -114,13 +114,11 @@ impl AgentThread {
             .collect();
         let close = self.tools.prune_background(&resolved);
         if let Some(window) = self.bindings.window() {
-            let workspace = self.host.workspace().clone();
+            let seat = self.host.seat().clone();
             cx.defer(move |cx| {
                 for item in close {
                     let _ = cx.update_window(window, |_, window, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            workspace.close_background_session(item, window, cx)
-                        });
+                        seat.close_background(item, window, cx)
                     });
                 }
             });
@@ -172,13 +170,13 @@ impl AgentThread {
     }
 
     pub(crate) fn describe_target(&mut self, call: &TerminalCall, cx: &App) -> String {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
         self.tools
             .describe_target(call, &input, self.composer.default_attachments(), cx)
     }
 
     pub(crate) fn context(&mut self, cx: &App) -> String {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
         self.tools
             .context(&input, self.composer.default_attachments(), cx)
     }
@@ -187,7 +185,7 @@ impl AgentThread {
         &mut self,
         cx: &App,
     ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
         self.tools
             .offline_servers(&input, self.composer.default_attachments(), cx)
     }
@@ -196,13 +194,13 @@ impl AgentThread {
         &mut self,
         cx: &App,
     ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
         self.tools
             .resolved(&input, self.composer.default_attachments(), cx)
     }
 
     pub(super) fn server_is_attached(&self, profile: &str, cx: &App) -> bool {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.workspace(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
         input.summaries().iter().any(|summary| {
             summary.id.as_ref() == profile
                 && self
@@ -337,14 +335,12 @@ impl AgentThread {
             runtime.unregister_document(id, cx);
         });
         if let Some(window) = self.bindings.window() {
-            let workspace = self.host.workspace().clone();
+            let seat = self.host.seat().clone();
             let background = self.tools.take_close_effects();
             cx.defer(move |cx| {
                 for item in background {
                     let _ = cx.update_window(window, |_, window, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            workspace.close_background_session(item, window, cx)
-                        });
+                        seat.close_background(item, window, cx)
                     });
                 }
             });
@@ -359,11 +355,13 @@ impl AgentThread {
         host: crate::chat_host::ChatHost,
         cx: &mut Context<Self>,
     ) -> Self {
-        let authority = host.workspace().upgrade().map(|workspace| {
-            cx.subscribe(&workspace, |this, _, _, cx| {
-                this.on_workspace_authority_changed(cx)
-            })
-        });
+        let this = cx.weak_entity();
+        let authority = host.seat().observe(
+            Box::new(move |cx| {
+                let _ = this.update(cx, |this, cx| this.on_workspace_authority_changed(cx));
+            }),
+            cx,
+        );
         let id = cx.entity_id();
         let release = cx.on_release(move |this, cx| this.on_release(id, cx));
         Self {
@@ -604,16 +602,18 @@ impl AgentThread {
             AuthFlow::AgentManaged => commands.authenticate(method.id.clone()),
             AuthFlow::TerminalSetup(_) => {
                 let runtime = self.host.runtime();
-                let Some(opener) = self.host.auth() else {
+                if self.host.auth().is_none() {
                     return;
-                };
+                }
                 let Some(request) = self
                     .connection_key()
                     .and_then(|key| runtime.terminal_auth_request(key, &method, cx))
                 else {
                     return;
                 };
-                let completion = opener(self.host.workspace().clone(), request, window, cx);
+                let Some(completion) = self.host.sign_in(request, window, cx) else {
+                    return;
+                };
                 async move {
                     completion
                         .await
