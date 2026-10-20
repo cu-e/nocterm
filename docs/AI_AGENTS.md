@@ -378,7 +378,8 @@ with successful execution.
 contracts, ACP update reducer, descriptors, MCP parser, approvals, filtering,
 favorites and pure image admission. `nocterm-image-codec` implements bounded
 physical image validation and PNG previews through injected image ports. `nocterm-acp` adapts subprocess stdio and local
-bridge transport. `nocterm-agent` owns GPUI lifecycle, chat state/UI and routing.
+bridge transport. `nocterm-agent-chat` owns chat state, sessions and tools; `nocterm-agent`
+owns the chat UI and routing.
 Saved chats (`nocterm_ai::history`), Claude limit metadata and transcript usage
 estimates (`nocterm_ai::usage`) remain domain code. Codex session-log parsing and
 bounded native reads belong to `nocterm-agent-storage`. The panel is split into modules by part: transcript, menus, attach menu, approvals,
