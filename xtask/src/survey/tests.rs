@@ -193,6 +193,7 @@ fn fields_changed_together_form_candidate_owners() {
     assert_eq!(result.coordinators, ["reconnect"]);
     assert_eq!(result.cross_cluster, ["submit"]);
     assert_eq!(result.no_direct_fields, ["render_title"]);
+    assert_eq!(result.coordinator_only_fields, ["status"]);
     assert_eq!(result.untouched_fields, ["epoch", "title"]);
 }
 

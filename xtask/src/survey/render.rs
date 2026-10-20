@@ -151,6 +151,11 @@ fn matrix_text(out: &mut String, matrix: &Matrix) {
     );
     let _ = writeln!(
         out,
+        "fields only coordinators use: {}",
+        matrix.coordinator_only_fields.join(", ")
+    );
+    let _ = writeln!(
+        out,
         "untouched fields: {}",
         matrix.untouched_fields.join(", ")
     );

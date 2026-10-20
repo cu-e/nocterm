@@ -106,8 +106,8 @@ a design needs: file sizes, struct shapes and visibility, implementation spread,
 references from each top-level module to workspace crates and sibling modules,
 tests longer than 60 lines and the same warnings. `--type` adds the method ×
 field matrix of one struct with candidate owners: fields that the same methods
-change together, coordinators that reach most of the state, cross-cluster
-methods and methods without direct field access. The survey is syntactic and
+use together, coordinators that reach most of the state, fields only they use,
+cross-cluster methods and methods without direct field access. The survey is syntactic and
 keys types by name; it refuses a matrix for an ambiguous name and is a planning
 aid, not a check.
 

@@ -1,6 +1,7 @@
 //! Method × field matrix of one type and candidate state owners.
 //!
-//! Fields that the same methods change together are candidates for one owner.
+//! Fields that the same methods use (read or write) together are candidates
+//! for one owner.
 //! Coordinators (methods reaching most of the state) are excluded from the
 //! similarity, otherwise every field would join one cluster through them.
 use serde::Serialize;
@@ -18,6 +19,7 @@ pub(super) struct Matrix {
     pub(super) clusters: Vec<Cluster>,
     pub(super) cross_cluster: Vec<String>,
     pub(super) no_direct_fields: Vec<String>,
+    pub(super) coordinator_only_fields: Vec<String>,
     pub(super) untouched_fields: Vec<String>,
 }
 
@@ -70,6 +72,7 @@ pub(super) fn build(owner: &str, fields: &[String], mut methods: Vec<Row>) -> Ma
         }
     }
     let touched: BTreeSet<_> = methods.iter().flat_map(|row| &row.touches).collect();
+    let focused_touched: BTreeSet<_> = focused.iter().flat_map(|row| &row.touches).collect();
     grouped.retain(|cluster| !cluster.methods.is_empty());
     grouped.sort_by_key(|cluster| std::cmp::Reverse(cluster.fields.len()));
     Matrix {
@@ -79,6 +82,11 @@ pub(super) fn build(owner: &str, fields: &[String], mut methods: Vec<Row>) -> Ma
         clusters: grouped,
         cross_cluster,
         no_direct_fields,
+        coordinator_only_fields: fields
+            .iter()
+            .filter(|field| touched.contains(field) && !focused_touched.contains(field))
+            .cloned()
+            .collect(),
         untouched_fields: fields
             .iter()
             .filter(|field| !touched.contains(field))
