@@ -92,6 +92,20 @@ impl Assets {
     }
 }
 
+/// An agent's icon: its brand mark served at `mark`, in the `0xRRGGBB` `tint`
+/// when it has one, or a generic bot for agents without a mark.
+pub fn agent_icon(mark: Option<&'static str>, tint: Option<u32>) -> gpui_kit::component::Icon {
+    use gpui_kit::{Styled as _, component::Icon};
+    let Some(mark) = mark else {
+        return Icon::new(IconName::Bot);
+    };
+    let icon = Icon::empty().path(mark);
+    match tint {
+        Some(rgb) => icon.text_color(gpui_kit::rgb(rgb)),
+        None => icon,
+    }
+}
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if let Some((_, data)) = self.marks.iter().find(|(name, _)| *name == path) {

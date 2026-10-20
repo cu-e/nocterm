@@ -322,9 +322,9 @@ fn boot_with_ports_and_probe(
             terminal_auth_factory: None,
             files,
             themes,
+            sandbox_probe: probe,
             agent: nocterm_agent::AgentServices {
                 catalog: nocterm_agent_providers::catalog(),
-                sandbox_probe: probe,
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(

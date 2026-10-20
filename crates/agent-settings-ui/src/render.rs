@@ -6,7 +6,6 @@ use super::{
     controls::{text_row, toggle},
     field::{FieldError, optional},
 };
-use crate::agent_icon::agent_icon;
 use gpui_kit::{
     AnyElement, Context, SharedString, TestSupportExt as _, Window,
     component::{
@@ -28,7 +27,7 @@ pub(super) fn render(
     view: &mut AgentSettingsPage,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let ai = view.installed.settings().setting::<AiSettings>(cx).clone();
+    let ai = view.settings().setting::<AiSettings>(cx).clone();
     let off = !ai.enabled;
     let mut page = v_flex()
         .w_full()
@@ -173,7 +172,7 @@ fn default_agent(
     disabled: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let agents = view.installed.agents().available(cx);
+    let agents = view.agents().available(cx);
     let current = ai
         .default_agent
         .clone()
@@ -285,7 +284,7 @@ fn agent_heading(
     off: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let (name, description, enabled) = agent_label(view.installed.agents().catalog(), id, ai);
+    let (name, description, enabled) = agent_label(view.agents().catalog(), id, ai);
     let expanded = view.ai.expanded.contains(id);
     let toggle_id = id.to_owned();
     let enable_id = id.to_owned();
@@ -310,7 +309,7 @@ fn agent_heading(
                     .small()
                     .text_color(cx.theme().muted_foreground),
                 )
-                .child(agent_icon(view.installed.agents().profile(id, cx)).small())
+                .child(agent_icon(view.agents().profile(id, cx)).small())
                 .child(div().text_sm().font_medium().child(name))
                 .child(
                     div()
@@ -335,7 +334,7 @@ fn agent_heading(
             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                 let id = enable_id.clone();
                 let checked = *checked;
-                let catalog = this.installed.agents().catalog().clone();
+                let catalog = this.agents().catalog().clone();
                 save_checked(
                     this,
                     move |s| {
@@ -355,7 +354,7 @@ fn agent_details(
     id: &str,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let default = view.installed.agents().catalog().get(id);
+    let default = view.agents().catalog().get(id);
     let key = |name: &str| format!("agent.{id}.{name}");
     let command_hint = match default {
         Some(profile) => format!(
@@ -464,7 +463,7 @@ fn add(view: &mut AgentSettingsPage, window: &mut Window, cx: &mut Context<Agent
     let result = if view.ai.agents.contains(&id) {
         Err(FieldError::DuplicateAgent(id.clone()))
     } else {
-        validate_agent(view.installed.agents().catalog(), &id, &agent).map_err(FieldError::from)
+        validate_agent(view.agents().catalog(), &id, &agent).map_err(FieldError::from)
     };
     match result {
         Ok(()) => {
@@ -482,4 +481,13 @@ fn add(view: &mut AgentSettingsPage, window: &mut Window, cx: &mut Context<Agent
         Err(error) => view.ai.add_error = Some(error.to_string().into()),
     }
     cx.notify();
+}
+
+/// The agent's brand mark when nocterm knows it, a generic bot otherwise.
+fn agent_icon(profile: Option<AgentProfile>) -> gpui_kit::component::Icon {
+    let mark = profile.as_ref().and_then(AgentProfile::mark);
+    nocterm_ui::agent_icon(
+        mark.map(|mark| mark.asset()),
+        mark.and_then(|mark| mark.tint()),
+    )
 }

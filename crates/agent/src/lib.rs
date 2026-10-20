@@ -89,7 +89,6 @@ pub type TerminalAuthOpener = Arc<
 pub struct AgentServices {
     /// The agents nocterm ships profiles for.
     pub catalog: nocterm_ai::AgentCatalog,
-    pub sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
@@ -151,6 +150,3 @@ pub fn register(
     workspace.set_right_panel(panel, window, cx);
     workspace.set_right_panel_available(enabled, window, cx);
 }
-
-mod settings_page;
-pub use settings_page::settings_page;

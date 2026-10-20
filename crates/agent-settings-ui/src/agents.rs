@@ -75,8 +75,8 @@ pub(super) fn sync(
     cx: &mut Context<AgentSettingsPage>,
 ) {
     let ids = agent_ids(
-        view.installed.agents().catalog(),
-        view.installed.settings().setting::<AiSettings>(cx),
+        view.agents().catalog(),
+        view.settings().setting::<AiSettings>(cx),
     );
     for id in view.ai.agents.clone() {
         if !ids.contains(&id) {
@@ -150,7 +150,7 @@ fn agent_fields(
     for (name, get, set) in fields {
         let read_id = id.clone();
         let write_id = id.clone();
-        let catalog = view.installed.agents().catalog().clone();
+        let catalog = view.agents().catalog().clone();
         view.add_field(
             format!("agent.{id}.{name}"),
             move |s: &AiSettings| get(&s.agents.get(&read_id).cloned().unwrap_or_default()),
@@ -185,7 +185,7 @@ pub(super) fn save_checked(
     edit: impl Fn(&mut AiSettings) -> Result<(), FieldError> + 'static,
     cx: &mut Context<AgentSettingsPage>,
 ) {
-    let mut probe = view.installed.settings().setting::<AiSettings>(cx).clone();
+    let mut probe = view.settings().setting::<AiSettings>(cx).clone();
     match edit(&mut probe) {
         Ok(()) => {
             view.ai.error = None;

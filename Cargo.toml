@@ -18,6 +18,7 @@ nocterm-agent-usage.workspace = true
 nocterm-agent-runtime.workspace = true
 nocterm-acp.workspace = true
 nocterm-agent.workspace = true
+nocterm-agent-settings-ui.workspace = true
 nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
 nocterm-connections-model.workspace = true
@@ -160,6 +161,7 @@ nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
 nocterm-agent-providers = { path = "crates/agent-providers" }
 nocterm-agent-directory = { path = "crates/agent-directory" }
+nocterm-agent-settings-ui = { path = "crates/agent-settings-ui" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }
 nocterm-agent-usage = { path = "crates/agent-usage" }

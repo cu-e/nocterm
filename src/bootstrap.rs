@@ -34,6 +34,8 @@ pub(crate) struct Services {
     pub(crate) files: nocterm_files::Deps,
     pub(crate) themes: Option<Themes>,
     pub(crate) agent: nocterm_agent::AgentServices,
+    /// Whether agents can be sandboxed here, shown on the AI settings page.
+    pub(crate) sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     pub(crate) images: nocterm_agent::ImageDeps,
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
@@ -113,6 +115,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         files,
         themes,
         mut agent,
+        sandbox_probe,
         images,
         vault,
         connections,
@@ -154,7 +157,11 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         nocterm_settings_ui::Installed::new(ui.settings().clone()),
         themes.clone(),
         nocterm_terminal::settings_pages(&terminal),
-        nocterm_agent::settings_page(&agent),
+        nocterm_agent_settings_ui::settings_page(
+            ui.settings().clone(),
+            agent.agents().clone(),
+            sandbox_probe,
+        ),
         [
             nocterm_keymap_ui::settings_page(keymap.clone()),
             nocterm_monitor_ui::settings_page(&monitor),

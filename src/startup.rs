@@ -114,6 +114,7 @@ impl PreparedApp {
                 files: self.files,
                 themes: Some(self.themes),
                 agent,
+                sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
                 vault,
                 connections,
             },
@@ -181,8 +182,6 @@ fn agent_services(
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
         catalog: nocterm_agent_providers::catalog(),
-        sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
-
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
         terminal_auth: None,

@@ -6,8 +6,8 @@ Features depend on shared contracts and never on other features or the SSH
 adapter. Feature crates use the service, UI, domain and foundation
 layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-files`, `nocterm-snippets-ui`, `nocterm-monitor-ui`,
-`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui` and
-`nocterm-agent`.
+`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
+`nocterm-agent` and `nocterm-agent-settings-ui`.
 
 ## Terminal
 
@@ -295,7 +295,7 @@ Chats are saved one file each in a private state directory and reopened through
 the agent's session resume/load; fork uses `session/fork`. All three are sent only when
 advertised. Favorites have a separate state file. Usage limits come from Claude's
 `usage_update` metadata and Codex's session logs through an injected
-`AccountUsageSource`. See [AI agents](../AI_AGENTS.md) for protocol, limits and
+`AccountUsageSource`, as each agent's profile says. See [AI agents](../AI_AGENTS.md) for protocol, limits and
 privacy boundaries. On Linux, `nocterm_ai::sandbox` validates supplied path facts
 and derives the ordered mount policy; the ACP adapter resolves native paths and
 launches bubblewrap. Startup uses the injected `WorkdirResolver` to prepare the
@@ -303,8 +303,9 @@ canonical directory shared by the process and session. Fresh launch validation
 rejects changed or protected directories and unavailable bubblewrap without an
 unisolated fallback. A changed isolation setting restarts running agents.
 
-The Agent-owned settings page receives `SandboxProbe` from its retained installation.
-It reports availability while keeping the isolation controls visible; launch
+The AI agents settings page lives in `nocterm-agent-settings-ui`. Composition gives it
+the `SettingsHandle`, the installation's `AgentsHandle` and the `SandboxProbe`; it
+edits the `ai` section only through AI's validation rules. It reports availability while keeping the isolation controls visible; launch
 checks availability again rather than trusting the displayed result.
 
 A chat's input — the draft, the attachments and images for the next prompt

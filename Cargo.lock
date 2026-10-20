@@ -4925,6 +4925,7 @@ dependencies = [
  "nocterm-agent",
  "nocterm-agent-providers",
  "nocterm-agent-runtime",
+ "nocterm-agent-settings-ui",
  "nocterm-agent-storage",
  "nocterm-agent-usage",
  "nocterm-ai",
@@ -5051,6 +5052,21 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "nocterm-agent-settings-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-agent-directory",
+ "nocterm-agent-providers",
+ "nocterm-ai",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

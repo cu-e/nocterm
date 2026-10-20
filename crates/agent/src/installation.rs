@@ -10,7 +10,6 @@ pub struct Installed {
     inner: Rc<Installation>,
 }
 struct Installation {
-    sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     runtime: runtime::RuntimeHandle,
     agents: AgentsHandle,
     settings: SettingsHandle,
@@ -21,13 +20,11 @@ struct Installation {
     _settings_observation: Subscription,
 }
 impl Installed {
-    pub(crate) fn sandbox_probe(&self) -> Arc<dyn nocterm_ai::sandbox::SandboxProbe> {
-        self.inner.sandbox_probe.clone()
-    }
     pub fn runtime(&self) -> &runtime::RuntimeHandle {
         &self.inner.runtime
     }
-    pub(crate) fn agents(&self) -> &AgentsHandle {
+    /// The agents available to start, for other surfaces such as settings.
+    pub fn agents(&self) -> &AgentsHandle {
         &self.inner.agents
     }
     pub(crate) fn settings(&self) -> &SettingsHandle {
@@ -82,7 +79,6 @@ pub(crate) fn install(
     (
         Installed {
             inner: Rc::new(Installation {
-                sandbox_probe: services.sandbox_probe,
                 runtime,
                 agents,
                 settings,

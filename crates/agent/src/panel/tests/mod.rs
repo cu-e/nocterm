@@ -408,9 +408,6 @@ fn fixture_with_width(
             let (installed, registration) = crate::init(
                 AgentServices {
                     catalog: nocterm_agent_providers::catalog(),
-                    sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
-                        nocterm_ai::sandbox::Availability::Unsupported,
-                    )),
                     metadata: directory.metadata.clone(),
                     terminal_auth: None,
                     private_dirs: Vec::new(),
@@ -497,9 +494,6 @@ fn fixture_with_width(
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
         catalog: nocterm_agent_providers::catalog(),
-        sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
-            nocterm_ai::sandbox::Availability::Unsupported,
-        )),
         metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),
         bridge: f.bridge.clone(),

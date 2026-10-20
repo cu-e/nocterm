@@ -1,12 +1,28 @@
-//! Agent-owned settings page; runtime and native display probe retain one installation.
+//! The "AI agents" settings page: the master switch, approvals, sandboxing,
+//! resources and every available agent's launch settings.
+//!
+//! Owns: the page view, its text fields and their validation feedback, adding
+//! and removing custom agents, and the sandbox availability shown on it.
+//! Does not own: which agents exist or how settings resolve into them
+//! (`nocterm-agent-directory`), the rules that validate a setting
+//! (`nocterm-ai`), probing the sandbox natively (the injected `SandboxProbe`),
+//! or chats.
+//! Ports used: `SettingsHandle`, `AgentsHandle`, AI `SandboxProbe`. Ports
+//! provided: `settings_page`, a `SettingsPageSpec` for the settings window.
+//! Settings section: reads and edits `ai`, owned by `nocterm-ai`.
+//! Globals: none.
+//! Invariants: every edit is validated by the AI rules before it is saved;
+//! the page reads agents only through the directory.
 mod agents;
 mod controls;
 mod field;
 mod render;
 use gpui_kit::Entity;
 use gpui_kit::component::input::InputState;
+use nocterm_agent_directory::AgentsHandle;
 use nocterm_ai::sandbox::{Availability, SandboxProbe};
-use std::collections::BTreeSet;
+use nocterm_store::SettingsHandle;
+use std::{collections::BTreeSet, sync::Arc};
 struct AiPage {
     /// Agents whose details are shown.
     expanded: BTreeSet<String>,
@@ -18,7 +34,7 @@ struct AiPage {
     /// Why the last switch could not be saved.
     error: Option<SharedString>,
     sandbox: Option<Availability>,
-    probe: std::sync::Arc<dyn SandboxProbe>,
+    probe: Arc<dyn SandboxProbe>,
 }
 
 use field::FieldError;
@@ -32,15 +48,22 @@ use nocterm_ui::{
 };
 use std::collections::BTreeMap;
 
-pub fn settings_page(installed: &crate::Installed) -> SettingsPageSpec {
-    let installed = installed.clone();
+/// The page, editing `settings` and listing `agents`; `probe` reports whether
+/// agents can be sandboxed here.
+pub fn settings_page(
+    settings: SettingsHandle,
+    agents: AgentsHandle,
+    probe: Arc<dyn SandboxProbe>,
+) -> SettingsPageSpec {
     SettingsPageSpec::contextual("ai", "AI agents", move |context, window, cx| {
-        cx.new(|cx| AgentSettingsPage::new(installed.clone(), context, window, cx))
+        let (settings, agents, probe) = (settings.clone(), agents.clone(), probe.clone());
+        cx.new(|cx| AgentSettingsPage::new(settings, agents, probe, context, window, cx))
     })
     .with_icon(nocterm_ui::IconName::Bot)
 }
 struct AgentSettingsPage {
-    installed: crate::Installed,
+    settings: SettingsHandle,
+    agents: AgentsHandle,
     fields: BTreeMap<SharedString, nocterm_ui::FieldPresentation>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -48,18 +71,23 @@ struct AgentSettingsPage {
     ai: AiPage,
 }
 impl AgentSettingsPage {
-    fn settings(&self) -> &nocterm_store::SettingsHandle {
-        self.installed.settings()
+    fn settings(&self) -> &SettingsHandle {
+        &self.settings
+    }
+    fn agents(&self) -> &AgentsHandle {
+        &self.agents
     }
     fn new(
-        installed: crate::Installed,
+        settings: SettingsHandle,
+        agents: AgentsHandle,
+        probe: Arc<dyn SandboxProbe>,
         context: SettingsPageContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
-        let subscription = installed.settings().observe(cx, move |cx| {
+        let subscription = settings.observe(cx, move |cx| {
             let _ = original_window.update(cx, |_, window, cx| {
                 let _ = weak.update(cx, |this, cx| {
                     agents::sync(this, window, cx);
@@ -68,8 +96,9 @@ impl AgentSettingsPage {
             });
         });
         let mut this = Self {
-            ai: AiPage::new(installed.sandbox_probe()),
-            installed,
+            ai: AiPage::new(probe),
+            settings,
+            agents,
             fields: BTreeMap::new(),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
@@ -79,7 +108,7 @@ impl AgentSettingsPage {
         this
     }
     /// Adds a text setting of section `S` saved under `key`.
-    pub(super) fn add_field<S: SettingsSection>(
+    fn add_field<S: SettingsSection>(
         &mut self,
         key: impl Into<SharedString>,
         read: impl Fn(&S) -> String + 'static,
@@ -104,14 +133,14 @@ impl AgentSettingsPage {
         self.fields
             .insert(key, nocterm_ui::FieldPresentation::new(field, window, cx));
     }
-    pub(super) fn remove_fields(&mut self, prefix: &str) {
+    fn remove_fields(&mut self, prefix: &str) {
         self.fields.retain(|key, _| !key.starts_with(prefix));
     }
-    pub(super) fn field(&self, key: &str) -> &SettingsTextField {
+    fn field(&self, key: &str) -> &SettingsTextField {
         self.fields[key].field()
     }
 
-    pub(super) fn save<S: SettingsSection>(
+    fn save<S: SettingsSection>(
         &mut self,
         edit: impl FnOnce(&mut S) + 'static,
         cx: &mut Context<Self>,
