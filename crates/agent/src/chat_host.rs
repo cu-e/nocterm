@@ -6,12 +6,17 @@ use nocterm_workspace::Workspace;
 pub(crate) struct ChatHost {
     workspace: WeakEntity<Workspace>,
     seat: crate::seat::Seat,
+    sign_in: Option<std::rc::Rc<dyn crate::sign_in::SignInTerminal>>,
     installed: crate::Installed,
 }
 impl ChatHost {
     pub(crate) fn new(workspace: WeakEntity<Workspace>, installed: crate::Installed) -> Self {
         Self {
             seat: std::rc::Rc::new(crate::seat::WorkspaceSeat::new(workspace.clone())),
+            sign_in: installed.auth().map(|opener| {
+                std::rc::Rc::new(crate::sign_in::WorkspaceSignIn::new(opener, workspace.clone()))
+                    as std::rc::Rc<dyn crate::sign_in::SignInTerminal>
+            }),
             workspace,
             installed,
         }
@@ -24,17 +29,9 @@ impl ChatHost {
     pub(crate) fn seat(&self) -> &crate::seat::Seat {
         &self.seat
     }
-    /// Opens `request`'s sign-in terminal in this window, when the host can.
-    pub(crate) fn sign_in(
-        &self,
-        request: crate::TerminalAuthRequest,
-        window: &mut gpui_kit::Window,
-        cx: &mut App,
-    ) -> Option<
-        futures::channel::oneshot::Receiver<Result<(), crate::TerminalAuthError>>,
-    > {
-        let opener = self.installed.auth()?;
-        Some(opener(self.workspace.clone(), request, window, cx))
+    /// Runs sign-in terminals in this window, when the host can.
+    pub(crate) fn sign_in(&self) -> Option<&std::rc::Rc<dyn crate::sign_in::SignInTerminal>> {
+        self.sign_in.as_ref()
     }
     pub(crate) fn runtime(&self) -> &crate::runtime::RuntimeHandle {
         self.installed.runtime()
@@ -56,9 +53,6 @@ impl ChatHost {
     }
     pub(crate) fn layout(&self) -> &nocterm_ui::LayoutHandle {
         self.installed.layout()
-    }
-    pub(crate) fn auth(&self) -> Option<crate::TerminalAuthOpener> {
-        self.installed.auth()
     }
     pub(crate) fn timestamp(&self) -> u64 {
         self.installed.timestamp()

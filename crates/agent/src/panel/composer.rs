@@ -193,7 +193,7 @@ impl AgentPanel {
         );
         let notices = composer_renderer::ComposerRenderer::render_notices(
             &self.composer,
-            self.host.auth().is_some(),
+            self.host.sign_in().is_some(),
             thread,
             cx,
         );

@@ -602,18 +602,16 @@ impl AgentThread {
             AuthFlow::AgentManaged => commands.authenticate(method.id.clone()),
             AuthFlow::TerminalSetup(_) => {
                 let runtime = self.host.runtime();
-                if self.host.auth().is_none() {
+                let Some(sign_in) = self.host.sign_in().cloned() else {
                     return;
-                }
+                };
                 let Some(request) = self
                     .connection_key()
                     .and_then(|key| runtime.terminal_auth_request(key, &method, cx))
                 else {
                     return;
                 };
-                let Some(completion) = self.host.sign_in(request, window, cx) else {
-                    return;
-                };
+                let completion = sign_in.open(request, window, cx);
                 async move {
                     completion
                         .await
