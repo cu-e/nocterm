@@ -6,9 +6,26 @@ description: Run the full agent pipeline (architect → implementer → tester �
 Drive the pipeline described in AGENTS.md for the task: $ARGUMENTS
 
 You are the orchestrator. Subagents start with no context, so every prompt must
-carry the task, plan, branch name, target/base branch, verification scope and prior
-findings, plus paths to docs/ARCHITECTURE.md, relevant layer notes and docs/adr/README.md
-(AGENTS.md is loaded automatically). Plans and reports go in ignored `.claude/plans/`.
+carry the task, plan directory, branch name, target/base branch, verification scope
+and prior findings, plus paths to docs/ARCHITECTURE.md, relevant layer notes and
+docs/adr/README.md (AGENTS.md is loaded automatically). Decisions live in
+`.claude/plans/<slug>/` as described in [plan-bus.md](plan-bus.md); every stage
+reads the files earlier stages wrote and ends with its Result block.
+
+0. **Route** — classify the task and follow the matching workflow skill instead
+   of the generic stages below when one fits:
+
+   | Task | Workflow |
+   | --- | --- |
+   | responsibility with no fitting crate, or "new crate" | `crate-new` |
+   | behaviour added inside one crate | `crate-extend` |
+   | restructure inside a crate, early warning or limit hit | `refactor` |
+   | move a module or subject to another crate | `crate-split` |
+   | shrink an `xtask/baseline.toml` or oversized-file entry | `debt-paydown` |
+
+   Spanning several rows: run them as separate branches in the order
+   refactor → split → extend. None fits (cross-cutting, app-only): continue
+   with the stages below, using the procedure skills each agent preloads.
 
 1. **Design** — spawn `architect` with the task and reading paths above. Require
    placement, shape, public surface, reuse, typed errors, docs/ADR and the target

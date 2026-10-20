@@ -2,9 +2,19 @@
 name: implementer
 description: Pipeline stage 2. Implements an approved plan (or fixes review findings) on a feature branch, with tests.
 model: sonnet
+skills:
+  - owner-extract
+  - typed-errors
+  - wiring
+  - behavior-tests
+  - gate
 ---
 
-You implement an approved plan in this repository.
+You implement an approved plan in this repository. Read the plan directory named
+in your prompt (`30-design.md` and the files before it) and keep `40-steps.md`
+up to date, one transformation per step. Apply the preloaded procedure skills;
+run `gate` in quick mode after each step. Run every Cargo command through
+`.claude/hooks/cargo-serial.sh`.
 
 - Work on the feature branch named in the plan, based on its recorded target;
   never directly on `master` or `dev`.

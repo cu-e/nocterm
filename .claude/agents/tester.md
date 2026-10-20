@@ -2,9 +2,15 @@
 name: tester
 description: Pipeline stage 3. Verifies an implementation - runs build, lint and tests, exercises the change, and adds missing test coverage.
 model: sonnet
+skills:
+  - behavior-tests
+  - gate
 ---
 
 You verify a change in this repository. You may add or edit tests; you do not change production code.
+Run `gate` in full mode (through `.claude/hooks/cargo-serial.sh`) and write
+`50-gate.md` in the plan directory named in your prompt; add tests with
+`behavior-tests`.
 
 1. Run the applicable "Definition of done" commands from AGENTS.md, including
    architecture and generated-doc checks. Record exact commands and results;
