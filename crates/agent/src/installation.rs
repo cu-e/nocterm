@@ -1,6 +1,7 @@
 //! Original runtime, policy and host capabilities shared by every agent window.
 use crate::{AgentServices, ImageDeps, TerminalAuthOpener, runtime};
 use gpui_kit::{App, Subscription};
+use nocterm_agent_directory::AgentsHandle;
 use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::{LayoutHandle, UiReady};
 use std::{rc::Rc, sync::Arc};
@@ -11,6 +12,7 @@ pub struct Installed {
 struct Installation {
     sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     runtime: runtime::RuntimeHandle,
+    agents: AgentsHandle,
     settings: SettingsHandle,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     images: ImageDeps,
@@ -24,6 +26,9 @@ impl Installed {
     }
     pub fn runtime(&self) -> &runtime::RuntimeHandle {
         &self.inner.runtime
+    }
+    pub(crate) fn agents(&self) -> &AgentsHandle {
+        &self.inner.agents
     }
     pub(crate) fn settings(&self) -> &SettingsHandle {
         &self.inner.settings
@@ -54,9 +59,11 @@ pub(crate) fn install(
     cx: &mut App,
 ) -> (Installed, Result<(), StoreError>) {
     let settings = ready.settings().clone();
+    let agents = AgentsHandle::new(services.catalog, settings.clone(), cx);
     let runtime = runtime::RuntimeHandle::new(
         runtime::RuntimeServices {
             settings: settings.clone(),
+            agents: agents.clone(),
             connector: services.connector,
             bridge: services.bridge,
             storage: services.storage,
@@ -77,6 +84,7 @@ pub(crate) fn install(
             inner: Rc::new(Installation {
                 sandbox_probe: services.sandbox_probe,
                 runtime,
+                agents,
                 settings,
                 metadata: services.metadata,
                 images,

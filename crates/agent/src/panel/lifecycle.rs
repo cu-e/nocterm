@@ -357,13 +357,9 @@ impl AgentPanel {
             ThreadStart::New(id) => id.clone(),
             ThreadStart::Restart(data) => data.agent_id().to_owned(),
         };
-        let Some(_launch) =
-            nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx))
-                .get(&id)
-                .cloned()
-        else {
+        if self.host.agents().get(&id, cx).is_none() {
             return;
-        };
+        }
         self.host.runtime().set_last_agent(&id, cx);
         self.leave_composer(cx);
         let active = self

@@ -251,9 +251,8 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let registry =
-            nocterm_ai::AgentRegistry::new(self.settings.setting::<nocterm_ai::AiSettings>(cx));
-        let known = |id: &&String| registry.get(id).is_some();
+        let agents = self.host.agents().available(cx);
+        let known = |id: &&String| agents.get(id).is_some();
         self.host
             .runtime()
             .favorites(cx)
@@ -267,7 +266,7 @@ impl AgentPanel {
                 .as_ref()
                 .filter(known))
             .cloned()
-            .or_else(|| registry.iter().next().map(|launch| launch.id.clone()))
+            .or_else(|| agents.iter().next().map(|agent| agent.id().to_owned()))
     }
     pub(super) fn set_history(&mut self, open: bool, cx: &mut Context<Self>) {
         if let Some(width) = self.layout.set_history(open, self.current().is_some(), cx) {
@@ -284,6 +283,7 @@ impl AgentPanel {
         let history = history::HistoryProjection::render(
             &self.chats,
             &self.history,
+            self.host.agents(),
             self.host.timestamp(),
             cx,
         );
@@ -330,7 +330,7 @@ impl AgentPanel {
             self.current(),
             self.menus.query_input(),
             self.menus.query(cx).to_lowercase(),
-            self.settings.setting::<nocterm_ai::AiSettings>(cx).clone(),
+            self.host.agents().available(cx),
             self.last_agent(cx),
             self.focus.clone(),
             self.host.runtime().favorites(cx).clone(),
@@ -379,9 +379,10 @@ impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         self.history.set_visible(self.history_is_visible(cx), cx);
-        let agent = current
-            .as_ref()
-            .map(|thread| thread.read(cx).document().agent_id().to_owned());
+        let agent = current.as_ref().map(|thread| {
+            let id = thread.read(cx).document().agent_id();
+            crate::agent_icon::agent_icon(self.host.agents().profile(id, cx))
+        });
         let header = shell::ShellRenderer::header(
             agent,
             self.title(cx),
@@ -395,6 +396,7 @@ impl Render for AgentPanel {
             None => body.child(history::HistoryProjection::render(
                 &self.chats,
                 &self.history,
+                self.host.agents(),
                 self.host.timestamp(),
                 cx,
             )),

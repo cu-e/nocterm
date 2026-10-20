@@ -11,6 +11,7 @@ layer = "app"
 
 [dependencies]
 nocterm-ai.workspace = true
+nocterm-agent-providers.workspace = true
 nocterm-image-codec.workspace = true
 nocterm-agent-storage.workspace = true
 nocterm-agent-usage.workspace = true
@@ -157,6 +158,8 @@ license-file = "LICENSE"
 nocterm-terminal-model = { path = "crates/terminal-model" }
 nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
+nocterm-agent-providers = { path = "crates/agent-providers" }
+nocterm-agent-directory = { path = "crates/agent-directory" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }
 nocterm-agent-usage = { path = "crates/agent-usage" }

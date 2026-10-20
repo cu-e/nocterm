@@ -14,6 +14,8 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_agent_directory::AgentsHandle;
+use nocterm_ai::agents::AgentProfile;
 use nocterm_ui::IconName;
 use std::time::Duration;
 
@@ -46,7 +48,7 @@ struct HistoryRow {
     when: String,
     model: String,
     generating: bool,
-    agent: String,
+    agent: Option<AgentProfile>,
     rename: Option<Input>,
 }
 struct HistoryRowRenderer;
@@ -84,7 +86,7 @@ impl HistoryRowRenderer {
                 .color(cx.theme().muted_foreground)
                 .into_any_element()
         } else {
-            nocterm_ui::agent_icon(&row.agent)
+            crate::agent_icon::agent_icon(row.agent)
                 .small()
                 .into_any_element()
         };
@@ -270,6 +272,7 @@ impl HistoryProjection {
     pub(super) fn render(
         chats: &super::chat_list::ChatList,
         history_owner: &super::history_column::HistoryColumn,
+        agents: &AgentsHandle,
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
@@ -319,6 +322,7 @@ impl HistoryProjection {
                 &thread,
                 chats,
                 history_owner,
+                agents,
                 now,
                 cx,
             ));
@@ -329,6 +333,7 @@ impl HistoryProjection {
         thread: &Entity<AgentThread>,
         chats: &super::chat_list::ChatList,
         history: &super::history_column::HistoryColumn,
+        agents: &AgentsHandle,
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
@@ -354,7 +359,7 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: chat.document().agent_id().to_owned(),
+            agent: agents.profile(chat.document().agent_id(), cx),
             rename: history.rename_input(id),
         };
         HistoryRowRenderer::render(row, cx)

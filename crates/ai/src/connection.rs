@@ -1,4 +1,5 @@
 use crate::{
+    agents::AgentLaunch,
     model::{
         auth::{AuthMethod, PermissionOutcome, ProviderPermission},
         controls::ConfigOption,
@@ -10,7 +11,6 @@ use crate::{
             SetConfigOption, SetMode,
         },
     },
-    registry::AgentLaunch,
     tools::TerminalCall,
 };
 use futures::{channel::oneshot, future::BoxFuture};

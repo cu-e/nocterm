@@ -180,6 +180,7 @@ fn agent_services(
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
+        catalog: nocterm_agent_providers::catalog(),
         sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
 
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),

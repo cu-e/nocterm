@@ -20,6 +20,9 @@ impl ChatHost {
     pub(crate) fn runtime(&self) -> &crate::runtime::RuntimeHandle {
         self.installed.runtime()
     }
+    pub(crate) fn agents(&self) -> &nocterm_agent_directory::AgentsHandle {
+        self.installed.agents()
+    }
     pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
         self.installed.settings()
     }

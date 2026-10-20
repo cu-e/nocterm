@@ -7,7 +7,9 @@ depend on GPUI alone, never on the component library, the UI layer or features,
 and UI/feature crates depend on them. `nocterm-store` owns ordered persistence
 and synchronous quit capture for layout, settings, snippets, connection state and agent preferences/documents ([ADR 0013](../adr/0013-persistence-shutdown-service.md)).
 `nocterm-agent-runtime` owns agent lifecycle
-([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-snippets-store` owns
+([ADR 0005](../adr/0005-agent-runtime-service.md)); `nocterm-agent-directory` owns
+`AgentsHandle`, the one resolution of the injected agent catalog and the `ai`
+settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
 
 ## Agents

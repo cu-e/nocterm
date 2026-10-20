@@ -4923,6 +4923,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-acp",
  "nocterm-agent",
+ "nocterm-agent-providers",
  "nocterm-agent-runtime",
  "nocterm-agent-storage",
  "nocterm-agent-usage",
@@ -4982,6 +4983,7 @@ dependencies = [
  "futures",
  "getrandom 0.4.3",
  "nix 0.28.0",
+ "nocterm-agent-providers",
  "nocterm-ai",
  "nocterm-core",
  "nocterm-settings",
@@ -5001,6 +5003,8 @@ dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
+ "nocterm-agent-directory",
+ "nocterm-agent-providers",
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-session",
@@ -5016,12 +5020,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-agent-directory"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-ai",
+ "nocterm-store",
+]
+
+[[package]]
+name = "nocterm-agent-providers"
+version = "0.0.0"
+dependencies = [
+ "nocterm-ai",
+]
+
+[[package]]
 name = "nocterm-agent-runtime"
 version = "0.0.0"
 dependencies = [
  "async-channel",
  "futures",
  "gpui-pre",
+ "nocterm-agent-directory",
+ "nocterm-agent-providers",
  "nocterm-ai",
  "nocterm-core",
  "nocterm-store",

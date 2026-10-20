@@ -11,7 +11,7 @@ These SVG assets are converted from the monochrome React icons in
 | `hermes.svg` | [src/NousResearch/components/Mono.tsx](https://github.com/lobehub/lobe-icons/blob/82e641b4fece9d1028a127149af9ded00df5ac0c/src/NousResearch/components/Mono.tsx) |
 
 Copyright (c) 2023 LobeHub. These icons are distributed under the
-[MIT license](../../../../licensing/supplemental/lobehub/LICENSE), including the
+[MIT license](../../../licensing/supplemental/lobehub/LICENSE), including the
 conversion performed for Nocterm. The conversion preserves the SVG paths,
 24-by-24 view box, `currentColor` fill and even-odd fill rule; JSX `clipRule` is
 written as SVG `clip-rule`. React properties and the generated title are omitted.

@@ -59,7 +59,11 @@ fn main() -> anyhow::Result<()> {
 
     let prepared = startup::PreparedApp::load()?;
     gpui_kit::application()
-        .with_assets(nocterm_ui::Assets)
+        .with_assets(nocterm_ui::Assets::with_marks(
+            nocterm_agent_providers::catalog()
+                .marks()
+                .map(|mark| (mark.asset(), mark.svg())),
+        ))
         .run(move |cx| prepared.install_when_ready(cx));
     Ok(())
 }

@@ -6,6 +6,7 @@ use super::{
     controls::{text_row, toggle},
     field::{FieldError, optional},
 };
+use crate::agent_icon::agent_icon;
 use gpui_kit::{
     AnyElement, Context, SharedString, TestSupportExt as _, Window,
     component::{
@@ -19,8 +20,8 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_ai::{
-    AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode, registry::AgentRegistry,
-    sandbox::Availability, validate_agent,
+    AgentCatalog, AgentServerSettings, AiSettings, ApprovalPolicy, SandboxMode,
+    agents::AgentProfile, sandbox::Availability, validate_agent,
 };
 use nocterm_ui::{IconName, form};
 pub(super) fn render(
@@ -73,7 +74,7 @@ fn general_section(
             form::row(
                 "Default agent",
                 "The agent a new chat starts with.",
-                default_agent(ai, off, cx),
+                default_agent(view, ai, off, cx),
                 cx,
             ),
             text_row(
@@ -167,39 +168,47 @@ fn policy(ask: bool) -> ApprovalPolicy {
 }
 
 fn default_agent(
+    view: &AgentSettingsPage,
     ai: &AiSettings,
     disabled: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let registry = AgentRegistry::new(ai);
+    let agents = view.installed.agents().available(cx);
     let current = ai
         .default_agent
         .clone()
-        .filter(|id| registry.get(id).is_some());
-    let options = std::iter::once((None, SharedString::from("Ask")))
-        .chain(
-            registry
-                .iter()
-                .map(|launch| (Some(launch.id.clone()), launch.name.clone().into())),
-        )
+        .filter(|id| agents.get(id).is_some());
+    let options = std::iter::once((None, SharedString::from("Ask"), None))
+        .chain(agents.iter().map(|agent| {
+            (
+                Some(agent.id().to_owned()),
+                agent.name().to_owned().into(),
+                Some(agent_icon(agent.profile().copied())),
+            )
+        }))
         .collect::<Vec<_>>();
     h_flex()
         .gap_1()
         .flex_wrap()
         .justify_end()
-        .children(options.into_iter().enumerate().map(|(index, (id, name))| {
-            Button::new(("ai-default-agent", index))
-                .small()
-                .ghost()
-                .when_some(id.as_deref().map(nocterm_ui::agent_icon), Button::icon)
-                .label(name)
-                .disabled(disabled)
-                .selected(current == id)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let id = id.clone();
-                    this.save(move |s: &mut AiSettings| s.default_agent = id, cx)
-                }))
-        }))
+        .children(
+            options
+                .into_iter()
+                .enumerate()
+                .map(|(index, (id, name, icon))| {
+                    Button::new(("ai-default-agent", index))
+                        .small()
+                        .ghost()
+                        .when_some(icon, Button::icon)
+                        .label(name)
+                        .disabled(disabled)
+                        .selected(current == id)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let id = id.clone();
+                            this.save(move |s: &mut AiSettings| s.default_agent = id, cx)
+                        }))
+                }),
+        )
         .into_any_element()
 }
 
@@ -255,17 +264,16 @@ fn agent(
     }
     block.into_any_element()
 }
-fn agent_label(id: &str, ai: &AiSettings) -> (String, String, bool) {
+fn agent_label(catalog: &AgentCatalog, id: &str, ai: &AiSettings) -> (String, String, bool) {
     let setting = ai.agents.get(id).cloned().unwrap_or_default();
-    let builtin = AgentRegistry::new(&AiSettings::default());
-    let default = builtin.get(id);
+    let default = catalog.get(id);
     let name = setting
         .name
         .clone()
-        .or_else(|| default.map(|launch| launch.name.clone()))
+        .or_else(|| default.map(|profile| profile.name().to_owned()))
         .unwrap_or_else(|| id.to_owned());
-    let description = match default {
-        Some(launch) => format!("{} {}", launch.command, launch.args.join(" ")),
+    let description = match default.map(AgentProfile::launch_defaults) {
+        Some(launch) => format!("{} {}", launch.command(), launch.args().join(" ")),
         None => setting.command.clone().unwrap_or_default(),
     };
     (name, description, setting.enabled)
@@ -277,7 +285,7 @@ fn agent_heading(
     off: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let (name, description, enabled) = agent_label(id, ai);
+    let (name, description, enabled) = agent_label(view.installed.agents().catalog(), id, ai);
     let expanded = view.ai.expanded.contains(id);
     let toggle_id = id.to_owned();
     let enable_id = id.to_owned();
@@ -302,7 +310,7 @@ fn agent_heading(
                     .small()
                     .text_color(cx.theme().muted_foreground),
                 )
-                .child(nocterm_ui::agent_icon(id).small())
+                .child(agent_icon(view.installed.agents().profile(id, cx)).small())
                 .child(div().text_sm().font_medium().child(name))
                 .child(
                     div()
@@ -327,10 +335,11 @@ fn agent_heading(
             .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                 let id = enable_id.clone();
                 let checked = *checked;
+                let catalog = this.installed.agents().catalog().clone();
                 save_checked(
                     this,
                     move |s| {
-                        edit_agent(s, &id, |a| {
+                        edit_agent(&catalog, s, &id, |a| {
                             a.enabled = checked;
                             Ok(())
                         })
@@ -346,13 +355,12 @@ fn agent_details(
     id: &str,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
-    let builtin = AgentRegistry::new(&AiSettings::default());
-    let default = builtin.get(id);
+    let default = view.installed.agents().catalog().get(id);
     let key = |name: &str| format!("agent.{id}.{name}");
     let command_hint = match default {
-        Some(launch) => format!(
+        Some(profile) => format!(
             "Empty runs `{}`. Use an absolute path if the desktop cannot find it.",
-            launch.command
+            profile.launch_defaults().command()
         ),
         None => "The program that speaks the Agent Client Protocol.".into(),
     };
@@ -456,7 +464,7 @@ fn add(view: &mut AgentSettingsPage, window: &mut Window, cx: &mut Context<Agent
     let result = if view.ai.agents.contains(&id) {
         Err(FieldError::DuplicateAgent(id.clone()))
     } else {
-        validate_agent(&id, &agent).map_err(FieldError::from)
+        validate_agent(view.installed.agents().catalog(), &id, &agent).map_err(FieldError::from)
     };
     match result {
         Ok(()) => {

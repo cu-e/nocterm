@@ -323,6 +323,7 @@ fn boot_with_ports_and_probe(
             files,
             themes,
             agent: nocterm_agent::AgentServices {
+                catalog: nocterm_agent_providers::catalog(),
                 sandbox_probe: probe,
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),

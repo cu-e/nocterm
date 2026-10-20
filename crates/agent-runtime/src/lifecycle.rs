@@ -117,11 +117,8 @@ impl Runtime {
                 self.admission.defer(client);
                 continue;
             }
-            if let Some(launch) = nocterm_ai::AgentRegistry::new(self.ai(cx))
-                .get(&state.agent_id)
-                .cloned()
-            {
-                self.connect(client, state.chat_id, launch, cx);
+            if let Some(agent) = self.services.agents.get(&state.agent_id, cx) {
+                self.connect(client, state.chat_id, agent.launch().clone(), cx);
             } else {
                 client.emit(SessionEvent::AgentRemoved, cx);
             }

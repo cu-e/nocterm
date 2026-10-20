@@ -1,6 +1,5 @@
 //! Agent settings rules without input widgets or native environment lookup.
-use crate::AgentServerSettings;
-pub const BUILTIN_AGENT_IDS: [&str; 3] = ["claude", "codex", "hermes"];
+use crate::{AgentServerSettings, agents::AgentCatalog};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentValidationError {
     #[error("Agent ids use letters, numbers, underscore or dash, up to 64 characters.")]
@@ -19,11 +18,16 @@ pub enum AgentValidationError {
     ContainsNul(String),
 }
 
-pub fn validate_agent(id: &str, setting: &AgentServerSettings) -> Result<(), AgentValidationError> {
-    if !crate::registry::valid_id(id) {
+/// Checks one agent's settings; only `catalog` agents may leave the command unset.
+pub fn validate_agent(
+    catalog: &AgentCatalog,
+    id: &str,
+    setting: &AgentServerSettings,
+) -> Result<(), AgentValidationError> {
+    if !crate::agents::valid_id(id) {
         return Err(AgentValidationError::InvalidId);
     }
-    if setting.enabled && setting.command.is_none() && !BUILTIN_AGENT_IDS.contains(&id) {
+    if setting.enabled && setting.command.is_none() && !catalog.is_builtin(id) {
         return Err(AgentValidationError::MissingCommand(id.to_owned()));
     }
     if setting
@@ -59,17 +63,18 @@ mod tests {
     use super::*;
     #[test]
     fn validates_custom_and_prohibited_environment() {
+        let catalog = AgentCatalog::default();
         let mut agent = AgentServerSettings::default();
-        assert!(validate_agent("custom", &agent).is_err());
+        assert!(validate_agent(&catalog, "custom", &agent).is_err());
         agent.command = Some("/opt/acp".into());
-        assert!(validate_agent("custom", &agent).is_ok());
+        assert!(validate_agent(&catalog, "custom", &agent).is_ok());
         agent.env.insert("OPENAI_API_KEY".into(), "marker".into());
-        assert!(validate_agent("custom", &agent).is_err());
+        assert!(validate_agent(&catalog, "custom", &agent).is_err());
         agent.env.clear();
         agent.inherit_env.push("SSH_AUTH_SOCK".into());
-        assert!(validate_agent("custom", &agent).is_err());
+        assert!(validate_agent(&catalog, "custom", &agent).is_err());
         agent.inherit_env.clear();
         agent.args = Some(vec!["nul\0".into()]);
-        assert!(validate_agent("custom", &agent).is_err());
+        assert!(validate_agent(&catalog, "custom", &agent).is_err());
     }
 }

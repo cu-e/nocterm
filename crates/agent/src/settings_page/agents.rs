@@ -6,8 +6,7 @@ use super::{
 };
 use gpui_kit::{AppContext as _, Context, Window, component::input::InputState};
 use nocterm_ai::{
-    AgentServerSettings, AiSettings, BUILTIN_AGENT_IDS as BUILTIN, sandbox::SandboxProbe,
-    validate_agent,
+    AgentCatalog, AgentServerSettings, AiSettings, sandbox::SandboxProbe, validate_agent,
 };
 use std::collections::BTreeSet;
 impl AiPage {
@@ -25,13 +24,16 @@ impl AiPage {
     }
 }
 
-fn agent_ids(settings: &AiSettings) -> Vec<String> {
-    let mut ids: Vec<String> = BUILTIN.map(str::to_owned).to_vec();
+fn agent_ids(catalog: &AgentCatalog, settings: &AiSettings) -> Vec<String> {
+    let mut ids: Vec<String> = catalog
+        .iter()
+        .map(|profile| profile.id().to_owned())
+        .collect();
     ids.extend(
         settings
             .agents
             .keys()
-            .filter(|id| !BUILTIN.contains(&id.as_str()))
+            .filter(|id| !catalog.is_builtin(id))
             .cloned(),
     );
     ids
@@ -72,7 +74,10 @@ pub(super) fn sync(
     window: &mut Window,
     cx: &mut Context<AgentSettingsPage>,
 ) {
-    let ids = agent_ids(view.installed.settings().setting::<AiSettings>(cx));
+    let ids = agent_ids(
+        view.installed.agents().catalog(),
+        view.installed.settings().setting::<AiSettings>(cx),
+    );
     for id in view.ai.agents.clone() {
         if !ids.contains(&id) {
             view.remove_fields(&format!("agent.{id}."));
@@ -145,10 +150,11 @@ fn agent_fields(
     for (name, get, set) in fields {
         let read_id = id.clone();
         let write_id = id.clone();
+        let catalog = view.installed.agents().catalog().clone();
         view.add_field(
             format!("agent.{id}.{name}"),
             move |s: &AiSettings| get(&s.agents.get(&read_id).cloned().unwrap_or_default()),
-            move |s, text| edit_agent(s, &write_id, |agent| set(agent, text)),
+            move |s, text| edit_agent(&catalog, s, &write_id, |agent| set(agent, text)),
             window,
             cx,
         );
@@ -157,14 +163,15 @@ fn agent_fields(
 
 /// Changes agent `id`, keeping only what differs from the built-in defaults.
 pub(super) fn edit_agent(
+    catalog: &AgentCatalog,
     settings: &mut AiSettings,
     id: &str,
     edit: impl FnOnce(&mut AgentServerSettings) -> Result<(), FieldError>,
 ) -> Result<(), FieldError> {
     let mut agent = settings.agents.get(id).cloned().unwrap_or_default();
     edit(&mut agent)?;
-    validate_agent(id, &agent)?;
-    if BUILTIN.contains(&id) && agent == AgentServerSettings::default() {
+    validate_agent(catalog, id, &agent)?;
+    if catalog.is_builtin(id) && agent == AgentServerSettings::default() {
         settings.agents.remove(id);
     } else {
         settings.agents.insert(id.to_owned(), agent);
@@ -201,21 +208,22 @@ mod tests {
 
     #[test]
     fn editing_a_builtin_back_to_its_defaults_removes_the_override() {
+        let catalog = nocterm_agent_providers::catalog();
         let mut settings = AiSettings::default();
-        edit_agent(&mut settings, "claude", |a| {
+        edit_agent(&catalog, &mut settings, "claude", |a| {
             a.command = Some("/opt/claude".into());
             Ok(())
         })
         .unwrap();
         assert!(settings.agents.contains_key("claude"));
-        edit_agent(&mut settings, "claude", |a| {
+        edit_agent(&catalog, &mut settings, "claude", |a| {
             a.command = None;
             Ok(())
         })
         .unwrap();
         assert!(settings.agents.is_empty());
         assert!(
-            edit_agent(&mut settings, "mine", |_| Ok(())).is_err(),
+            edit_agent(&catalog, &mut settings, "mine", |_| Ok(())).is_err(),
             "a custom agent needs an executable"
         );
         assert!(settings.agents.is_empty());

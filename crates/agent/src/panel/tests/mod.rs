@@ -407,6 +407,7 @@ fn fixture_with_width(
             let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
             let (installed, registration) = crate::init(
                 AgentServices {
+                    catalog: nocterm_agent_providers::catalog(),
                     sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
                         nocterm_ai::sandbox::Availability::Unsupported,
                     )),
@@ -495,6 +496,7 @@ fn fixture_with_width(
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
+        catalog: nocterm_agent_providers::catalog(),
         sandbox_probe: Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
             nocterm_ai::sandbox::Availability::Unsupported,
         )),

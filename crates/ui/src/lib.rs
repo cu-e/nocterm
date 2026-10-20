@@ -41,7 +41,7 @@ mod themes;
 pub use animations::thinking_indicator;
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
-pub use icons::{Assets, IconName, agent_icon};
+pub use icons::{Assets, IconName};
 pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
 pub use sections::{

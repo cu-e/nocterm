@@ -5,49 +5,21 @@ use crate::model::tools::ToolStatus;
 use crate::model::tools::{ToolChanges, ToolPatch};
 use crate::model::usage::ContextUsage;
 use crate::model::{controls::Change, session::SessionInfo};
-use crate::{AgentServerSettings, AiSettings, ApprovalSettings};
+use crate::{AgentLaunch, ApprovalSettings};
 use crate::{
-    approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, registry::*, thread::*,
-    tools::*,
+    approval::ApprovalGrants, context::*, env::*, favorites::*, mcp::*, thread::*, tools::*,
 };
 use serde_json::json;
 #[test]
-fn registry_merges_overrides_and_rejects_invalid_entries() {
-    let mut settings = AiSettings::default();
-    settings.agents.insert(
-        "codex".into(),
-        AgentServerSettings {
-            enabled: false,
-            ..Default::default()
-        },
-    );
-    settings.agents.insert(
-        "custom".into(),
-        AgentServerSettings {
-            command: Some("/opt/agent".into()),
-            args: Some(vec!["acp".into()]),
-            ..Default::default()
-        },
-    );
-    settings.agents.insert("bad/id".into(), Default::default());
-    settings.agents.insert("empty".into(), Default::default());
-    let r = AgentRegistry::new(&settings);
-    assert!(r.get("codex").is_none());
-    assert_eq!(r.get("custom").unwrap().command, "/opt/agent");
-    assert_eq!(r.warnings.len(), 2);
-    assert_eq!(
-        r.get("claude").unwrap().args[1],
-        "@agentclientprotocol/claude-agent-acp@0.85.1"
-    );
-    settings.enabled = false;
-    assert!(AgentRegistry::new(&settings).agents.is_empty());
-}
-#[test]
 fn environment_blocks_sensitive_and_injection_vars_even_if_requested() {
-    let mut launch = AgentRegistry::new(&AiSettings::default())
-        .get("claude")
-        .unwrap()
-        .clone();
+    let mut launch = AgentLaunch {
+        id: "agent".into(),
+        name: "Agent".into(),
+        command: "agent".into(),
+        args: Vec::new(),
+        env: Default::default(),
+        inherit_env: vec!["ANTHROPIC_API_KEY".into()],
+    };
     for name in [
         "SSH_AUTH_SOCK",
         "SSH_AGENT_PID",
@@ -281,37 +253,6 @@ fn command_guards_reject_multiline_and_bad_timeout() {
         .validate()
         .is_err()
     );
-}
-
-#[test]
-fn credential_environment_overrides_are_rejected_but_explicit_inheritance_remains_possible() {
-    let mut settings = AiSettings::default();
-    settings.agents.insert(
-        "claude".into(),
-        AgentServerSettings {
-            env: std::collections::BTreeMap::from([(
-                "ANTHROPIC_API_KEY".into(),
-                "plaintext-marker".into(),
-            )]),
-            ..Default::default()
-        },
-    );
-    let registry = AgentRegistry::new(&settings);
-    assert!(registry.get("claude").is_none());
-    assert_eq!(registry.warnings.len(), 1);
-    let mut launch = AgentRegistry::new(&AiSettings::default())
-        .get("claude")
-        .unwrap()
-        .clone();
-    launch
-        .env
-        .insert("ANTHROPIC_API_KEY".into(), "plaintext-marker".into());
-    let env = sanitized_environment(
-        &launch,
-        [("ANTHROPIC_API_KEY".into(), "explicit-inherited-key".into())],
-    );
-    assert_eq!(env["ANTHROPIC_API_KEY"], "explicit-inherited-key");
-    assert!(!env.values().any(|value| value == "plaintext-marker"));
 }
 
 #[test]

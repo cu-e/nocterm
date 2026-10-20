@@ -1,6 +1,7 @@
 //! Agent chat presentation and session coordination through injected contracts.
 //! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose immutable facts.
-//! Installed retains the actual runtime, image, layout, settings, metadata and auth collaborators.
+//! Installed retains the actual runtime, available agents, image, layout, settings, metadata
+//! and auth collaborators.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.
 //! ChatList retains original entity selection and slot observations; SignInCards owns
@@ -42,6 +43,7 @@
 //! Ordering releases after synchronous launch; direct calls after connection retain
 //! their existing admission path and long-running commands remain independent.
 
+mod agent_icon;
 mod chat_host;
 mod image_deps;
 mod installation;
@@ -85,6 +87,8 @@ pub type TerminalAuthOpener = Arc<
 
 /// What the host provides to the agents.
 pub struct AgentServices {
+    /// The agents nocterm ships profiles for.
+    pub catalog: nocterm_ai::AgentCatalog,
     pub sandbox_probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,

@@ -262,7 +262,7 @@ that section explicitly before constructing AI controls.
 `SettingsTextField` owns native text, checked immutable admissions and the original
 store receipt. `FieldPresentation` retains that field and its weak redraw observation
 with the page membership. The small shared syntax helpers parse numbers and JSON;
-AI registry and credential policy remain in the AI domain and Agent page.
+agent resolution and credential policy remain in the AI domain and Agent page.
 `SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
 factories. The latter receive only their original SettingsHandle and per-Item save
 feedback. The additive flush operation leaves existing guest lifecycle contracts intact.

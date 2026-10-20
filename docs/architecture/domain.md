@@ -191,6 +191,19 @@ preparations. A prepared directory may already have existed; the count records s
 adapter create/open acknowledgement, not a new-file or new-directory count. Its acknowledgement
 survives later failure or cancellation without advancing file or byte counters.
 
+## Agent profiles
+
+`nocterm-ai::agents` describes how a known agent deviates from plain ACP as an
+`AgentProfile`: its pinned launch, the home directories it writes, how it reports
+plan limits and its brand mark. Deviations are named by shape, never by brand.
+`AgentCatalog` validates profiles (unique valid ids, a command, permitted inherited
+environment, home-relative state) and finds the profile of a launch by id, then by
+an adapter marker in its command. `AvailableAgents::resolve` applies the `ai`
+settings to the catalog and returns typed `AgentConfigWarning`s; `validate_agent`
+takes the catalog to know which agents may leave their command unset. The domain
+names no concrete agent: `nocterm-agent-providers` holds one module per built-in
+agent and `catalog()`, which the application injects.
+
 ## Agent history
 
 `nocterm-ai` owns pure version-one transcript codecs, structural/collection

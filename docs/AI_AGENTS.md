@@ -10,7 +10,9 @@ Settings button.
 
 Create a chat with Claude, Codex, Hermes, or a custom ACP executable; the
 built-in agents show their brand marks in the menu, the panel header, chat
-history and AI Settings; custom agents show a generic icon. A working chat
+history and AI Settings; a custom agent that runs a built-in agent's adapter
+(for example a different `claude-agent-acp` version) shows that agent's mark,
+other custom agents show a generic icon. A working chat
 shows a spinner in history; its pin remains a separate indicator. Ctrl+N (Cmd+N on macOS) in the panel
 starts a new chat with the agent the last chat was started with (remembered in
 `agents.toml`; before any chat, the default agent); the new-chat menu shows the

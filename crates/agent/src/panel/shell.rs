@@ -94,7 +94,7 @@ impl ShellRenderer {
     }
 
     pub(super) fn header(
-        agent: Option<String>,
+        agent: Option<gpui_kit::component::Icon>,
         title: SharedString,
         history: bool,
         maximized: bool,
@@ -115,7 +115,7 @@ impl ShellRenderer {
             .text_sm()
             .child({
                 match agent {
-                    Some(agent) => nocterm_ui::agent_icon(&agent).small(),
+                    Some(icon) => icon.small(),
                     None => gpui_kit::component::Icon::new(IconName::Bot)
                         .small()
                         .text_color(cx.theme().muted_foreground),
