@@ -168,3 +168,37 @@ fn malformed_recents_rebuild_without_disabling_profile_writes() {
     assert_eq!(loaded.recents, Recents::default());
     assert!(loaded.read_only.is_none());
 }
+
+#[test]
+fn jump_hosts_of_both_forms_survive_a_save_and_load() {
+    use nocterm_connections_model::jump_route::JumpHostEntry;
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let mut profile = profile();
+    profile.jump_hosts = vec![
+        JumpHostEntry::Profile(ProfileId::from_bytes([9; 16])),
+        JumpHostEntry::Address(Target::new("ops", "gw.test", 2222)),
+    ];
+    let mut profiles = Profiles::default();
+    profiles.upsert(profile);
+    repository.save_profiles(&profiles).unwrap();
+    assert_eq!(repository.load().profiles, profiles);
+}
+
+#[test]
+fn a_document_without_jump_hosts_keeps_its_bytes_after_a_save() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = repository(directory.path());
+    let mut profiles = Profiles::default();
+    profiles.upsert(profile());
+    repository.save_profiles(&profiles).unwrap();
+    let first = std::fs::read(directory.path().join("profiles.toml")).unwrap();
+    assert!(!String::from_utf8_lossy(&first).contains("jump_hosts"));
+    repository
+        .save_profiles(&repository.load().profiles)
+        .unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("profiles.toml")).unwrap(),
+        first
+    );
+}
