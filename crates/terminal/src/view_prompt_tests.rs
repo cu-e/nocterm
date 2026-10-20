@@ -428,6 +428,55 @@ fn a_jump_host_password_prompt_offers_no_remember_choice(cx: &mut TestAppContext
     .unwrap();
 }
 #[gpui_kit::test]
+fn a_jump_host_prompt_with_a_locked_saved_secret_offers_to_unlock_the_vault(
+    cx: &mut TestAppContext,
+) {
+    let store = Arc::new(crate::credentials::fake::FakeStore::default());
+    let bastion = bastion_hop().target;
+    let saved = store.insert(
+        SecretRequest::Password {
+            target: bastion.clone(),
+            retry: false,
+        },
+        "bastion password",
+    );
+    let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+    let jumps = vec![nocterm_session::ResolvedJump {
+        host: nocterm_session::JumpHost {
+            target: bastion.clone(),
+            auth: Auth::Password,
+        },
+        credential: Some(saved),
+    }];
+    let (handle, _view, transport) = prompt_fixture_via(cx, Some(provider), jumps);
+    let (reply, answer) = Reply::channel();
+    emit_prompt(
+        cx,
+        &transport,
+        Prompt::Secret {
+            request: SecretRequest::Password {
+                target: bastion,
+                retry: false,
+            },
+            hop: Some(bastion_hop()),
+            reply,
+        },
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("remember-credential").is_none());
+        assert!(window.try_find("auth-open-vault").is_some());
+    })
+    .unwrap();
+    // Unlocking answers the jump host's prompt from its saved secret.
+    store.unlock();
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never().unwrap().unwrap().unwrap().expose(),
+        "bastion password"
+    );
+}
+#[gpui_kit::test]
 fn a_changed_host_key_card_names_the_jump_host_only_for_a_hop(cx: &mut TestAppContext) {
     let (handle, _view, transport) = prompt_fixture(cx, None);
     let changed = |hop| {

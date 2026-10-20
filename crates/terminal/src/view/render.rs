@@ -597,7 +597,9 @@ impl TerminalView {
 
         let rememberable = !matches!(request, SecretRequest::Interactive { .. }) && hop.is_none();
         let unlocked = self.terminal.read(cx).vault_unlocked(cx);
-        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        // A saved secret behind the locked vault can answer any prompt, including
+        // a jump host's, which never offers to remember.
+        let unlockable = !unlocked && (rememberable || self.terminal.read(cx).awaiting_vault());
         let message = self
             .terminal
             .read(cx)
@@ -620,38 +622,7 @@ impl TerminalView {
                 .when_some(message, |card, message| {
                     card.child(div().text_xs().child(message))
                 })
-                .when(rememberable, |card| {
-                    card.child(
-                        h_flex()
-                            .justify_between()
-                            .gap_2()
-                            .child(
-                                gpui_kit::component::checkbox::Checkbox::new("remember-credential")
-                                    .small()
-                                    .label("Remember after sign in")
-                                    .checked(remember && unlocked)
-                                    .disabled(!unlocked)
-                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                        if let Some(field) = &mut this.secret {
-                                            field.remember = *checked;
-                                            cx.notify();
-                                        }
-                                    })),
-                            )
-                            .when(!unlocked, |row| {
-                                row.child(
-                                    Button::new("auth-open-vault")
-                                        .link()
-                                        .small()
-                                        .icon(IconName::Lock)
-                                        .label("Unlock vault…")
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(Box::new(UnlockVault), cx)
-                                        }),
-                                )
-                            }),
-                    )
-                })
+                .children(self.secret_choices(rememberable, unlockable, cx))
                 .child(
                     h_flex()
                         .justify_end()
@@ -671,6 +642,52 @@ impl TerminalView {
                                 })),
                         ),
                 )
+                .into_any_element(),
+        )
+    }
+
+    /// The remember choice and the vault link under a secret field; none when
+    /// neither applies.
+    fn secret_choices(
+        &self,
+        rememberable: bool,
+        unlockable: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !rememberable && !unlockable {
+            return None;
+        }
+        let unlocked = self.terminal.read(cx).vault_unlocked(cx);
+        let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        let choice = rememberable.then(|| {
+            gpui_kit::component::checkbox::Checkbox::new("remember-credential")
+                .small()
+                .label("Remember after sign in")
+                .checked(remember && unlocked)
+                .disabled(!unlocked)
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                    if let Some(field) = &mut this.secret {
+                        field.remember = *checked;
+                        cx.notify();
+                    }
+                }))
+                .into_any_element()
+        });
+        let link = unlockable.then(|| {
+            Button::new("auth-open-vault")
+                .link()
+                .small()
+                .icon(IconName::Lock)
+                .label("Unlock vault…")
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(UnlockVault), cx))
+        });
+        Some(
+            h_flex()
+                .justify_between()
+                .gap_2()
+                // Keeps the link on the right when there is no choice beside it.
+                .child(choice.unwrap_or_else(|| div().into_any_element()))
+                .children(link)
                 .into_any_element(),
         )
     }
