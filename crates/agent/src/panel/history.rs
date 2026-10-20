@@ -240,7 +240,7 @@ pub(super) struct HistoryProjection;
 impl HistoryProjection {
     /// The chats to list, in order, matching the search.
     fn listed_threads(
-        chats: &super::chat_list::ChatList,
+        chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
         cx: &App,
     ) -> Vec<Entity<AgentThread>> {
@@ -270,7 +270,7 @@ impl HistoryProjection {
             .collect()
     }
     pub(super) fn render(
-        chats: &super::chat_list::ChatList,
+        chats: &crate::roster::ChatRoster,
         history_owner: &super::history_column::HistoryColumn,
         agents: &AgentsHandle,
         now: u64,
@@ -331,7 +331,7 @@ impl HistoryProjection {
     }
     fn render_history_row(
         thread: &Entity<AgentThread>,
-        chats: &super::chat_list::ChatList,
+        chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
         agents: &AgentsHandle,
         now: u64,

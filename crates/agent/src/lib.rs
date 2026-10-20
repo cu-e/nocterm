@@ -49,6 +49,7 @@ mod image_deps;
 mod installation;
 pub use installation::Installed;
 mod panel;
+mod roster;
 mod seat;
 mod sign_in;
 pub use image_deps::ImageDeps;

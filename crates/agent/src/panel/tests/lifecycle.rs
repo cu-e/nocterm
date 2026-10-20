@@ -714,7 +714,7 @@ fn snapshot_capture_and_rejected_queue_budget_do_not_acquire_native_metadata(
 
 #[gpui_kit::test]
 fn chat_membership_preserves_selection_and_retires_removed_observations(cx: &mut TestAppContext) {
-    use crate::panel::chat_list::{ChatList, ChatSlot};
+    use crate::roster::chat_list::{ChatList, ChatSlot};
     let f = fixture(cx);
     new_chat(&f, cx);
     let first = cx.update(|cx| f.panel.read(cx).current().unwrap());

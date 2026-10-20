@@ -15,7 +15,6 @@ mod attach;
 mod attachments;
 mod bindings;
 mod chat;
-mod chat_list;
 pub(crate) mod commands;
 mod composer;
 mod composer_renderer;
@@ -59,7 +58,7 @@ enum MenuKind {
 pub(crate) struct AgentPanel {
     focus: FocusHandle,
     host: crate::chat_host::ChatHost,
-    chats: chat_list::ChatList,
+    chats: crate::roster::ChatRoster,
     sign_ins: sign_in::SignInCards,
     notices: notices::PanelNotices,
     _bindings: bindings::PanelBindings,
@@ -96,8 +95,8 @@ impl AgentPanel {
         });
         Self {
             focus: cx.focus_handle(),
+            chats: crate::roster::ChatRoster::new(host.clone()),
             host,
-            chats: chat_list::ChatList::default(),
             notices: notices::PanelNotices::default(),
             _bindings: bindings::PanelBindings::new(subscriptions),
             sign_ins: sign_in::SignInCards::default(),

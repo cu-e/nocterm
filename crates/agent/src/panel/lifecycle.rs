@@ -1,11 +1,7 @@
 use super::history_column::SearchTicket;
 use super::*;
-use crate::thread::Attachment;
+use crate::roster::ChatStart;
 use std::collections::HashSet;
-enum ThreadStart {
-    New(String),
-    Restart(Box<crate::thread::RestartData>),
-}
 
 impl AgentPanel {
     pub(super) fn search_archives(&mut self, cx: &mut Context<Self>) {
@@ -53,16 +49,11 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let active = self.current().map(|thread| thread.entity_id());
-        let proposed: Vec<_> = self
-            .chats
-            .iter()
-            .filter(|thread| !keep(thread, cx))
-            .map(|thread| thread.entity_id())
-            .collect();
-        let removed = proposed
-            .into_iter()
-            .filter(|id| self.admit_before_removal(*id, cx))
-            .collect::<Vec<_>>();
+        let retained = self.chats.retain(keep, cx);
+        let removed = retained.removed().to_vec();
+        if let Some(error) = retained.into_error() {
+            self.notices.set_error(Some(error.to_string()));
+        }
         if self
             .composer
             .editing_chat()
@@ -71,7 +62,6 @@ impl AgentPanel {
             self.leave_composer_with(true, cx);
         }
         self.composer.removed_chats(&removed);
-        self.chats.remove_admitted(&removed);
         if active.is_some_and(|id| removed.contains(&id)) {
             self.reset_chat_view(cx);
         }
@@ -102,10 +92,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(thread) = self.chats.find(id).cloned() {
-            let chat = thread.read(cx).document().chat_id().to_owned();
-            thread.update(cx, |thread, cx| thread.release_resources(cx));
-            self.host.runtime().delete_chat(chat, cx);
+        if self.chats.delete(id, cx) {
             self.retain_threads(|thread, _| thread.entity_id() != id, cx);
             if self.current().is_none() {
                 self.composer.set_text("", window, cx);
@@ -150,13 +137,7 @@ impl AgentPanel {
             });
             return;
         }
-        let fork = match last {
-            Some(last) => source.read(cx).fork_at(last + 1),
-            None => source.read(cx).fork(),
-        };
-        let host = self.host.clone();
-        let thread = cx.new(|cx| AgentThread::forked(fork, host, cx));
-        thread.update(cx, |thread, cx| thread.persist(cx));
+        let thread = self.chats.fork(&source, last, cx);
         let slot = self.track(&thread, window, cx);
         let id = thread.entity_id();
         self.chats.append(slot);
@@ -251,13 +232,7 @@ impl AgentPanel {
         self.menus.reset();
     }
     pub(super) fn select_thread(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
-        if let Some(previous) = self.current() {
-            previous.update(cx, |thread, cx| thread.set_shown(false, cx));
-        }
-        self.chats.select(id);
-        if let Some(current) = self.current() {
-            current.update(cx, |thread, cx| thread.set_shown(true, cx));
-        }
+        self.chats.select(id, cx);
         self.reset_chat_view(cx);
         if let Some(thread) = self
             .current()
@@ -299,28 +274,6 @@ impl AgentPanel {
         self.trim_resident_history(cx);
         cx.notify();
     }
-    pub(super) fn admit_before_removal(
-        &mut self,
-        id: gpui_kit::EntityId,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        match self.host.runtime().capture_and_detach_document(id, cx) {
-            Ok(true) => {
-                if let Some(thread) = self.chats.iter().find(|thread| thread.entity_id() == id) {
-                    thread.update(cx, |thread, cx| {
-                        thread.document_admitted(thread.document().desired_revision(), cx)
-                    });
-                }
-                true
-            }
-            Ok(false) => true,
-            Err(error) => {
-                self.notices
-                    .set_error(Some(format!("Could not retain chat: {error}")));
-                false
-            }
-        }
-    }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.original_composer_text(cx);
         if let Some(thread) = self.current() {
@@ -339,44 +292,35 @@ impl AgentPanel {
         self.sync_approval_attention(window, cx);
     }
     pub(super) fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_thread_connection(ThreadStart::New(id), window, cx);
-    }
-    fn new_thread_connection(
-        &mut self,
-        start: ThreadStart,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let restarting = matches!(&start, ThreadStart::Restart(_));
-        let id = match &start {
-            ThreadStart::New(id) => id.clone(),
-            ThreadStart::Restart(data) => data.agent_id().to_owned(),
-        };
-        if self.host.agents().get(&id, cx).is_none() {
-            return;
-        }
-        self.host.runtime().set_last_agent(&id, cx);
-        self.leave_composer(cx);
-        let active = self
+        let terminal = self
             .host
             .workspace()
             .upgrade()
             .and_then(|workspace| workspace.read(cx).active_terminal(cx));
+        self.open_started(
+            ChatStart::New {
+                agent: id,
+                terminal,
+            },
+            window,
+            cx,
+        );
+    }
+    fn open_started(&mut self, start: ChatStart, window: &mut Window, cx: &mut Context<Self>) {
+        // An unknown agent leaves the composer and drafts alone.
+        let agent = match &start {
+            ChatStart::New { agent, .. } => agent.as_str(),
+            ChatStart::Restart(data) => data.agent_id(),
+        };
+        if self.host.agents().get(agent, cx).is_none() {
+            return;
+        }
+        self.leave_composer(cx);
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
-        let thread = cx.new(|cx| match start {
-            ThreadStart::New(id) => {
-                let mut thread = AgentThread::new(id, self.host.clone(), cx);
-                thread.preview_config(cx);
-                thread
-            }
-            ThreadStart::Restart(data) => AgentThread::restarted(*data, self.host.clone(), cx),
-        });
-        if !restarting && let Some(id) = active {
-            thread.update(cx, |thread, cx| {
-                thread.add_composer_attachment(Attachment::Terminal(id), cx)
-            });
-        }
+        let Some(thread) = self.chats.start(start, cx) else {
+            return;
+        };
         let id = thread.entity_id();
         let slot = self.track(&thread, window, cx);
         self.chats.append(slot);
@@ -398,7 +342,7 @@ impl AgentPanel {
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
         let data = old.read(cx).restart_data();
-        self.new_thread_connection(ThreadStart::Restart(Box::new(data)), window, cx);
+        self.open_started(ChatStart::Restart(Box::new(data)), window, cx);
         let Some(thread) = self
             .current()
             .filter(|thread| thread.entity_id() != old.entity_id())
@@ -423,30 +367,12 @@ impl AgentPanel {
         if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
             return;
         }
-        let (chats, catalog) = self.host.runtime().take_history(cx);
-        let mut restored = Vec::new();
-        if let Some(chats) = chats {
-            for chat in chats.into_iter().rev() {
-                let thread = cx.new(|cx| AgentThread::restored(chat, self.host.clone(), cx));
-                let slot = self.track(&thread, window, cx);
-                restored.push(slot);
-            }
-        }
-        if let Some(catalog) = catalog {
-            for summary in catalog.into_iter().rev() {
-                if self
-                    .chats
-                    .iter()
-                    .chain(restored.iter().map(chat_list::ChatSlot::thread))
-                    .any(|thread| thread.read(cx).chat_id() == summary.id)
-                {
-                    continue;
-                }
-                let thread = cx.new(|cx| AgentThread::archived(summary, self.host.clone(), cx));
-                let slot = self.track(&thread, window, cx);
-                restored.push(slot);
-            }
-        }
+        let restored = self
+            .chats
+            .saved(cx)
+            .into_iter()
+            .map(|thread| self.track(&thread, window, cx))
+            .collect::<Vec<_>>();
         let count = restored.len();
         self.chats.prepend(restored);
         if count > 0 {
@@ -455,31 +381,9 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn trim_resident_history(&mut self, cx: &mut Context<Self>) {
-        const BUDGET: usize = 64 * 1024 * 1024;
-        let active = self.current().map(|thread| thread.entity_id());
-        let mut resident: usize = self
-            .chat_documents()
-            .map(|thread| thread.read(cx).resident_history_bytes())
-            .sum();
-        let mut candidates = self.chats.iter().cloned().collect::<Vec<_>>();
-        candidates.sort_by_key(|thread| thread.read(cx).document().updated());
-        for thread in candidates {
-            if resident <= BUDGET {
-                break;
-            }
-            if Some(thread.entity_id()) == active {
-                continue;
-            }
-            let bytes = thread.read(cx).resident_history_bytes();
-            let query = self.history.query(cx);
-            let matched = !query.is_empty() && thread.read(cx).transcript().mentions(&query);
-            let chat_id = thread.read(cx).document().chat_id().to_owned();
-            if thread.update(cx, |thread, cx| thread.evict_history(cx)) {
-                resident = resident.saturating_sub(bytes);
-                if matched {
-                    self.history.record_loaded_match(chat_id);
-                }
-            }
+        let query = self.history.query(cx);
+        for chat in self.chats.trim_resident_history(&query, cx) {
+            self.history.record_loaded_match(chat);
         }
     }
     pub(super) fn track(
@@ -487,13 +391,7 @@ impl AgentPanel {
         thread: &Entity<AgentThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> chat_list::ChatSlot {
-        self.host
-            .runtime()
-            .register_document(crate::thread::client(thread), cx);
-        // Background sessions the chat opens belong to this window.
-        let handle = window.window_handle();
-        thread.update(cx, |thread, _| thread.bind_window(handle));
+    ) -> crate::roster::chat_list::ChatSlot {
         let mut archived = thread.read(cx).is_archived();
         let observation = cx.observe_in(thread, window, move |panel, loaded, window, cx| {
             let current_archived = loaded.read(cx).is_archived();
@@ -501,7 +399,9 @@ impl AgentPanel {
             archived = current_archived;
             panel.on_chat_changed(loaded, changed, window, cx);
         });
-        chat_list::ChatSlot::new(thread.clone(), observation)
+        // Background sessions the chat opens belong to this window.
+        self.chats
+            .track(thread, window.window_handle(), observation, cx)
     }
     pub(super) fn on_chat_changed(
         &mut self,
