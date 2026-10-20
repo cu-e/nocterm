@@ -195,7 +195,7 @@ fn the_same_document_waits_for_its_close_fence_even_with_spare_slots(cx: &mut Te
     cx.update(|cx| {
         assert!(thread.read(cx).session_closing());
         assert!(!thread.read(cx).is_leased());
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "resume");
+        assert_eq!(thread.read(cx).composer().queue()[0].saved().text, "resume");
     });
     close.send(()).unwrap();
     cx.run_until_parked();
@@ -230,7 +230,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
         assert!(thread.read(cx).document().persistence_error().is_some());
         assert!(thread.read(cx).composer().paused());
         assert_eq!(
-            thread.read(cx).composer().queue()[0].saved.text,
+            thread.read(cx).composer().queue()[0].saved().text,
             "retain me"
         );
         assert_eq!(thread.read(cx).document().published_revision(), 0);
@@ -240,7 +240,7 @@ fn dormant_save_failure_keeps_queue_and_prevents_process_launch(cx: &mut TestApp
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update(|cx| {
         assert!(thread.read(cx).document().persistence_error().is_none());
-        assert_eq!(thread.read(cx).composer().queue()[0].saved.text, "next");
+        assert_eq!(thread.read(cx).composer().queue()[0].saved().text, "next");
     });
     complete_active(&f, cx);
     complete_active(&f, cx);
@@ -665,7 +665,7 @@ fn restart_does_not_treat_the_old_documents_save_ack_as_the_new_queues_ack(
                 .is_some()
         );
         assert_eq!(
-            replacement.read(cx).composer().queue()[0].saved.text,
+            replacement.read(cx).composer().queue()[0].saved().text,
             "new unsaved queue"
         );
     });
@@ -703,7 +703,7 @@ fn replacing_the_document_waits_for_the_saved_chats_closing_session(cx: &mut Tes
     cx.update(|cx| {
         assert!(!replacement.read(cx).is_leased());
         assert_eq!(
-            replacement.read(cx).composer().queue()[0].saved.text,
+            replacement.read(cx).composer().queue()[0].saved().text,
             "second turn"
         );
     });

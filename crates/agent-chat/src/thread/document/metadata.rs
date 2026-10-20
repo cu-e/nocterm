@@ -134,7 +134,7 @@ impl<'a> Inputs<'a> {
         self.composer
             .queue()
             .iter()
-            .map(|prompt| prompt.saved.clone())
+            .map(|prompt| prompt.saved().clone())
             .collect()
     }
     pub(super) fn has_content(&self) -> bool {
@@ -171,7 +171,7 @@ impl SemanticInputs {
                 .iter()
                 .zip(input.composer.queue())
                 .all(|(saved, queued)| {
-                    Arc::ptr_eq(saved, &queued.saved) || **saved == *queued.saved
+                    Arc::ptr_eq(saved, queued.saved()) || **saved == **queued.saved()
                 })
             && self.resume == input.resume
     }

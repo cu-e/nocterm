@@ -358,7 +358,7 @@ impl AgentThread {
                 .composer
                 .queue()
                 .iter()
-                .map(|prompt| prompt.memory_len)
+                .map(|prompt| prompt.memory_len())
                 .sum::<usize>()
             + self.composer.draft().map_or(0, String::len)
     }

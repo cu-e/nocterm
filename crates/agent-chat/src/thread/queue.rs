@@ -25,11 +25,11 @@ pub(super) use submit_error::SubmitError;
 
 #[derive(Clone)]
 pub struct QueuedPrompt {
-    pub saved: Arc<SavedPrompt>,
-    pub image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
-    pub attachments: Vec<Attachment>,
-    pub encoded_len: usize,
-    pub memory_len: usize,
+    saved: Arc<SavedPrompt>,
+    image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
+    attachments: Vec<Attachment>,
+    encoded_len: usize,
+    memory_len: usize,
 }
 
 impl QueuedPrompt {
@@ -65,6 +65,24 @@ impl QueuedPrompt {
             image_keys: Arc::new(image_keys),
             encoded_len,
         }
+    }
+    pub fn saved(&self) -> &Arc<SavedPrompt> {
+        &self.saved
+    }
+    /// One key per image block: its preview identity, encoded size and
+    /// whether it still awaits preparation; `None` for other blocks.
+    pub fn image_keys(&self) -> &[Option<(usize, usize, bool)>] {
+        &self.image_keys
+    }
+    /// What the prompt was written about, captured when it was queued.
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+    pub fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+    pub fn memory_len(&self) -> usize {
+        self.memory_len
     }
 }
 

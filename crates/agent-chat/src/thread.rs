@@ -66,10 +66,19 @@ pub enum Attachment {
 /// An agent session from a saved chat, to reopen on the next connection.
 #[derive(Clone, Debug)]
 pub struct Restore {
-    pub session: SessionId,
-    pub workdir: PathBuf,
+    session: SessionId,
+    workdir: PathBuf,
     /// Open a copy of the session rather than the session itself.
-    pub fork: bool,
+    fork: bool,
+}
+impl Restore {
+    pub fn session(&self) -> &SessionId {
+        &self.session
+    }
+    /// Whether a copy of the session opens rather than the session itself.
+    pub fn fork(&self) -> bool {
+        self.fork
+    }
 }
 /// What a forked chat starts from.
 pub struct Fork {
@@ -432,7 +441,7 @@ impl AgentThread {
         self.composer.draft().map(String::as_str)
     }
     pub fn queued_prompt_ids(&self) -> impl ExactSizeIterator<Item = u64> + '_ {
-        self.composer.queue().iter().map(|prompt| prompt.saved.id)
+        self.composer.queue().iter().map(|prompt| prompt.saved().id)
     }
     pub fn queue_dispatchable(&self) -> bool {
         self.composer.dispatchable()

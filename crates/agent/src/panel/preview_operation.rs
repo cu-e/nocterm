@@ -122,10 +122,10 @@ impl PreviewOperation {
             .iter()
             .map(|prompt| {
                 prompt
-                    .saved
+                    .saved()
                     .images
                     .iter()
-                    .zip(prompt.image_keys.iter())
+                    .zip(prompt.image_keys().iter())
                     .filter_map(|(block, key)| {
                         let Content::Image(image) = block else {
                             return None;

@@ -73,7 +73,7 @@ impl Composer {
         let attachment_count = candidate
             .queue()
             .iter()
-            .map(|prompt| prompt.saved.attachments.len())
+            .map(|prompt| prompt.saved().attachments.len())
             .max()
             .unwrap_or(0);
         if candidate.queue().len() > 1024 || self.images().len() > 128 || attachment_count > 1024 {
@@ -160,7 +160,7 @@ impl Composer {
     ) -> Result<PromptCandidate, super::queue::SubmitError> {
         let mut queue = self.queue.clone();
         if let Some(id) = replace {
-            let Some(slot) = queue.iter_mut().find(|value| value.saved.id == id) else {
+            let Some(slot) = queue.iter_mut().find(|value| value.saved().id == id) else {
                 return Err(super::queue::SubmitError::AlreadySent);
             };
             *slot = prompt;
@@ -183,7 +183,7 @@ impl Composer {
     ) -> Self {
         let next_queue_id = queue
             .iter()
-            .map(|prompt| prompt.saved.id)
+            .map(|prompt| prompt.saved().id)
             .max()
             .unwrap_or(0)
             + 1;
@@ -255,7 +255,7 @@ impl Composer {
 
     /// Moves the queued prompt `id` to the front. Returns whether it is queued.
     pub fn move_to_front(&mut self, id: u64) -> bool {
-        let Some(index) = self.queue.iter().position(|prompt| prompt.saved.id == id) else {
+        let Some(index) = self.queue.iter().position(|prompt| prompt.saved().id == id) else {
             return false;
         };
         let prompt = self.queue.remove(index);
@@ -266,7 +266,7 @@ impl Composer {
     /// Removes the queued prompt `id`. Returns whether it was queued.
     pub fn remove(&mut self, id: u64) -> bool {
         let before = self.queue.len();
-        self.queue.retain(|prompt| prompt.saved.id != id);
+        self.queue.retain(|prompt| prompt.saved().id != id);
         self.queue.len() != before
     }
 
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(composer.attachments(), [Attachment::Group("own".into())]);
         assert!(composer.move_to_front(2));
         assert!(!composer.move_to_front(9));
-        assert_eq!(composer.take_next().unwrap().saved.id, 2);
+        assert_eq!(composer.take_next().unwrap().saved().id, 2);
     }
 
     #[test]
@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(candidate.queue().len(), 2);
         drop(candidate);
         assert_eq!(composer.queue().len(), 1);
-        assert_eq!(composer.queue()[0].saved.id, 1);
+        assert_eq!(composer.queue()[0].saved().id, 1);
         assert_eq!(
             composer.draft().map(String::as_str),
             Some("keep this draft")
@@ -437,7 +437,7 @@ mod tests {
         let ids = composer
             .queue()
             .iter()
-            .map(|prompt| prompt.saved.id)
+            .map(|prompt| prompt.saved().id)
             .collect::<Vec<_>>();
         assert_eq!(ids, [1, 3]);
     }

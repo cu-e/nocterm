@@ -83,7 +83,7 @@ fn empty_fork_descriptor_with_a_queued_prompt_does_not_restore(cx: &mut TestAppC
             thread
                 .pending_restore()
                 .as_ref()
-                .is_some_and(|restore| restore.fork)
+                .is_some_and(|restore| restore.fork())
         );
         assert!(thread.submit("waiting request".into(), None, cx).unwrap());
         let id = thread.queued_prompt_ids().next().unwrap();
@@ -361,7 +361,7 @@ fn persisted_empty_history_with_a_stale_id_starts_fresh_and_keeps_queued_fifo(
         assert!(thread.read(cx).session_generating());
         assert!(!thread.read(cx).has_status_error());
         assert_eq!(
-            thread.read(cx).composer().queue()[0].saved.text,
+            thread.read(cx).composer().queue()[0].saved().text,
             "new submission"
         );
     });
