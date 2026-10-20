@@ -8,23 +8,27 @@
 //! The transport owns a small Tokio runtime, so callers need none: a session
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
 //!
-//! Owns: SSH authentication, host-key policy, proxy tunnels, SFTP and remote execution.
+//! Owns: SSH authentication, host-key policy, proxy tunnels, jump-host routes, SFTP and remote execution.
 //! Does not own: profiles, credential storage, terminal emulation or session views.
 //! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
 //! Settings section: consumes session SSH options. Globals: none.
-//! Invariants: bounded session channels and independent closure interrupt blocked I/O.
+//! Invariants: bounded session channels and independent closure interrupt blocked I/O;
+//! the proxy carries only the first connection of a route, and each jump host is
+//! verified and authenticated before a forward is opened through it.
 
 mod auth;
 mod connection;
 mod exec;
 mod file;
 mod host_keys;
+mod login;
 mod proxy;
+mod route;
 mod sftp;
 
 use std::{path::PathBuf, sync::Arc};
 
-use nocterm_session::{ConnectRequest, Session, SessionError, Transport};
+use nocterm_session::{ConnectRequest, MAX_JUMP_HOSTS, Session, SessionError, Transport};
 use tokio::runtime::{Builder, Runtime};
 
 /// Threads serving every SSH connection of the application.
@@ -75,6 +79,12 @@ impl Transport for SshTransport {
         };
         if let Err(error) = request.launch.validate() {
             return Session::failed(SessionError::InvalidLaunch(error));
+        }
+        if request.jumps.len() > MAX_JUMP_HOSTS {
+            return Session::failed(SessionError::TooManyJumpHosts {
+                count: request.jumps.len(),
+                limit: MAX_JUMP_HOSTS,
+            });
         }
         let (fs, fs_requests) = sftp::channel();
         let (exec, exec_requests) = exec::channel(runtime.handle().clone());

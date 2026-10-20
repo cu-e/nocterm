@@ -18,7 +18,10 @@ use tokio::{
     io::AsyncWriteExt as _, runtime, sync::mpsc, sync::watch, task::JoinSet, time::timeout,
 };
 
-use crate::connection::{Client, Observed, confirmed, open_terminal, run_shell};
+use crate::{
+    connection::{confirmed, open_terminal, run_shell},
+    login::{Client, Observed},
+};
 
 const REQUEST_BACKLOG: usize = 16;
 /// Programs one connection runs at once; further requests wait their turn.

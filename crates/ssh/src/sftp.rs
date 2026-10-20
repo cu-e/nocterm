@@ -1,5 +1,5 @@
 //! Bounded, session-owned SFTP requests and streaming transfers.
-use crate::connection::Client;
+use crate::login::Client;
 use futures::{FutureExt, StreamExt as _, channel::oneshot};
 use nocterm_session::{
     DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs,

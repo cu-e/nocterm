@@ -6,9 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use nocterm_session::{
-    Auth, ConnectRequest, Prompt, Secret, SecretRequest, SessionDriver, SessionError,
-};
+use nocterm_session::{Auth, Prompt, Secret, SecretRequest, SessionDriver, SessionError};
 use russh::{
     MethodKind, MethodSet,
     client::{AuthResult, Handle, KeyboardInteractiveAuthResponse},
@@ -18,7 +16,10 @@ use russh::{
     },
 };
 
-use crate::{SshConfig, connection::Client};
+use crate::{
+    SshConfig,
+    login::{Client, Login},
+};
 use zeroize::Zeroizing;
 
 const MAX_PRIVATE_KEY: usize = 1024 * 1024;
@@ -37,13 +38,13 @@ const MAX_SECRET_ATTEMPTS: usize = 3;
 
 pub(crate) async fn authenticate(
     handle: &mut Handle<Client>,
-    request: &ConnectRequest,
+    login: &Login<'_>,
     config: &SshConfig,
     driver: &SessionDriver,
 ) -> Result<(), SessionError> {
     let mut authenticator = Authenticator {
         handle,
-        request,
+        login,
         driver,
         methods: MethodSet::empty(),
         offered: Vec::new(),
@@ -55,7 +56,7 @@ pub(crate) async fn authenticate(
 
 struct Authenticator<'a> {
     handle: &'a mut Handle<Client>,
-    request: &'a ConnectRequest,
+    login: &'a Login<'a>,
     driver: &'a SessionDriver,
     /// The methods the host will still accept.
     methods: MethodSet,
@@ -75,7 +76,7 @@ impl<'a> Authenticator<'a> {
         }
 
         let public_key_only = requires_key(&self.methods);
-        let signed_in = match &self.request.auth {
+        let signed_in = match self.login.auth() {
             Auth::Auto => self.try_agent(config).await? || self.try_default_keys(config).await?,
             Auth::Key { path } => self.try_key_file(path, true).await?,
             Auth::Password => false,
@@ -93,27 +94,26 @@ impl<'a> Authenticator<'a> {
             return Err(SessionError::Other(format!(
                 "{}@{} accepted an authentication factor, but sign-in is incomplete. {remaining}",
                 self.user(),
-                self.request.target.host
+                self.login.target().host
             )));
         }
         if let Some(message) =
-            key_required_message(public_key_only, &self.request.auth, self.rejected_key)
+            key_required_message(public_key_only, self.login.auth(), self.rejected_key)
         {
             return Err(SessionError::Other(format!(
                 "{}@{} {message}",
                 self.user(),
-                self.request.target.host
+                self.login.target().host
             )));
         }
         Err(SessionError::AuthenticationFailed {
             user: self.user().to_owned(),
-            host: self.request.target.host.clone(),
+            host: self.login.target().host.clone(),
         })
     }
 
     fn user(&self) -> &'a str {
-        let request: &'a ConnectRequest = self.request;
-        &request.target.user
+        &self.login.target().user
     }
 
     fn offers(&self, method: MethodKind) -> bool {
@@ -304,7 +304,7 @@ impl<'a> Authenticator<'a> {
         loop {
             if self.offers(MethodKind::Password) && passwords < MAX_SECRET_ATTEMPTS {
                 let request = SecretRequest::Password {
-                    target: self.request.target.clone(),
+                    target: self.login.target().clone(),
                     retry: passwords > 0,
                 };
                 passwords += 1;
@@ -379,7 +379,7 @@ impl<'a> Authenticator<'a> {
         self.driver
             .ask(|reply| Prompt::Secret {
                 request,
-                hop: None,
+                hop: self.login.hop(),
                 reply,
             })
             .await
