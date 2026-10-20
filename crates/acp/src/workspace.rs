@@ -52,7 +52,8 @@ impl WorkdirResolver for NativeWorkdirResolver {
                         home.as_deref(),
                         &paths.private_dirs,
                         &paths.shared_dirs,
-                    );
+                    )
+                    .with_home_state(home.as_deref(), &paths.home_state);
                     let facts = super::sandbox::resolution::PathResolver::resolve(&policy, &root)?;
                     policy.validate_workdir(&facts)?;
                     Ok::<_, WorkdirError>(policy)

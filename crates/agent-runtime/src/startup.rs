@@ -47,6 +47,12 @@ impl StartupConfig {
                 isolation: isolated.then(|| IsolationPaths {
                     private_dirs: services.private_dirs.clone(),
                     shared_dirs: services.shared_dirs.clone(),
+                    home_state: services
+                        .agents
+                        .catalog()
+                        .home_state()
+                        .map(PathBuf::from)
+                        .collect(),
                 }),
             },
             resolver: services.workdir_resolver.clone(),
