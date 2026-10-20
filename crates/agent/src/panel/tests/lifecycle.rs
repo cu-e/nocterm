@@ -387,6 +387,11 @@ fn ready_hides_auth_and_status_while_working_status_precedes_composer(cx: &mut T
         let status = window.find("agent-status").bounds();
         let composer = window.find("agent-composer").bounds();
         assert!(status.bottom() <= composer.origin.y);
+        let thinking = window.find("agent-thinking").bounds();
+        assert!(status.contains(&thinking.origin));
+        assert_eq!(thinking.origin.x, status.origin.x + gpui_kit::px(12.));
+        let thread = f.panel.read(cx).current().unwrap();
+        assert_eq!(thread.read(cx).status(), "Thinking…");
         assert!(window.try_find("authenticate-sign-in").is_none());
     })
     .unwrap();

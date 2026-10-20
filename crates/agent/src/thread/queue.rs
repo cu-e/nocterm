@@ -594,7 +594,7 @@ impl AgentThread {
             .append_user(prepared.visible().to_vec(), self.host.timestamp(), &input);
         self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
-        self.notice.present("Working…".into());
+        self.notice.present("Thinking…".into());
         self.notice.clear_error();
         let is_command = prepared.is_command();
         let operation = super::session_driver::prompt_operation::PromptOperation::new(

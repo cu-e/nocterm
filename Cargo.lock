@@ -5527,6 +5527,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
+ "image",
  "nocterm-core",
  "nocterm-design",
  "nocterm-session",

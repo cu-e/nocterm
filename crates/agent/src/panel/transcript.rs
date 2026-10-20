@@ -2,7 +2,7 @@
 //! line and the composer.
 use gpui_kit::{
     AnyElement, SharedString, TestSupportExt as _,
-    component::{ActiveTheme as _, v_flex},
+    component::{ActiveTheme as _, h_flex, v_flex},
     div,
     prelude::*,
 };
@@ -60,13 +60,22 @@ impl TranscriptView {
         live: bool,
         cx: &gpui_kit::App,
     ) -> AnyElement {
-        div()
+        h_flex()
             .id("agent-status")
             .test_support()
+            .gap_1p5()
             .px_3()
             .pb_2()
             .text_xs()
             .text_color(cx.theme().muted_foreground)
+            .when(live, |row| {
+                row.child(div().id("agent-thinking").test_support().child(
+                    nocterm_ui::thinking_indicator(
+                        SharedString::from(format!("agent-thinking-{id}")),
+                        cx.theme().foreground,
+                    ),
+                ))
+            })
             .child(activity_text(
                 SharedString::from(format!("agent-live-status-{id}")),
                 text,
